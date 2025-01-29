@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DayNotes-current</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .editor {
+            border: 1px solid #ccc;
+            padding: 10px;
+            min-height: 200px;
+            line-height: 1.2; /* Set to normal line height for better spacing */
+            contenteditable: true; /* Ensures the editor is editable */
+            resize: both; /* Allows resizing in both directions */
+            overflow: auto; /* Adds scrollbars if content exceeds the size */
+            max-width: 100%; /* Prevents overflow beyond the body width */
+            margin-bottom: 10px; /* Space between editors */
+        }
+        .editor2 {
+            border: 1px solid #ccc;
+            padding: 10px;
+            min-height: 20px;
+            line-height: 1.0; /* Set to normal line height for better spacing */
+            contenteditable: true; /* Ensures the editor is editable */
+            resize: both; /* Allows resizing in both directions */
+            overflow: auto; /* Adds scrollbars if content exceeds the size */
+            max-width: 100%; /* Prevents overflow beyond the body width */
+            margin-bottom: 10px; /* Space between editors */
+        }
+        button {
+            margin-right: 5px;
+        }
+        .toolbar {
+            margin-bottom: 10px;
+        }
+        textarea {
+            width: 100%; /* Full width */
+            height: 30px; /* Fixed height */
+            margin-top: 10px;
+            padding: 10px;
+            font-size: 14px;
+            box-sizing: border-box; /* Ensure padding is included in width */
+        }
+    </style>
+    <script>
+        window.addEventListener("beforeunload", function(e) {
+            e.preventDefault();
+            e.returnValue = "";
+        });
+
+        // Function to get the current date and format it
+        function getCurrentDate() {
+            const options = { year: 'numeric', month: 'long', day: 'numeric' };
+            const today = new Date().toLocaleDateString(undefined, options);
+            document.getElementById('currentDate').innerText = " " + today +" ";
+        }
+
+
+
+        // Function to add a new editor
+        function addEditor() {
+            const newEditorContainer = document.createElement('div');
+            
+            // Create a toolbar for the new editor
+            const toolbar = document.createElement('div');
+            toolbar.className = 'toolbar';
+            
+            // Add buttons to the toolbar
+            ['bold', 'italic', 'underline'].forEach(command => {
+                const button = document.createElement('button');
+                button.innerText = command.charAt(0).toUpperCase() + command.slice(1);
+                button.onclick = () => document.execCommand(command, false, null);
+                toolbar.appendChild(button);
+            });
+
+            // Add buttons for list formatting
+            const bulletButton = document.createElement('button');
+            bulletButton.innerText = '• Bullet';
+            bulletButton.onclick = () => document.execCommand('insertUnorderedList', false, null);
+            toolbar.appendChild(bulletButton);
+
+            // Add button for inserting subbullet
+             const subbulletButton = document.createElement('button');
+             subbulletButton.innerText = 'Sub-bullet';
+             subbulletButton.onclick = insertSubBullet; // Call insertSubBullet function on click
+             toolbar.appendChild(subbulletButton);
+
+            const numberButton = document.createElement('button');
+            numberButton.innerText = '1. Numbered';
+            numberButton.onclick = () => document.execCommand('insertOrderedList', false, null);
+            toolbar.appendChild(numberButton);
+
+             // Add button for inserting checkboxes
+             const checkboxButton = document.createElement('button');
+             checkboxButton.innerText = 'Checkbox';
+             checkboxButton.onclick = insertCheckbox; // Call insertCheckbox function on click
+             toolbar.appendChild(checkboxButton);
+
+             // Add button for inserting checklist
+             const checklistButton = document.createElement('button');
+             checklistButton.innerText = 'Checklist';
+             checklistButton.onclick = insertChecklist; // Call insertCheckbox function on click
+             toolbar.appendChild(checklistButton);
+
+             // Add button to insert current timestamp
+             const timestampButton = document.createElement('button');
+             timestampButton.innerText = '+Time';
+             timestampButton.onclick = () => insertTimestamp();
+             toolbar.appendChild(timestampButton);
+
+             // Add button to insert current day
+             const dayButton = document.createElement('button');
+             dayButton.innerText = '+Day';
+             dayButton.onclick = () => insertDay();
+             toolbar.appendChild(dayButton);
+
+             newEditorContainer.appendChild(toolbar);
+
+             // Create the editor
+             const newEditor = document.createElement('div');
+             newEditor.className = 'editor';
+             newEditor.setAttribute('contenteditable', 'true');
+
+             newEditor.innerHTML = 'Title: '; // Default text for new editor
+            
+             newEditorContainer.appendChild(newEditor);
+             
+             document.getElementById('editorsContainer').appendChild(newEditorContainer);
+         }
+
+		// Function to insert a sub-bullet point
+				function insertSubBullet() {
+			    // Create a new unordered list element
+			    const subBulletHTML = '<ul style="list-style-type:disc; padding-left:20px;"><li></li></ul>';    
+ 			   // Insert the sub-bullet HTML at the current caret position
+			    document.execCommand('insertHTML', false, subBulletHTML);   
+ 			   // Move the caret inside the newly created list item
+			    const selection = window.getSelection();
+			    if (selection.rangeCount > 0) {
+		        const range = selection.getRangeAt(0);
+		        range.setStartAfter(range.startContainer);
+		        range.collapse(true);
+		        selection.removeAllRanges();
+		        selection.addRange(range);
+				    }
+			 }
+
+		// Function to insert a checklist (multiple checkboxes)
+		function insertChecklist() {
+	    const checklistHTML = `
+	        <ul style="list-style-type:none; padding-left:0;">
+            <li><input type="checkbox" style="margin-right: 5px;padding-left:20px;">  </li>
+            <li><input type="checkbox" style="margin-right: 5px;">  </li>
+            <li><input type="checkbox" style="margin-right: 5px;">  </li>
+	        </ul>`;   
+ 		   // Insert the checklist HTML at the current caret position
+ 		   document.execCommand('insertHTML', false, checklistHTML);
+		  }
+
+
+         // Function to insert current timestamp in "hh:mm" format
+         function insertTimestamp() {
+             const now = new Date();
+             const hours = String(now.getHours()).padStart(2, '0'); 
+             const minutes = String(now.getMinutes()).padStart(2, '0'); 
+             const timestamp = `${hours}:${minutes} `;
+
+             const selection = window.getSelection();
+             if (selection.rangeCount > 0) {
+                 const range = selection.getRangeAt(0);
+                 range.deleteContents(); 
+                 range.insertNode(document.createTextNode(timestamp)); 
+                 range.collapse(false); 
+                 selection.removeAllRanges();
+                 selection.addRange(range); 
+              }
+          }
+
+          // Function to insert current day in "Wed " format
+          function insertDay() {
+              const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+              const now = new Date();
+              const dayIndex = now.getDay(); 
+              
+              const dayString = " " + daysOfWeek[dayIndex] + " "; 
+              
+              const selection = window.getSelection();
+              if (selection.rangeCount > 0) {
+                  const range = selection.getRangeAt(0);
+                  range.deleteContents(); 
+                  range.insertNode(document.createTextNode(dayString)); 
+                  range.collapse(false); 
+                  selection.removeAllRanges();
+                  selection.addRange(range); 
+              }
+          }
+          // Function to insert a checkbox
+		 function insertCheckbox() {
+   		 const checkboxHTML = '<input type="checkbox" style="margin-right: 5px;">';
+            
+   		 // Insert the checkbox HTML at the current caret position
+   		 document.execCommand('insertHTML', false, checkboxHTML);
+		 }      
+          window.onload = getCurrentDate; 
+      </script>
+</head>
+<body>
+    <h1 contenteditable>DayNotes</h1>
+    <p contenteditable>Date: <span id="currentDate"></span></p>
+
+    <div class="editor2" contenteditable="true">
+       Summary:
+       <!-- Keydown event listener for bullet points on Tab press -->
+       <script>
+           document.querySelector('.editor2').addEventListener('keydown', function(event) {
+               if (event.key === 'Tab') {
+                   event.preventDefault(); 
+
+                   const selection = window.getSelection();
+                   const range = selection.getRangeAt(0);
+                   const parentLi = range.startContainer.closest('li');
+
+                   if (!parentLi) {
+                       const listItem = document.createElement('li');
+                       listItem.textContent = ''; 
+
+                       let list = range.startContainer.closest('ul');
+                       if (!list) {
+                           list = document.createElement('ul');
+                           range.insertNode(list);
+                       }
+
+                       list.appendChild(listItem);
+                       range.setStartAfter(listItem); 
+                       range.collapse(true); 
+                       selection.removeAllRanges();
+                       selection.addRange(range); 
+                   }
+               }
+           });
+       </script>
+   </div>
+
+   <div id="editorsContainer">
+       <div>
+           <div class="toolbar">
+               <button onclick="document.execCommand('bold', false, null)">Bold</button>
+               <button onclick="document.execCommand('italic', false, null)">Italic</button>
+               <button onclick="document.execCommand('underline', false, null)">Underline</button>
+               <button onclick="document.execCommand('insertUnorderedList', false, null)">• Bullet</button>
+  			   <button onclick="insertSubBullet()">Sub-Bullet</button> <!-- Sub Bullet Button -->
+               <button onclick="document.execCommand('insertOrderedList', false, null)">1. Numbered</button>
+               <button onclick="insertCheckbox()">Checkbox</button> <!-- Checkbox Button -->
+               <button onclick="insertChecklist()">Checklist</button> <!-- Checklist Button -->
+               <button onclick="insertTimestamp()">+Time</button> <!-- Timestamp Button -->
+               <button onclick="insertDay()">+Day</button> <!-- Day Button -->
+           </div>
+           <div class="editor" contenteditable="true">
+               Start my Dream:
+               <!-- Keydown event listener for bullet points on Tab press -->
+               <script>
+                   document.querySelector('.editor').addEventListener('keydown', function(event) {
+                       if (event.key === 'Tab') {
+                           event.preventDefault(); 
+
+                           const selection = window.getSelection();
+                           const range = selection.getRangeAt(0);
+                           const parentLi = range.startContainer.closest('li');
+
+                           if (!parentLi) {
+                               const listItem = document.createElement('li');
+                               listItem.textContent = ''; 
+
+                               let list = range.startContainer.closest('ul');
+                               if (!list) {
+                                   list = document.createElement('ul');
+                                   range.insertNode(list);
+                               }
+
+                               list.appendChild(listItem);
+                               range.setStartAfter(listItem); 
+                               range.collapse(true); 
+                               selection.removeAllRanges();
+                               selection.addRange(range); 
+                           }
+                       }
+                   });
+               </script>
+           </div>
+       </div>
+       <hr>
+       <div>
+           <div class="toolbar">
+               <button onclick="document.execCommand('bold', false, null)">Bold</button>
+               <button onclick="document.execCommand('italic', false, null)">Italic</button>
+               <button onclick="document.execCommand('underline', false, null)">Underline</button>
+               <button onclick="document.execCommand('insertUnorderedList', false, null)">• Bullet </button>
+  			   <button onclick="insertSubBullet()">Sub-Bullet</button> <!-- Sub Bullet Button -->
+               <button onclick="document.execCommand('insertOrderedList', false, null)">1. Numbered </button>
+               <button onclick="insertCheckbox()">Checkbox</button> <!-- Checkbox Button -->
+               <button onclick="insertChecklist()">Checklist</button> <!-- Checklist Button -->
+               <button onclick="insertTimestamp()">+Time</button> <!-- Timestamp Button -->
+               <button onclick="insertDay()">+Day</button> <!-- Day Button -->
+           </div>
+           <div class="editor" contenteditable="true">
+               More:
+               <!-- Keydown event listener for bullet points on Tab press -->
+               <script>
+                   document.querySelector('.editor').addEventListener('keydown', function(event) {
+                       if (event.key === 'Tab') {
+                           event.preventDefault(); 
+
+                           const selection = window.getSelection();
+                           const range = selection.getRangeAt(0);
+                           const parentLi = range.startContainer.closest('li');
+
+                           if (!parentLi) {
+                               const listItem = document.createElement('li');
+                               listItem.textContent = ''; 
+
+                               let list = range.startContainer.closest('ul');
+                               if (!list) {
+                                   list = document.createElement('ul');
+                                   range.insertNode(list);
+                               }
+
+                               list.appendChild(listItem);
+                               range.setStartAfter(listItem); 
+                               range.collapse(true); 
+                               selection.removeAllRanges();
+                               selection.addRange(range); 
+                           }
+                       }
+                   });
+               </script>
+           </div>
+       </div>
+   </div>
+
+   <button onclick="addEditor()">Add Editor</button>
+
+<div contenteditable>More typing></div>
+           <div class="toolbar">
+               <button onclick="document.execCommand('bold', false, null)">Bold</button>
+               <button onclick="document.execCommand('italic', false, null)">Italic</button>
+               <button onclick="document.execCommand('underline', false, null)">Underline</button>
+               <button onclick="document.execCommand('insertUnorderedList', false, null)">• Bullet</button>
+  			   <button onclick="insertSubBullet()">Sub-Bullet</button> <!-- Sub Bullet Button -->
+               <button onclick="document.execCommand('insertOrderedList', false, null)">1. Numbered</button>
+               <button onclick="insertCheckbox()">Checkbox</button> <!-- Checkbox Button -->
+               <button onclick="insertChecklist()">Checklist</button> <!-- Checklist Button -->
+               <button onclick="insertTimestamp()">+Time</button> <!-- Timestamp Button -->
+               <button onclick="insertDay()">+Day</button> <!-- Day Button -->
+           </div>
+<div contenteditable>
+    <textarea id="editor" placeholder="Simple text only for paste and style change...."></textarea>
+</div>
+
+<footer>
+   Copyright © 2025 Dr. Wen-Ming Yang 20250111 R5 
+</footer>
+</body>
+</html>
