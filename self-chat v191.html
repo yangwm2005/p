@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Self Chat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f4;
+            display: flex;
+            justify-content: center;
+            align-items: top;
+            height: 120vh;
+            margin: 0;
+        }
+        .chat-container {
+            width: 450px;
+            background: white;
+            padding: 10px;
+            box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+        }
+        .editable-title {
+            font-size: 18px;
+            font-weight: bold;
+            text-align: center;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background: #f1f1f1;
+            cursor: text;
+        }
+        .chat-box {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            background: #fafafa;
+            display: flex;
+            flex-direction: column;
+            scroll-behavior: smooth;
+        }
+        .chat-box div {
+            margin: 3px 0;
+            padding: 6px 10px;
+            border-radius: 5px;
+            max-width: 100%;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            user-select: text;
+            text-align: left;
+            background: #e6e6e6;
+            color: black;
+            cursor: pointer;
+        }
+        .user-msg {
+            align-self: flex-start;
+        }
+        .timestamp {
+            font-size: 10px;
+            color: #555;
+            margin-left: 8px;
+        }
+        .delete-btn {
+            background: none;
+            border: none;
+            color: red;
+            font-size: 9px;
+            cursor: pointer;
+            margin-left: 1px;
+        }
+        .delete-btn:hover {
+            color: darkred;
+        }
+        .input-area, .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        textarea {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            resize: none;
+            overflow-y: hidden;
+            min-height: 40px;
+            max-height: 120px;
+            font-size: 14px;
+        }
+        button, select {
+            padding: 5px;
+            border: none;
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        button:hover, select:hover {
+            background: #0056b3;
+        }
+        .chat-box div::selection {
+            background: transparent;
+            color: black;
+        }
+        .action-btn {
+            background: none;
+            border: none;
+            color: #007bff;
+            font-size: 12px;
+            cursor: pointer;
+            margin-left: 5px;
+            padding: 2px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            transition: background 0.2s;
+        }
+        .action-btn:hover {
+            background: #f1f1f1;
+        }
+        .action-menu {
+            display: none;
+            position: absolute;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1);
+            z-index: 1;
+            right: 0;
+            top: 100%;
+            min-width: 80px;
+        }
+        .action-menu button {
+            display: block;
+            width: 100%;
+            padding: 5px 10px;
+            text-align: left;
+            background: none;
+            border: none;
+            color: #333;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .action-menu button:hover {
+            background: #f1f1f1;
+        }
+        .highlighted {
+            background-color: yellow !important;
+        }
+    </style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div id="chatTitle" class="editable-title" contenteditable="true">Title</div>
+    <input type="text" id="searchInput" placeholder="🔍 Search messages..." oninput="filterMessages()">
+    <div class="chat-box" id="chatBox"></div>
+    <div class="input-area">
+        <textarea id="textInput" placeholder="Type a message..." oninput="autoExpand(this)"></textarea>
+        <button onclick="sendMessage()" style="color:white;background-color:green;">Send</button>
+    </div>
+    <div class="controls">
+        <button onclick="startVoiceRecognition()">🎤 Voice</button>
+        <select id="languageSelect">
+            <option value="en-US">English</option>
+            <option value="zh-CN">Chinese</option>
+        </select>
+        <button onclick="saveChatAsFile()" style="color:white;background-color:green;">💾 Save Chat</button>
+        <button onclick="openChatFile()" style="color:white;background-color:orange;">📂 Open File</button>
+        <button onclick="exportToGmail()" style="color:white;background-color:purple;">✉️ To Gmail</button>
+        <select id="viewVersion" onchange="handleViewChange()" style="color:white;background-color:blue;">
+            <option value="">🌐 View</option>
+            <option value="v1">V1(bullet)</option>
+            <option value="v2">V2</option>
+        </select>
+    </div>
+    <div>
+        <footer>
+            Copyright © 2025 Dr. Wen-Ming Yang 20250213 v1.91 option
+        </footer>
+    </div>
+</div>
+
+<script>
+    // Helper function for scrolling
+    function scrollToBottom(element) {
+        element.offsetHeight; // Force a reflow
+        element.scrollTop = element.scrollHeight;
+    }
+
+    document.addEventListener("DOMContentLoaded", function() {
+        document.getElementById("textInput").addEventListener("keydown", function(event) {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        });
+    });
+
+    function autoExpand(textarea) {
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+    }
+
+function sendMessage(message = null, timestamp = null, isFromFile = false) {
+    let inputField = document.getElementById("textInput");
+    let chatBox = document.getElementById("chatBox");
+
+    let text = message || inputField.value.trim();
+    if (text === "") return;
+
+    let time = timestamp || getCurrentTime();
+    let userMessage = document.createElement("div");
+    userMessage.classList.add("user-msg");
+    userMessage.contentEditable = true;
+    userMessage.innerHTML = `<span class="message-text">${text}</span> <span class="timestamp">${time}</span>`;
+
+    // Create the action button
+    let actionBtn = document.createElement("button");
+    actionBtn.innerHTML = "⚙️";
+    actionBtn.classList.add("action-btn");
+
+    // Create the action menu
+    let actionMenu = document.createElement("div");
+    actionMenu.classList.add("action-menu");
+    actionMenu.style.display = "none"; // Hide the menu by default
+
+    // Add delete option
+    let deleteOption = document.createElement("button");
+    deleteOption.innerHTML = "Delete";
+    deleteOption.onclick = function () {
+        chatBox.removeChild(userMessage);
+    };
+
+    // Add highlight option
+    let highlightOption = document.createElement("button");
+    highlightOption.innerHTML = "Highlight";
+    highlightOption.onclick = function () {
+        userMessage.classList.toggle("highlighted");
+    };
+
+    // Append options to the menu
+    actionMenu.appendChild(deleteOption);
+    actionMenu.appendChild(highlightOption);
+
+    // Append the menu to the action button
+    actionBtn.appendChild(actionMenu);
+
+    // Toggle the menu on button click
+    actionBtn.onclick = function (event) {
+        event.stopPropagation(); // Prevent the click from closing the menu immediately
+        actionMenu.style.display = actionMenu.style.display === "block" ? "none" : "block";
+    };
+
+    // Close the menu when clicking outside
+    document.addEventListener("click", function (event) {
+        if (!actionBtn.contains(event.target)) {
+            actionMenu.style.display = "none";
+        }
+    });
+
+    userMessage.appendChild(actionBtn);
+    chatBox.appendChild(userMessage);
+
+    if (!isFromFile) {
+        inputField.value = "";
+        autoExpand(inputField);
+    }
+
+    // Use requestAnimationFrame for reliable scrolling
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            scrollToBottom(chatBox);
+        });
+    });
+}
+
+    function getCurrentTime() {
+        let now = new Date();
+        let hours = now.getHours();
+        let minutes = now.getMinutes();
+        let ampm = hours >= 12 ? "PM" : "AM";
+
+        hours = hours % 12 || 12;
+        minutes = minutes.toString().padStart(2, "0");
+
+        return `${hours}:${minutes} ${ampm}`;
+    }
+
+    function saveChatAsFile() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            return textSpan ? `• ${textSpan.textContent} (${timestamp.textContent})` : "";
+        });
+
+        if (messages.length === 0) {
+            alert("No chat history to save.");
+            return;
+        }
+
+        let chatText = chatTitle + "\n\n" + messages.join("\n");
+
+        let blob = new Blob([chatText], { type: "text/plain" });
+        let fileName = prompt("Enter file name:", chatTitle || "chat_history");
+        if (!fileName) return;
+
+        let link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = fileName + ".txt";
+        link.click();
+    }
+
+    function openChatFile() {
+        let input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".txt";
+        input.onchange = function (event) {
+            let file = event.target.files[0];
+            if (!file) return;
+
+            let reader = new FileReader();
+            reader.onload = function () {
+                let lines = reader.result.split("\n");
+                document.getElementById("chatTitle").textContent = lines[0].trim();
+
+                let chatBox = document.getElementById("chatBox");
+                chatBox.innerHTML = "";
+
+                lines.slice(2).forEach(line => {
+                    let match = line.match(/• (.*?) \((\d+:\d+ [APM]{2})\)/);
+                    if (match) {
+                        sendMessage(match[1], match[2], true);
+                    }
+                });
+
+                // Ensure scrolling after loading file
+                requestAnimationFrame(() => {
+                    scrollToBottom(chatBox);
+                });
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    }
+
+function exportToGmail() {
+    let chatTitle = document.getElementById("chatTitle").textContent.trim();
+    let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+        let textSpan = div.querySelector(".message-text");
+        let timestamp = div.querySelector(".timestamp");
+        return textSpan ? `• ${textSpan.textContent} (${timestamp.textContent})` : "";
+    });
+
+    if (messages.length === 0) {
+        alert("No chat history to export.");
+        return;
+    }
+
+    let chatText = chatTitle + "\n\n" + messages.join("\n");
+
+    // Encode the chat content for use in a URL
+    let subject = encodeURIComponent(`Chat Export: ${chatTitle}`);
+    let body = encodeURIComponent(chatText);
+
+    // Replace 'yangwm@email.nchu.edu.tw' with your actual email address
+    let to = encodeURIComponent('yangwm@email.nchu.edu.tw');
+
+    // Open Gmail in a new small-sized window with your email address pre-filled
+    let gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${body}`;
+    window.open(gmailUrl, "Gmail", "width=600,height=600");
+}
+
+    function startVoiceRecognition() {
+        if ('webkitSpeechRecognition' in window) {
+            const recognition = new webkitSpeechRecognition();
+            const languageSelect = document.getElementById('languageSelect');
+            recognition.lang = languageSelect.value;
+            recognition.continuous = false;
+            recognition.interimResults = false;
+
+            recognition.onresult = function(event) {
+                const text = event.results[0][0].transcript;
+                document.getElementById('textInput').value = text;
+                sendMessage();
+            };
+
+            recognition.start();
+        } else {
+            alert('Speech recognition is not supported in this browser.');
+        }
+    }
+
+    function filterMessages() {
+        let query = document.getElementById("searchInput").value.toLowerCase();
+        document.querySelectorAll(".chat-box div").forEach(msg => {
+            msg.style.display = msg.textContent.toLowerCase().includes(query) ? "block" : "none";
+        });
+    }
+
+    function openChatInNewWindow() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            return textSpan ? `<p>• ${textSpan.textContent} <small>(${timestamp.textContent})</small></p>` : "";
+        }).join("");
+
+        if (messages === "") {
+            alert("No chat history to display.");
+            return;
+        }
+
+        let newWindow = window.open("", "_blank");
+        newWindow.document.write(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>${chatTitle}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
+                    h2 { text-align: center; color: #333; }
+                    .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); }
+                    p { font-size: 14px; color: #333; background: #e6e6e6; padding: 8px; border-radius: 5px; margin: 5px 0; }
+                    small { color: #555; font-size: 12px; }
+                </style>
+            </head>
+            <body>
+                <h2>${chatTitle}</h2>
+                <div class="chat-box">${messages}</div>
+            </body>
+            </html>
+        `);
+    }
+
+    function openChatInNewWindow2() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            return textSpan ? `<p> ${textSpan.textContent} <small>(${timestamp.textContent})</small></p>` : "";
+        }).join("");
+
+        if (messages === "") {
+            alert("No chat history to display.");
+            return;
+        }
+
+        let newWindow = window.open("", "_blank");
+        newWindow.document.write(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>${chatTitle}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
+                    h2 { text-align: center; color: #333; }
+                    .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); }
+                    p { font-size: 14px; color: #333; background: #e6e6e6; padding: 8px; border-radius: 5px; margin: 5px 0; }
+                    small { color: #555; font-size: 12px; }
+                </style>
+            </head>
+            <body>
+                <h2>${chatTitle}</h2>
+                <div class="chat-box">${messages}</div>
+            </body>
+            </html>
+        `);
+    }
+
+    function handleViewChange() {
+        const viewSelect = document.getElementById('viewVersion');
+        const selectedValue = viewSelect.value;
+        
+        if (selectedValue === 'v1') {
+            openChatInNewWindow();
+        } else if (selectedValue === 'v2') {
+            openChatInNewWindow2();
+        }
+        
+        // Reset the select to the default option after executing
+        viewSelect.selectedIndex = 0;
+    }
+</script>
+
+</body>
+</html>
