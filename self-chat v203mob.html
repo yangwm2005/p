@@ -514,20 +514,133 @@
         let fileName = prompt("Enter file name:", chatTitle || "chat_history");
         if (!fileName) return;
 
-        // Mobile-friendly save method
         try {
             let link = document.createElement("a");
             link.href = URL.createObjectURL(blob);
             link.download = fileName + ".txt";
-            document.body.appendChild(link); // Ensure link is in DOM
+            document.body.appendChild(link);
             link.click();
-            document.body.removeChild(link); // Clean up
-            URL.revokeObjectURL(link.href); // Free memory
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
         } catch (e) {
-            // Fallback for mobile browsers if direct download fails
             alert("Download failed. Here’s your chat content to copy:\n\n" + chatText);
             console.error("Save error:", e);
         }
+    }
+
+    function openChatFile() {
+        let input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".txt";
+        input.onchange = function (event) {
+            let file = event.target.files[0];
+            if (!file) {
+                console.log("No file selected.");
+                return;
+            }
+
+            console.log("File selected:", file.name); // Debug: Confirm file selection
+
+            let reader = new FileReader();
+            reader.onload = function () {
+                console.log("File content loaded:", reader.result); // Debug: Confirm content read
+                let lines = reader.result.split("\n");
+                document.getElementById("chatTitle").textContent = lines[0].trim();
+
+                let chatBox = document.getElementById("chatBox");
+                chatBox.innerHTML = "";
+
+                lines.slice(2).forEach(line => {
+                    console.log("Processing line:", line); // Debug: Confirm each line
+                    let match = line.match(/(  •|•) (\[H\]\s)?(.*?) \((\d+:\d+ [APM]{2})\)/);
+                    if (match) {
+                        let isSubchat = match[1] === "  •";
+                        let isHighlighted = !!match[2];
+                        let text = match[3];
+                        let timestamp = match[4];
+
+                        console.log("Parsed: Subchat:", isSubchat, "Highlighted:", isHighlighted, "Text:", text, "Time:", timestamp);
+
+                        text = text.replace(/\[X\]/g, '<span class="checkbox-wrapper"><input type="checkbox" checked></span>')
+                                   .replace(/\[ \]/g, '<span class="checkbox-wrapper"><input type="checkbox"></span>');
+
+                        let newMessage = document.createElement("div");
+                        newMessage.classList.add("user-msg");
+                        newMessage.contentEditable = true;
+                        newMessage.draggable = true;
+                        newMessage.innerHTML = `<span class="message-text">${text}</span> <span class="timestamp">${timestamp}</span>`;
+
+                        if (isSubchat) newMessage.classList.add("subchat");
+                        if (isHighlighted) newMessage.classList.add("highlighted");
+
+                        let actionBtn = document.createElement("button");
+                        actionBtn.innerHTML = "⚙️";
+                        actionBtn.classList.add("action-btn");
+
+                        let actionMenu = document.createElement("div");
+                        actionMenu.classList.add("action-menu");
+                        actionMenu.style.display = "none";
+
+                        let highlightOption = document.createElement("button");
+                        highlightOption.innerHTML = "Highlight";
+                        highlightOption.onclick = function () {
+                            newMessage.classList.toggle("highlighted");
+                        };
+                        
+                        let deleteOption = document.createElement("button");
+                        deleteOption.innerHTML = "Delete";
+                        deleteOption.onclick = function () {
+                            chatBox.removeChild(newMessage);
+                        };
+
+                        let subchatOption = document.createElement("button");
+                        subchatOption.innerHTML = "Shift to Subchat";
+                        subchatOption.onclick = function () {
+                            shiftToSubchat(newMessage);
+                        };
+
+                        actionMenu.appendChild(highlightOption);
+                        actionMenu.appendChild(deleteOption);
+                        actionMenu.appendChild(subchatOption);
+                        actionBtn.appendChild(actionMenu);
+
+                        actionBtn.onclick = function (event) {
+                            event.stopPropagation();
+                            actionMenu.style.display = actionMenu.style.display === "block" ? "none" : "block";
+                        };
+
+                        document.addEventListener("click", function (event) {
+                            if (!actionBtn.contains(event.target)) {
+                                actionMenu.style.display = "none";
+                            }
+                        });
+
+                        newMessage.appendChild(actionBtn);
+                        chatBox.appendChild(newMessage);
+                    }
+                });
+
+                requestAnimationFrame(() => {
+                    scrollToBottom(chatBox);
+                });
+            };
+
+            reader.onerror = function () {
+                alert("Failed to read the file. Please ensure it’s a valid .txt file and try again.");
+                console.error("FileReader error:", reader.error);
+            };
+
+            reader.readAsText(file);
+        };
+
+        // Prevent default behavior to ensure file stays in app
+        input.addEventListener("click", function(event) {
+            event.stopPropagation(); // Prevent any parent handlers
+        });
+
+        document.body.appendChild(input); // Ensure input is in DOM
+        input.click();
+        document.body.removeChild(input); // Clean up after click
     }
 
     function exportToGmail() {
@@ -563,9 +676,8 @@
         let to = encodeURIComponent('yangwm@email.nchu.edu.tw');
         let gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${body}`;
 
-        // Mobile-friendly redirect instead of pop-up
         try {
-            window.location.href = gmailUrl; // Redirect in same tab
+            window.location.href = gmailUrl;
         } catch (e) {
             alert("Couldn’t open Gmail. Copy this URL to your browser:\n" + gmailUrl);
             console.error("Gmail export error:", e);
