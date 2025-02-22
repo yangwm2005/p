@@ -144,7 +144,7 @@
             justify-content: space-between;
             overflow-x: auto;
             overflow-y: visible;
-            height: 40px;
+            height: 46px; /* Increased from 40px to fit taller buttons */
             align-items: center;
             padding-bottom: 5px;
         }
@@ -157,7 +157,7 @@
             border-radius: 5px;
             font-size: 12px;
             min-width: 45px;
-            height: 30px;
+            height: 36px; /* Increased from 30px for easier touch */
             line-height: 1;
             flex-shrink: 0;
         }
@@ -286,13 +286,13 @@
                 padding: 5px 6px;
                 font-size: 11px;
                 min-width: 40px;
-                height: 28px;
+                height: 34px; /* Increased from 28px for small screens */
             }
             .editable-title {
                 font-size: 16px;
             }
             .controls {
-                height: 40px;
+                height: 46px; /* Consistent with larger buttons */
             }
         }
     </style>
@@ -324,6 +324,7 @@
         <button onclick="saveChatAsFile()" style="background-color:purple;" title="Save as a txt file on Disk">💾 Save</button>
         <button onclick="openChatFile()" style="background-color:orange;" title="Open a saved txt file from Disk">📂 Open</button>
         <button onclick="exportToGmail()" style="background-color:green;" title="Send the contexts to your gmail account">✉️ Gmail</button>
+        <button onclick="shareChatContents()" style="background-color:teal;" title="Share chat to other apps">📤 Share</button>
     </div>
     <div>
         <footer>
@@ -526,25 +527,22 @@
     }
 
     function openChatFile() {
-        console.log("OpenChatFile triggered"); // Debug: Confirm function starts
+        console.log("OpenChatFile triggered");
 
-        // Create a persistent input element if it doesn't exist
         let input = document.getElementById("fileInput");
         if (!input) {
             input = document.createElement("input");
             input.id = "fileInput";
             input.type = "file";
             input.accept = ".txt";
-            input.style.display = "none"; // Keep hidden
-            document.body.appendChild(input); // Add to DOM permanently
+            input.style.display = "none";
+            document.body.appendChild(input);
         }
 
-        // Reset input value to allow re-selecting the same file
         input.value = null;
 
-        // Define the file handling logic
         input.onchange = function (event) {
-            console.log("Input change event fired"); // Debug: Confirm event
+            console.log("Input change event fired");
             let file = event.target.files[0];
             if (!file) {
                 console.log("No file selected.");
@@ -646,7 +644,6 @@
             reader.readAsText(file);
         };
 
-        // Trigger file picker
         try {
             console.log("Triggering file input click");
             input.click();
@@ -694,6 +691,51 @@
         } catch (e) {
             alert("Couldn’t open Gmail. Copy this URL to your browser:\n" + gmailUrl);
             console.error("Gmail export error:", e);
+        }
+    }
+
+    function shareChatContents() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            let prefix = div.classList.contains("subchat") ? "  •" : "•";
+            let highlightMarker = div.classList.contains("highlighted") ? "[H] " : "";
+
+            if (!textSpan) return "";
+
+            let clonedSpan = textSpan.cloneNode(true);
+            let checkboxes = clonedSpan.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => {
+                let replacement = cb.checked ? '[X]' : '[ ]';
+                let span = cb.parentElement;
+                span.outerHTML = replacement;
+            });
+            let messageText = clonedSpan.textContent;
+
+            return `${prefix} ${highlightMarker}${messageText} (${timestamp.textContent})`;
+        });
+
+        if (messages.length === 0) {
+            alert("No chat history to share.");
+            return;
+        }
+
+        let chatText = chatTitle + "\n\n" + messages.join("\n");
+
+        if (navigator.share) {
+            navigator.share({
+                title: chatTitle,
+                text: chatText,
+            })
+            .then(() => console.log("Chat shared successfully"))
+            .catch((error) => {
+                alert("Failed to share. Copy this text manually:\n\n" + chatText);
+                console.error("Share error:", error);
+            });
+        } else {
+            alert("Web Share API not supported. Copy this text manually:\n\n" + chatText);
+            console.log("Web Share API not available");
         }
     }
 
