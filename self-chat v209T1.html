@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Self Chat</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background: #f4f4f4;
+        display: flex;
+        justify-content: center;
+        align-items: top;
+        height: 120vh;
+        margin: 0;
+    }
+    .chat-container {
+        width: 100%;
+        max-width: 675px;
+        min-width: 450px;
+        background: white;
+        padding: 10px;
+        box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1);
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        overflow-x: auto;
+        margin-left: 20px;
+        margin-right: 20px;
+    }
+    .editable-title {
+        font-size: 18px;
+        font-weight: bold;
+        text-align: center;
+        padding: 5px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        background: #f1f1f1;
+        cursor: text;
+    }
+    .chat-box {
+        height: calc(100vh - 230px);
+        max-height: 600px;
+        min-height: 150px;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        padding: 10px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+        background: #fafafa;
+        display: flex;
+        flex-direction: column;
+        scroll-behavior: smooth;
+        flex-grow: 0;
+    }
+    .chat-box div {
+        margin: 3px 0;
+        padding: 6px 10px;
+        border-radius: 5px;
+        max-width: 100%;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        user-select: text;
+        text-align: left;
+        background: #e6e6e6;
+        color: black;
+        cursor: pointer;
+    }
+    .user-msg {
+        align-self: flex-start;
+    }
+    .timestamp {
+        font-size: 10px;
+        color: #555;
+        margin-left: 8px;
+    }
+    .delete-btn {
+        background: none;
+        border: none;
+        color: red;
+        font-size: 9px;
+        cursor: pointer;
+        margin-left: 1px;
+    }
+    .delete-btn:hover {
+        color: darkred;
+    }
+    .input-area, .controls {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
+    }
+    .controls {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        white-space: nowrap;
+        padding-bottom: 5px;
+    }
+    textarea {
+        flex: 1;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        resize: none;
+        overflow-y: hidden;
+        min-height: 50px;
+        max-height: 120px;
+        font-size: 14px;
+    }
+    button, select {
+        padding: 5px;
+        border: none;
+        background: #007bff;
+        color: white;
+        cursor: pointer;
+        border-radius: 5px;
+        min-width: 50px;
+        flex-shrink: 0;
+    }
+    button:hover, select:hover {
+        background: #0056b3;
+    }
+    button[onclick="shareChat()"] {
+        background: #00aced;
+    }
+    .chat-box div::selection {
+        background: transparent;
+        color: black;
+    }
+    .action-btn {
+        background: none;
+        border: none;
+        color: #007bff;
+        font-size: 12px;
+        cursor: pointer;
+        margin-left: 5px;
+        padding: 2px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        transition: background 0.2s;
+    }
+    .action-btn:hover {
+        background: #f1f1f1;
+    }
+    .action-menu {
+        display: none;
+        position: absolute;
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1);
+        z-index: 1;
+        right: 0;
+        top: 100%;
+        min-width: 80px;
+    }
+    .action-menu button {
+        display: block;
+        width: 100%;
+        padding: 5px 10px;
+        text-align: left;
+        background: none;
+        border: none;
+        color: #333;
+        cursor: pointer;
+        font-size: 12px;
+    }
+    .action-menu button:hover {
+        background: #f1f1f1;
+    }
+    .highlighted {
+        background-color: yellow !important;
+    }
+    .subtitle-dropdown {
+        display: none;
+        position: absolute;
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1);
+        z-index: 10;
+        width: 200px;
+        padding: 10px;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+    }
+    .subtitle-dropdown input {
+        width: 100%;
+        padding: 5px;
+        margin-bottom: 5px;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+    }
+    .subtitle-option {
+        margin: 5px 0;
+        cursor: pointer;
+        padding: 5px;
+        border-radius: 3px;
+    }
+    .subtitle-option:hover {
+        background: #f1f1f1;
+    }
+    .subtitle-preset-list {
+        max-height: 150px;
+        overflow-y: auto;
+        margin-top: 3px;
+        font-size: 12px;
+    }
+    .chat-box div.dragging {
+        opacity: 0.5;
+        background: #d3d3d3;
+    }
+    .chat-box div.drag-over {
+        border: 2px dashed #007bff;
+    }
+    .subchat {
+        margin-left: 30px !important;
+        border-left: 2px solid #007bff;
+        padding-left: 6px !important;
+    }
+    .checkbox-wrapper {
+        display: inline-flex;
+        align-items: center;
+        margin-right: 5px;
+    }
+    .checkbox-wrapper input[type="checkbox"] {
+        margin: 0 5px 0 0;
+        cursor: pointer;
+    }
+    .toggle-subchat {
+        background: none;
+        border: none;
+        color: #007bff;
+        font-size: 14px;
+        cursor: pointer;
+        margin-right: 1px;
+        padding: 0;
+        width: 12px;
+        min-width: 12px;
+        text-align: center;
+        vertical-align: middle;
+        line-height: 1;
+    }
+    .toggle-subchat:hover {
+        color: #0056b3;
+    }
+    .subchat-hidden {
+        display: none !important;
+    }
+</style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div id="chatTitle" class="editable-title" contenteditable="true">Title</div>
+    <input type="text" id="searchInput" placeholder="🔍 Search messages..." oninput="filterMessages()">
+    <div class="chat-box" id="chatBox"></div>
+    <div class="input-area">
+        <textarea id="textInput" placeholder="Type a message..." oninput="autoExpand(this)"></textarea>
+        <button onclick="sendMessage()" style="color:white;background-color:green;">Send</button>
+    </div>
+<div class="controls">
+    <button onclick="startVoiceRecognition()">🎤 Voice</button>
+    <select id="languageSelect">
+        <option value="en-US">EN</option>
+        <option value="zh-CN">CN</option>
+    </select>
+    <button id="subtitleBtn" onclick="toggleSubtitleDropdown()" style="color:white;background-color:gray;" title="Insert more subtitles for different sections">➕ Sub</button>
+    <select id="viewVersion" onchange="handleViewChange()" style="color:white;background-color:blue;">
+        <option value="">🌐 View</option>
+        <option value="v1">V1(bullet)</option>
+        <option value="v2">V2</option>
+        <option value="v3">V3(Single •)</option>
+        <option value="v4">V4(Checkboxes)</option>
+    </select>
+    <button onclick="saveChatAsFile()" style="color:white;background-color:purple;" title="Save as a txt file on Disk">💾 Save</button>
+    <button onclick="openChatFile()" style="color:white;background-color:orange;" title="Open a saved txt file from Disk">📂 Open</button>
+    <button onclick="exportToGmail()" style="color:white;background-color:green;" title="Send the contexts to your gmail account">✉️ Gmail</button>
+    <button onclick="shareChat()" style="color:white;background-color:#00aced;" title="Share chat to other apps">📤 Share</button>
+</div>
+    <div>
+        <footer>
+            Copyright © 2025 Dr. Wen-Ming Yang 20250226 v2.09T1 (from 204) Resize with window 1.5/double-clicking for subchat + Toggle
+        </footer>
+    </div>
+</div>
+
+<div id="subtitleDropdown" class="subtitle-dropdown">
+    <div>Custom Subtitles:</div>
+    <input type="text" id="customSubtitle" placeholder="Enter custom subtitle text">
+    <button onclick="insertCustomSubtitle()" style="width:100%;margin-bottom:10px;">Insert Custom</button>   
+    <button onclick="addNewPreset()" style="width:100%;margin-top:10px;">Add to Presets</button>
+    <div class="subtitle-preset-list">
+        <div class="subtitle-option" onclick="insertSubtitlePreset('▼▼▼ TopicChange ▼▼▼')">▼▼▼ Topic Change ▼▼▼</div>
+        <div class="subtitle-option" onclick="insertSubtitlePreset('### Chapter ###')">### Chapter ###</div>
+        <div class="subtitle-option" onclick="insertSubtitlePreset('<<< NextPart >>>')"><<< Next Part >>></div>
+        <div class="subtitle-option" onclick="insertSubtitlePreset('--- NewSection ---')">--- New Section ---</div>
+        <div class="subtitle-option" onclick="insertSubtitlePreset('===== Subtitle =====')">===== Subtitle =====</div>
+        <div class="subtitle-option" onclick="insertSubtitlePreset('*** important')">*** Important</div>
+        <div class="subtitle-option" onclick="insertSubtitlePreset('!!! Warning')">!!! Warning</div>
+    </div>
+</div>
+
+<script>
+    function scrollToBottom(element) {
+        element.offsetHeight;
+        element.scrollTop = element.scrollHeight;
+    }
+
+    document.addEventListener("DOMContentLoaded", function() {
+        document.getElementById("textInput").addEventListener("keydown", function(event) {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        });
+        
+        document.addEventListener("click", function(event) {
+            const dropdown = document.getElementById("subtitleDropdown");
+            const subtitleBtn = document.getElementById("subtitleBtn");
+            if (!dropdown.contains(event.target) && event.target !== subtitleBtn) {
+                dropdown.style.display = "none";
+            }
+        });
+
+        const chatBox = document.getElementById("chatBox");
+        chatBox.addEventListener("dragstart", handleDragStart);
+        chatBox.addEventListener("dragover", handleDragOver);
+        chatBox.addEventListener("drop", handleDrop);
+        chatBox.addEventListener("dragend", handleDragEnd);
+
+        const chatContainer = document.querySelector(".chat-container");
+        chatContainer.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            chatContainer.style.background = "#e0e0e0";
+        });
+        chatContainer.addEventListener("dragleave", () => {
+            chatContainer.style.background = "white";
+        });
+        chatContainer.addEventListener("drop", (event) => {
+            event.preventDefault();
+            chatContainer.style.background = "white";
+            const files = event.dataTransfer.files;
+            if (files && files.length > 0) {
+                if (files[0].type === "text/plain") {
+                    loadDroppedFile(files[0]);
+                } else {
+                    alert("Please drop a valid .txt file.");
+                }
+            }
+        });
+    });
+
+    window.addEventListener('resize', function() {
+        const chatContainer = document.querySelector('.chat-container');
+        const windowWidth = window.innerWidth;
+        chatContainer.style.width = Math.min(Math.max(windowWidth, 450), 675) + 'px';
+    });
+
+    window.dispatchEvent(new Event('resize'));
+
+    function loadDroppedFile(file) {
+        const reader = new FileReader();
+        reader.onload = function () {
+            const lines = reader.result.split("\n");
+            document.getElementById("chatTitle").textContent = lines[0].trim();
+            const chatBox = document.getElementById("chatBox");
+            chatBox.innerHTML = "";
+
+            lines.slice(2).forEach(line => {
+                const match = line.match(/(  •|•) (\[H\]\s)?(.*?) \((\d+:\d+ [APM]{2})\)/);
+                if (match) {
+                    const isSubchat = match[1] === "  •";
+                    const isHighlighted = !!match[2];
+                    let text = match[3];
+                    const timestamp = match[4];
+
+                    text = text.replace(/\[X\]/g, '<span class="checkbox-wrapper"><input type="checkbox" checked></span>')
+                               .replace(/\[ \]/g, '<span class="checkbox-wrapper"><input type="checkbox"></span>');
+
+                    const newMessage = sendMessage(text, timestamp, true);
+                    if (isSubchat) newMessage.classList.add("subchat");
+                    if (isHighlighted) newMessage.classList.add("highlighted");
+                }
+            });
+
+            requestAnimationFrame(() => {
+                scrollToBottom(chatBox);
+                updateSubchatToggles();
+            });
+        };
+        reader.readAsText(file);
+    }
+
+    function autoExpand(textarea) {
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+    }
+
+    function sendMessage(message = null, timestamp = null, isFromFile = false) {
+        let inputField = document.getElementById("textInput");
+        let chatBox = document.getElementById("chatBox");
+
+        let text = message || inputField.value.trim();
+        if (text === "") return;
+
+        let time = timestamp || getCurrentTime();
+        let userMessage = document.createElement("div");
+        userMessage.classList.add("user-msg");
+        userMessage.contentEditable = true;
+        userMessage.draggable = true;
+
+        let messageText = text.replace(/\[\]/g, '<span class="checkbox-wrapper"><input type="checkbox"> </span>');
+        userMessage.innerHTML = `<span class="message-text">${messageText}</span> <span class="timestamp">${time}</span>`;
+
+        let isSubchat = false;
+        if (!isFromFile) {
+            let lastMessage = chatBox.lastElementChild;
+            if (lastMessage && lastMessage.classList.contains("subchat")) {
+                userMessage.classList.add("subchat");
+                isSubchat = true;
+            }
+        }
+
+        let actionBtn = document.createElement("button");
+        actionBtn.innerHTML = "⚙️";
+        actionBtn.classList.add("action-btn");
+
+        let actionMenu = document.createElement("div");
+        actionMenu.classList.add("action-menu");
+        actionMenu.style.display = "none";
+
+        let highlightOption = document.createElement("button");
+        highlightOption.innerHTML = "Highlight";
+        highlightOption.onclick = function () {
+            userMessage.classList.toggle("highlighted");
+        };
+        
+        let deleteOption = document.createElement("button");
+        deleteOption.innerHTML = "Delete";
+        deleteOption.onclick = function () {
+            chatBox.removeChild(userMessage);
+            updateSubchatToggles();
+        };
+
+        let subchatOption = document.createElement("button");
+        subchatOption.innerHTML = "Shift to Subchat";
+        subchatOption.onclick = function () {
+            shiftToSubchat(userMessage);
+            updateSubchatToggles();
+        };
+
+        actionMenu.appendChild(highlightOption);
+        actionMenu.appendChild(deleteOption);
+        actionMenu.appendChild(subchatOption);
+        actionBtn.appendChild(actionMenu);
+
+        actionBtn.onclick = function (event) {
+            event.stopPropagation();
+            actionMenu.style.display = actionMenu.style.display === "block" ? "none" : "block";
+        };
+
+        document.addEventListener("click", function (event) {
+            if (!actionBtn.contains(event.target)) {
+                actionMenu.style.display = "none";
+            }
+        });
+
+        userMessage.appendChild(actionBtn);
+
+        if (!isSubchat) {
+            let toggleBtn = document.createElement("button");
+            toggleBtn.innerHTML = "+";
+            toggleBtn.classList.add("toggle-subchat");
+            toggleBtn.style.visibility = "hidden";
+            toggleBtn.onclick = (event) => {
+                event.stopPropagation();
+                toggleSubchats(userMessage);
+            };
+            userMessage.insertBefore(toggleBtn, userMessage.firstChild);
+        }
+
+        chatBox.appendChild(userMessage);
+
+        if (isSubchat) {
+            const allMessages = Array.from(chatBox.children);
+            const prevMessage = allMessages[allMessages.length - 2]; // Message before this one
+            if (prevMessage && prevMessage.querySelector(".toggle-subchat")?.innerHTML === "+") {
+                userMessage.classList.add("subchat-hidden");
+            }
+        }
+
+        userMessage.addEventListener("dblclick", function (event) {
+            if (event.target === actionBtn || actionMenu.contains(event.target)) return;
+            shiftToSubchat(userMessage);
+            updateSubchatToggles();
+            event.preventDefault();
+        });
+
+        if (!isFromFile) {
+            inputField.value = "";
+            autoExpand(inputField);
+        }
+
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                scrollToBottom(chatBox);
+                updateSubchatToggles();
+            });
+        });
+
+        return userMessage;
+    }
+
+    function getCurrentTime() {
+        let now = new Date();
+        let hours = now.getHours();
+        let minutes = now.getMinutes();
+        let ampm = hours >= 12 ? "PM" : "AM";
+        hours = hours % 12 || 12;
+        minutes = minutes.toString().padStart(2, "0");
+        return `${hours}:${minutes} ${ampm}`;
+    }
+
+    function shiftToSubchat(messageElement) {
+        const chatBox = document.getElementById("chatBox");
+        const allMessages = Array.from(chatBox.children);
+        const messageIndex = allMessages.indexOf(messageElement);
+
+        if (messageElement.classList.contains("subchat")) {
+            messageElement.classList.remove("subchat");
+            messageElement.classList.remove("subchat-hidden"); // Ensure it’s visible when shifted up
+
+            // Remove existing toggle button if present
+            const existingToggle = messageElement.querySelector(".toggle-subchat");
+            if (existingToggle) {
+                messageElement.removeChild(existingToggle);
+            }
+
+            // Add toggle button if there are subsequent subchats
+            let hasSubchats = false;
+            for (let i = messageIndex + 1; i < allMessages.length; i++) {
+                if (allMessages[i].classList.contains("subchat")) {
+                    hasSubchats = true;
+                    break;
+                } else {
+                    break; // Stop if we hit a non-subchat
+                }
+            }
+
+            if (hasSubchats) {
+                let toggleBtn = document.createElement("button");
+                toggleBtn.innerHTML = "+";
+                toggleBtn.classList.add("toggle-subchat");
+                toggleBtn.style.visibility = "hidden"; // Will be updated by updateSubchatToggles
+                toggleBtn.onclick = (event) => {
+                    event.stopPropagation();
+                    toggleSubchats(messageElement);
+                };
+                messageElement.insertBefore(toggleBtn, messageElement.firstChild);
+            }
+        } else {
+            messageElement.classList.add("subchat");
+            // Remove toggle button if present
+            const existingToggle = messageElement.querySelector(".toggle-subchat");
+            if (existingToggle) {
+                messageElement.removeChild(existingToggle);
+            }
+            // Check if previous message has a toggle and adjust visibility
+            if (messageIndex > 0 && allMessages[messageIndex - 1].querySelector(".toggle-subchat")?.innerHTML === "+") {
+                messageElement.classList.add("subchat-hidden");
+            }
+        }
+    }
+
+    function toggleSubchats(message) {
+        const chatBox = document.getElementById("chatBox");
+        const allMessages = Array.from(chatBox.children);
+        const messageIndex = allMessages.indexOf(message);
+        const toggleBtn = message.querySelector(".toggle-subchat");
+
+        if (!toggleBtn) return;
+
+        let subchatGroup = [];
+        for (let i = messageIndex + 1; i < allMessages.length; i++) {
+            if (allMessages[i].classList.contains("subchat")) {
+                subchatGroup.push(allMessages[i]);
+            } else {
+                break;
+            }
+        }
+
+        if (subchatGroup.length > 0) {
+            const isCollapsed = toggleBtn.innerHTML === "+";
+            toggleBtn.innerHTML = isCollapsed ? "−" : "+";
+            subchatGroup.forEach(subchat => {
+                if (isCollapsed) {
+                    subchat.classList.remove("subchat-hidden");
+                } else {
+                    subchat.classList.add("subchat-hidden");
+                }
+            });
+            toggleBtn.style.visibility = "visible";
+        }
+    }
+
+    function updateSubchatToggles() {
+        const chatBox = document.getElementById("chatBox");
+        const allMessages = Array.from(chatBox.children);
+
+        allMessages.forEach((message, index) => {
+            const toggleBtn = message.querySelector(".toggle-subchat");
+            let hasSubchats = false;
+            let subchatGroup = [];
+
+            for (let i = index + 1; i < allMessages.length; i++) {
+                if (allMessages[i].classList.contains("subchat")) {
+                    hasSubchats = true;
+                    subchatGroup.push(allMessages[i]);
+                } else {
+                    break;
+                }
+            }
+
+            if (message.classList.contains("subchat")) {
+                // Subchats should not have toggle buttons
+                if (toggleBtn) {
+                    message.removeChild(toggleBtn);
+                }
+            } else {
+                // Only non-subchat messages should have toggles
+                if (toggleBtn) {
+                    if (hasSubchats) {
+                        toggleBtn.style.visibility = "visible";
+                        const isCollapsed = toggleBtn.innerHTML === "+";
+                        subchatGroup.forEach(subchat => {
+                            subchat.classList.toggle("subchat-hidden", isCollapsed);
+                        });
+                    } else {
+                        toggleBtn.style.visibility = "hidden";
+                        toggleBtn.innerHTML = "+";
+                    }
+                } else if (hasSubchats) {
+                    // Add toggle button if missing and needed
+                    let newToggleBtn = document.createElement("button");
+                    newToggleBtn.innerHTML = "+";
+                    newToggleBtn.classList.add("toggle-subchat");
+                    newToggleBtn.style.visibility = "visible";
+                    newToggleBtn.onclick = (event) => {
+                        event.stopPropagation();
+                        toggleSubchats(message);
+                    };
+                    message.insertBefore(newToggleBtn, message.firstChild);
+                    subchatGroup.forEach(subchat => subchat.classList.add("subchat-hidden"));
+                }
+            }
+        });
+    }
+
+    function saveChatAsFile() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            let prefix = div.classList.contains("subchat") ? "  •" : "•";
+            let highlightMarker = div.classList.contains("highlighted") ? "[H] " : "";
+
+            if (!textSpan) return "";
+
+            let clonedSpan = textSpan.cloneNode(true);
+            let checkboxes = clonedSpan.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => {
+                let replacement = cb.checked ? '[X]' : '[ ]';
+                let span = cb.parentElement;
+                span.outerHTML = replacement;
+            });
+            let messageText = clonedSpan.textContent;
+
+            return `${prefix} ${highlightMarker}${messageText} (${timestamp.textContent})`;
+        });
+
+        if (messages.length === 0) {
+            alert("No chat history to save.");
+            return;
+        }
+
+        let chatText = chatTitle + "\n\n" + messages.join("\n");
+        let blob = new Blob([chatText], { type: "text/plain" });
+        let fileName = prompt("Enter file name:", chatTitle || "chat_history");
+        if (!fileName) return;
+
+        let link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = fileName + ".txt";
+        link.click();
+    }
+
+    function openChatFile() {
+        let input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".txt";
+        input.onchange = function (event) {
+            let file = event.target.files[0];
+            if (!file) return;
+
+            let reader = new FileReader();
+            reader.onload = function () {
+                let lines = reader.result.split("\n");
+                document.getElementById("chatTitle").textContent = lines[0].trim();
+
+                let chatBox = document.getElementById("chatBox");
+                chatBox.innerHTML = "";
+
+                lines.slice(2).forEach(line => {
+                    let match = line.match(/(  •|•) (\[H\]\s)?(.*?) \((\d+:\d+ [APM]{2})\)/);
+                    if (match) {
+                        let isSubchat = match[1] === "  •";
+                        let isHighlighted = !!match[2];
+                        let text = match[3];
+                        let timestamp = match[4];
+
+                        text = text.replace(/\[X\]/g, '<span class="checkbox-wrapper"><input type="checkbox" checked></span>')
+                                   .replace(/\[ \]/g, '<span class="checkbox-wrapper"><input type="checkbox"></span>');
+
+                        let newMessage = sendMessage(text, timestamp, true);
+                        if (isSubchat) newMessage.classList.add("subchat");
+                        if (isHighlighted) newMessage.classList.add("highlighted");
+                    }
+                });
+
+                requestAnimationFrame(() => {
+                    scrollToBottom(chatBox);
+                    updateSubchatToggles();
+                });
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    }
+
+    function exportToGmail() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            let prefix = div.classList.contains("subchat") ? "  •" : "•";
+            let highlightMarker = div.classList.contains("highlighted") ? "[H] " : "";
+
+            if (!textSpan) return "";
+
+            let clonedSpan = textSpan.cloneNode(true);
+            let checkboxes = clonedSpan.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => {
+                let replacement = cb.checked ? '[X]' : '[ ]';
+                let span = cb.parentElement;
+                span.outerHTML = replacement;
+            });
+            let messageText = clonedSpan.textContent;
+
+            return `${prefix} ${highlightMarker}${messageText} (${timestamp.textContent})`;
+        });
+
+        if (messages.length === 0) {
+            alert("No chat history to export.");
+            return;
+        }
+
+        let chatText = chatTitle + "\n\n" + messages.join("\n");
+        let subject = encodeURIComponent(`Chat Export: ${chatTitle}`);
+        let body = encodeURIComponent(chatText);
+        let to = encodeURIComponent('yangwm@email.nchu.edu.tw');
+        let gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${body}`;
+        window.open(gmailUrl, "Gmail", "width=600,height=600");
+    }
+
+    function startVoiceRecognition() {
+        if ('webkitSpeechRecognition' in window) {
+            const recognition = new webkitSpeechRecognition();
+            const languageSelect = document.getElementById('languageSelect');
+            recognition.lang = languageSelect.value;
+            recognition.continuous = false;
+            recognition.interimResults = false;
+
+            recognition.onresult = function(event) {
+                const text = event.results[0][0].transcript;
+                document.getElementById('textInput').value = text;
+                sendMessage();
+            };
+            recognition.start();
+        } else {
+            alert('Speech recognition is not supported in this browser.');
+        }
+    }
+
+    function filterMessages() {
+        let query = document.getElementById("searchInput").value.toLowerCase();
+        document.querySelectorAll(".chat-box div").forEach(msg => {
+            msg.style.display = msg.textContent.toLowerCase().includes(query) ? "block" : "none";
+        });
+    }
+
+    function openChatInNewWindow() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            let isSubchat = div.classList.contains("subchat");
+            let isHighlighted = div.classList.contains("highlighted");
+            let classAttr = isHighlighted ? ' class="highlighted' + (isSubchat ? ' subchat' : '') + '"' : (isSubchat ? ' class="subchat"' : '');
+
+            if (!textSpan) return "";
+
+            let messageContent = textSpan.innerHTML;
+            return `<p${classAttr}>• ${messageContent} <small>(${timestamp.textContent})</small></p>`;
+        }).join("");
+
+        if (messages === "") {
+            alert("No chat history to display.");
+            return;
+        }
+
+        let newWindow = window.open("", "_blank");
+        newWindow.document.write(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>${chatTitle}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
+                    h2 { text-align: center; color: #333; }
+                    .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); }
+                    p { font-size: 14px; color: #333; background: #e6e6e6; padding: 8px; border-radius: 5px; margin: 5px 0; }
+                    p.highlighted { background: yellow; }
+                    p.subchat { margin-left: 10px; border-left: 2px solid #007bff; padding-left: 6px; }
+                    small { color: #555; font-size: 12px; }
+                    .checkbox-wrapper { display: inline-flex; align-items: center; margin-right: 5px; }
+                    .checkbox-wrapper input[type="checkbox"] { margin: 0 5px 0 0; cursor: pointer; }
+                </style>
+            </head>
+            <body>
+                <h2>${chatTitle}</h2>
+                <div class="chat-box">${messages}</div>
+            </body>
+            </html>
+        `);
+    }
+
+    function openChatInNewWindow2() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            let isSubchat = div.classList.contains("subchat");
+            let isHighlighted = div.classList.contains("highlighted");
+            let classAttr = isHighlighted ? ' class="highlighted' + (isSubchat ? ' subchat' : '') + '"' : (isSubchat ? ' class="subchat"' : '');
+
+            if (!textSpan) return "";
+
+            let messageContent = textSpan.innerHTML;
+            return `<p${classAttr}>${messageContent} <small>(${timestamp.textContent})</small></p>`;
+        }).join("");
+
+        if (messages === "") {
+            alert("No chat history to display.");
+            return;
+        }
+
+        let newWindow = window.open("", "_blank");
+        newWindow.document.write(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>${chatTitle}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
+                    h2 { text-align: center; color: #333; }
+                    .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); }
+                    p { font-size: 14px; color: #333; background: #e6e6e6; padding: 8px; border-radius: 5px; margin: 5px 0; }
+                    p.highlighted { background: yellow; }
+                    p.subchat { margin-left: 10px; border-left: 2px solid #007bff; padding-left: 6px; }
+                    small { color: #555; font-size: 12px; }
+                    .checkbox-wrapper { display: inline-flex; align-items: center; margin-right: 5px; }
+                    .checkbox-wrapper input[type="checkbox"] { margin: 0 5px 0 0; cursor: pointer; }
+                </style>
+            </head>
+            <body>
+                <h2>${chatTitle}</h2>
+                <div class="chat-box">${messages}</div>
+            </body>
+            </html>
+        `);
+    }
+
+    function openChatInNewWindow3() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            let prefix = div.classList.contains("subchat") ? "  •" : "•";
+            let highlightMarker = div.classList.contains("highlighted") ? "[H] " : "";
+
+            if (!textSpan) return "";
+
+            let clonedSpan = textSpan.cloneNode(true);
+            let checkboxes = clonedSpan.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => {
+                let replacement = cb.checked ? '[X]' : '[ ]';
+                let span = cb.parentElement;
+                span.outerHTML = replacement;
+            });
+            let messageText = clonedSpan.textContent;
+
+            return `${prefix} ${highlightMarker}${messageText} (${timestamp.textContent})`;
+        }).join("\n");
+
+        if (messages === "") {
+            alert("No chat history to display.");
+            return;
+        }
+
+        let newWindow = window.open("", "_blank");
+        newWindow.document.write(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>${chatTitle}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
+                    h2 { text-align: center; color: #333; }
+                    .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); white-space: pre-wrap; }
+                </style>
+            </head>
+            <body>
+                <h2>${chatTitle}</h2>
+                <div class="chat-box">${messages}</div>
+            </body>
+            </html>
+        `);
+    }
+
+    function openChatInNewWindow4() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            let prefix = div.classList.contains("subchat") ? "  •" : "•";
+            let highlightMarker = div.classList.contains("highlighted") ? "[H] " : "";
+
+            if (!textSpan) return "";
+
+            let clonedSpan = textSpan.cloneNode(true);
+            let messageText = clonedSpan.innerHTML;
+
+            return `${prefix} ${highlightMarker}${messageText} (${timestamp.textContent})`;
+        }).join("\n");
+
+        if (messages === "") {
+            alert("No chat history to display.");
+            return;
+        }
+
+        let newWindow = window.open("", "_blank");
+        newWindow.document.write(`
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>${chatTitle}</title>
+                <style>
+                    body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
+                    h2 { text-align: center; color: #333; }
+                    .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); white-space: pre-wrap; }
+                    .checkbox-wrapper { display: inline-flex; align-items: center; margin-right: 5px; }
+                    .checkbox-wrapper input[type="checkbox"] { margin: 0 5px 0 0; cursor: pointer; }
+                </style>
+            </head>
+            <body>
+                <h2>${chatTitle}</h2>
+                <div class="chat-box">${messages}</div>
+            </body>
+            </html>
+        `);
+    }
+
+    function handleViewChange() {
+        const viewSelect = document.getElementById('viewVersion');
+        const selectedValue = viewSelect.value;
+        
+        if (selectedValue === 'v1') {
+            openChatInNewWindow();
+        } else if (selectedValue === 'v2') {
+            openChatInNewWindow2();
+        } else if (selectedValue === 'v3') {
+            openChatInNewWindow3();
+        } else if (selectedValue === 'v4') {
+            openChatInNewWindow4();
+        }
+        
+        viewSelect.selectedIndex = 0;
+    }
+
+    function toggleSubtitleDropdown() {
+        const dropdown = document.getElementById("subtitleDropdown");
+        const button = document.getElementById("subtitleBtn");
+        
+        const buttonRect = button.getBoundingClientRect();
+        dropdown.style.bottom = (window.innerHeight - buttonRect.top + window.scrollY) + "px";
+        dropdown.style.left = (buttonRect.left + window.scrollX + buttonRect.width / 2) + "px";
+        dropdown.style.transform = "translateX(-50%)";
+        
+        if (dropdown.style.display === "block") {
+            dropdown.style.display = "none";
+        } else {
+            dropdown.style.display = "block";
+        }
+    }
+
+    function insertCustomSubtitle() {
+        const customText = document.getElementById("customSubtitle").value.trim();
+        if (customText) {
+            insertTextAtCursor(customText);
+            document.getElementById("subtitleDropdown").style.display = "none";
+        } else {
+            alert("Please enter custom subtitle text.");
+        }
+    }
+
+    function insertSubtitlePreset(text) {
+        insertTextAtCursor(text);
+        document.getElementById("subtitleDropdown").style.display = "none";
+    }
+
+    function addNewPreset() {
+        const customText = document.getElementById("customSubtitle").value.trim();
+        if (customText) {
+            const presetList = document.querySelector(".subtitle-preset-list");
+            const newOption = document.createElement("div");
+            newOption.className = "subtitle-option";
+            newOption.textContent = customText;
+            newOption.onclick = function() {
+                insertSubtitlePreset(customText);
+            };
+            presetList.appendChild(newOption);
+            document.getElementById("customSubtitle").value = "";
+        } else {
+            alert("Please enter text to add as a preset.");
+        }
+    }
+
+    function insertTextAtCursor(text) {
+        let textarea = document.getElementById("textInput");
+        let currentText = textarea.value;
+        let cursorPosition = textarea.selectionStart;
+        let textBeforeCursor = currentText.substring(0, cursorPosition);
+        let textAfterCursor = currentText.substring(cursorPosition);
+
+        textarea.value = textBeforeCursor + text + textAfterCursor;
+        textarea.selectionStart = textarea.selectionEnd = cursorPosition + text.length;
+        textarea.focus();
+        autoExpand(textarea);
+    }
+
+    let draggedElement = null;
+
+    function handleDragStart(event) {
+        if (event.target.classList.contains("user-msg")) {
+            draggedElement = event.target;
+            draggedElement.classList.add("dragging");
+            event.dataTransfer.effectAllowed = "move";
+        }
+    }
+
+    function handleDragOver(event) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        const target = event.target.closest(".user-msg");
+        if (target && target !== draggedElement) {
+            target.classList.add("drag-over");
+        }
+    }
+
+    function handleDrop(event) {
+        event.preventDefault();
+        const target = event.target.closest(".user-msg");
+        if (target && target !== draggedElement) {
+            const chatBox = document.getElementById("chatBox");
+            const allMessages = Array.from(chatBox.children);
+            const targetIndex = allMessages.indexOf(target);
+            const draggedIndex = allMessages.indexOf(draggedElement);
+
+            if (draggedIndex < targetIndex) {
+                target.after(draggedElement);
+            } else {
+                target.before(draggedElement);
+            }
+            updateSubchatToggles();
+        }
+        cleanupDragStyles();
+    }
+
+    function handleDragEnd(event) {
+        cleanupDragStyles();
+        draggedElement = null;
+    }
+
+    function cleanupDragStyles() {
+        document.querySelectorAll(".user-msg").forEach(msg => {
+            msg.classList.remove("dragging", "drag-over");
+        });
+    }
+
+    function shareChat() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let messages = Array.from(document.getElementById("chatBox").children).map(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            let prefix = div.classList.contains("subchat") ? "  •" : "•";
+            let highlightMarker = div.classList.contains("highlighted") ? "[H] " : "";
+
+            if (!textSpan) return "";
+
+            let clonedSpan = textSpan.cloneNode(true);
+            let checkboxes = clonedSpan.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => {
+                let replacement = cb.checked ? '[X]' : '[ ]';
+                let span = cb.parentElement;
+                span.outerHTML = replacement;
+            });
+            let messageText = clonedSpan.textContent;
+
+            return `${prefix} ${highlightMarker}${messageText} (${timestamp.textContent})`;
+        });
+
+        if (messages.length === 0) {
+            alert("No chat history to share.");
+            return;
+        }
+
+        let chatText = chatTitle + "\n\n" + messages.join("\n");
+
+        if (navigator.share) {
+            navigator.share({
+                title: chatTitle,
+                text: chatText,
+                url: window.location.href
+            })
+            .then(() => console.log('Successful share'))
+            .catch((error) => console.log('Error sharing:', error));
+        } else {
+            let shareText = encodeURIComponent(chatText);
+            let shareUrl = `mailto:?subject=${encodeURIComponent(chatTitle)}&body=${shareText}`;
+            window.open(shareUrl, '_blank');
+            
+            navigator.clipboard.writeText(chatText)
+                .then(() => {
+                    alert('Chat copied to clipboard! You can paste it in any app.');
+                })
+                .catch(err => {
+                    console.error('Could not copy text: ', err);
+                    alert('Please manually copy the chat text and share it in your preferred app.');
+                });
+        }
+    }
+</script>
+
+</body>
+</html>
