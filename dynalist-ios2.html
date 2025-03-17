@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynalist Notes</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            width: 100%;
+            max-width: 800px; /* Limit width for larger screens */
+            margin: 0 auto; /* Center the container */
+            padding: 20px;
+            box-sizing: border-box;
+            background-color: white;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* Subtle shadow for depth */
+        }
+        .document-title {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            text-align: center;
+            color: #333;
+        }
+        .input-container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            flex-grow: 1; /* Take up remaining space */
+        }
+        .input-container textarea {
+            width: 100%;
+            height: 200px; /* Larger input area */
+            padding: 15px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            resize: none; /* Disable resizing */
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+            line-height: 1.5;
+            transition: border-color 0.3s ease;
+        }
+        .input-container textarea:focus {
+            border-color: #06D85F; /* Highlight when focused */
+            outline: none;
+        }
+        .button-container {
+            display: flex;
+            gap: 10px; /* Space between buttons */
+            margin-top: 10px;
+        }
+        .button-container button {
+            flex: 1; /* Equal width for both buttons */
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background-color 0.3s ease;
+            text-align: center;
+        }
+        #enterButton {
+            background-color: #06D85F;
+            color: white;
+        }
+        #enterButton:hover {
+            background-color: #059c47; /* Darker green on hover */
+        }
+        .open-dynalist-btn {
+            background-color: #007bff;
+            color: white;
+        }
+        .open-dynalist-btn:hover {
+            background-color: #0056b3; /* Darker blue on hover */
+        }
+        .status-message {
+            padding: 20px; /* Increased padding */
+            margin: 10px 0 0;
+            background-color: #f0f0f0;
+            text-align: center;
+            border-radius: 8px;
+            font-size: 18px; /* Larger font size */
+            transition: opacity 0.5s, transform 0.5s;
+            transform: scale(1); /* Default scale */
+            opacity: 1;
+        }
+        .status-message.hidden {
+            opacity: 0;
+            transform: scale(0.9); /* Slightly shrink when hiding */
+        }
+        .success {
+            background-color: #dff8d8;
+            color: #3c763d;
+        }
+        .error {
+            background-color: #f8d8d8;
+            color: #a94442;
+        }
+        .api-settings {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            font-size: 14px;
+            color: #666;
+            cursor: pointer;
+            background-color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s ease;
+        }
+        .api-settings:hover {
+            background-color: #f9f9f9;
+        }
+        .api-status {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .api-enabled {
+            background-color: #06D85F;
+        }
+        .api-disabled {
+            background-color: #ccc;
+        }
+        .doc-id-settings {
+            position: fixed;
+            top: 70px; /* Position below the API settings */
+            right: 20px;
+            font-size: 14px;
+            color: #666;
+            cursor: pointer;
+            background-color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s ease;
+        }
+        .doc-id-settings:hover {
+            background-color: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="api-settings" onclick="showApiSettings()">
+            <span class="api-status api-disabled"></span>
+            API Disabled
+        </div>
+        <div class="doc-id-settings" onclick="showDocIdSettings()">
+            Document ID
+        </div>
+
+        <!-- Document Title -->
+        <div class="document-title" id="documentTitle">Loading document title...</div>
+
+        <!-- Input container for textarea and buttons -->
+        <div class="input-container">
+            <textarea id="dynalistInput" placeholder="Type your note here..."></textarea>
+            <div class="button-container">
+                <button id="enterButton">Enter</button>
+                <button class="open-dynalist-btn" onclick="openDynalist()">Open Dynalist</button>
+            </div>
+            <p id="statusMessage" class="status-message hidden"></p>
+        </div>
+    </div>
+
+    <script>
+        let apiKey = null;
+        let docId = localStorage.getItem('dynalistDocId') || "QBPYSvxs9JO2gYfbf0sPhsoF"; // Default or stored document ID
+
+        // Function to fetch the document title
+        async function fetchDocumentTitle() {
+            const documentTitleElement = document.getElementById('documentTitle');
+            if (apiKey) {
+                try {
+                    const response = await fetch('https://dynalist.io/api/v1/doc/read', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            token: apiKey,
+                            file_id: docId,
+                        })
+                    });
+
+                    const result = await response.json();
+                    if (result._code === "Ok" && result.title) {
+                        documentTitleElement.textContent = `Working on: ${result.title}`;
+                    } else {
+                        documentTitleElement.textContent = `Document ID: ${docId}`;
+                    }
+                } catch (error) {
+                    console.error("Error fetching document title:", error);
+                    documentTitleElement.textContent = `Document ID: ${docId}`;
+                }
+            } else {
+                documentTitleElement.textContent = `Document ID: ${docId}`;
+            }
+        }
+
+        // Listen for messages from the main page
+        window.addEventListener('message', function(event) {
+            if (event.data.apiKey) {
+                apiKey = event.data.apiKey;
+                updateApiStatus(true);
+                showStatus("API key received. Reload to apply changes.", true);
+                fetchDocumentTitle(); // Fetch title after API key is set
+            }
+        });
+
+        // Check for API key in localStorage when the page loads
+        window.addEventListener('load', function() {
+            const storedApiKey = localStorage.getItem('dynalistApiKey');
+            if (storedApiKey) {
+                apiKey = storedApiKey;
+                updateApiStatus(true);
+            }
+            fetchDocumentTitle(); // Fetch title on page load
+        });
+
+        // Function to update API status UI
+        function updateApiStatus(isEnabled) {
+            const apiStatusElement = document.querySelector('.api-status');
+            const apiSettingsElement = document.querySelector('.api-settings');
+            if (isEnabled) {
+                apiStatusElement.className = 'api-status api-enabled';
+                apiSettingsElement.innerHTML = '<span class="api-status api-enabled"></span> API Enabled';
+            } else {
+                apiStatusElement.className = 'api-status api-disabled';
+                apiSettingsElement.innerHTML = '<span class="api-status api-disabled"></span> API Disabled';
+            }
+        }
+
+        // Function to show status messages
+        function showStatus(message, isSuccess = true) {
+            const statusMessage = document.getElementById('statusMessage');
+            statusMessage.textContent = message;
+            statusMessage.className = isSuccess ? 'status-message success' : 'status-message error';
+            statusMessage.classList.remove('hidden'); // Show the message
+
+            setTimeout(() => {
+                statusMessage.classList.add('hidden'); // Hide the message after 3 seconds
+            }, 3000);
+        }
+
+        // Show API settings dialog
+        function showApiSettings() {
+            const newApiKey = prompt("Enter your Dynalist API key:", apiKey);
+            if (newApiKey !== null) {
+                if (newApiKey.trim() !== '') {
+                    apiKey = newApiKey.trim();
+                    localStorage.setItem('dynalistApiKey', apiKey);
+                    updateApiStatus(true);
+                    showStatus("API key updated. Reload to apply changes.", true);
+                    fetchDocumentTitle(); // Fetch title after API key is updated
+                } else {
+                    apiKey = null;
+                    localStorage.removeItem('dynalistApiKey');
+                    updateApiStatus(false);
+                    showStatus("API key cleared. Using manual mode.", false);
+                    fetchDocumentTitle(); // Fetch title after API key is cleared
+                }
+            }
+        }
+
+        // Show Document ID settings dialog
+        function showDocIdSettings() {
+            const newDocId = prompt("Enter your Dynalist Document ID:", docId);
+            if (newDocId !== null) {
+                if (newDocId.trim() !== '') {
+                    docId = newDocId.trim();
+                    localStorage.setItem('dynalistDocId', docId);
+                    showStatus("Document ID updated.", true);
+                    fetchDocumentTitle(); // Fetch title after document ID is updated
+                } else {
+                    docId = "QBPYSvxs9JO2gYfbf0sPhsoF"; // Reset to default
+                    localStorage.removeItem('dynalistDocId');
+                    showStatus("Document ID cleared. Using default.", false);
+                    fetchDocumentTitle(); // Fetch title after document ID is cleared
+                }
+            }
+        }
+
+        // Function to open Dynalist
+        function openDynalist() {
+            window.open(`https://dynalist.io/d/${docId}`, '_blank');
+        }
+
+        // Function to get the current time in hh:mm format
+        function getCurrentTime() {
+            const now = new Date();
+            const hours = String(now.getHours()).padStart(2, '0'); // Ensure 2 digits
+            const minutes = String(now.getMinutes()).padStart(2, '0'); // Ensure 2 digits
+            return `${hours}:${minutes}`;
+        }
+
+        // Function to add note to Dynalist using API
+        async function addNoteToDynalistWithApi(note) {
+            showStatus("Adding note via API...");
+
+            try {
+                const response = await fetch('https://dynalist.io/api/v1/doc/edit', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        token: apiKey,
+                        file_id: docId,
+                        changes: [
+                            {
+                                action: 'insert',
+                                parent_id: 'root', // or specific node ID
+                                content: `[${getCurrentTime()}] ${note}`, // Add timestamp
+                                index: 0 // Insert at the beginning
+                            }
+                        ]
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result._code === "Ok") {
+                    showStatus("Note added successfully!");
+                    return true;
+                } else {
+                    showStatus("API Error: " + result._msg, false);
+                    return false;
+                }
+            } catch (error) {
+                console.error("API Error:", error);
+                showStatus("Error connecting to Dynalist API", false);
+                return false;
+            }
+        }
+
+        // Fallback method using URL parameters if no API is available
+        function addNoteToDynalistManually(note) {
+            showStatus("Ready! Now manually add this note in Dynalist.", true);
+
+            try {
+                const searchParam = encodeURIComponent(`[${getCurrentTime()}] ${note}`); // Add timestamp
+                const searchUrl = `https://dynalist.io/d/${docId}?q=${searchParam}`;
+                window.open(searchUrl, '_blank'); // Open in a new tab
+                return true;
+            } catch (e) {
+                console.error("Error preparing note:", e);
+                showStatus("Error preparing note", false);
+                return false;
+            }
+        }
+
+        // Main function to add a note
+        function addNoteToDynalist(note) {
+            if (apiKey) {
+                return addNoteToDynalistWithApi(note);
+            } else {
+                return addNoteToDynalistManually(note);
+            }
+        }
+
+        // Add event listener to the enter button
+        document.getElementById('enterButton').addEventListener('click', function() {
+            const textarea = document.getElementById('dynalistInput');
+            const note = textarea.value.trim();
+
+            if (note) {
+                if (addNoteToDynalist(note)) {
+                    textarea.value = ''; // Clear the textarea
+                }
+            } else {
+                showStatus("Please enter a note first", false);
+            }
+        });
+
+        // Add keyboard event listener for Enter key
+        document.getElementById('dynalistInput').addEventListener('keydown', function(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault(); // Prevent default newline
+                document.getElementById('enterButton').click(); // Trigger the Enter button
+            }
+        });
+    </script>
+</body>
+</html>
