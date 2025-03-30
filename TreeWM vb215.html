@@ -1,0 +1,1718 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', Helvetica, sans-serif;
+            font-size: 14px;
+            background: #f4f7fa;
+            margin: 0;
+            padding: 0;
+        }
+        .outline-container {
+            min-width: 900px; /* Minimum width instead of max-width */
+            width: auto; /* Allow width to grow with content */
+            margin: 30px auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            position: relative;
+            resize: horizontal; /* Enable horizontal resizing */
+            overflow-x: auto; /* Handle overflow if content exceeds viewport */
+        }
+        .outline-container.drag-over {
+            background: #e9f1fb;
+            border: 2px dashed #007bff;
+        }
+        .container-resize-handle {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 15px;
+            height: 15px;
+            background: #ddd;
+            cursor: nwse-resize; /* Diagonal resize cursor */
+            border-radius: 0 0 8px 0;
+        }
+        .container-resize-handle:hover {
+            background: #aaa;
+        }
+        .outline-title {
+            width: 100%;
+            padding: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            border: 1px solid #ccd0d5;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+        .outline-title:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 4px rgba(0,123,255,0.3);
+        }
+        .button-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 10px;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            background: white;
+            z-index: 1000;
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .button-group {
+            display: flex;
+            gap: 6px;
+        }
+        .separator {
+            width: 1px;
+            height: 20px;
+            background: #ddd;
+            margin: 0 8px;
+        }
+        button {
+            padding: 5px 8px;
+            font-size: 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            transition: background 0.2s;
+            position: relative;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        button[title]:hover::after,
+        select[title]:hover::after {
+            content: attr(title);
+            position: absolute;
+            bottom: 120%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            white-space: nowrap;
+            z-index: 10;
+        }
+        select {
+            padding: 4px 6px;
+            font-size: 12px;
+            border: none;
+            border-radius: 4px;
+            background: #6f42c1;
+            color: white;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image: url('data:image/svg+xml;utf8,<svg fill="white" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+            background-repeat: no-repeat;
+            background-position: right 6px center;
+            background-size: 12px;
+            padding-right: 20px;
+            position: relative;
+        }
+        #fontSizeSelect, #fontFamilySelect {
+            width: 60px;
+        }
+        #allFontSizeSelect, #allFontFamilySelect {
+            width: 80px;
+        }
+        select:hover {
+            background-color: #5a32a3;
+        }
+        #deleteBtn { background: #dc3545; }
+        #deleteBtn:hover { background: #c82333; }
+        #boldBtn { font-weight: bold; }
+        #redBtn { background: #dc3545; }
+        #redBtn:hover { background: #c82333; }
+        #blueBtn { background: #007bff; }
+        #yellowHighlightBtn { background: #ffc107; color: black; }
+        #yellowHighlightBtn:hover { background: #e0a800; }
+        #orangeHighlightBtn { background: #fd7e14; color: black; }
+        #orangeHighlightBtn:hover { background: #e06c00; }
+        #helpBtn { background: #28a745; }
+        #helpBtn:hover { background: #218838; }
+        #newLineBtn { background: #17a2b8; }
+        #newLineBtn:hover { background: #138496; }
+        #toggleFormatBtn { background: #6c757d; font-family: monospace; }
+        #toggleFormatBtn:hover { background: #5a6268; }
+        #pasteBtn { background: #17a2b8; }
+        #pasteBtn:hover { background: #138496; }
+        .outline-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .outline-item {
+            padding: 4px;
+            margin: 2px 0;
+            cursor: move;
+            display: flex;
+            align-items: center;
+            position: relative;
+            min-height: 24px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        .outline-item:hover { background: #f8f9fa; }
+        .outline-item.dragging { opacity: 0.5; background: #e0e0e0; }
+        .outline-item.selected { background: #e9f1fb; }
+        .outline-item.drop-target-above { border-top: 2px solid #007bff; }
+        .outline-item.drop-target-child { background: #e9f1fb; }
+        .outline-item.drop-target-below { border-bottom: 2px solid #007bff; }
+        .content-wrapper {
+            display: flex;
+            align-items: center;
+            position: relative;
+            min-width: 0;
+            flex-shrink: 0;
+        }
+        .content {
+            min-width: 100px;
+            width: var(--level-0-width, 140px);
+            margin-left: 8px;
+            white-space: pre-wrap;
+            overflow-x: hidden;
+            padding: 4px 6px;
+            box-sizing: border-box;
+            flex-shrink: 0;
+            border: 1px solid transparent;
+            line-height: 1.4;
+            min-height: 20px;
+            font-family: 'Arial', Helvetica, sans-serif;
+            font-size: 14px;
+        }
+        .content:empty::before {
+            content: attr(placeholder);
+            color: #999;
+        }
+        .level-1 { margin-left: 20px; }
+        .level-2 { margin-left: 20px; }
+        .level-3 { margin-left: 20px; }
+        .level-4 { margin-left: 20px; }
+        .level-0 .content { width: var(--level-0-width, 140px); }
+        .level-1 .content { width: var(--level-1-width, 140px); }
+        .level-2 .content { width: var(--level-2-width, 140px); }
+        .level-3 .content { width: var(--level-3-width, 140px); }
+        .level-4 .content { width: var(--level-4-width, 140px); }
+        .content[contenteditable="true"]:focus {
+            outline: none;
+            border: 1px solid #007bff;
+            background: white;
+            box-shadow: 0 0 4px rgba(0,123,255,0.3);
+        }
+        .resize-handle {
+            width: 6px;
+            height: 20px;
+            background: #ddd;
+            cursor: col-resize;
+            flex-shrink: 0;
+            margin-left: 4px;
+            border-radius: 2px;
+        }
+        .resize-handle:hover { background: #aaa; }
+        .toggle-btn {
+            cursor: pointer;
+            width: 12px;
+            height: 12px; /* Added for consistent vertical size */
+            text-align: center;
+            font-family: monospace;
+            color: #666;
+            flex-shrink: 0;
+            margin-left: 4px;
+            font-size: 10px; /* Fits within smaller box */
+            line-height: 12px; /* Aligns triangle vertically */
+        }
+        .no-toggle {
+            width: 15px;
+            flex-shrink: 0;
+            margin-left: 4px;
+        }
+        .hidden > .outline-list { display: none; }
+        .outline-item::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: -10px;
+            width: 7px;
+            height: 1px;
+            background: #999;
+        }
+        .outline-list > .outline-item::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            bottom: 0;
+            left: -10px;
+            width: 1px;
+            background: transparent;
+            border-left: 1px solid #999;
+        }
+        .outline-list > .outline-item:first-child::after {
+            top: 50%;
+            border-top-left-radius: 5px;
+        }
+        .outline-list > .outline-item:last-child::after {
+            bottom: 50%;
+            border-bottom-left-radius: 5px;
+        }
+        .outline-list > .outline-item:only-child::after {
+            display: none;
+        }
+        .outline-item .content-wrapper::before {
+            content: '•';
+            position: absolute;
+            top: 55%;
+            left: -7px;
+            transform: translateY(-50%);
+            color: #999;
+            font-size: 18px;
+        }
+        .notification {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 1000;
+            display: none;
+        }
+        .notification.error { background: #dc3545; }
+        .help-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            z-index: 2000;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+            display: none;
+        }
+        .help-popup h2 {
+            margin-top: 0;
+            font-size: 20px;
+            color: #333;
+        }
+        .help-popup ul {
+            list-style: none;
+            padding: 0;
+        }
+        .help-popup li {
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+        }
+        .help-popup kbd {
+            background: #f1f1f1;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .help-popup .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            cursor: pointer;
+        }
+        .help-popup .close-btn:hover {
+            background: #c82333;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            max-width: 400px;
+            width: 90%;
+            position: relative;
+        }
+        .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .close-btn:hover {
+            background: #c82333;
+        }
+        footer {
+            text-align: center;
+            padding: 20px;
+            font-size: 12px;
+            color: #666;
+            background: #fff;
+            border-top: 1px solid #eee;
+            margin-top: 20px;
+        }
+        @media print {
+            body { background: white; }
+            .outline-container {
+                margin: 0;
+                padding: 10px;
+                border: 1px solid #000;
+                box-shadow: none;
+                resize: none; /* Disable resize for print */
+            }
+            .outline-title {
+                border: none;
+                width: 100%;
+                padding: 0;
+                margin-bottom: 10px;
+                font-size: 18px;
+                text-align: center;
+            }
+            .outline-item {
+                padding: 4px 0;
+                margin: 0;
+                border: none;
+                min-height: 0;
+            }
+            .content-wrapper, .content {
+                width: auto;
+                flex-grow: 1;
+                margin-left: 15px;
+                padding: 0;
+                border: none;
+            }
+            .content:empty::before { content: ''; }
+            .button-bar, .resize-handle, .container-resize-handle, .no-toggle, .toggle-btn, .notification, .help-popup, footer { display: none; }
+            .outline-list { padding-left: 15px; }
+            .outline-item::before {
+                content: '';
+                position: absolute;
+                top: 50%;
+                left: 0;
+                width: 10px;
+                height: 1px;
+                background: #000;
+            }
+            .outline-item .content-wrapper::before {
+                content: '•';
+                position: absolute;
+                top: 50%;
+                left: 7px;
+                transform: translateY(-50%);
+                color: #000;
+                font-size: 12px;
+            }
+            .outline-list > .outline-item::after {
+                content: '';
+                position: absolute;
+                top: -50%;
+                bottom: 0;
+                left: 5px;
+                width: 1px;
+                background: transparent;
+                border-left: 1px solid #000;
+            }
+            .outline-list > .outline-item:first-child::after {
+                top: 50%;
+                border-top-left-radius: 5px;
+            }
+            .outline-list > .outline-item:last-child::after {
+                bottom: 50%;
+                border-bottom-left-radius: 5px;
+            }
+            .outline-list > .outline-item:only-child::after {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="outline-container">
+        <input type="text" class="outline-title" placeholder="Welcome to Dr. Yang's Tree organiztaion. Please Enter Outline Title" value="">
+        <div class="button-bar">
+            <div class="button-group">
+                <button id="addMainBtn" title="Add a new main item (Enter)">+ Main</button>
+                <button id="addSubBtn" title="Add a sub-item under selected item (Shift+Enter)">+ Sub</button>
+                <button id="addSiblingBtn" title="Add a sibling item below selected item (Enter)">+ Sibling</button>
+                <button id="deleteBtn" title="Delete selected item (Shift+Delete)">Delete</button>
+            </div>
+            <div class="separator"></div>
+            <div class="button-group">
+                <button id="saveBtn" title="Save outline as .wmtree">Save</button>
+                <button id="loadBtn" title="Load outline from .wmtree">Load</button>
+                <button id="exportOPMLBtn" title="Export outline as OPML">Exp OPML</button>
+                <button id="importOPMLBtn" title="Import outline from OPML">Imp OPML</button>
+            </div>
+            <div class="button-group">
+                <button id="boldBtn" title="Bold selected text (Ctrl+B)">B</button>
+                <button id="redBtn" title="Red text">Red</button>
+                <button id="blueBtn" title="Blue text">Blue</button>
+                <button id="yellowHighlightBtn" title="Yellow highlight (Ctrl+H)">Yellow</button>
+                <button id="orangeHighlightBtn" title="Orange highlight (Ctrl+Shift+H)">Orange</button>
+                <button id="toggleFormatBtn" title="Toggle formatting (Ctrl+Shift+F)">T̶</button>
+            </div>
+            <div class="separator"></div>
+            <div class="button-group">
+                <button id="newLineBtn" title="Insert line break (Ctrl+Enter)">↵</button>
+                <button id="pasteBtn" title="Paste as items (Ctrl+Shift+V)">Paste</button>
+                <select id="fontSizeSelect" title="Font size for selected item">
+                    <option value="" selected disabled>Size</option>
+                    <option value="12px">12px</option>
+                    <option value="14px">14px</option>
+                    <option value="16px">16px</option>
+                    <option value="18px">18px</option>
+                </select>
+                <select id="fontFamilySelect" title="Font family for selected item">
+                    <option value="" selected disabled>Font</option>
+                    <option value="Segoe UI">Segoe UI</option>
+                    <option value="Arial">Arial</option>
+                    <option value="Times New Roman">Times New Roman</option>
+                </select>
+                <select id="allFontSizeSelect" title="Font size for all items">
+                    <option value="" selected disabled>All Size</option>
+                    <option value="12px">12px</option>
+                    <option value="14px">14px</option>
+                    <option value="16px">16px</option>
+                    <option value="18px">18px</option>
+                </select>
+                <select id="allFontFamilySelect" title="Font family for all items">
+                    <option value="" selected disabled>All Font</option>
+                    <option value="Segoe UI">Segoe UI</option>
+                    <option value="Arial">Arial</option>
+                    <option value="Times New Roman">Times New Roman</option>
+                </select>
+            </div>
+            <div class="separator"></div>
+            <div class="button-group">
+                <button id="printBtn" title="Print outline">Print</button>
+                <button id="pdfOpenBtn" title="Open outline as PDF">PDF Open</button>
+                <button id="pdfDownloadBtn" title="Download outline as PDF">PDF Download</button>
+                <button id="helpBtn" title="Show keyboard shortcuts">Help</button>
+            </div>
+        </div>
+        <ul class="outline-list" id="outlineList">
+            <li class="outline-item" draggable="true">
+                <div class="content-wrapper">
+                    <span class="content" contenteditable="true" placeholder="New main item"></span>
+                    <span class="resize-handle"></span>
+                </div>
+                <span class="no-toggle"></span>
+                <ul class="outline-list"></ul>
+            </li>
+        </ul>
+        <div class="container-resize-handle"></div> <!-- Resize handle for the container -->
+    </div>
+    <div class="notification" id="notification"></div>
+    <div class="help-popup" id="helpPopup">
+        <button class="close-btn" id="closeHelpBtn">X</button>
+        <h2>Keyboard Shortcuts</h2>
+        <ul>
+            <li>Add new main/sibling item <kbd>Enter</kbd></li>
+            <li>Add sub-item <kbd>Shift + Enter</kbd></li>
+            <li>Insert line break <kbd>Ctrl + Enter</kbd></li>
+            <li>Delete selected item <kbd>Shift + Delete</kbd></li>
+            <li>Paste as items <kbd>Ctrl + Shift + V</kbd></li>
+            <li>Next item <kbd>Tab</kbd></li>
+            <li>Previous item <kbd>Arrow Up</kbd></li>
+            <li>Next item <kbd>Arrow Down</kbd></li>
+            <li>Collapse/parent item <kbd>Arrow Left</kbd></li>
+            <li>Expand/child item <kbd>Arrow Right</kbd></li>
+            <li>Undo <kbd>Ctrl + Z</kbd></li>
+            <li>Redo <kbd>Ctrl + Y</kbd></li>
+            <li>Bold text <kbd>Ctrl + B</kbd></li>
+            <li>Yellow highlight <kbd>Ctrl + H</kbd></li>
+            <li>Orange highlight <kbd>Ctrl + Shift + H</kbd></li>
+            <li>Toggle formatting <kbd>Ctrl + Shift + F</kbd></li>
+        </ul>
+    </div>
+    <div class="modal" id="orientationModal">
+        <div class="modal-content">
+            <span class="close-btn" id="closeOrientationModal">×</span>
+            <h2>Select PDF Orientation</h2>
+            <p style="color: #6b7280; margin: 0 0 10px;">Choose how you’d like your PDF to be oriented:</p>
+            <div style="text-align: center; margin-top: 15px;">
+                <button id="portraitBtn" style="margin: 0 10px;">Portrait</button>
+                <button id="landscapeBtn" style="margin: 0 10px; background: linear-gradient(#10b981, #059669);">Landscape</button>
+                <button id="cancelOrientationBtn" style="margin: 0 10px; background: linear-gradient(#ef4444, #dc2626);">Cancel</button>
+            </div>
+        </div>
+    </div>
+    <footer>
+        © 2025 Dr. Wen-Ming Yang | Version b2.15  | Last Updated: March 30, 2025 (PDF goof view (landscape or Protal))
+    </footer>
+
+    <script>
+        const outlineList = document.getElementById('outlineList');
+        const outlineTitle = document.querySelector('.outline-title');
+        const outlineContainer = document.querySelector('.outline-container');
+        const notification = document.getElementById('notification');
+        const helpPopup = document.getElementById('helpPopup');
+        const helpBtn = document.getElementById('helpBtn');
+        const closeHelpBtn = document.getElementById('closeHelpBtn');
+        let draggedItem = null;
+        let resizingItem = null;
+        let resizingLevel = null;
+        let resizingContainer = false;
+        let startX = 0;
+        let startWidth = 0;
+        let selectedItem = null;
+        let history = [];
+        let historyIndex = -1;
+        const { jsPDF } = window.jspdf; // Access jsPDF from the global UMD module
+
+        function createItem(text = '', level = 0) {
+            const li = document.createElement('li');
+            li.className = `outline-item level-${level}`;
+            li.draggable = true;
+            const placeholder = level === 0 ? 'New main item' : 'New sub-item';
+            li.innerHTML = `
+                <div class="content-wrapper">
+                    <span class="content" contenteditable="true" placeholder="${placeholder}">${text}</span>
+                    <span class="resize-handle"></span>
+                </div>
+                <span class="no-toggle"></span>
+                <ul class="outline-list"></ul>
+            `;
+            const content = li.querySelector('.content');
+            const defaultWidth = 140;
+            content.style.width = `${defaultWidth}px`;
+            content.style.fontSize = '14px'; // Add this line for default font size
+            return li;
+        }
+
+        function saveState() {
+            const state = {
+                title: outlineTitle.value,
+                items: serializeItems(outlineList.children),
+                containerWidth: outlineContainer.style.width
+            };
+            if (historyIndex < history.length - 1) {
+                history = history.slice(0, historyIndex + 1);
+            }
+            history.push(state);
+            historyIndex++;
+            if (history.length > 20) {
+                history.shift();
+                historyIndex--;
+            }
+        }
+
+        function undo() {
+            if (historyIndex > 0) {
+                historyIndex--;
+                applyState(history[historyIndex]);
+                showNotification('Undo action performed.');
+            }
+        }
+
+        function redo() {
+            if (historyIndex < history.length - 1) {
+                historyIndex++;
+                applyState(history[historyIndex]);
+                showNotification('Redo action performed.');
+            }
+        }
+
+        function applyState(state) {
+            outlineTitle.value = state.title;
+            outlineList.innerHTML = '';
+            deserializeItems(state.items, outlineList);
+            outlineContainer.style.width = state.containerWidth || '';
+            document.querySelectorAll('.outline-item').forEach(item => updateItemState(item));
+            selectedItem = null;
+        }
+
+        function showNotification(message, isError = false) {
+            notification.textContent = message;
+            notification.classList.toggle('error', isError);
+            notification.style.display = 'block';
+            setTimeout(() => notification.style.display = 'none', 5000);
+        }
+
+        function generatePDFForView(forDownload = false) {
+            return new Promise((resolve) => {
+                const modal = document.getElementById('orientationModal');
+                const portraitBtn = document.getElementById('portraitBtn');
+                const landscapeBtn = document.getElementById('landscapeBtn');
+                const cancelBtn = document.getElementById('cancelOrientationBtn');
+                const closeModalBtn = document.getElementById('closeOrientationModal');
+
+                // Show the modal
+                modal.style.display = 'flex';
+
+                // Function to hide modal and proceed
+                const proceedWithOrientation = (orientation) => {
+                    modal.style.display = 'none';
+                    if (orientation === null) {
+                        showNotification('PDF Generation Cancelled');
+                        resolve();
+                        return;
+                    }
+
+                    const doc = new jsPDF({
+                        orientation: orientation,
+                        unit: 'mm',
+                        format: 'a4'
+                    });
+                    const outlineContainer = document.querySelector('.outline-container');
+                    const buttonBar = document.querySelector('.button-bar');
+                    const containerResizeHandle = document.querySelector('.container-resize-handle');
+
+                    // Temporarily hide elements we don’t want in the PDF
+                    buttonBar.style.display = 'none';
+                    containerResizeHandle.style.display = 'none';
+
+                    // Ensure the outline list is fully visible
+                    outlineContainer.style.overflow = 'visible';
+                    outlineList.style.overflow = 'visible';
+
+                    // Capture the entire outline container
+                    return html2canvas(outlineContainer, {
+                        scale: 2,
+                        useCORS: true,
+                        backgroundColor: '#ffffff' // Match the container’s white background
+                    }).then(canvas => {
+                        // Restore visibility of hidden elements
+                        buttonBar.style.display = '';
+                        containerResizeHandle.style.display = '';
+                        outlineContainer.style.overflow = 'auto';
+                        outlineList.style.overflow = '';
+
+                        const imgData = canvas.toDataURL('image/png');
+                        const imgWidth = canvas.width;
+                        const imgHeight = canvas.height;
+
+                        const pdfWidth = doc.internal.pageSize.getWidth();
+                        const pdfHeight = doc.internal.pageSize.getHeight();
+                        const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+                        const scaledWidth = imgWidth * ratio;
+                        const scaledHeight = imgHeight * ratio;
+
+                        // Center the image on the PDF page
+                        const xOffset = (pdfWidth - scaledWidth) / 2;
+                        const yOffset = (pdfHeight - scaledHeight) / 2;
+
+                        doc.addImage(imgData, 'PNG', xOffset, yOffset, scaledWidth, scaledHeight);
+
+                        if (forDownload) {
+                            doc.save(`${outlineTitle.value || 'outline'}_${orientation}.pdf`);
+                            showNotification(`Downloaded Visual PDF (${orientation})`);
+                        } else {
+                            const pdfBlob = doc.output('blob');
+                            const url = URL.createObjectURL(pdfBlob);
+                            window.open(url);
+                            showNotification(`Generated Visual PDF (${orientation})`);
+                        }
+                        resolve();
+                    }).catch(error => {
+                        console.error('Error generating PDF:', error);
+                        showNotification('Failed to generate PDF. Check console for details.', true);
+                        buttonBar.style.display = '';
+                        containerResizeHandle.style.display = '';
+                        outlineContainer.style.overflow = 'auto';
+                        outlineList.style.overflow = '';
+                        modal.style.display = 'none';
+                        resolve();
+                    });
+                };
+
+                // Event listeners for buttons
+                portraitBtn.onclick = () => proceedWithOrientation('portrait');
+                landscapeBtn.onclick = () => proceedWithOrientation('landscape');
+                cancelBtn.onclick = () => proceedWithOrientation(null);
+                closeModalBtn.onclick = () => proceedWithOrientation(null);
+
+                // Close modal when clicking outside
+                modal.onclick = (e) => {
+                    if (e.target === modal) {
+                        proceedWithOrientation(null);
+                    }
+                };
+            });
+        }
+
+        document.getElementById('addMainBtn').addEventListener('click', () => {
+            saveState();
+            const newItem = createItem();
+            outlineList.appendChild(newItem);
+            updateItemState(newItem);
+            focusAndSelect(newItem);
+            adjustContainerWidth();
+        });
+
+        document.getElementById('addSubBtn').addEventListener('click', () => {
+            if (selectedItem) {
+                saveState();
+                const subList = selectedItem.querySelector('.outline-list');
+                const level = selectedItem.className.match(/level-(\d)/)?.[1] || 0;
+                const newSubItem = createItem('', parseInt(level) + 1);
+                subList.appendChild(newSubItem);
+                updateItemState(selectedItem);
+                updateItemState(newSubItem);
+                focusAndSelect(newSubItem);
+                adjustContainerWidth();
+            } else {
+                showNotification('Please select an item to add a sub-item.');
+            }
+        });
+
+        document.getElementById('addSiblingBtn').addEventListener('click', () => {
+            if (selectedItem) {
+                saveState();
+                const parentList = selectedItem.parentElement.closest('.outline-list');
+                const level = selectedItem.className.match(/level-(\d)/)?.[1] || 0;
+                const newSiblingItem = createItem('', parseInt(level));
+                selectedItem.after(newSiblingItem);
+                updateItemState(newSiblingItem);
+                const parentItem = parentList.parentElement.closest('.outline-item');
+                if (parentItem) updateItemState(parentItem);
+                focusAndSelect(newSiblingItem);
+                adjustContainerWidth();
+            } else {
+                showNotification('Please select an item to add a sibling.');
+            }
+        });
+
+        document.getElementById('deleteBtn').addEventListener('click', () => {
+            if (selectedItem) {
+                if (confirm('Are you sure you want to delete this item?')) {
+                    saveState();
+                    const parentItem = selectedItem.parentElement.closest('.outline-item');
+                    const parentList = selectedItem.parentElement.closest('.outline-list');
+                    selectedItem.remove();
+                    selectedItem = null;
+                    if (parentItem) updateItemState(parentItem);
+                    if (parentList.children.length === 0 && parentItem) {
+                        updateItemState(parentItem);
+                    }
+                    showNotification('Item deleted.');
+                    adjustContainerWidth();
+                }
+            } else {
+                showNotification('Please select an item to delete.');
+            }
+        });
+
+        document.getElementById('newLineBtn').addEventListener('click', () => {
+            if (selectedItem) {
+                saveState();
+                const content = selectedItem.querySelector('.content');
+                content.focus();
+                const selection = window.getSelection();
+                const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : document.createRange();
+                const br = document.createElement('br');
+
+                if (content.innerHTML === '' || content.innerHTML === '<br>') {
+                    content.innerHTML = '';
+                    content.appendChild(br);
+                    range.selectNodeContents(content);
+                    range.collapse(false);
+                } else {
+                    range.insertNode(br);
+                    range.setStartAfter(br);
+                    range.setEndAfter(br);
+                }
+
+                selection.removeAllRanges();
+                selection.addRange(range);
+
+                showNotification('Line break inserted.');
+            } else {
+                showNotification('Please select an item to insert a line break.');
+            }
+        });
+
+        document.getElementById('toggleFormatBtn').addEventListener('click', () => {
+            if (selectedItem) {
+                saveState();
+                const content = selectedItem.querySelector('.content');
+                content.focus();
+                const selection = window.getSelection();
+
+                if (selection.rangeCount > 0 && content.contains(selection.anchorNode) && !selection.isCollapsed) {
+                    const range = selection.getRangeAt(0);
+                    const fragment = range.extractContents();
+                    const textNode = document.createTextNode(fragment.textContent);
+                    range.insertNode(textNode);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                } else {
+                    const plainText = content.textContent;
+                    content.innerHTML = plainText;
+                    content.style.fontSize = '';
+                    content.style.fontFamily = '';
+                }
+
+                showNotification('Formatting toggled off.');
+            } else {
+                showNotification('Please select an item to toggle formatting.');
+            }
+        });
+
+        document.getElementById('pasteBtn').addEventListener('click', () => {
+            const asSubItems = selectedItem && confirm('Paste as sub-items of the selected item? Click "Cancel" to paste as main items.');
+            pasteAsItems(asSubItems);
+        });
+
+        function pasteAsItems(asSubItems = false) {
+            navigator.clipboard.readText().then(text => {
+                processPastedText(text, asSubItems);
+            }).catch(err => {
+                console.error('Failed to read clipboard:', err);
+                const manualText = prompt('Unable to access clipboard automatically. Please paste your text here:');
+                if (manualText !== null) {
+                    processPastedText(manualText, asSubItems);
+                }
+            });
+        }
+
+        function processPastedText(text, asSubItems) {
+            if (!text) {
+                showNotification('No text provided.');
+                return;
+            }
+
+            saveState();
+            const lines = text.split('\n').filter(line => line.trim() !== '');
+            if (lines.length === 0) {
+                showNotification('No valid content to paste.');
+                return;
+            }
+
+            let targetList = outlineList;
+            let level = 0;
+            if (asSubItems && selectedItem) {
+                targetList = selectedItem.querySelector('.outline-list');
+                level = parseInt(selectedItem.className.match(/level-(\d)/)?.[1] || 0) + 1;
+            }
+
+            lines.forEach(line => {
+                const newItem = createItem(line.trim(), level);
+                targetList.appendChild(newItem);
+                updateItemState(newItem);
+            });
+
+            const lastItem = targetList.lastElementChild;
+            if (lastItem) {
+                focusAndSelect(lastItem);
+            }
+
+            showNotification(`Pasted as ${asSubItems ? 'sub-items' : 'main items'}.`);
+            adjustContainerWidth();
+        }
+
+        const fontSizeSelect = document.getElementById('fontSizeSelect');
+        const fontFamilySelect = document.getElementById('fontFamilySelect');
+        const allFontSizeSelect = document.getElementById('allFontSizeSelect');
+        const allFontFamilySelect = document.getElementById('allFontFamilySelect');
+
+        fontSizeSelect.addEventListener('change', (e) => {
+            if (!selectedItem) {
+                showNotification('Please select an item.');
+                e.target.value = '';
+                return;
+            }
+            const newSize = e.target.value;
+            applyStyle('fontSize', newSize);
+            e.target.value = '';
+        });
+
+        fontFamilySelect.addEventListener('change', (e) => {
+            if (!selectedItem) {
+                showNotification('Please select an item.');
+                e.target.value = '';
+                return;
+            }
+            const newFont = e.target.value;
+            applyStyle('fontFamily', newFont);
+            e.target.value = '';
+        });
+
+        allFontSizeSelect.addEventListener('change', (e) => {
+            const newSize = e.target.value;
+            applyStyleToAll('fontSize', newSize);
+            e.target.value = '';
+        });
+
+        allFontFamilySelect.addEventListener('change', (e) => {
+            const newFont = e.target.value;
+            applyStyleToAll('fontFamily', newFont);
+            e.target.value = '';
+        });
+
+        function applyStyle(property, value) {
+            if (!selectedItem) return;
+            saveState();
+            const content = selectedItem.querySelector('.content');
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0 && content.contains(selection.anchorNode)) {
+                const range = selection.getRangeAt(0);
+                if (!range.collapsed) {
+                    const fragment = range.extractContents();
+                    const span = document.createElement('span');
+                    span.style[property] = value;
+                    span.appendChild(fragment);
+                    range.insertNode(span);
+                    selection.removeAllRanges();
+                    content.focus();
+                } else {
+                    content.style[property] = value;
+                }
+            } else {
+                content.style[property] = value;
+            }
+            showNotification(`${property} set to ${value}`);
+        }
+
+        function applyStyleToAll(property, value) {
+            saveState();
+            const allContents = document.querySelectorAll('.outline-item .content');
+            allContents.forEach(content => {
+                content.style[property] = value;
+            });
+            showNotification(`${property} set to ${value} for all items`);
+        }
+
+        outlineList.addEventListener('click', (e) => {
+            const item = e.target.closest('.outline-item');
+            if (item) {
+                if (selectedItem) {
+                    selectedItem.classList.remove('selected');
+                }
+                selectedItem = item;
+                selectedItem.classList.add('selected');
+            }
+            
+            const toggleBtn = e.target.closest('.toggle-btn');
+            if (toggleBtn) {
+                e.stopPropagation();
+                const item = toggleBtn.parentElement;
+                item.classList.toggle('hidden');
+                toggleBtn.textContent = item.classList.contains('hidden') ? '▶' : '▼';
+            }
+        });
+
+        function focusAndSelect(item) {
+            if (selectedItem) {
+                selectedItem.classList.remove('selected');
+            }
+            selectedItem = item;
+            selectedItem.classList.add('selected');
+            const content = item.querySelector('.content');
+            content.focus();
+            const range = document.createRange();
+            const sel = window.getSelection();
+            range.selectNodeContents(content);
+            range.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+
+        function updateItemState(item) {
+            const parentList = item.parentElement.closest('.outline-list');
+            const parentItem = parentList?.parentElement.closest('.outline-item');
+            const currentLevel = parentItem ? (parseInt(parentItem.className.match(/level-(\d)/)?.[1] || 0) + 1) : 0;
+            
+            item.className = item.className.replace(/level-\d/g, '');
+            item.className += ` outline-item level-${currentLevel}`;
+            if (item === selectedItem) {
+                item.className += ' selected';
+            }
+            
+            const hasChildren = item.querySelector('.outline-list').children.length > 0;
+            const toggle = item.querySelector('.toggle-btn') || item.querySelector('.no-toggle');
+            if (hasChildren && toggle.classList.contains('no-toggle')) {
+                toggle.className = 'toggle-btn';
+                toggle.textContent = item.classList.contains('hidden') ? '▶' : '▼';
+            } else if (!hasChildren && toggle.classList.contains('toggle-btn')) {
+                toggle.className = 'no-toggle';
+                toggle.textContent = '';
+            } else if (hasChildren) {
+                toggle.textContent = item.classList.contains('hidden') ? '▶' : '▼';
+            }
+        }
+
+        outlineList.addEventListener('dragstart', (e) => {
+            draggedItem = e.target.closest('.outline-item');
+            if (draggedItem) {
+                draggedItem.classList.add('dragging');
+                setTimeout(() => {
+                    draggedItem.style.display = 'none';
+                }, 0);
+            }
+        });
+
+        outlineList.addEventListener('dragend', (e) => {
+            if (draggedItem) {
+                draggedItem.style.display = 'flex';
+                draggedItem.classList.remove('dragging');
+                const oldParent = draggedItem.parentElement.closest('.outline-item');
+                updateItemState(draggedItem);
+                if (oldParent) updateItemState(oldParent);
+                draggedItem = null;
+                saveState();
+                adjustContainerWidth();
+            }
+        });
+
+        outlineList.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            if (!draggedItem) return;
+
+            const dropTarget = e.target.closest('.outline-item');
+            const dropList = e.target.closest('.outline-list');
+
+            document.querySelectorAll('.drop-target-above, .drop-target-child, .drop-target-below')
+                .forEach(el => el.classList.remove('drop-target-above', 'drop-target-child', 'drop-target-below'));
+
+            if (dropTarget && dropTarget !== draggedItem) {
+                const rect = dropTarget.getBoundingClientRect();
+                const dropY = e.clientY - rect.top;
+                const third = rect.height / 3;
+
+                if (dropY < third) {
+                    dropTarget.classList.add('drop-target-above');
+                } else if (dropY > 2 * third) {
+                    dropTarget.classList.add('drop-target-below');
+                } else {
+                    dropTarget.classList.add('drop-target-child');
+                }
+            }
+        });
+
+        outlineList.addEventListener('dragleave', (e) => {
+            const dropTarget = e.target.closest('.outline-item');
+            if (dropTarget) {
+                dropTarget.classList.remove('drop-target-above', 'drop-target-child', 'drop-target-below');
+            }
+        });
+
+        outlineList.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (!draggedItem) return;
+
+            const dropTarget = e.target.closest('.outline-item');
+            const dropList = e.target.closest('.outline-list');
+
+            document.querySelectorAll('.drop-target-above, .drop-target-child, .drop-target-below')
+                .forEach(el => el.classList.remove('drop-target-above', 'drop-target-child', 'drop-target-below'));
+
+            if (dropTarget && draggedItem !== dropTarget) {
+                const rect = dropTarget.getBoundingClientRect();
+                const dropY = e.clientY - rect.top;
+                const third = rect.height / 3;
+                const targetSubList = dropTarget.querySelector('.outline-list');
+
+                if (dropY < third) {
+                    dropTarget.before(draggedItem);
+                } else if (dropY > 2 * third) {
+                    dropTarget.after(draggedItem);
+                } else {
+                    targetSubList.appendChild(draggedItem);
+                    updateItemState(dropTarget);
+                }
+                updateItemState(draggedItem);
+                const oldParent = draggedItem.parentElement.closest('.outline-item');
+                if (oldParent) updateItemState(oldParent);
+            } else if (dropList && !dropTarget) {
+                dropList.appendChild(draggedItem);
+                updateItemState(draggedItem);
+                const oldParent = draggedItem.parentElement.closest('.outline-item');
+                if (oldParent) updateItemState(oldParent);
+            }
+            adjustContainerWidth();
+        });
+
+        outlineList.addEventListener('mousedown', (e) => {
+            const handle = e.target.closest('.resize-handle');
+            if (handle) {
+                e.preventDefault();
+                resizingItem = handle.closest('.outline-item');
+                resizingLevel = resizingItem.className.match(/level-(\d)/)?.[1] || '0';
+                startX = e.pageX;
+                const content = resizingItem.querySelector('.content');
+                startWidth = content.offsetWidth;
+                document.addEventListener('mousemove', resizeItem);
+                document.addEventListener('mouseup', stopResizeItem);
+            }
+        });
+
+        function resizeItem(e) {
+            if (resizingItem && resizingLevel !== null) {
+                const diff = e.pageX - startX;
+                const containerRect = outlineContainer.getBoundingClientRect();
+                const itemRect = resizingItem.getBoundingClientRect();
+                const marginLeft = parseInt(getComputedStyle(resizingItem).marginLeft) || 0;
+
+                const maxWidth = containerRect.width - marginLeft - 25;
+                const newWidth = Math.min(Math.max(100, startWidth + diff), maxWidth);
+
+                document.documentElement.style.setProperty(`--level-${resizingLevel}-width`, `${newWidth}px`);
+                document.querySelectorAll(`.outline-item.level-${resizingLevel} > .content-wrapper > .content`).forEach(content => {
+                    content.style.width = `${newWidth}px`;
+                });
+                adjustContainerWidth();
+            }
+        }
+
+        function stopResizeItem() {
+            resizingItem = null;
+            resizingLevel = null;
+            document.removeEventListener('mousemove', resizeItem);
+            document.removeEventListener('mouseup', stopResizeItem);
+            saveState();
+        }
+
+        // Container resize functionality
+        const containerResizeHandle = document.querySelector('.container-resize-handle');
+        containerResizeHandle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            resizingContainer = true;
+            startX = e.pageX;
+            startWidth = outlineContainer.offsetWidth;
+            document.addEventListener('mousemove', resizeContainer);
+            document.addEventListener('mouseup', stopResizeContainer);
+        });
+
+        function resizeContainer(e) {
+            if (resizingContainer) {
+                const diff = e.pageX - startX;
+                const newWidth = Math.max(900, startWidth + diff); // Minimum width of 900px
+                outlineContainer.style.width = `${newWidth}px`;
+            }
+        }
+
+        function stopResizeContainer() {
+            resizingContainer = false;
+            document.removeEventListener('mousemove', resizeContainer);
+            document.removeEventListener('mouseup', stopResizeContainer);
+            saveState();
+        }
+
+        // Adjust container width based on content
+        function adjustContainerWidth() {
+            const allItems = outlineList.querySelectorAll('.outline-item');
+            let maxRequiredWidth = 900; // Minimum width
+            allItems.forEach(item => {
+                const level = parseInt(item.className.match(/level-(\d)/)?.[1] || 0);
+                const contentWidth = parseInt(getComputedStyle(item.querySelector('.content')).width);
+                const marginLeft = level * 20; // 20px per level
+                const totalWidth = marginLeft + contentWidth + 50; // Extra padding/margin
+                maxRequiredWidth = Math.max(maxRequiredWidth, totalWidth);
+            });
+            outlineContainer.style.width = `${maxRequiredWidth}px`;
+        }
+
+        document.getElementById('saveBtn').addEventListener('click', () => {
+            const data = {
+                title: outlineTitle.value,
+                items: serializeItems(outlineList.children),
+                containerWidth: outlineContainer.style.width
+            };
+            const jsonString = JSON.stringify(data);
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${outlineTitle.value || 'outline'}.wmtree`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showNotification('Outline saved as .wmtree successfully!');
+        });
+
+        document.getElementById('loadBtn').addEventListener('click', () => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.wmtree, .json';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file) loadFile(file);
+            };
+            input.click();
+        });
+
+        outlineContainer.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            outlineContainer.classList.add('drag-over');
+        });
+
+        outlineContainer.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            outlineContainer.classList.remove('drag-over');
+        });
+
+        outlineContainer.addEventListener('drop', (e) => {
+            e.preventDefault();
+            outlineContainer.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file) {
+                if (file.name.endsWith('.wmtree') || file.name.endsWith('.json')) {
+                    loadFile(file);
+                } else {
+                    showNotification('Please drop a valid .wmtree or .json file.', true);
+                }
+            }
+        });
+
+        function loadFile(file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const data = JSON.parse(event.target.result);
+                    if (!data.title || !Array.isArray(data.items)) {
+                        throw new Error('Invalid outline format');
+                    }
+                    outlineTitle.value = data.title;
+                    outlineList.innerHTML = '';
+                    deserializeItems(data.items, outlineList);
+                    outlineContainer.style.width = data.containerWidth || '900px';
+                    document.querySelectorAll('.outline-item').forEach(item => updateItemState(item));
+                    history = [];
+                    historyIndex = -1;
+                    saveState();
+                    showNotification('Outline loaded successfully!');
+                } catch (err) {
+                    showNotification('Error loading file: ' + err.message, true);
+                }
+            };
+            reader.onerror = () => {
+                showNotification('Failed to read the file.', true);
+            };
+            reader.readAsText(file);
+        }
+
+        document.getElementById('printBtn').addEventListener('click', () => {
+            window.print();
+            showNotification('Printing outline...');
+        });
+
+        document.getElementById('pdfOpenBtn').addEventListener('click', () => {
+            generatePDFForView(false);
+        });
+
+        document.getElementById('pdfDownloadBtn').addEventListener('click', () => {
+            generatePDFForView(true);
+        });
+
+        document.getElementById('exportOPMLBtn').addEventListener('click', () => {
+            const opml = generateOPML();
+            const blob = new Blob([opml], { type: 'text/xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${outlineTitle.value || 'outline'}.opml`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showNotification('Outline exported as OPML!');
+        });
+
+        document.getElementById('importOPMLBtn').addEventListener('click', () => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.opml, text/xml';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file) importOPMLFile(file);
+            };
+            input.click();
+        });
+
+        function importOPMLFile(file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(event.target.result, 'text/xml');
+                    const opml = xmlDoc.getElementsByTagName('opml')[0];
+                    if (!opml) throw new Error('Invalid OPML file');
+
+                    const head = opml.getElementsByTagName('head')[0];
+                    const title = head?.getElementsByTagName('title')[0]?.textContent || 'Imported Outline';
+                    const body = opml.getElementsByTagName('body')[0];
+                    const items = parseOPMLOutlines(body.children, 0);
+
+                    outlineTitle.value = title;
+                    outlineList.innerHTML = '';
+                    deserializeItems(items, outlineList);
+                    document.querySelectorAll('.outline-item').forEach(item => updateItemState(item));
+                    history = [];
+                    historyIndex = -1;
+                    saveState();
+                    showNotification('OPML imported successfully!');
+                    adjustContainerWidth();
+                } catch (err) {
+                    showNotification('Error importing OPML file: ' + err.message, true);
+                }
+            };
+            reader.onerror = () => {
+                showNotification('Failed to read the OPML file.', true);
+            };
+            reader.readAsText(file);
+        }
+
+        function parseOPMLOutlines(nodes, level) {
+            const items = [];
+            for (let node of nodes) {
+                if (node.tagName && node.tagName.toLowerCase() === 'outline') {
+                    const text = node.getAttribute('text') || '';
+                    const note = node.getAttribute('note') || '';
+                    const content = note || text;
+                    const children = parseOPMLOutlines(node.children, level + 1);
+                    items.push({
+                        text: content,
+                        level: level,
+                        width: '140',
+                        children: children
+                    });
+                }
+            }
+            return items;
+        }
+
+        function serializeItems(items) {
+            const result = [];
+            for (let item of items) {
+                const content = item.querySelector('.content');
+                const children = item.querySelector('.outline-list').children;
+                const level = item.className.match(/level-(\d)/)?.[1] || '0';
+                result.push({
+                    text: content.innerHTML,
+                    level: parseInt(level),
+                    width: getComputedStyle(content).width.replace('px', ''),
+                    children: serializeItems(children)
+                });
+            }
+            return result;
+        }
+
+        function deserializeItems(items, parentList) {
+            items.forEach(itemData => {
+                const newItem = createItem(itemData.text, itemData.level);
+                const content = newItem.querySelector('.content');
+                content.innerHTML = itemData.text;
+                document.documentElement.style.setProperty(`--level-${itemData.level}-width`, `${itemData.width}px`);
+                content.style.width = `${itemData.width}px`;
+                content.style.fontSize = '14px';
+                content.style.fontFamily = 'Arial, Helvetica, sans-serif';
+                parentList.appendChild(newItem);
+                if (itemData.children && itemData.children.length > 0) {
+                    deserializeItems(itemData.children, newItem.querySelector('.outline-list'));
+                }
+            });
+        }
+
+        function generateOPML() {
+            const items = serializeItems(outlineList.children);
+            const doc = document.implementation.createDocument('', '', null);
+            const opml = doc.createElement('opml');
+            opml.setAttribute('version', '1.0');
+
+            const head = doc.createElement('head');
+            const title = doc.createElement('title');
+            title.textContent = outlineTitle.value || 'Outline';
+            head.appendChild(title);
+            opml.appendChild(head);
+
+            const body = doc.createElement('body');
+            appendOPMLOutlines(body, items, doc);
+            opml.appendChild(body);
+
+            const serializer = new XMLSerializer();
+            return '<?xml version="1.0" encoding="UTF-8"?>\n' + serializer.serializeToString(opml);
+        }
+
+        function appendOPMLOutlines(parent, items, doc) {
+            items.forEach(item => {
+                const outline = doc.createElement('outline');
+                const text = item.text.replace(/<[^>]+>/g, '').trim() || 'Untitled';
+                outline.setAttribute('text', text);
+                if (item.text.includes('<') && item.text !== text) {
+                    outline.setAttribute('note', item.text);
+                }
+                if (item.children && item.children.length > 0) {
+                    appendOPMLOutlines(outline, item.children, doc);
+                }
+                parent.appendChild(outline);
+            });
+        }
+
+        document.getElementById('boldBtn').addEventListener('click', () => {
+            if (selectedItem) {
+                saveState();
+                const content = selectedItem.querySelector('.content');
+                content.focus();
+                document.execCommand('bold');
+                showNotification('Text bolded.');
+            } else {
+                showNotification('Please select an item to format.');
+            }
+        });
+
+        document.getElementById('redBtn').addEventListener('click', () => {
+            if (selectedItem) {
+                saveState();
+                const content = selectedItem.querySelector('.content');
+                content.focus();
+                document.execCommand('foreColor', false, 'red');
+                showNotification('Text colored red.');
+            } else {
+                showNotification('Please select an item to format.');
+            }
+        });
+
+        document.getElementById('blueBtn').addEventListener('click', () => {
+            if (selectedItem) {
+                saveState();
+                const content = selectedItem.querySelector('.content');
+                content.focus();
+                document.execCommand('foreColor', false, 'blue');
+                showNotification('Text colored blue.');
+            } else {
+                showNotification('Please select an item to format.');
+            }
+        });
+
+        document.getElementById('yellowHighlightBtn').addEventListener('click', () => {
+            if (selectedItem) {
+                saveState();
+                const content = selectedItem.querySelector('.content');
+                content.focus();
+                document.execCommand('backColor', false, 'yellow');
+                showNotification('Text highlighted yellow.');
+            } else {
+                showNotification('Please select an item to format.');
+            }
+        });
+
+        document.getElementById('orangeHighlightBtn').addEventListener('click', () => {
+            if (selectedItem) {
+                saveState();
+                const content = selectedItem.querySelector('.content');
+                content.focus();
+                document.execCommand('backColor', false, 'orange');
+                showNotification('Text highlighted orange.');
+            } else {
+                showNotification('Please select an item to format.');
+            }
+        });
+
+        helpBtn.addEventListener('click', () => {
+            helpPopup.style.display = 'block';
+        });
+
+        closeHelpBtn.addEventListener('click', () => {
+            helpPopup.style.display = 'none';
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!helpPopup.contains(e.target) && e.target !== helpBtn) {
+                helpPopup.style.display = 'none';
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.target.classList.contains('outline-title') || (!selectedItem && e.target !== document.body)) return;
+
+            const content = selectedItem ? selectedItem.querySelector('.content') : null;
+            if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
+                e.preventDefault();
+                saveState();
+                const parentList = selectedItem.parentElement.closest('.outline-list');
+                const level = selectedItem.className.match(/level-(\d)/)?.[1] || 0;
+                const newSiblingItem = createItem('', parseInt(level));
+                selectedItem.after(newSiblingItem);
+                updateItemState(newSiblingItem);
+                const parentItem = parentList.parentElement.closest('.outline-item');
+                if (parentItem) updateItemState(parentItem);
+                focusAndSelect(newSiblingItem);
+                adjustContainerWidth();
+            } else if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey) {
+                e.preventDefault();
+                saveState();
+                const subList = selectedItem.querySelector('.outline-list');
+                const level = selectedItem.className.match(/level-(\d)/)?.[1] || 0;
+                const newSubItem = createItem('', parseInt(level) + 1);
+                subList.appendChild(newSubItem);
+                updateItemState(selectedItem);
+                updateItemState(newSubItem);
+                focusAndSelect(newSubItem);
+                adjustContainerWidth();
+            } else if (e.key === 'Enter' && e.ctrlKey && selectedItem) {
+                e.preventDefault();
+                saveState();
+                content.focus();
+                const selection = window.getSelection();
+                const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : document.createRange();
+                const br = document.createElement('br');
+
+                if (content.innerHTML === '' || content.innerHTML === '<br>') {
+                    content.innerHTML = '';
+                    content.appendChild(br);
+                    range.selectNodeContents(content);
+                    range.collapse(false);
+                } else {
+                    range.insertNode(br);
+                    range.setStartAfter(br);
+                    range.setEndAfter(br);
+                }
+
+                selection.removeAllRanges();
+                selection.addRange(range);
+
+                showNotification('Line break inserted.');
+            } else if (e.key === 'Delete' && e.shiftKey && selectedItem) {
+                e.preventDefault();
+                if (confirm('Are you sure you want to delete this item?')) {
+                    saveState();
+                    const parentItem = selectedItem.parentElement.closest('.outline-item');
+                    const parentList = selectedItem.parentElement.closest('.outline-list');
+                    selectedItem.remove();
+                    selectedItem = null;
+                    if (parentItem) updateItemState(parentItem);
+                    if (parentList.children.length > 0) focusAndSelect(parentList.children[0]);
+                    showNotification('Item deleted.');
+                    adjustContainerWidth();
+                }
+            } else if (e.key === 'Tab' && selectedItem) {
+                e.preventDefault();
+                const allItems = [...outlineList.querySelectorAll('.outline-item')];
+                const currentIndex = allItems.indexOf(selectedItem);
+                if (currentIndex < allItems.length - 1) {
+                    focusAndSelect(allItems[currentIndex + 1]);
+                }
+            } else if (e.key === 'ArrowUp' && selectedItem) {
+                e.preventDefault();
+                const allItems = [...outlineList.querySelectorAll('.outline-item')];
+                const currentIndex = allItems.indexOf(selectedItem);
+                if (currentIndex > 0) {
+                    focusAndSelect(allItems[currentIndex - 1]);
+                }
+            } else if (e.key === 'ArrowDown' && selectedItem) {
+                e.preventDefault();
+                const allItems = [...outlineList.querySelectorAll('.outline-item')];
+                const currentIndex = allItems.indexOf(selectedItem);
+                if (currentIndex < allItems.length - 1) {
+                    focusAndSelect(allItems[currentIndex + 1]);
+                }
+            } else if (e.key === 'ArrowLeft' && selectedItem) {
+                e.preventDefault();
+                const toggle = selectedItem.querySelector('.toggle-btn');
+                if (toggle && !selectedItem.classList.contains('hidden')) {
+                    selectedItem.classList.add('hidden');
+                    toggle.textContent = '▶';
+                } else {
+                    const parentItem = selectedItem.parentElement.closest('.outline-item');
+                    if (parentItem) focusAndSelect(parentItem);
+                }
+            } else if (e.key === 'ArrowRight' && selectedItem) {
+                e.preventDefault();
+                const toggle = selectedItem.querySelector('.toggle-btn');
+                if (toggle && selectedItem.classList.contains('hidden')) {
+                    selectedItem.classList.remove('hidden');
+                    toggle.textContent = '▼';
+                } else {
+                    const subList = selectedItem.querySelector('.outline-list');
+                    if (subList.children.length > 0) focusAndSelect(subList.children[0]);
+                }
+            } else if (e.ctrlKey && e.key === 'z') {
+                e.preventDefault();
+                undo();
+            } else if (e.ctrlKey && e.key === 'y') {
+                e.preventDefault();
+                redo();
+            } else if (e.ctrlKey && e.key === 'b' && selectedItem) {
+                e.preventDefault();
+                saveState();
+                document.execCommand('bold');
+                showNotification('Text bolded.');
+            } else if (e.ctrlKey && e.key === 'h' && !e.shiftKey && selectedItem) {
+                e.preventDefault();
+                saveState();
+                document.execCommand('backColor', false, 'yellow');
+                showNotification('Text highlighted yellow.');
+            } else if (e.ctrlKey && e.shiftKey && e.key === 'H' && selectedItem) {
+                e.preventDefault();
+                saveState();
+                document.execCommand('backColor', false, 'orange');
+                showNotification('Text highlighted orange.');
+            } else if (e.ctrlKey && e.shiftKey && e.key === 'F' && selectedItem) {
+                e.preventDefault();
+                saveState();
+                content.focus();
+                const selection = window.getSelection();
+
+                if (selection.rangeCount > 0 && content.contains(selection.anchorNode) && !selection.isCollapsed) {
+                    const range = selection.getRangeAt(0);
+                    const fragment = range.extractContents();
+                    const textNode = document.createTextNode(fragment.textContent);
+                    range.insertNode(textNode);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                } else {
+                    const plainText = content.textContent;
+                    content.innerHTML = plainText;
+                    content.style.fontSize = '';
+                    content.style.fontFamily = '';
+                }
+
+                showNotification('Formatting toggled off.');
+            } else if (e.ctrlKey && e.shiftKey && e.key === 'V') {
+                e.preventDefault();
+                const asSubItems = selectedItem && confirm('Paste as sub-items of the selected item? Click "Cancel" to paste as main items.');
+                pasteAsItems(asSubItems);
+            }
+        });
+
+        document.querySelectorAll('.outline-item').forEach(item => {
+            updateItemState(item);
+        });
+        saveState(); // Initial state
+        adjustContainerWidth(); // Initial adjustment
+    </script>
+    <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9284843cf9f8bd4b',t:'MTc0MzMwNTMwMi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script>
+</body>
+</html>
