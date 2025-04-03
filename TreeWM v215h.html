@@ -57,8 +57,8 @@
         white-space: nowrap; 
     }
     .outline-item { 
-        padding: 4px;
-        margin: 2px 0; 
+        padding: 1px;
+        margin: 0px 0; 
         cursor: move; 
         display: flex; 
         align-items: flex-start; 
@@ -84,10 +84,10 @@
     .content-wrapper::before { 
         content: '•'; 
         color: #6b7280; 
-        font-size: 20px; 
+        font-size: 24px; 
         position: absolute; 
-        left: -6px; 
-        top: -4px; 
+        left: -3px; 
+        top: -3px; 
     }
     .checkbox { 
         margin-left: 5px; 
@@ -156,7 +156,7 @@
         flex-shrink: 0; 
         margin-left: 3px; 
         user-select: none; 
-        font-size: 10px; 
+        font-size: 8px; 
     }
     .no-toggle { 
         width: 12px; 
@@ -235,6 +235,12 @@
     #fontSizeBtn:hover, #fontFamilyBtn:hover, #allFontSizeBtn:hover, #allFontFamilyBtn:hover {
         background: linear-gradient(#c026d3, #a21caf);
     }
+#pdfFitAllStyledOpenBtn { 
+    background: linear-gradient(#22c55e, #16a34a); 
+}
+#pdfFitAllStyledOpenBtn:hover { 
+    background: linear-gradient(#16a34a, #15803d); 
+}
     .outline-list { 
         padding-left: 20px; 
         position: relative; 
@@ -428,7 +434,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&family=Open+Sans:wght@400&display=swap" rel="stylesheet">
 </head>
 <body>
 <div class="outline-container">
@@ -457,7 +463,7 @@
             <button id="printBtn" title="Print outline">Print</button>
             <button id="exportOPMLBtn" title="Export as OPML">Exp OPML</button>
             <button id="importOPMLBtn" title="Import from OPML">Imp OPML</button>
-            <button id="pdfOpenBtn" title="Open outline as PDF">PDF Open</button>
+            <button id="pdfOpenBtn" title="Open outline as PDF with short one">PDF Open</button>
             <button id="pdfDownloadBtn" title="Download outline as PDF">PDF Download</button>
             <button id="deleteBtn" title="Delete selected item (Shift + Delete)">Delete</button>
             <button id="undoBtn" title="Undo last action (Ctrl + Z)">Undo</button>
@@ -515,6 +521,11 @@
             <button id="portraitBtn" style="margin: 0 10px;">Portrait</button>
             <button id="landscapeBtn" style="margin: 0 10px; background: linear-gradient(#10b981, #059669);">Landscape</button>
             <button id="cancelOrientationBtn" style="margin: 0 10px; background: linear-gradient(#ef4444, #dc2626);">Cancel</button>
+        </div>
+        <div style="text-align: center; margin-top: 10px;">
+            <label style="color: #4b5563; font-size: 12px;">
+                <input type="checkbox" id="fitAllCheckbox" style="margin-right: 5px;"> Fit All Pages
+            </label>
         </div>
     </div>
 </div>
@@ -849,60 +860,92 @@
         }
     });
 
-    function pasteAsItems(asSubItems = false) {
-        navigator.clipboard.readText().then(text => {
-            processPastedText(text, asSubItems);
-        }).catch(err => {
-            console.error('Failed to read clipboard:', err);
-            // Fallback to manual paste with prompt
-            const manualText = prompt('Unable to access clipboard automatically. Please paste your text here:');
-            if (manualText !== null) { // User didn't cancel the prompt
-                processPastedText(manualText, asSubItems);
+function pasteAsItems(asSubItems = false) {
+    navigator.clipboard.readText().then(text => {
+        processPastedText(text, asSubItems);
+    }).catch(err => {
+        console.error('Failed to read clipboard:', err);
+        const manualText = prompt('Unable to access clipboard automatically. Please paste your text here:');
+        if (manualText !== null) {
+            processPastedText(manualText, asSubItems);
+        }
+    });
+}
+
+function processPastedText(text, asSubItems) {
+    if (!text) {
+        alert('No text provided.');
+        return;
+    }
+
+    const lines = text.split('\n').filter(line => line.trim() !== '');
+    if (lines.length === 0) {
+        alert('No valid content to paste.');
+        return;
+    }
+
+    // Parse lines into a hierarchical structure
+    const itemsTree = [];
+    const stack = [{ level: -1, children: itemsTree }]; // Stack to track nesting levels
+
+    lines.forEach(line => {
+        // Determine indentation level (count leading tabs or assume 4 spaces = 1 level)
+        const trimmedLine = line.trim();
+        const indentMatch = line.match(/^(\t+|\s{4,})/);
+        const indentLevel = indentMatch ? indentMatch[0].replace(/\s{4}/g, '\t').length : 0;
+        const content = trimmedLine.replace(/^[-•*]\s+/, ''); // Remove common bullet markers
+
+        // Adjust stack based on indentation level
+        while (stack.length > 1 && indentLevel <= stack[stack.length - 1].level) {
+            stack.pop();
+        }
+
+        const newItem = { text: content, level: indentLevel, children: [] };
+        stack[stack.length - 1].children.push(newItem);
+        stack.push(newItem);
+    });
+
+    // Determine base level and target list
+    let targetList = outlineList;
+    let baseLevel = 0;
+    if (asSubItems && currentItem) {
+        targetList = currentItem.querySelector('.outline-list');
+        baseLevel = parseInt(currentItem.className.match(/level-(\d)/)?.[1] || 0) + 1;
+    }
+
+    // Convert tree to outline items
+    function createItemsFromTree(nodes, parentList, levelOffset) {
+        nodes.forEach(node => {
+            const itemLevel = baseLevel + (node.level - (itemsTree[0]?.level || 0)) + levelOffset;
+            const newItem = createItem(node.text, itemLevel);
+            parentList.appendChild(newItem);
+            updateItemState(newItem);
+            if (node.children.length > 0) {
+                createItemsFromTree(node.children, newItem.querySelector('.outline-list'), 0);
             }
         });
     }
 
-    function processPastedText(text, asSubItems) {
-        if (!text) {
-            alert('No text provided.');
-            return;
-        }
+    createItemsFromTree(itemsTree, targetList, 0);
+    updateResizeBars();
 
-        const lines = text.split('\n').filter(line => line.trim() !== '');
-        if (lines.length === 0) {
-            alert('No valid content to paste.');
-            return;
-        }
-
-        let targetList = outlineList;
-        let level = 0;
-        if (asSubItems && currentItem) {
-            targetList = currentItem.querySelector('.outline-list');
-            level = parseInt(currentItem.className.match(/level-(\d)/)?.[1] || 0) + 1;
-        }
-
-        lines.forEach(line => {
-            const newItem = createItem(line.trim(), level);
-            targetList.appendChild(newItem);
-            updateItemState(newItem);
-        });
-
-        updateResizeBars();
-        const lastItem = targetList.lastElementChild;
-        if (lastItem) {
-            const content = lastItem.querySelector('.content');
-            content.focus();
-            currentItem = lastItem;
-        }
-
-        saveState(`Pasted as ${asSubItems ? 'Sub-Items' : 'Main Items'}`);
+    // Focus on the last top-level item pasted
+    const lastItem = targetList.lastElementChild;
+    if (lastItem) {
+        const content = lastItem.querySelector('.content');
+        content.focus();
+        currentItem = lastItem;
     }
 
-    document.getElementById('pasteAsItemsBtn').addEventListener('click', (e) => {
-        e.preventDefault();
-        const asSubItems = currentItem && confirm('Paste as sub-items of the selected item? Click "Cancel" to paste as main items.');
-        pasteAsItems(asSubItems);
-    });
+    saveState(`Pasted as ${asSubItems ? 'Sub-Items' : 'Main Items'} with Hierarchy`);
+}
+
+// Keep the existing event listener
+document.getElementById('pasteAsItemsBtn').addEventListener('click', (e) => {
+    e.preventDefault();
+    const asSubItems = currentItem && confirm('Paste as sub-items of the selected item? Click "Cancel" to paste as main items.');
+    pasteAsItems(asSubItems);
+});
 
     document.getElementById('colorBlackBtn').addEventListener('click', (e) => {
         e.preventDefault();
@@ -948,17 +991,20 @@
     const allFontFamilyBtn = document.getElementById('allFontFamilyBtn');
 
     const fontSizes = [
+        { label: '10', value: '10px' }, // Added new option
+        { label: '11', value: '11px' }, // Added new option
         { label: '12', value: '12px' },
         { label: '14', value: '14px' },
         { label: '16', value: '16px' },
         { label: '18', value: '18px' }
     ];
 
-    const fontFamilies = [
-        { label: 'Roboto', value: 'Roboto' },
-        { label: 'Arial', value: 'Arial' },
-        { label: 'Times New Roman', value: 'Times New Roman' }
-    ];
+const fontFamilies = [
+    { label: 'Roboto', value: 'Roboto' },
+    { label: 'Arial', value: 'Arial' },
+    { label: 'Times New Roman', value: 'Times New Roman' },
+    { label: 'Open Sans', value: 'Open Sans' } // Added new option
+];
 
     function createDropdown(options, property, button, applyToAll = false) {
         if (activeDropdown) {
@@ -1476,19 +1522,26 @@
         document.getElementById('toggleFormattingBtn').classList.toggle('active', formattingEnabled);
     }
 
-function generatePDFForView(forDownload = false) {
+function generatePDF(forDownload = false) {
     return new Promise((resolve) => {
         const modal = document.getElementById('orientationModal');
         const portraitBtn = document.getElementById('portraitBtn');
         const landscapeBtn = document.getElementById('landscapeBtn');
         const cancelBtn = document.getElementById('cancelOrientationBtn');
         const closeModalBtn = document.getElementById('closeOrientationModal');
+        const fitAllCheckbox = document.getElementById('fitAllCheckbox');
 
-        // Show the modal
         modal.style.display = 'flex';
 
-        // Function to hide modal and proceed
-        const proceedWithOrientation = (orientation) => {
+        const outlineContainer = document.querySelector('.outline-container');
+        const controlsContainer = document.querySelector('.controls-container');
+        const resizeBarContainer = document.getElementById('resizeBarContainer');
+        const outlineList = document.getElementById('outlineList');
+        const resizeHandle = document.querySelector('.resize-handle');
+        const statusBar = document.querySelector('.status-bar');
+        let tempContainer;
+
+        const proceedWithOrientation = async (orientation) => {
             modal.style.display = 'none';
             if (orientation === null) {
                 updateStatus('PDF Generation Cancelled');
@@ -1496,117 +1549,152 @@ function generatePDFForView(forDownload = false) {
                 return;
             }
 
+            const fitAll = fitAllCheckbox.checked;
             const doc = new jsPDF({
                 orientation: orientation,
                 unit: 'mm',
                 format: 'a4'
             });
-            const outlineContainer = document.querySelector('.outline-container');
-            const controlsContainer = document.querySelector('.controls-container');
-            const resizeBarContainer = document.getElementById('resizeBarContainer');
-            const outlineList = document.getElementById('outlineList');
-            const resizeHandle = document.querySelector('.resize-handle');
-            const statusBar = document.querySelector('.status-bar');
 
             // Temporarily hide elements we don’t want in the PDF
             controlsContainer.style.display = 'none';
             resizeHandle.style.display = 'none';
             statusBar.style.display = 'none';
-
-            // Ensure the outline list is fully visible
             outlineContainer.style.overflow = 'visible';
             outlineList.style.overflow = 'visible';
 
-            // Capture only the area starting from the resize-bar-container downward
-            const captureElement = document.createElement('div');
-            captureElement.style.position = 'absolute';
-            captureElement.style.top = `${resizeBarContainer.offsetTop}px`;
-            captureElement.style.left = `${outlineContainer.offsetLeft}px`;
-            captureElement.style.width = `${outlineContainer.offsetWidth}px`;
-            captureElement.style.height = `${outlineContainer.offsetHeight - resizeBarContainer.offsetTop}px`;
-            captureElement.style.background = '#f8f9fa';
-            captureElement.appendChild(resizeBarContainer.cloneNode(true));
-            captureElement.appendChild(outlineList.cloneNode(true));
-            document.body.appendChild(captureElement);
+            // Create a temporary container for just the outline content
+            tempContainer = document.createElement('div');
+            tempContainer.style.position = 'absolute';
+            tempContainer.style.top = '0';
+            tempContainer.style.left = '-9999px'; // Off-screen
+            tempContainer.style.width = `${outlineContainer.offsetWidth}px`;
+            tempContainer.style.background = '#f8fafc';
+            tempContainer.style.padding = '15px';
+            tempContainer.appendChild(resizeBarContainer.cloneNode(true));
+            tempContainer.appendChild(outlineList.cloneNode(true));
+            document.body.appendChild(tempContainer);
 
-            html2canvas(captureElement, {
-                scale: 2,
-                useCORS: true,
-                backgroundColor: '#f8f9fa'
-            }).then(canvas => {
-                // Clean up temporary element
-                document.body.removeChild(captureElement);
+            const pdfWidth = doc.internal.pageSize.getWidth();
+            const pdfHeight = doc.internal.pageSize.getHeight();
+            const scale = 2; // Higher resolution
+            const contentWidth = tempContainer.offsetWidth;
+            const contentHeight = tempContainer.scrollHeight;
+            const pageHeightInPixels = (pdfHeight * scale * 96) / 25.4; // mm to pixels at 96 DPI
+            const ratio = (pdfWidth * scale * 96 / 25.4) / contentWidth; // Scale to fit width
 
-                // Restore visibility of hidden elements
-                controlsContainer.style.display = '';
-                resizeHandle.style.display = '';
-                statusBar.style.display = '';
-                outlineContainer.style.overflow = '';
-                outlineList.style.overflow = 'auto';
+            if (fitAll) {
+                // Multi-page PDF with all content
+                async function captureAndAddPages(currentY = 0) {
+                    const totalHeight = contentHeight * ratio;
+                    if (currentY >= totalHeight) {
+                        finalizePDF('Fit All');
+                        return;
+                    }
 
-                const imgData = canvas.toDataURL('image/png');
-                const imgWidth = canvas.width;
-                const imgHeight = canvas.height;
+                    try {
+                        const canvas = await html2canvas(tempContainer, {
+                            scale: scale,
+                            width: contentWidth,
+                            height: Math.min(pageHeightInPixels / ratio, contentHeight - currentY / ratio),
+                            y: currentY / ratio,
+                            backgroundColor: '#f8fafc',
+                            useCORS: true
+                        });
 
-                const pdfWidth = doc.internal.pageSize.getWidth();
-                const pdfHeight = doc.internal.pageSize.getHeight();
-                const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
-                const scaledWidth = imgWidth * ratio;
-                const scaledHeight = imgHeight * ratio;
+                        const imgData = canvas.toDataURL('image/png');
+                        const imgWidth = canvas.width;
+                        const imgHeight = canvas.height;
+                        const scaledWidth = pdfWidth;
+                        const scaledHeight = (imgHeight * pdfWidth) / imgWidth;
 
-                // Center the image on the PDF page
-                const xOffset = (pdfWidth - scaledWidth) / 2;
-                const yOffset = (pdfHeight - scaledHeight) / 2;
+                        if (currentY > 0) doc.addPage();
+                        doc.addImage(imgData, 'PNG', 0, 0, scaledWidth, scaledHeight);
 
-                doc.addImage(imgData, 'PNG', xOffset, yOffset, scaledWidth, scaledHeight);
+                        await captureAndAddPages(currentY + pageHeightInPixels);
+                    } catch (error) {
+                        console.error('Error generating PDF:', error);
+                        alert('Failed to generate PDF. Check console for details.');
+                        cleanup();
+                        resolve();
+                    }
+                }
 
+                await captureAndAddPages();
+            } else {
+                // Single-page PDF (original behavior)
+                try {
+                    const canvas = await html2canvas(tempContainer, {
+                        scale: scale,
+                        useCORS: true,
+                        backgroundColor: '#f8fafc'
+                    });
+
+                    const imgData = canvas.toDataURL('image/png');
+                    const imgWidth = canvas.width;
+                    const imgHeight = canvas.height;
+                    const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+                    const scaledWidth = imgWidth * ratio;
+                    const scaledHeight = imgHeight * ratio;
+                    const xOffset = (pdfWidth - scaledWidth) / 2;
+                    const yOffset = (pdfHeight - scaledHeight) / 2;
+
+                    doc.addImage(imgData, 'PNG', xOffset, yOffset, scaledWidth, scaledHeight);
+                    finalizePDF('Single Page');
+                } catch (error) {
+                    console.error('Error generating PDF:', error);
+                    alert('Failed to generate PDF. Check console for details.');
+                    cleanup();
+                    resolve();
+                }
+            }
+
+            function finalizePDF(mode) {
+                cleanup();
+                const filename = `${outlineTitle.value || 'outline'}_${orientation}_${mode.toLowerCase().replace(' ', '_')}.pdf`;
                 if (forDownload) {
-                    doc.save(`${outlineTitle.value || 'outline'}_${orientation}.pdf`);
-                    updateStatus(`Downloaded Visual PDF (${orientation})`);
+                    doc.save(filename);
+                    updateStatus(`Downloaded PDF (${mode}, ${orientation})`);
                 } else {
                     const pdfBlob = doc.output('blob');
                     const url = URL.createObjectURL(pdfBlob);
                     window.open(url);
-                    updateStatus(`Generated Visual PDF (${orientation})`);
+                    updateStatus(`Opened PDF (${mode}, ${orientation})`);
                 }
                 resolve();
-            }).catch(error => {
-                console.error('Error generating PDF:', error);
-                alert('Failed to generate PDF. Check console for details.');
+            }
+
+            function cleanup() {
+                if (tempContainer && tempContainer.parentNode) {
+                    document.body.removeChild(tempContainer);
+                }
                 controlsContainer.style.display = '';
                 resizeHandle.style.display = '';
                 statusBar.style.display = '';
                 outlineContainer.style.overflow = '';
                 outlineList.style.overflow = 'auto';
-                if (captureElement.parentNode) document.body.removeChild(captureElement);
-                modal.style.display = 'none';
-                resolve();
-            });
+            }
         };
 
-        // Event listeners for buttons
         portraitBtn.onclick = () => proceedWithOrientation('portrait');
         landscapeBtn.onclick = () => proceedWithOrientation('landscape');
         cancelBtn.onclick = () => proceedWithOrientation(null);
         closeModalBtn.onclick = () => proceedWithOrientation(null);
-
-        // Close modal when clicking outside
         modal.onclick = (e) => {
-            if (e.target === modal) {
-                proceedWithOrientation(null);
-            }
+            if (e.target === modal) proceedWithOrientation(null);
         };
     });
 }
 
+// Update the existing event listener for pdfOpenBtn
 document.getElementById('pdfOpenBtn').addEventListener('click', () => {
-    generatePDFForView(false);
+    generatePDF(false);
 });
 
+// Update the pdfDownloadBtn to use the new function as well
 document.getElementById('pdfDownloadBtn').addEventListener('click', () => {
-    generatePDFForView(true);
+    generatePDF(true);
 });
-
     function exportOPML() {
         const opmlDoc = document.implementation.createDocument('', '', null);
         const opml = opmlDoc.createElement('opml');
@@ -1828,24 +1916,34 @@ document.getElementById('pdfDownloadBtn').addEventListener('click', () => {
         saveState('Resized Frame');
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
-        const initialItem = outlineList.querySelector('.outline-item');
-        if (initialItem) {
-            currentItem = initialItem;
-            updateItemState(initialItem);
-            updateResizeBars();
-            updateFormattingMode();
-            saveState('Initial Load');
-        }
-        updateStatus('Loaded');
-    });
+document.addEventListener('DOMContentLoaded', () => {
+    const initialItem = outlineList.querySelector('.outline-item');
+    if (initialItem) {
+        currentItem = initialItem;
+        // Attach toggle event listener to the initial item's toggle element
+        const toggle = initialItem.querySelector('.no-toggle');
+        toggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (toggle.classList.contains('toggle-btn')) {
+                const item = toggle.closest('.outline-item');
+                item.classList.toggle('hidden');
+                toggle.textContent = item.classList.contains('hidden') ? '▶' : '▼';
+            }
+        });
+        updateItemState(initialItem);
+        updateResizeBars();
+        updateFormattingMode();
+        saveState('Initial Load');
+    }
+    updateStatus('Loaded');
+});
 
+ 
 </script>
 <footer style="text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px;">
     Copyright © 2025 Dr. Wen-Ming Yang <br>
-    20250330: v2.15 PDF as the one we see in landscape or portal view option (popup).
-        <img src="https://hitwebcounter.com/counter/counter.php?page=20090258&style=0002&nbdigits=5&type=page&initCount=0" title="Counter Widget" Alt="Visit counter For Websites"   border="0" /></a>   
-
+    20250403: v2.15h hierarchy paste items.
+    <img src="https://hitwebcounter.com/counter/counter.php?page=20090258&style=0002&nbdigits=5&type=page&initCount=0" title="Counter Widget" Alt="Visit counter For Websites"   border="0" /></a>   
 </footer> 
 <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'92739abd7f51674d',t:'MTc0MzEyNzk2Ni4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
