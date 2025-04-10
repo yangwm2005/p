@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Previewer</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f4f7fa;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            width: 100%;
+            max-width: 100%;
+            min-width: 800px;
+            min-height: 600px;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            resize: both;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+            transition: background-color 0.3s;
+        }
+        .container.drag-over {
+            background-color: #e9f1ff;
+            border: 2px dashed #007bff;
+        }
+        .control-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+            margin-bottom: 20px;
+        }
+        .control-bar .folder-info {
+            font-weight: bold;
+            color: #555;
+            flex-grow: 1;
+            text-align: center;
+            margin: 0 10px;
+        }
+        .control-bar .nav-buttons {
+            display: flex;
+            align-items: center;
+        }
+        .control-bar .nav-buttons button {
+            padding: 8px 16px;
+            margin: 0 5px;
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .control-bar .nav-buttons button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .control-bar .nav-buttons button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+        .control-bar .nav-buttons .load-button {
+            padding: 8px 12px;
+            font-size: 12px;
+            background-color: #28a745;
+        }
+        .control-bar .nav-buttons .load-button:hover:not(:disabled) {
+            background-color: #218838;
+        }
+        .control-bar .nav-buttons .zoom-button {
+            padding: 8px 12px;
+            background-color: #6c757d;
+        }
+        .control-bar .nav-buttons .zoom-button:hover:not(:disabled) {
+            background-color: #5a6268;
+        }
+        .content-area {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        .left-sidebar {
+            width: 200px;
+            background: #f8f9fa;
+            border-right: 1px solid #e0e0e0;
+            padding: 10px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            transition: width 0.3s ease;
+            position: relative;
+        }
+        .left-sidebar.collapsed {
+            width: 24px;
+            padding: 10px 0;
+        }
+        .left-sidebar.collapsed .sidebar-header span,
+        .left-sidebar.collapsed .preview-container {
+            display: none;
+        }
+        .sidebar-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .sidebar-toggle {
+            background: none;
+            border: none;
+            color: #007bff;
+            font-size: 12px;
+            cursor: pointer;
+            padding: 5px;
+            transition: color 0.3s;
+            z-index: 1;
+        }
+        .left-sidebar .sidebar-toggle {
+            margin-right: 5px;
+        }
+        .right-sidebar .sidebar-toggle {
+            margin-left: 5px;
+            position: absolute;
+            right: 5px;
+            top: 5px;
+        }
+        .sidebar-toggle:hover {
+            color: #0056b3;
+        }
+        .main-content {
+            flex: 1;
+            overflow: auto;
+            padding: 0 20px;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .iframe-container {
+            flex: 1;
+            margin: 0 auto;
+            text-align: center;
+            width: 100%;
+            max-width: 100%;
+            position: relative;
+        }
+        iframe {
+            border: 1px solid #ddd;
+            width: 100%;
+            height: 100%;
+            resize: both;
+            overflow: auto;
+            display: block;
+            border-radius: 4px;
+            background: #fff;
+            margin: 0 auto;
+        }
+        .preview-container {
+            margin: 0;
+            width: 100%;
+        }
+        .folder-section {
+            margin-bottom: 15px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            background: #fafafa;
+            width: 100%;
+        }
+        .folder-section h3 {
+            margin: 0;
+            padding: 8px;
+            cursor: pointer;
+            background-color: #e9ecef;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+            color: #333;
+            border-radius: 6px 6px 0 0;
+        }
+        .folder-section h3:hover {
+            background-color: #dee2e6;
+        }
+        .folder-section h3::after {
+            content: '▼';
+            font-size: 10px;
+        }
+        .folder-section.collapsed h3::after {
+            content: '▶';
+        }
+        .preview-items {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-start;
+            padding: 10px;
+            width: 100%;
+        }
+        .folder-section.collapsed .preview-items {
+            display: none;
+        }
+        .preview-item {
+            margin: 5px;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .preview-item:hover {
+            transform: scale(1.05);
+        }
+        .preview-item.active {
+            background-color: #e9f1ff;
+            border: 2px solid #007bff;
+            border-radius: 4px;
+            padding: 2px;
+        }
+        .preview-item img, .preview-item canvas {
+            width: 80px;
+            height: 80px;
+            object-fit: contain;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: #fff;
+        }
+        .preview-item span {
+            display: block;
+            font-size: 10px;
+            word-break: break-all;
+            max-width: 80px;
+            color: #666;
+            margin-top: 3px;
+        }
+        .right-sidebar {
+            width: 200px;
+            background: #f8f9fa;
+            border-left: 1px solid #e0e0e0;
+            padding: 10px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            transition: width 0.3s ease;
+            position: relative;
+        }
+        .right-sidebar.collapsed {
+            width: 24px;
+            padding: 10px 0;
+        }
+        .right-sidebar.collapsed .sidebar-header span,
+        .right-sidebar.collapsed .sidebar-section {
+            display: none;
+        }
+        .right-sidebar .sidebar-header {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        .right-sidebar .search-container {
+            margin: 0;
+            flex-grow: 1;
+        }
+        .right-sidebar .search-container input {
+            width: 100%;
+            padding: 6px;
+            font-size: 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .sidebar-section {
+            margin-bottom: 15px;
+        }
+        .sidebar-section h4 {
+            margin: 0;
+            padding: 8px;
+            cursor: pointer;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #333;
+        }
+        .sidebar-section h4:hover {
+            background-color: #dee2e6;
+        }
+        .sidebar-section h4::after {
+            content: '▼';
+            font-size: 10px;
+            float: right;
+        }
+        .sidebar-section.collapsed h4::after {
+            content: '▶';
+        }
+        .sidebar-files {
+            padding: 5px 0;
+        }
+        .sidebar-section.collapsed .sidebar-files {
+            display: none;
+        }
+        .sidebar-file {
+            padding: 5px 10px;
+            font-size: 12px;
+            color: #007bff;
+            cursor: pointer;
+            word-break: break-all;
+        }
+        .sidebar-file:hover {
+            background-color: #e9f1ff;
+            color: #0056b3;
+        }
+        .sidebar-file.active {
+            background-color: #007bff;
+            color: #fff;
+            border-radius: 4px;
+        }
+        footer {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 12px;
+            color: #777;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="control-bar">
+            <div class="folder-info" id="folderInfo"></div>
+            <div class="nav-buttons">
+                <button class="zoom-button" id="zoomOutBtn">−</button>
+                <button class="zoom-button" id="zoomInBtn">+</button>
+                <button id="prevBtn" disabled>Previous</button>
+                <button id="nextBtn" disabled>Next</button>
+                <button class="load-button" id="loadButton">Load Folders</button>
+                <input type="file" id="folderInput" webkitdirectory mozdirectory msdirectory odirectory directory multiple style="display: none;">
+            </div>
+        </div>
+        <div class="content-area">
+            <div class="left-sidebar collapsed" id="leftSidebar">
+                <div class="sidebar-header">
+                    <button class="sidebar-toggle" id="leftSidebarToggle">►</button>
+                    <span>Previews</span>
+                </div>
+                <div class="preview-container" id="previewContainer"></div>
+            </div>
+            <div class="main-content">
+                <div class="iframe-container">
+                    <iframe id="quoteFrame"></iframe>
+                </div>
+            </div>
+            <div class="right-sidebar" id="rightSidebar">
+                <div class="sidebar-header">
+                    <div class="search-container">
+                        <input type="text" id="searchInput" placeholder="Search files..." oninput="filterFiles()">
+                    </div>
+                    <button class="sidebar-toggle" id="rightSidebarToggle">◄</button>
+                </div>
+                <div id="sidebarContent"></div>
+            </div>
+        </div>
+    </div>
+    <footer>
+        Version 1.61 Copyright © 2005 by Dr. Wen-Ming Yang on 20250410 (only on server with draw-n-drop function)
+    </footer>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+
+        let quoteFolders = [];
+        let currentFolderIndex = 0;
+        let currentImageIndex = 0;
+        let zoomLevel = 1.0;
+        const supportedExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.txt', '.pdf'];
+
+        async function loadFolders(event) {
+            let files = [];
+            let isFolder = false;
+
+            try {
+                if (event.target && event.target.files) {
+                    // Handle file input case
+                    files = Array.from(event.target.files);
+                    isFolder = files.some(file => file.webkitRelativePath && file.webkitRelativePath.includes('/'));
+                } else if (event.dataTransfer) {
+                    // Handle drag-and-drop case
+                    const items = event.dataTransfer.items;
+                    
+                    if (items && items.length > 0) {
+                        // Process each dropped item
+                        for (let i = 0; i < items.length; i++) {
+                            const entry = items[i].webkitGetAsEntry();
+                            if (entry) {
+                                if (entry.isFile) {
+                                    const file = await getFileFromEntry(entry);
+                                    files.push(file);
+                                } else if (entry.isDirectory) {
+                                    isFolder = true;
+                                    const dirFiles = await readDirectory(entry);
+                                    files.push(...dirFiles);
+                                }
+                            }
+                        }
+                    } else if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+                        // Fallback for browsers that don't support webkitGetAsEntry
+                        files = Array.from(event.dataTransfer.files);
+                        isFolder = files.length > 1; // Best guess for folder
+                    }
+                }
+
+                // Validate we have files
+                if (files.length === 0) {
+                    throw new Error('No files were found in the dropped item.');
+                }
+
+                // If we didn't detect a folder structure but have multiple files, treat as single folder
+                if (!isFolder && files.length > 1) {
+                    isFolder = true;
+                    // Create a fake folder structure
+                    files.forEach(file => {
+                        if (!file.webkitRelativePath) {
+                            file.webkitRelativePath = `DroppedFolder/${file.name}`;
+                        }
+                    });
+                }
+
+                // Process the files into folders
+                const folderMap = new Map();
+
+                for (const file of files) {
+                    const relativePath = file.webkitRelativePath || '';
+                    const folderName = relativePath.split('/')[0] || 'DroppedFolder';
+                    
+                    if (!folderMap.has(folderName)) {
+                        folderMap.set(folderName, []);
+                    }
+                    
+                    if (supportedExtensions.some(ext => file.name.toLowerCase().endsWith(ext))) {
+                        folderMap.get(folderName).push(file);
+                    }
+                }
+
+                // Update the application state
+                const newFolders = Array.from(folderMap.entries())
+                    .map(([folder, files]) => ({
+                        folder,
+                        images: files
+                    }))
+                    .filter(f => f.images.length > 0);
+
+                if (newFolders.length === 0) {
+                    throw new Error('No supported files found in the dropped folder.');
+                }
+
+                // Merge with existing folders
+                newFolders.forEach(newFolder => {
+                    const existingIndex = quoteFolders.findIndex(f => f.folder === newFolder.folder);
+                    if (existingIndex >= 0) {
+                        quoteFolders[existingIndex].images = [...quoteFolders[existingIndex].images, ...newFolder.images];
+                    } else {
+                        quoteFolders.push(newFolder);
+                    }
+                });
+
+                // Sort folders and update UI
+                quoteFolders.sort((a, b) => b.folder.localeCompare(a.folder));
+                
+                currentFolderIndex = 0;
+                currentImageIndex = 0;
+                zoomLevel = 1.0;
+                
+                displayPreviews();
+                displaySidebar();
+                displayImage();
+                updateFolderInfo();
+                
+                document.getElementById('prevBtn').disabled = false;
+                document.getElementById('nextBtn').disabled = false;
+
+            } catch (error) {
+                console.error('Error in loadFolders:', error);
+                alert(`Error loading folder: ${error.message}`);
+            }
+        }
+
+        // Helper function to get file from entry
+        async function getFileFromEntry(entry) {
+            return new Promise((resolve, reject) => {
+                entry.file(file => {
+                    if (!file.webkitRelativePath && entry.fullPath) {
+                        file.webkitRelativePath = entry.fullPath.startsWith('/') 
+                            ? entry.fullPath.slice(1) 
+                            : entry.fullPath;
+                    }
+                    resolve(file);
+                }, reject);
+            });
+        }
+
+        // Improved directory reading function
+        async function readDirectory(directory) {
+            const files = [];
+            const dirReader = directory.createReader();
+            
+            const readEntries = () => new Promise((resolve, reject) => {
+                dirReader.readEntries(resolve, reject);
+            });
+
+            try {
+                let entries;
+                do {
+                    entries = await readEntries();
+                    for (const entry of entries) {
+                        if (entry.isFile) {
+                            const file = await getFileFromEntry(entry);
+                            files.push(file);
+                        } else if (entry.isDirectory) {
+                            const subFiles = await readDirectory(entry);
+                            files.push(...subFiles);
+                        }
+                    }
+                } while (entries.length > 0);
+            } catch (error) {
+                console.error('Error reading directory:', directory.name, error);
+            }
+            
+            return files;
+        }
+
+        async function displayImage() {
+            if (quoteFolders.length === 0) return;
+            const file = quoteFolders[currentFolderIndex].images[currentImageIndex];
+            const iframe = document.getElementById('quoteFrame');
+            const timestamp = new Date().getTime();
+            let url;
+
+            try {
+                url = URL.createObjectURL(file);
+                const uniqueUrl = `${url}#t=${timestamp}`;
+
+                if (file.name.toLowerCase().endsWith('.txt')) {
+                    const text = await file.text();
+                    const htmlContent = `
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <meta charset="UTF-8">
+                            <title>${file.name}</title>
+                            <style>
+                                body { margin: 0; padding: 20px; font-family: monospace; overflow: auto; }
+                                pre { white-space: pre-wrap; word-wrap: break-word; width: 100%; height: 100%; margin: 0; transform: scale(${zoomLevel}); transform-origin: top left; }
+                            </style>
+                        </head>
+                        <body>
+                            <pre>${text}</pre>
+                        </body>
+                        </html>
+                    `;
+                    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+                    iframe.src = `${URL.createObjectURL(blob)}#t=${timestamp}`;
+                } else {
+                    iframe.src = uniqueUrl;
+                }
+
+                console.log(`Displaying: ${file.webkitRelativePath} at zoom level ${zoomLevel}`);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+                updateFolderInfo();
+                iframe.style.resize = 'both';
+                iframe.style.transform = `scale(${zoomLevel})`;
+                iframe.style.transformOrigin = 'top left';
+                highlightActiveFile();
+            } catch (error) {
+                console.error('Error in displayImage:', error);
+                alert('Failed to display file: ' + error.message);
+            }
+        }
+
+        function highlightActiveFile() {
+            try {
+                const currentFile = quoteFolders[currentFolderIndex].images[currentImageIndex];
+                const currentFilePath = `${quoteFolders[currentFolderIndex].folder}/${currentFile.name}`;
+
+                document.querySelectorAll('.preview-item.active').forEach(item => item.classList.remove('active'));
+                document.querySelectorAll('.sidebar-file.active').forEach(item => item.classList.remove('active'));
+
+                const previewItem = document.querySelector(`.preview-item[data-filename="${currentFilePath}"]`);
+                if (previewItem) previewItem.classList.add('active');
+
+                const sidebarSection = document.querySelector(`.sidebar-section[data-folder="${quoteFolders[currentFolderIndex].folder}"]`);
+                if (sidebarSection) {
+                    const sidebarFile = Array.from(sidebarSection.querySelectorAll('.sidebar-file'))
+                        .find(file => file.textContent === currentFile.name);
+                    if (sidebarFile) sidebarFile.classList.add('active');
+                }
+            } catch (error) {
+                console.error('Error in highlightActiveFile:', error);
+            }
+        }
+
+        function updateFolderInfo() {
+            const folderInfo = document.getElementById('folderInfo');
+            if (quoteFolders.length > 0) {
+                const currentFolder = quoteFolders[currentFolderIndex].folder;
+                const currentFile = quoteFolders[currentFolderIndex].images[currentImageIndex].name;
+                folderInfo.textContent = `Folder: ${currentFolder} | File: ${currentFile} | Zoom: ${Math.round(zoomLevel * 100)}%`;
+            } else {
+                folderInfo.textContent = '';
+            }
+        }
+
+        async function displayPreviews() {
+            const previewContainer = document.getElementById('previewContainer');
+            previewContainer.innerHTML = '';
+
+            for (const [folderIndex, folder] of quoteFolders.entries()) {
+                const section = document.createElement('div');
+                section.className = 'folder-section';
+                section.dataset.folder = folder.folder;
+                
+                const header = document.createElement('h3');
+                header.textContent = folder.folder;
+                header.onclick = () => section.classList.toggle('collapsed');
+                section.appendChild(header);
+
+                const itemsDiv = document.createElement('div');
+                itemsDiv.className = 'preview-items';
+
+                for (const [imageIndex, file] of folder.images.entries()) {
+                    const previewItem = document.createElement('div');
+                    previewItem.className = 'preview-item';
+                    previewItem.dataset.filename = `${folder.folder}/${file.name}`;
+                    
+                    const previewElement = await createPreview(file);
+                    const label = document.createElement('span');
+                    label.textContent = file.name;
+
+                    previewItem.appendChild(previewElement);
+                    previewItem.appendChild(label);
+                    
+                    previewItem.onclick = () => {
+                        console.log(`Preview clicked: Folder ${folderIndex}, File ${imageIndex}`);
+                        currentFolderIndex = folderIndex;
+                        currentImageIndex = imageIndex;
+                        zoomLevel = 1.0;
+                        displayImage();
+                    };
+                    
+                    previewItem.ondblclick = async () => {
+                        const url = URL.createObjectURL(file);
+                        if (file.name.toLowerCase().endsWith('.txt')) {
+                            const text = await file.text();
+                            const blob = new Blob(
+                                [`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${file.name}</title></head><body><pre style="font-family: monospace; padding: 20px; white-space: pre-wrap; word-wrap: break-word;">${text}</pre></body></html>`],
+                                { type: 'text/html;charset=utf-8' }
+                            );
+                            const textUrl = URL.createObjectURL(blob);
+                            window.open(textUrl, '_blank');
+                            setTimeout(() => URL.revokeObjectURL(textUrl), 1000);
+                        } else {
+                            window.open(url, '_blank');
+                            setTimeout(() => URL.revokeObjectURL(url), 1000);
+                        }
+                    };
+
+                    itemsDiv.appendChild(previewItem);
+                }
+
+                section.appendChild(itemsDiv);
+                previewContainer.appendChild(section);
+            }
+            filterFiles();
+        }
+
+        function displaySidebar() {
+            const sidebarContent = document.getElementById('sidebarContent');
+            sidebarContent.innerHTML = '';
+
+            for (const [folderIndex, folder] of quoteFolders.entries()) {
+                const section = document.createElement('div');
+                section.className = 'sidebar-section';
+                section.dataset.folder = folder.folder;
+
+                const header = document.createElement('h4');
+                header.textContent = folder.folder;
+                header.onclick = () => section.classList.toggle('collapsed');
+                section.appendChild(header);
+
+                const filesDiv = document.createElement('div');
+                filesDiv.className = 'sidebar-files';
+
+                for (const [imageIndex, file] of folder.images.entries()) {
+                    const fileDiv = document.createElement('div');
+                    fileDiv.className = 'sidebar-file';
+                    fileDiv.textContent = file.name;
+                    
+                    fileDiv.onclick = () => {
+                        console.log(`Sidebar clicked: Folder ${folderIndex}, File ${imageIndex}`);
+                        currentFolderIndex = folderIndex;
+                        currentImageIndex = imageIndex;
+                        zoomLevel = 1.0;
+                        displayImage();
+                    };
+                    
+                    fileDiv.ondblclick = async () => {
+                        const url = URL.createObjectURL(file);
+                        if (file.name.toLowerCase().endsWith('.txt')) {
+                            const text = await file.text();
+                            const blob = new Blob(
+                                [`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${file.name}</title></head><body><pre style="font-family: monospace; padding: 20px; white-space: pre-wrap; word-wrap: break-word;">${text}</pre></body></html>`],
+                                { type: 'text/html;charset=utf-8' }
+                            );
+                            const textUrl = URL.createObjectURL(blob);
+                            window.open(textUrl, '_blank');
+                            setTimeout(() => URL.revokeObjectURL(textUrl), 1000);
+                        } else {
+                            window.open(url, '_blank');
+                            setTimeout(() => URL.revokeObjectURL(url), 1000);
+                        }
+                    };
+
+                    filesDiv.appendChild(fileDiv);
+                }
+
+                section.appendChild(filesDiv);
+                sidebarContent.appendChild(section);
+            }
+        }
+
+        async function createPreview(file) {
+            const url = URL.createObjectURL(file);
+            if (file.name.toLowerCase().endsWith('.png') || file.name.toLowerCase().endsWith('.jpg') || 
+                file.name.toLowerCase().endsWith('.jpeg') || file.name.toLowerCase().endsWith('.gif')) {
+                const img = document.createElement('img');
+                img.src = url;
+                img.onload = () => URL.revokeObjectURL(url);
+                return img;
+            } else if (file.name.toLowerCase().endsWith('.txt')) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 80;
+                canvas.height = 80;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, 80, 80);
+                ctx.fillStyle = '#000';
+                ctx.font = '6px Arial';
+                ctx.textAlign = 'left';
+                const text = (await file.text()).split('\n')[0].substring(0, 20);
+                ctx.fillText('TXT', 5, 15);
+                ctx.fillText(text, 5, 25);
+                return canvas;
+            } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 80;
+                canvas.height = 80;
+                const ctx = canvas.getContext('2d');
+                try {
+                    const pdf = await pdfjsLib.getDocument(url).promise;
+                    const page = await pdf.getPage(1);
+                    const viewport = page.getViewport({ scale: 0.15 });
+                    const renderContext = { canvasContext: ctx, viewport: viewport };
+                    await page.render(renderContext).promise;
+                    URL.revokeObjectURL(url);
+                } catch (e) {
+                    console.error('PDF preview error:', e);
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(0, 0, 80, 80);
+                    ctx.fillStyle = '#000';
+                    ctx.font = '8px Arial';
+                    ctx.fillText('PDF', 5, 40);
+                }
+                return canvas;
+            }
+        }
+
+        function filterFiles() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            
+            const previewSections = document.querySelectorAll('.folder-section');
+            previewSections.forEach(section => {
+                const items = section.querySelectorAll('.preview-item');
+                let hasVisible = false;
+                items.forEach(item => {
+                    const filename = item.dataset.filename.toLowerCase();
+                    const isVisible = filename.includes(searchTerm);
+                    item.style.display = isVisible ? 'block' : 'none';
+                    if (isVisible) hasVisible = true;
+                });
+                section.style.display = hasVisible ? 'block' : 'none';
+            });
+
+            const sidebarSections = document.querySelectorAll('.sidebar-section');
+            sidebarSections.forEach(section => {
+                const files = section.querySelectorAll('.sidebar-file');
+                let hasVisible = false;
+                files.forEach(file => {
+                    const filename = file.textContent.toLowerCase();
+                    const fullPath = `${section.dataset.folder}/${filename}`.toLowerCase();
+                    const isVisible = fullPath.includes(searchTerm);
+                    file.style.display = isVisible ? 'block' : 'none';
+                    if (isVisible) hasVisible = true;
+                });
+                section.style.display = hasVisible ? 'block' : 'none';
+            });
+        }
+
+        function nextImage() {
+            if (quoteFolders.length === 0) return;
+            const currentFolder = quoteFolders[currentFolderIndex];
+            if (currentImageIndex < currentFolder.images.length - 1) {
+                currentImageIndex++;
+            } else if (currentFolderIndex < quoteFolders.length - 1) {
+                currentFolderIndex++;
+                currentImageIndex = 0;
+            }
+            displayImage();
+        }
+
+        function previousImage() {
+            if (quoteFolders.length === 0) return;
+            if (currentImageIndex > 0) {
+                currentImageIndex--;
+            } else if (currentFolderIndex > 0) {
+                currentFolderIndex--;
+                currentImageIndex = quoteFolders[currentFolderIndex].images.length - 1;
+            }
+            displayImage();
+        }
+
+        function zoomIn() {
+            zoomLevel = Math.min(zoomLevel + 0.25, 2.0);
+            displayImage();
+        }
+
+        function zoomOut() {
+            zoomLevel = Math.max(zoomLevel - 0.25, 0.25);
+            displayImage();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const loadButton = document.getElementById('loadButton');
+            const folderInput = document.getElementById('folderInput');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+            const zoomInBtn = document.getElementById('zoomInBtn');
+            const zoomOutBtn = document.getElementById('zoomOutBtn');
+            const leftSidebarToggle = document.getElementById('leftSidebarToggle');
+            const rightSidebarToggle = document.getElementById('rightSidebarToggle');
+            const leftSidebar = document.getElementById('leftSidebar');
+            const rightSidebar = document.getElementById('rightSidebar');
+            const container = document.querySelector('.container');
+
+            loadButton.addEventListener('click', () => {
+                console.log('Load button clicked');
+                folderInput.value = '';
+                folderInput.click();
+            });
+
+            folderInput.addEventListener('change', (event) => {
+                console.log('Folder input changed');
+                loadFolders(event);
+            });
+
+            container.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                container.classList.add('drag-over');
+            });
+
+            container.addEventListener('dragleave', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                container.classList.remove('drag-over');
+            });
+
+            container.addEventListener('drop', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                container.classList.remove('drag-over');
+                
+                // Check if any files were dropped
+                if (event.dataTransfer.items && event.dataTransfer.items.length > 0) {
+                    await loadFolders(event);
+                }
+            });
+
+            prevBtn.addEventListener('click', () => {
+                console.log('Previous button clicked');
+                previousImage();
+            });
+
+            nextBtn.addEventListener('click', () => {
+                console.log('Next button clicked');
+                nextImage();
+            });
+
+            zoomInBtn.addEventListener('click', () => {
+                console.log('Zoom In button clicked');
+                zoomIn();
+            });
+
+            zoomOutBtn.addEventListener('click', () => {
+                console.log('Zoom Out button clicked');
+                zoomOut();
+            });
+
+            function manageSidebars() {
+                const containerWidth = container.offsetWidth;
+                const iframeMinWidth = 400;
+                const bothSidebarsWidth = 200 + 200 + 40;
+
+                if (!leftSidebar.classList.contains('collapsed') && !rightSidebar.classList.contains('collapsed') && containerWidth < bothSidebarsWidth + iframeMinWidth) {
+                    rightSidebar.classList.add('collapsed');
+                    rightSidebarToggle.textContent = '►';
+                }
+            }
+
+            leftSidebarToggle.addEventListener('click', () => {
+                console.log('Left sidebar toggle clicked');
+                leftSidebar.classList.toggle('collapsed');
+                leftSidebarToggle.textContent = leftSidebar.classList.contains('collapsed') ? '►' : '◄';
+                manageSidebars();
+            });
+
+            rightSidebarToggle.addEventListener('click', () => {
+                console.log('Right sidebar toggle clicked');
+                rightSidebar.classList.toggle('collapsed');
+                rightSidebarToggle.textContent = rightSidebar.classList.contains('collapsed') ? '►' : '◄';
+            });
+
+            new ResizeObserver(() => manageSidebars()).observe(container);
+        });
+    </script>
+</body>
+</html>
