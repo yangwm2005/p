@@ -1,0 +1,1933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Previewer Pro</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        body.dark-mode {
+            background-color: #1e1e1e;
+            color: #ddd;
+        }
+        .container {
+            width: 100%;
+            max-width: 100%;
+            min-width: 800px;
+            min-height: 600px;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            resize: both;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+            transition: background-color 0.3s;
+        }
+        .container.dark-mode {
+            background: #2d2d2d;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        .container.drag-over {
+            background-color: #e9f1ff;
+            border: 2px dashed #007bff;
+        }
+        .control-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 15px;
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+            margin-bottom: 20px;
+            position: relative;
+        }
+        .dark-mode .control-bar {
+            background: linear-gradient(135deg, #3a3a3a, #2d2d2d);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+        .control-bar .nav-buttons {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .control-bar .nav-buttons button {
+            padding: 8px 14px;
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.1s;
+            position: relative;
+            font-size: 13px;
+        }
+        .control-bar .nav-buttons button:disabled {
+            background-color: #b0b0b0;
+            cursor: not-allowed;
+        }
+        .control-bar .nav-buttons button:hover:not(:disabled) {
+            background-color: #0056b3;
+            transform: translateY(-1px);
+        }
+        .control-bar .nav-buttons button::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 120%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: #fff;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .control-bar .nav-buttons button:hover::after {
+            opacity: 1;
+        }
+        .control-bar .nav-buttons .load-button {
+            background-color: #28a745;
+        }
+        .control-bar .nav-buttons .load-button:hover:not(:disabled) {
+            background-color: #218838;
+        }
+        .control-bar .nav-buttons .zoom-button {
+            background-color: #6c757d;
+            padding: 8px 12px;
+        }
+        .control-bar .nav-buttons .zoom-button:hover:not(:disabled) {
+            background-color: #5a6268;
+        }
+        .control-bar .nav-buttons .undo-button {
+            background-color: #ffc107;
+            color: #212529;
+        }
+        .control-bar .nav-buttons .undo-button:hover:not(:disabled) {
+            background-color: #e0a800;
+        }
+        .control-bar .nav-buttons .theme-toggle {
+            background-color: #17a2b8;
+            margin-left: 10px;
+        }
+        .control-bar .nav-buttons .theme-toggle:hover:not(:disabled) {
+            background-color: #138496;
+        }
+        .content-area {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        .left-sidebar {
+            width: 220px;
+            background: #f8f9fa;
+            border-right: 1px solid #e0e0e0;
+            padding: 15px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            transition: width 0.3s ease, background-color 0.3s;
+        }
+        .dark-mode .left-sidebar {
+            background: #3a3a3a;
+            border-right: 1px solid #555;
+        }
+        .left-sidebar.collapsed {
+            width: 24px;
+            padding: 15px 0;
+        }
+        .left-sidebar.collapsed .sidebar-header span,
+        .left-sidebar.collapsed .preview-container {
+            display: none;
+        }
+        .sidebar-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+        .sidebar-toggle {
+            background: none;
+            border: none;
+            color: #007bff;
+            font-size: 14px;
+            cursor: pointer;
+            padding: 5px;
+            transition: color 0.3s;
+        }
+        .dark-mode .sidebar-toggle {
+            color: #4dabf7;
+        }
+        .sidebar-toggle:hover {
+            color: #0056b3;
+        }
+        .dark-mode .sidebar-toggle:hover {
+            color: #339af0;
+        }
+        .left-sidebar .sidebar-toggle {
+            margin-right: 8px;
+        }
+        .right-sidebar .sidebar-toggle {
+            margin-left: 8px;
+            position: absolute;
+            right: 8px;
+            top: 8px;
+        }
+        .main-content {
+            flex: 1;
+            overflow: auto;
+            padding: 0 20px;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .iframe-container {
+            flex: 1;
+            margin: 0 auto;
+            text-align: center;
+            width: 100%;
+            max-width: 100%;
+            position: relative;
+        }
+        iframe {
+            border: 1px solid #ddd;
+            width: 100%;
+            height: 100%;
+            resize: both;
+            overflow: auto;
+            display: block;
+            border-radius: 8px;
+            background: #fff;
+            margin: 0 auto;
+            transition: border-color 0.3s;
+        }
+        .dark-mode iframe {
+            border-color: #555;
+            background: #333;
+        }
+        .folder-info {
+            font-size: 16px;
+            font-weight: 500;
+            color: #444;
+            text-align: center;
+            padding: 12px 0;
+            background: #f8f9fa;
+            border-top: 1px solid #e0e0e0;
+            margin-top: 15px;
+            border-radius: 6px;
+        }
+        .dark-mode .folder-info {
+            color: #ccc;
+            background: #3a3a3a;
+            border-top: 1px solid #555;
+        }
+        .folder-info span.folder {
+            color: #007bff;
+            font-weight: 600;
+        }
+        .folder-info span.file {
+            color: #28a745;
+            font-weight: 600;
+        }
+        .preview-container {
+            margin: 0;
+            width: 100%;
+        }
+        .folder-section {
+            margin-bottom: 20px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            background: #fafafa;
+            width: 100%;
+            transition: background-color 0.3s;
+        }
+        .dark-mode .folder-section {
+            border-color: #555;
+            background: #404040;
+        }
+        .folder-section h3 {
+            margin: 0;
+            padding: 10px;
+            cursor: pointer;
+            background-color: #e9ecef;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 15px;
+            color: #333;
+            border-radius: 8px 8px 0 0;
+            transition: background-color 0.3s;
+        }
+        .dark-mode .folder-section h3 {
+            background-color: #4a4a4a;
+            border-bottom: 1px solid #555;
+            color: #ddd;
+        }
+        .folder-section h3:hover, .folder-section.drag-over h3 {
+            background-color: #dee2e6;
+        }
+        .dark-mode .folder-section h3:hover, .dark-mode .folder-section.drag-over h3 {
+            background-color: #555;
+        }
+        .folder-section h3::after {
+            content: '▼';
+            font-size: 12px;
+        }
+        .folder-section.collapsed h3::after {
+            content: '▶';
+        }
+        .delete-folder-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .delete-folder-btn:hover {
+            background: #c82333;
+        }
+        .preview-items {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-start;
+            padding: 15px;
+            width: 100%;
+        }
+        .folder-section.collapsed .preview-items {
+            display: none;
+        }
+        .preview-item {
+            margin: 8px;
+            text-align: center;
+            cursor: move;
+            transition: transform 0.2s, box-shadow 0.2s;
+            user-select: none;
+            position: relative;
+        }
+        .preview-item:hover {
+            transform: scale(1.05);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        .dark-mode .preview-item:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        .preview-item.active {
+            background-color: #e9f1ff;
+            border: 2px solid #007bff;
+            border-radius: 6px;
+            padding: 4px;
+        }
+        .dark-mode .preview-item.active {
+            background-color: #4a4a4a;
+        }
+        .preview-item.drag-over {
+            border: 2px dashed #007bff;
+        }
+        .preview-item img, .preview-item canvas {
+            width: 90px;
+            height: 90px;
+            object-fit: contain;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            background: #fff;
+            transition: border-color 0.3s;
+        }
+        .dark-mode .preview-item img, .dark-mode .preview-item canvas {
+            border-color: #555;
+            background: #333;
+        }
+        .preview-item span {
+            display: block;
+            font-size: 11px;
+            word-break: break-all;
+            max-width: 90px;
+            color: #666;
+            margin-top: 5px;
+            position: relative;
+            padding-right: 24px;
+        }
+        .dark-mode .preview-item span {
+            color: #aaa;
+        }
+        .preview-item .delete-file-btn,
+        .preview-item .open-file-btn {
+            position: absolute;
+            right: 2px;
+            border: none;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            font-size: 11px;
+            cursor: pointer;
+            display: none;
+            transition: background-color 0.3s;
+        }
+        .preview-item .delete-file-btn {
+            top: 2px;
+            background: #dc3545;
+            color: white;
+        }
+        .preview-item .open-file-btn {
+            top: 22px;
+            background: #17a2b8;
+            color: white;
+        }
+        .preview-item:hover .delete-file-btn,
+        .preview-item:hover .open-file-btn {
+            display: block;
+        }
+        .preview-item .delete-file-btn:hover {
+            background: #c82333;
+        }
+        .preview-item .open-file-btn:hover {
+            background: #138496;
+        }
+        .right-sidebar {
+            width: 220px;
+            background: #f8f9fa;
+            border-left: 1px solid #e0e0e0;
+            padding: 15px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            transition: width 0.3s ease, background-color 0.3s;
+        }
+        .dark-mode .right-sidebar {
+            background: #3a3a3a;
+            border-left: 1px solid #555;
+        }
+        .right-sidebar.collapsed {
+            width: 24px;
+            padding: 15px 0;
+        }
+        .right-sidebar.collapsed .sidebar-header span,
+        .right-sidebar.collapsed .sidebar-section {
+            display: none;
+        }
+        .right-sidebar .sidebar-header {
+            position: relative;
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .right-sidebar .search-container {
+            margin: 0;
+            flex-grow: 1;
+        }
+        .right-sidebar .search-container input {
+            width: 100%;
+            padding: 8px;
+            font-size: 13px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            transition: border-color 0.3s, background-color 0.3s;
+        }
+        .dark-mode .right-sidebar .search-container input {
+            border-color: #555;
+            background: #4a4a4a;
+            color: #ddd;
+        }
+        .sidebar-section {
+            margin-bottom: 20px;
+        }
+        .sidebar-section h4 {
+            margin: 0;
+            padding: 10px;
+            cursor: pointer;
+            background-color: #e9ecef;
+            border-radius: 6px;
+            font-size: 15px;
+            color: #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background-color 0.3s;
+        }
+        .dark-mode .sidebar-section h4 {
+            background-color: #4a4a4a;
+            color: #ddd;
+        }
+        .sidebar-section h4:hover, .sidebar-section.drag-over h4 {
+            background-color: #dee2e6;
+        }
+        .dark-mode .sidebar-section h4:hover, .dark-mode .sidebar-section.drag-over h4 {
+            background-color: #555;
+        }
+        .sidebar-section h4::after {
+            content: '▼';
+            font-size: 12px;
+        }
+        .sidebar-section.collapsed h4::after {
+            content: '▶';
+        }
+        .sidebar-files {
+            padding: 8px 0;
+        }
+        .sidebar-section.collapsed .sidebar-files {
+            display: none;
+        }
+        .sidebar-file {
+            padding: 8px 12px;
+            font-size: 13px;
+            color: #007bff;
+            cursor: move;
+            word-break: break-all;
+            user-select: none;
+            position: relative;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background-color 0.3s, color 0.3s;
+            padding-right: 24px;
+        }
+        .dark-mode .sidebar-file {
+            color: #4dabf7;
+        }
+        .sidebar-file:hover {
+            background-color: #e9f1ff;
+            color: #0056b3;
+        }
+        .dark-mode .sidebar-file:hover {
+            background-color: #4a4a4a;
+            color: #339af0;
+        }
+        .sidebar-file.active {
+            background-color: #007bff;
+            color: #fff;
+            border-radius: 4px;
+        }
+        .dark-mode .sidebar-file.active {
+            background-color: #4dabf7;
+        }
+        .sidebar-file.drag-over {
+            border-bottom: 2px dashed #007bff;
+        }
+        .sidebar-file span {
+            display: inline-block;
+            max-width: calc(100% - 24px);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .sidebar-file .delete-file-btn,
+        .sidebar-file .open-file-btn {
+            position: absolute;
+            right: 2px;
+            border: none;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            font-size: 11px;
+            cursor: pointer;
+            display: none;
+            transition: background-color 0.3s;
+        }
+        .sidebar-file .delete-file-btn {
+            top: 2px;
+            background: #dc3545;
+            color: white;
+        }
+        .sidebar-file .open-file-btn {
+            top: 22px;
+            background: #17a2b8;
+            color: white;
+        }
+        .sidebar-file:hover .delete-file-btn,
+        .sidebar-file:hover .open-file-btn {
+            display: block;
+        }
+        .sidebar-file .delete-file-btn:hover {
+            background: #c82333;
+        }
+        .sidebar-file .open-file-btn:hover {
+            background: #138496;
+        }
+        .sidebar-file.active .delete-file-btn {
+            background: #fff;
+            color: #dc3545;
+        }
+        .sidebar-file.active .delete-file-btn:hover {
+            background: #e9ecef;
+        }
+        footer {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #777;
+            transition: color 0.3s;
+        }
+        .dark-mode footer {
+            color: #aaa;
+        }
+        .editable-header:hover {
+            background-color: #dee2e6;
+        }
+        .dark-mode .editable-header:hover {
+            background-color: #555;
+        }
+        .editable-header input {
+            width: 100%;
+            padding: 6px;
+            font-size: 15px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            transition: border-color 0.3s, background-color 0.3s;
+        }
+        .dark-mode .editable-header input {
+            border-color: #555;
+            background: #4a4a4a;
+            color: #ddd;
+        }
+        .status-bar {
+            position: fixed;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #28a745;
+            color: #fff;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 1000;
+        }
+        .status-bar.error {
+            background: #dc3545;
+        }
+        .status-bar.visible {
+            opacity: 1;
+        }
+        .preview-item span input,
+        .sidebar-file input {
+            width: 100%;
+            padding: 2px;
+            font-size: 11px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .dark-mode .preview-item span input,
+        .dark-mode .sidebar-file input {
+            border-color: #555;
+            background: #4a4a4a;
+            color: #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="control-bar">
+            <div class="nav-buttons">
+                <button id="prevBtn" disabled data-tooltip="Previous File">Previous</button>
+                <button class="zoom-button" id="zoomOutBtn" data-tooltip="Zoom Out">−</button>
+                <button class="zoom-button" id="zoomInBtn" data-tooltip="Zoom In">+</button>
+                <button id="nextBtn" disabled data-tooltip="Next File">Next</button>
+                <button class="load-button" id="loadButton" data-tooltip="Load Folders">Load Folders</button>
+                <button class="load-button" id="saveButton" data-tooltip="Save Project">Save</button>
+                <button class="load-button" id="openButton" data-tooltip="Open Project">Open</button>
+                <button class="load-button" id="exportButton" data-tooltip="Export as ZIP">Export ZIP</button>
+                <button class="load-button" id="newFolderButton" data-tooltip="Create New Folder">New Folder</button>
+                <button class="load-button" id="addFilesButton" data-tooltip="Add Files to Current Folder">Add Files</button>
+                <button class="undo-button" id="undoButton" disabled data-tooltip="Undo Last Action">Undo</button>
+                <button class="load-button theme-toggle" id="themeToggle" data-tooltip="Toggle Dark Mode">🌙</button>
+                <input type="file" id="folderInput" webkitdirectory mozdirectory msdirectory odirectory directory multiple style="display: none;">
+                <input type="file" id="openInput" accept=".json" style="display: none;">
+                <input type="file" id="addFileInput" multiple style="display: none;">
+            </div>
+        </div>
+        <div class="content-area">
+            <div class="left-sidebar collapsed" id="leftSidebar">
+                <div class="sidebar-header">
+                    <button class="sidebar-toggle" id="leftSidebarToggle">►</button>
+                    <span>Previews</span>
+                </div>
+                <div class="preview-container" id="previewContainer"></div>
+            </div>
+            <div class="main-content">
+                <div class="iframe-container">
+                    <iframe id="quoteFrame"></iframe>
+                </div>
+                <div class="folder-info" id="folderInfo"></div>
+            </div>
+            <div class="right-sidebar" id="rightSidebar">
+                <div class="sidebar-header">
+                    <div class="search-container">
+                        <input type="text" id="searchInput" placeholder="Search files..." oninput="filterFiles()">
+                    </div>
+                    <button class="sidebar-toggle" id="rightSidebarToggle">◄</button>
+                </div>
+                <div id="sidebarContent"></div>
+            </div>
+        </div>
+    </div>
+    <footer>
+        File Previewer Pro v1.82 © 2025 by Dr. Wen-Ming Yang 20250410 (file renamable)
+    </footer>
+    <div class="status-bar" id="statusBar"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+
+        let quoteFolders = [];
+        let dropFolderCounter = 0;
+        let currentFolderIndex = 0;
+        let currentImageIndex = 0;
+        let zoomLevel = 1.0;
+        let undoStack = [];
+        const supportedExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.txt', '.pdf', '.html'];
+
+        function showStatus(message, isError = false) {
+            const statusBar = document.getElementById('statusBar');
+            statusBar.textContent = message;
+            statusBar.classList.toggle('error', isError);
+            statusBar.classList.add('visible');
+            setTimeout(() => statusBar.classList.remove('visible'), 3000);
+        }
+
+        async function loadFolders(event) {
+            let files = [];
+            let isFolderInput = false;
+
+            try {
+                if (event.target && event.target.files) {
+                    console.log('loadFolders triggered with files (input)');
+                    files = Array.from(event.target.files);
+                    isFolderInput = files.some(file => file.webkitRelativePath && file.webkitRelativePath.includes('/'));
+                } else if (event.dataTransfer) {
+                    console.log('loadFolders triggered with drag-and-drop');
+                    console.log('dataTransfer.files:', event.dataTransfer.files);
+
+                    if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+                        files = Array.from(event.dataTransfer.files);
+                        dropFolderCounter++;
+                        const dropFolderName = `Drop Folder ${dropFolderCounter}`;
+                        files.forEach(file => {
+                            file.webkitRelativePath = `${dropFolderName}/${file.name}`;
+                        });
+                    } else {
+                        throw new Error('No files detected in dropped item.');
+                    }
+                }
+
+                if (files.length === 0) {
+                    throw new Error('No valid files found.');
+                }
+
+                const folderMap = new Map();
+                if (isFolderInput) {
+                    for (const file of files) {
+                        const relativePath = file.webkitRelativePath || file.name;
+                        console.log('Processing file:', relativePath);
+                        const folderName = relativePath.split('/')[0];
+                        if (!folderMap.has(folderName)) {
+                            folderMap.set(folderName, []);
+                        }
+                        if (supportedExtensions.some(ext => file.name.toLowerCase().endsWith(ext))) {
+                            folderMap.get(folderName).push(file);
+                        }
+                    }
+                } else {
+                    const dropFolderName = `Drop Folder ${dropFolderCounter}`;
+                    console.log('Grouping into:', dropFolderName);
+                    folderMap.set(dropFolderName, []);
+                    for (const file of files) {
+                        console.log('Processing file:', file.webkitRelativePath);
+                        if (supportedExtensions.some(ext => file.name.toLowerCase().endsWith(ext))) {
+                            folderMap.get(dropFolderName).push(file);
+                        }
+                    }
+                }
+
+                const newFolders = Array.from(folderMap.entries())
+                    .map(([folder, files]) => ({
+                        folder,
+                        images: files
+                    }))
+                    .filter(f => f.images.length > 0);
+
+                if (newFolders.length === 0) {
+                    throw new Error('No supported files found.');
+                }
+
+                quoteFolders.push(...newFolders);
+                currentFolderIndex = quoteFolders.length - 1;
+                quoteFolders.sort((a, b) => b.folder.localeCompare(a.folder));
+                console.log('Processed quoteFolders:', quoteFolders);
+
+                currentImageIndex = 0;
+                zoomLevel = 1.0;
+                displayPreviews();
+                displaySidebar();
+                displayImage();
+                updateFolderInfo();
+                document.getElementById('prevBtn').disabled = false;
+                document.getElementById('nextBtn').disabled = false;
+
+                showStatus(`Loaded ${newFolders.reduce((sum, f) => sum + f.images.length, 0)} file(s) successfully`);
+            } catch (error) {
+                console.error('Error in loadFolders:', error);
+                showStatus(`Error: ${error.message}`, true);
+            }
+        }
+
+        async function saveProject() {
+            if (quoteFolders.length === 0) {
+                showStatus('Nothing to save!', true);
+                return;
+            }
+
+            try {
+                const projectData = [];
+                for (const folder of quoteFolders) {
+                    const filesData = [];
+                    for (const file of folder.images) {
+                        const arrayBuffer = await file.arrayBuffer();
+                        const base64 = btoa(
+                            new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+                        );
+                        filesData.push({
+                            name: file.name,
+                            type: file.type,
+                            webkitRelativePath: file.webkitRelativePath,
+                            data: base64
+                        });
+                    }
+                    projectData.push({
+                        folder: folder.folder,
+                        images: filesData
+                    });
+                }
+
+                const json = JSON.stringify(projectData);
+                const blob = new Blob([json], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'FilePreviewerProject.json';
+                a.click();
+                URL.revokeObjectURL(url);
+                console.log('Project saved');
+                showStatus('Project saved successfully');
+            } catch (error) {
+                console.error('Error saving project:', error);
+                showStatus('Failed to save project', true);
+            }
+        }
+
+        async function openProject(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+                const text = await file.text();
+                const projectData = JSON.parse(text);
+                quoteFolders = [];
+
+                for (const folderData of projectData) {
+                    const files = [];
+                    for (const fileData of folderData.images) {
+                        const binary = atob(fileData.data);
+                        const array = new Uint8Array(binary.length);
+                        for (let i = 0; i < binary.length; i++) {
+                            array[i] = binary.charCodeAt(i);
+                        }
+                        const blob = new Blob([array], { type: fileData.type });
+                        const file = new File([blob], fileData.name, { type: fileData.type });
+                        file.webkitRelativePath = fileData.webkitRelativePath;
+                        files.push(file);
+                    }
+                    quoteFolders.push({
+                        folder: folderData.folder,
+                        images: files
+                    });
+                }
+
+                dropFolderCounter = Math.max(...quoteFolders.map(f => {
+                    const match = f.folder.match(/Drop Folder (\d+)/);
+                    return match ? parseInt(match[1]) : 0;
+                }), 0);
+
+                currentFolderIndex = 0;
+                currentImageIndex = 0;
+                zoomLevel = 1.0;
+                displayPreviews();
+                displaySidebar();
+                displayImage();
+                updateFolderInfo();
+                document.getElementById('prevBtn').disabled = false;
+                document.getElementById('nextBtn').disabled = false;
+                console.log('Project opened:', quoteFolders);
+                showStatus('Project opened successfully');
+            } catch (error) {
+                console.error('Error opening project:', error);
+                showStatus('Failed to open project', true);
+            }
+        }
+
+        async function exportFolders() {
+            if (quoteFolders.length === 0) {
+                showStatus('Nothing to export!', true);
+                return;
+            }
+
+            try {
+                const zip = new JSZip();
+                for (const folder of quoteFolders) {
+                    const folderZip = zip.folder(folder.folder);
+                    for (const file of folder.images) {
+                        const arrayBuffer = await file.arrayBuffer();
+                        folderZip.file(file.name, arrayBuffer);
+                    }
+                }
+
+                zip.generateAsync({ type: 'blob' }).then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'ExportedFolders.zip';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    console.log('Folders exported as ZIP');
+                    showStatus('Folders exported as ZIP');
+                });
+            } catch (error) {
+                console.error('Error exporting folders:', error);
+                showStatus('Failed to export folders', true);
+            }
+        }
+
+        function createNewFolder() {
+            let newFolderName;
+            let counter = 1;
+            do {
+                newFolderName = `New Folder ${counter}`;
+                counter++;
+            } while (quoteFolders.some(f => f.folder === newFolderName));
+            
+            quoteFolders.push({ folder: newFolderName, images: [] });
+            currentFolderIndex = quoteFolders.length - 1;
+            currentImageIndex = -1;
+            console.log(`Created folder: ${newFolderName}`);
+            displayPreviews();
+            displaySidebar();
+            displayImage();
+            updateFolderInfo();
+            showStatus(`Created folder: ${newFolderName}`);
+        }
+
+        function deleteFolder(folderIndex) {
+            if (confirm(`Delete folder "${quoteFolders[folderIndex].folder}" and all its files?`)) {
+                const deletedFolder = quoteFolders.splice(folderIndex, 1)[0];
+                undoStack.push({ type: 'folder', data: deletedFolder, index: folderIndex });
+                document.getElementById('undoButton').disabled = false;
+                console.log(`Deleted folder: ${deletedFolder.folder}`);
+                if (currentFolderIndex === folderIndex) {
+                    currentFolderIndex = Math.min(folderIndex, quoteFolders.length - 1);
+                    currentImageIndex = quoteFolders[currentFolderIndex]?.images.length > 0 ? 0 : -1;
+                } else if (currentFolderIndex > folderIndex) {
+                    currentFolderIndex--;
+                }
+                displayPreviews();
+                displaySidebar();
+                displayImage();
+                showStatus(`Deleted folder: ${deletedFolder.folder}`);
+            }
+        }
+
+        async function addFilesToFolder(event, folderIndex) {
+            const files = Array.from(event.target.files || event.dataTransfer.files);
+            if (files.length === 0) return;
+
+            const targetFolder = quoteFolders[folderIndex];
+            const validFiles = files.filter(file => 
+                supportedExtensions.some(ext => file.name.toLowerCase().endsWith(ext))
+            );
+
+            if (validFiles.length === 0) {
+                showStatus('No supported files selected', true);
+                return;
+            }
+
+            for (let file of validFiles) {
+                let newName = file.name;
+                while (targetFolder.images.some(f => f.name === newName)) {
+                    newName = prompt(`File "${file.name}" already exists in "${targetFolder.folder}". Enter a new name:`, `${file.name.split('.')[0]}_copy.${file.name.split('.').pop()}`);
+                    if (!newName) return; // Cancelled
+                    if (!supportedExtensions.some(ext => newName.toLowerCase().endsWith(ext))) {
+                        showStatus('Invalid file extension', true);
+                        newName = null;
+                        return;
+                    }
+                }
+                if (newName !== file.name) {
+                    file = new File([file], newName, { type: file.type });
+                }
+                file.webkitRelativePath = `${targetFolder.folder}/${file.name}`;
+                targetFolder.images.push(file);
+            }
+
+            console.log(`Added ${validFiles.length} file(s) to ${targetFolder.folder}`);
+            currentFolderIndex = folderIndex;
+            currentImageIndex = targetFolder.images.length - 1;
+            displayPreviews();
+            displaySidebar();
+            displayImage();
+            updateFolderInfo();
+            document.getElementById('prevBtn').disabled = false;
+            document.getElementById('nextBtn').disabled = false;
+            showStatus(`Added ${validFiles.length} file(s) to ${targetFolder.folder}`);
+        }
+
+        function deleteFile(folderIndex, imageIndex) {
+            if (confirm(`Delete file "${quoteFolders[folderIndex].images[imageIndex].name}"?`)) {
+                const folder = quoteFolders[folderIndex];
+                const deletedFile = folder.images.splice(imageIndex, 1)[0];
+                undoStack.push({ type: 'file', data: deletedFile, folderIndex, imageIndex });
+                document.getElementById('undoButton').disabled = false;
+                console.log(`Deleted file: ${deletedFile.name} from ${folder.folder}`);
+
+                if (folder.images.length === 0) {
+                    const deletedFolder = quoteFolders.splice(folderIndex, 1)[0];
+                    undoStack.push({ type: 'folder', data: deletedFolder, index: folderIndex });
+                    if (currentFolderIndex === folderIndex) {
+                        currentFolderIndex = Math.min(folderIndex, quoteFolders.length - 1);
+                        currentImageIndex = quoteFolders[currentFolderIndex]?.images.length > 0 ? 0 : -1;
+                    } else if (currentFolderIndex > folderIndex) {
+                        currentFolderIndex--;
+                    }
+                } else if (currentFolderIndex === folderIndex && currentImageIndex >= imageIndex) {
+                    currentImageIndex = Math.max(0, currentImageIndex - 1);
+                }
+
+                displayPreviews();
+                displaySidebar();
+                displayImage();
+                showStatus(`Deleted file: ${deletedFile.name}`);
+            }
+        }
+
+        function moveFile(sourceFolderIndex, sourceImageIndex, targetFolderIndex, targetImageIndex = null) {
+            const sourceFolder = quoteFolders[sourceFolderIndex];
+            const targetFolder = quoteFolders[targetFolderIndex];
+            const file = sourceFolder.images[sourceImageIndex];
+
+            let newName = file.name;
+            if (sourceFolderIndex !== targetFolderIndex) {
+                while (targetFolder.images.some(f => f.name === newName)) {
+                    newName = prompt(`File "${file.name}" already exists in "${targetFolder.folder}". Enter a new name:`, `${file.name.split('.')[0]}_copy.${file.name.split('.').pop()}`);
+                    if (!newName) return; // Cancelled
+                    if (!supportedExtensions.some(ext => newName.toLowerCase().endsWith(ext))) {
+                        showStatus('Invalid file extension', true);
+                        return;
+                    }
+                }
+                if (newName !== file.name) {
+                    file = new File([file], newName, { type: file.type });
+                }
+                file.webkitRelativePath = `${targetFolder.folder}/${file.name}`;
+            }
+
+            sourceFolder.images.splice(sourceImageIndex, 1);
+
+            if (targetImageIndex !== null && sourceFolderIndex === targetFolderIndex) {
+                targetFolder.images.splice(targetImageIndex, 0, file);
+            } else {
+                targetFolder.images.push(file);
+            }
+
+            if (sourceFolder.images.length === 0 && sourceFolderIndex !== targetFolderIndex) {
+                quoteFolders.splice(sourceFolderIndex, 1);
+                if (currentFolderIndex === sourceFolderIndex) {
+                    currentFolderIndex = targetFolderIndex;
+                    currentImageIndex = targetFolder.images.length - 1;
+                } else if (currentFolderIndex > sourceFolderIndex) {
+                    currentFolderIndex--;
+                }
+            } else if (currentFolderIndex === sourceFolderIndex && currentImageIndex >= sourceImageIndex) {
+                currentImageIndex = Math.max(0, currentImageIndex - 1);
+            }
+
+            if (sourceFolderIndex === targetFolderIndex) {
+                console.log(`Reordered ${file.name} in ${sourceFolder.folder} to position ${targetImageIndex}`);
+                currentImageIndex = targetImageIndex;
+                showStatus(`Reordered ${file.name} in ${sourceFolder.folder}`);
+            } else {
+                console.log(`Moved ${file.name} from ${sourceFolder.folder} to ${targetFolder.folder}`);
+                currentFolderIndex = targetFolderIndex;
+                currentImageIndex = targetFolder.images.length - 1;
+                showStatus(`Moved ${file.name} to ${targetFolder.folder}`);
+            }
+
+            displayPreviews();
+            displaySidebar();
+            displayImage();
+        }
+
+        function undoLastAction() {
+            if (undoStack.length === 0) return;
+
+            const action = undoStack.pop();
+            if (action.type === 'folder') {
+                quoteFolders.splice(action.index, 0, action.data);
+                if (currentFolderIndex >= action.index) {
+                    currentFolderIndex++;
+                }
+                console.log(`Undid deletion of folder: ${action.data.folder}`);
+                showStatus(`Restored folder: ${action.data.folder}`);
+            } else if (action.type === 'file') {
+                const folder = quoteFolders[action.folderIndex];
+                folder.images.splice(action.imageIndex, 0, action.data);
+                if (currentFolderIndex === action.folderIndex && currentImageIndex >= action.imageIndex) {
+                    currentImageIndex++;
+                }
+                console.log(`Undid deletion of file: ${action.data.name} in ${folder.folder}`);
+                showStatus(`Restored file: ${action.data.name}`);
+            } else if (action.type === 'rename') {
+                const folder = quoteFolders[action.folderIndex];
+                const oldFile = folder.images[action.imageIndex];
+                const restoredFile = new File([oldFile], action.oldName, { type: oldFile.type });
+                restoredFile.webkitRelativePath = `${folder.folder}/${action.oldName}`;
+                folder.images[action.imageIndex] = restoredFile;
+                console.log(`Undid rename: ${action.newName} to ${action.oldName}`);
+                showStatus(`Restored file name: ${action.oldName}`);
+            }
+
+            displayPreviews();
+            displaySidebar();
+            displayImage();
+            document.getElementById('undoButton').disabled = undoStack.length === 0;
+        }
+
+        async function displayImage() {
+            if (quoteFolders.length === 0 || currentFolderIndex < 0 || currentImageIndex < 0) {
+                document.getElementById('quoteFrame').src = 'about:blank';
+                updateFolderInfo();
+                return;
+            }
+            const file = quoteFolders[currentFolderIndex].images[currentImageIndex];
+            const iframe = document.getElementById('quoteFrame');
+            const timestamp = new Date().getTime();
+            let url;
+
+            try {
+                url = URL.createObjectURL(file);
+                const uniqueUrl = `${url}#t=${timestamp}`;
+
+                if (file.name.toLowerCase().endsWith('.txt')) {
+                    const text = await file.text();
+                    const htmlContent = `
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <meta charset="UTF-8">
+                            <title>${file.name}</title>
+                            <style>
+                                body { margin: 0; padding: 20px; font-family: monospace; overflow: auto; background: ${document.body.classList.contains('dark-mode') ? '#333' : '#fff'}; color: ${document.body.classList.contains('dark-mode') ? '#ddd' : '#000'}; }
+                                pre { white-space: pre-wrap; word-wrap: break-word; width: 100%; height: 100%; margin: 0; transform: scale(${zoomLevel}); transform-origin: top left; }
+                            </style>
+                        </head>
+                        <body>
+                            <pre>${text}</pre>
+                        </body>
+                        </html>
+                    `;
+                    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+                    iframe.src = `${URL.createObjectURL(blob)}#t=${timestamp}`;
+                } else if (file.name.toLowerCase().endsWith('.html')) {
+                    iframe.src = uniqueUrl;
+                } else {
+                    iframe.src = uniqueUrl;
+                }
+
+                console.log(`Displaying: ${file.webkitRelativePath || file.name} at zoom level ${zoomLevel}`);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+                updateFolderInfo();
+                iframe.style.resize = 'both';
+                iframe.style.transform = `scale(${zoomLevel})`;
+                iframe.style.transformOrigin = 'top left';
+                highlightActiveFile();
+            } catch (error) {
+                console.error('Error in displayImage:', error);
+                showStatus('Failed to display file', true);
+            }
+        }
+
+        function highlightActiveFile() {
+            try {
+                if (currentFolderIndex < 0 || currentImageIndex < 0) return;
+                const currentFile = quoteFolders[currentFolderIndex].images[currentImageIndex];
+                const currentFilePath = `${quoteFolders[currentFolderIndex].folder}/${currentFile.name}`;
+
+                document.querySelectorAll('.preview-item.active').forEach(item => item.classList.remove('active'));
+                document.querySelectorAll('.sidebar-file.active').forEach(item => item.classList.remove('active'));
+
+                const previewItem = document.querySelector(`.preview-item[data-filename="${currentFilePath}"]`);
+                if (previewItem) previewItem.classList.add('active');
+
+                const sidebarFile = document.querySelector(`.sidebar-file[data-filename="${currentFilePath}"]`);
+                if (sidebarFile) sidebarFile.classList.add('active');
+            } catch (error) {
+                console.error('Error in highlightActiveFile:', error);
+            }
+        }
+
+        function updateFolderInfo() {
+            const folderInfo = document.getElementById('folderInfo');
+            if (quoteFolders.length > 0 && currentFolderIndex >= 0 && currentImageIndex >= 0) {
+                const currentFolder = quoteFolders[currentFolderIndex].folder;
+                const currentFile = quoteFolders[currentFolderIndex].images[currentImageIndex].name;
+                const totalFiles = quoteFolders.reduce((sum, f) => sum + f.images.length, 0);
+                folderInfo.innerHTML = `Folder: <span class="folder">${currentFolder}</span> | File: <span class="file">${currentFile}</span> | Zoom: ${Math.round(zoomLevel * 100)}% | Total Files: ${totalFiles}`;
+            } else {
+                folderInfo.textContent = 'No file selected';
+            }
+        }
+
+        async function displayPreviews() {
+            const previewContainer = document.getElementById('previewContainer');
+            previewContainer.innerHTML = '';
+
+            for (const [folderIndex, folder] of quoteFolders.entries()) {
+                const section = document.createElement('div');
+                section.className = 'folder-section';
+                section.dataset.folder = folder.folder;
+                
+                const header = document.createElement('h3');
+                header.className = 'editable-header';
+                header.textContent = folder.folder;
+                header.onclick = () => section.classList.toggle('collapsed');
+                header.ondblclick = () => editFolderName(folderIndex, header, 'preview');
+                header.ondragover = (e) => {
+                    e.preventDefault();
+                    section.classList.add('drag-over');
+                };
+                header.ondragleave = () => section.classList.remove('drag-over');
+                header.ondrop = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    section.classList.remove('drag-over');
+                    const data = e.dataTransfer.getData('text/plain');
+                    if (data) {
+                        const { folderIndex: sourceIndex, imageIndex } = JSON.parse(data);
+                        moveFile(sourceIndex, imageIndex, folderIndex);
+                    } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                        addFilesToFolder(e, folderIndex);
+                    }
+                };
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-folder-btn';
+                deleteBtn.textContent = 'X';
+                deleteBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    deleteFolder(folderIndex);
+                };
+                header.appendChild(deleteBtn);
+
+                section.appendChild(header);
+
+                const itemsDiv = document.createElement('div');
+                itemsDiv.className = 'preview-items';
+
+                for (const [imageIndex, file] of folder.images.entries()) {
+                    const previewItem = document.createElement('div');
+                    previewItem.className = 'preview-item';
+                    previewItem.dataset.filename = `${folder.folder}/${file.name}`;
+                    previewItem.draggable = true;
+                    
+                    previewItem.ondragstart = (e) => {
+                        e.dataTransfer.setData('text/plain', JSON.stringify({ folderIndex, imageIndex }));
+                    };
+                    previewItem.ondragover = (e) => {
+                        e.preventDefault();
+                        previewItem.classList.add('drag-over');
+                    };
+                    previewItem.ondragleave = () => {
+                        previewItem.classList.remove('drag-over');
+                    };
+                    previewItem.ondrop = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        previewItem.classList.remove('drag-over');
+                        const data = e.dataTransfer.getData('text/plain');
+                        if (data) {
+                            const { folderIndex: sourceIndex, imageIndex: sourceImageIndex } = JSON.parse(data);
+                            moveFile(sourceIndex, sourceImageIndex, folderIndex, imageIndex);
+                        }
+                    };
+
+                    const previewElement = await createPreview(file);
+                    const label = document.createElement('span');
+                    const textSpan = document.createElement('span');
+                    textSpan.textContent = file.name;
+                    label.appendChild(textSpan);
+                    label.ondblclick = (e) => {
+                        e.stopPropagation();
+                        editFileName(folderIndex, imageIndex, label, 'preview');
+                    };
+
+                    appendFileButtons(folderIndex, imageIndex, label, 'preview');
+
+                    previewItem.appendChild(previewElement);
+                    previewItem.appendChild(label);
+                    
+                    previewItem.onclick = () => {
+                        console.log(`Preview clicked: Folder ${folderIndex}, File ${imageIndex}`);
+                        currentFolderIndex = folderIndex;
+                        currentImageIndex = imageIndex;
+                        zoomLevel = 1.0;
+                        displayImage();
+                    };
+
+                    itemsDiv.appendChild(previewItem);
+                }
+
+                section.appendChild(itemsDiv);
+                previewContainer.appendChild(section);
+            }
+            filterFiles(true);
+        }
+
+        async function displaySidebar() {
+            const sidebarContent = document.getElementById('sidebarContent');
+            sidebarContent.innerHTML = '';
+
+            for (const [folderIndex, folder] of quoteFolders.entries()) {
+                const section = document.createElement('div');
+                section.className = 'sidebar-section';
+                section.dataset.folder = folder.folder;
+
+                const header = document.createElement('h4');
+                header.className = 'editable-header';
+                header.textContent = folder.folder;
+                header.onclick = () => section.classList.toggle('collapsed');
+                header.ondblclick = () => editFolderName(folderIndex, header, 'sidebar');
+                header.ondragover = (e) => {
+                    e.preventDefault();
+                    section.classList.add('drag-over');
+                };
+                header.ondragleave = () => section.classList.remove('drag-over');
+                header.ondrop = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    section.classList.remove('drag-over');
+                    const data = e.dataTransfer.getData('text/plain');
+                    if (data) {
+                        const { folderIndex: sourceIndex, imageIndex } = JSON.parse(data);
+                        moveFile(sourceIndex, imageIndex, folderIndex);
+                    } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                        addFilesToFolder(e, folderIndex);
+                    }
+                };
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-folder-btn';
+                deleteBtn.textContent = 'X';
+                deleteBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    deleteFolder(folderIndex);
+                };
+                header.appendChild(deleteBtn);
+
+                section.appendChild(header);
+
+                const filesDiv = document.createElement('div');
+                filesDiv.className = 'sidebar-files';
+
+                for (const [imageIndex, file] of folder.images.entries()) {
+                    const fileDiv = document.createElement('div');
+                    fileDiv.className = 'sidebar-file';
+                    fileDiv.dataset.filename = `${folder.folder}/${file.name}`;
+                    const textSpan = document.createElement('span');
+                    textSpan.textContent = file.name;
+                    fileDiv.appendChild(textSpan);
+                    fileDiv.draggable = true;
+                    
+                    fileDiv.ondragstart = (e) => {
+                        e.dataTransfer.setData('text/plain', JSON.stringify({ folderIndex, imageIndex }));
+                    };
+                    fileDiv.ondragover = (e) => {
+                        e.preventDefault();
+                        fileDiv.classList.add('drag-over');
+                    };
+                    fileDiv.ondragleave = () => {
+                        fileDiv.classList.remove('drag-over');
+                    };
+                    fileDiv.ondrop = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        fileDiv.classList.remove('drag-over');
+                        const data = e.dataTransfer.getData('text/plain');
+                        if (data) {
+                            const { folderIndex: sourceIndex, imageIndex: sourceImageIndex } = JSON.parse(data);
+                            moveFile(sourceIndex, sourceImageIndex, folderIndex, imageIndex);
+                        }
+                    };
+
+                    appendFileButtons(folderIndex, imageIndex, fileDiv, 'sidebar');
+
+                    filesDiv.appendChild(fileDiv);
+                }
+
+                section.appendChild(filesDiv);
+                sidebarContent.appendChild(section);
+            }
+            highlightActiveFile();
+        }
+
+        function editFolderName(folderIndex, headerElement, type) {
+            const oldName = quoteFolders[folderIndex].folder;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = oldName;
+            input.onblur = () => saveFolderName(folderIndex, input.value, headerElement, type);
+            input.onkeypress = (e) => {
+                if (e.key === 'Enter') saveFolderName(folderIndex, input.value, headerElement, type);
+            };
+            headerElement.innerHTML = '';
+            headerElement.appendChild(input);
+            input.focus();
+        }
+
+        function saveFolderName(folderIndex, newName, headerElement, type) {
+            if (!newName || newName.trim() === '' || newName === quoteFolders[folderIndex].folder) {
+                headerElement.textContent = quoteFolders[folderIndex].folder;
+                if (type === 'preview') headerElement.onclick = () => headerElement.parentElement.classList.toggle('collapsed');
+                else headerElement.onclick = () => headerElement.parentElement.classList.toggle('collapsed');
+                headerElement.ondblclick = () => editFolderName(folderIndex, headerElement, type);
+                return;
+            }
+
+            const oldName = quoteFolders[folderIndex].folder;
+            quoteFolders[folderIndex].folder = newName.trim();
+            quoteFolders[folderIndex].images.forEach(file => {
+                file.webkitRelativePath = `${newName.trim()}/${file.name}`;
+            });
+
+            headerElement.textContent = newName.trim();
+            if (type === 'preview') headerElement.onclick = () => headerElement.parentElement.classList.toggle('collapsed');
+            else headerElement.onclick = () => headerElement.parentElement.classList.toggle('collapsed');
+            headerElement.ondblclick = () => editFolderName(folderIndex, headerElement, type);
+
+            const sections = document.querySelectorAll(`.${type}-section[data-folder="${oldName}"]`);
+            sections.forEach(section => {
+                section.dataset.folder = newName.trim();
+                if (type === 'preview') {
+                    const items = section.querySelectorAll('.preview-item');
+                    items.forEach(item => {
+                        const fileName = item.dataset.filename.split('/')[1];
+                        item.dataset.filename = `${newName.trim()}/${fileName}`;
+                    });
+                } else {
+                    const files = section.querySelectorAll('.sidebar-file');
+                    files.forEach(file => {
+                        const fileName = file.dataset.filename.split('/')[1];
+                        file.dataset.filename = `${newName.trim()}/${fileName}`;
+                    });
+                }
+            });
+
+            if (currentFolderIndex === folderIndex) {
+                displayImage();
+            }
+            console.log(`Renamed folder from "${oldName}" to "${newName.trim()}"`);
+            showStatus(`Renamed folder to "${newName.trim()}"`);
+        }
+
+        function editFileName(folderIndex, imageIndex, element, type) {
+            const oldName = quoteFolders[folderIndex].images[imageIndex].name;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = oldName;
+            input.onblur = () => saveFileName(folderIndex, imageIndex, input.value, element, type);
+            input.onkeypress = (e) => {
+                if (e.key === 'Enter') saveFileName(folderIndex, imageIndex, input.value, element, type);
+            };
+            element.innerHTML = '';
+            element.appendChild(input);
+            input.focus();
+        }
+
+        function saveFileName(folderIndex, imageIndex, newName, element, type) {
+            const folder = quoteFolders[folderIndex];
+            const oldName = folder.images[imageIndex].name;
+
+            newName = newName.trim();
+            if (!newName || newName === oldName) {
+                element.innerHTML = '';
+                const textSpan = document.createElement('span');
+                textSpan.textContent = oldName;
+                element.appendChild(textSpan);
+                appendFileButtons(folderIndex, imageIndex, element, type);
+                return;
+            }
+
+            if (folder.images.some((file, idx) => idx !== imageIndex && file.name === newName)) {
+                showStatus(`File "${newName}" already exists in "${folder.folder}"`, true);
+                element.innerHTML = '';
+                const textSpan = document.createElement('span');
+                textSpan.textContent = oldName;
+                element.appendChild(textSpan);
+                appendFileButtons(folderIndex, imageIndex, element, type);
+                return;
+            }
+
+            if (!supportedExtensions.some(ext => newName.toLowerCase().endsWith(ext))) {
+                showStatus('Invalid file extension', true);
+                element.innerHTML = '';
+                const textSpan = document.createElement('span');
+                textSpan.textContent = oldName;
+                element.appendChild(textSpan);
+                appendFileButtons(folderIndex, imageIndex, element, type);
+                return;
+            }
+
+            undoStack.push({
+                type: 'rename',
+                folderIndex,
+                imageIndex,
+                oldName,
+                newName
+            });
+            document.getElementById('undoButton').disabled = false;
+
+            const oldFile = folder.images[imageIndex];
+            const newFile = new File([oldFile], newName, { type: oldFile.type });
+            newFile.webkitRelativePath = `${folder.folder}/${newName}`;
+            folder.images[imageIndex] = newFile;
+
+            element.innerHTML = '';
+            const textSpan = document.createElement('span');
+            textSpan.textContent = newName;
+            element.appendChild(textSpan);
+            appendFileButtons(folderIndex, imageIndex, element, type);
+
+            const filePathOld = `${folder.folder}/${oldName}`;
+            const filePathNew = `${folder.folder}/${newName}`;
+            const previewItem = document.querySelector(`.preview-item[data-filename="${filePathOld}"]`);
+            if (previewItem) previewItem.dataset.filename = filePathNew;
+            const sidebarFile = document.querySelector(`.sidebar-file[data-filename="${filePathOld}"]`);
+            if (sidebarFile) sidebarFile.dataset.filename = filePathNew;
+
+            if (currentFolderIndex === folderIndex && currentImageIndex === imageIndex) {
+                displayImage();
+            }
+            displayPreviews();
+            displaySidebar();
+            showStatus(`Renamed file to "${newName}"`);
+        }
+
+        function appendFileButtons(folderIndex, imageIndex, element, type) {
+            const deleteFileBtn = document.createElement('button');
+            deleteFileBtn.className = 'delete-file-btn';
+            deleteFileBtn.textContent = 'X';
+            deleteFileBtn.onclick = (e) => {
+                e.stopPropagation();
+                deleteFile(folderIndex, imageIndex);
+            };
+
+            const openFileBtn = document.createElement('button');
+            openFileBtn.className = 'open-file-btn';
+            openFileBtn.textContent = 'O';
+            openFileBtn.onclick = (e) => {
+                e.stopPropagation();
+                const file = quoteFolders[folderIndex].images[imageIndex];
+                openFileInNewWindow(file);
+            };
+
+            element.appendChild(deleteFileBtn);
+            element.appendChild(openFileBtn);
+
+            if (type === 'sidebar') {
+                element.onclick = () => {
+                    currentFolderIndex = folderIndex;
+                    currentImageIndex = imageIndex;
+                    zoomLevel = 1.0;
+                    displayImage();
+                };
+                element.ondblclick = (e) => {
+                    e.stopPropagation();
+                    editFileName(folderIndex, imageIndex, element, type);
+                };
+            }
+        }
+
+        async function openFileInNewWindow(file) {
+            const url = URL.createObjectURL(file);
+            if (file.name.toLowerCase().endsWith('.txt')) {
+                const text = await file.text();
+                const blob = new Blob(
+                    [`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${file.name}</title></head><body><pre style="font-family: monospace; padding: 20px; white-space: pre-wrap; word-wrap: break-word;">${text}</pre></body></html>`],
+                    { type: 'text/html;charset=utf-8' }
+                );
+                const textUrl = URL.createObjectURL(blob);
+                window.open(textUrl, '_blank');
+                setTimeout(() => URL.revokeObjectURL(textUrl), 1000);
+            } else {
+                window.open(url, '_blank');
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }
+        }
+
+        async function createPreview(file) {
+            const url = URL.createObjectURL(file);
+            if (file.name.toLowerCase().endsWith('.png') || file.name.toLowerCase().endsWith('.jpg') || 
+                file.name.toLowerCase().endsWith('.jpeg') || file.name.toLowerCase().endsWith('.gif')) {
+                const img = document.createElement('img');
+                img.src = url;
+                img.onload = () => URL.revokeObjectURL(url);
+                return img;
+            } else if (file.name.toLowerCase().endsWith('.txt')) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 90;
+                canvas.height = 90;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = document.body.classList.contains('dark-mode') ? '#333' : '#fff';
+                ctx.fillRect(0, 0, 90, 90);
+                ctx.fillStyle = document.body.classList.contains('dark-mode') ? '#ddd' : '#000';
+                ctx.font = '7px Arial';
+                ctx.textAlign = 'left';
+                const text = (await file.text()).split('\n')[0].substring(0, 20);
+                ctx.fillText('TXT', 5, 15);
+                ctx.fillText(text, 5, 25);
+                return canvas;
+            } else if (file.name.toLowerCase().endsWith('.pdf')) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 90;
+                canvas.height = 90;
+                const ctx = canvas.getContext('2d');
+                try {
+                    const pdf = await pdfjsLib.getDocument(url).promise;
+                    const page = await pdf.getPage(1);
+                    const viewport = page.getViewport({ scale: 0.15 });
+                    const renderContext = { canvasContext: ctx, viewport: viewport };
+                    await page.render(renderContext).promise;
+                    URL.revokeObjectURL(url);
+                } catch (e) {
+                    console.error('PDF preview error:', e);
+                    ctx.fillStyle = document.body.classList.contains('dark-mode') ? '#333' : '#fff';
+                    ctx.fillRect(0, 0, 90, 90);
+                    ctx.fillStyle = document.body.classList.contains('dark-mode') ? '#ddd' : '#000';
+                    ctx.font = '9px Arial';
+                    ctx.fillText('PDF', 5, 45);
+                }
+                return canvas;
+            } else if (file.name.toLowerCase().endsWith('.html')) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 90;
+                canvas.height = 90;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = document.body.classList.contains('dark-mode') ? '#333' : '#fff';
+                ctx.fillRect(0, 0, 90, 90);
+                ctx.fillStyle = document.body.classList.contains('dark-mode') ? '#ddd' : '#000';
+                ctx.font = '9px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('HTML', 45, 45);
+                URL.revokeObjectURL(url);
+                return canvas;
+            }
+        }
+
+        function filterFiles(forceShow = false) {
+            const searchTerm = forceShow ? '' : document.getElementById('searchInput').value.toLowerCase();
+            
+            const previewSections = document.querySelectorAll('.folder-section');
+            previewSections.forEach(section => {
+                const items = section.querySelectorAll('.preview-item');
+                let hasVisible = false;
+                items.forEach(item => {
+                    const filename = item.dataset.filename.toLowerCase();
+                    const isVisible = filename.includes(searchTerm);
+                    item.style.display = isVisible ? 'block' : 'none';
+                    if (isVisible) hasVisible = true;
+                });
+                section.style.display = hasVisible || items.length === 0 ? 'block' : 'none';
+            });
+
+            const sidebarSections = document.querySelectorAll('.sidebar-section');
+            sidebarSections.forEach(section => {
+                const files = section.querySelectorAll('.sidebar-file');
+                let hasVisible = false;
+                files.forEach(file => {
+                    const filename = file.dataset.filename.toLowerCase();
+                    const isVisible = filename.includes(searchTerm);
+                    file.style.display = isVisible ? 'block' : 'none';
+                    if (isVisible) hasVisible = true;
+                });
+                section.style.display = hasVisible || files.length === 0 ? 'block' : 'none';
+            });
+        }
+
+        function nextImage() {
+            if (quoteFolders.length === 0) return;
+            const currentFolder = quoteFolders[currentFolderIndex];
+            if (currentImageIndex < currentFolder.images.length - 1) {
+                currentImageIndex++;
+            } else if (currentFolderIndex < quoteFolders.length - 1) {
+                currentFolderIndex++;
+                currentImageIndex = 0;
+            }
+            displayImage();
+        }
+
+        function previousImage() {
+            if (quoteFolders.length === 0) return;
+            if (currentImageIndex > 0) {
+                currentImageIndex--;
+            } else if (currentFolderIndex > 0) {
+                currentFolderIndex--;
+                currentImageIndex = quoteFolders[currentFolderIndex].images.length - 1;
+            }
+            displayImage();
+        }
+
+        function zoomIn() {
+            zoomLevel = Math.min(zoomLevel + 0.25, 2.0);
+            displayImage();
+        }
+
+        function zoomOut() {
+            zoomLevel = Math.max(zoomLevel - 0.25, 0.25);
+            displayImage();
+        }
+
+        function toggleTheme() {
+            document.body.classList.toggle('dark-mode');
+            const themeToggle = document.getElementById('themeToggle');
+            themeToggle.textContent = document.body.classList.contains('dark-mode') ? '☀️' : '🌙';
+            localStorage.setItem('theme', document.body.classList.contains('dark-mode') ? 'dark' : 'light');
+            displayImage();
+            displayPreviews();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const loadButton = document.getElementById('loadButton');
+            const folderInput = document.getElementById('folderInput');
+            const saveButton = document.getElementById('saveButton');
+            const openButton = document.getElementById('openButton');
+            const openInput = document.getElementById('openInput');
+            const exportButton = document.getElementById('exportButton');
+            const newFolderButton = document.getElementById('newFolderButton');
+            const addFilesButton = document.getElementById('addFilesButton');
+            const addFileInput = document.getElementById('addFileInput');
+            const undoButton = document.getElementById('undoButton');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+            const zoomInBtn = document.getElementById('zoomInBtn');
+            const zoomOutBtn = document.getElementById('zoomOutBtn');
+            const leftSidebarToggle = document.getElementById('leftSidebarToggle');
+            const rightSidebarToggle = document.getElementById('rightSidebarToggle');
+            const leftSidebar = document.getElementById('leftSidebar');
+            const rightSidebar = document.getElementById('rightSidebar');
+            const container = document.querySelector('.container');
+            const themeToggle = document.getElementById('themeToggle');
+
+            if (localStorage.getItem('theme') === 'dark') {
+                document.body.classList.add('dark-mode');
+                themeToggle.textContent = '☀️';
+            }
+
+            loadButton.addEventListener('click', () => {
+                console.log('Load button clicked');
+                folderInput.value = '';
+                folderInput.click();
+            });
+
+            folderInput.addEventListener('change', (event) => {
+                console.log('Folder input changed');
+                loadFolders(event);
+            });
+
+            saveButton.addEventListener('click', () => {
+                console.log('Save button clicked');
+                saveProject();
+            });
+
+            openButton.addEventListener('click', () => {
+                console.log('Open button clicked');
+                openInput.value = '';
+                openInput.click();
+            });
+
+            openInput.addEventListener('change', (event) => {
+                console.log('Open input changed');
+                openProject(event);
+            });
+
+            exportButton.addEventListener('click', () => {
+                console.log('Export ZIP button clicked');
+                exportFolders();
+            });
+
+            newFolderButton.addEventListener('click', () => {
+                console.log('New Folder button clicked');
+                createNewFolder();
+            });
+
+            addFilesButton.addEventListener('click', () => {
+                if (quoteFolders.length === 0) {
+                    showStatus('Create or load a folder first!', true);
+                    return;
+                }
+                console.log('Add Files button clicked');
+                addFileInput.value = '';
+                addFileInput.click();
+            });
+
+            addFileInput.addEventListener('change', (event) => {
+                const folderIndex = currentFolderIndex >= 0 ? currentFolderIndex : 0;
+                console.log(`Adding files to folder: ${quoteFolders[folderIndex].folder}`);
+                addFilesToFolder(event, folderIndex);
+            });
+
+            undoButton.addEventListener('click', () => {
+                console.log('Undo button clicked');
+                undoLastAction();
+            });
+
+            container.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                container.classList.add('drag-over');
+            });
+
+            container.addEventListener('dragleave', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                container.classList.remove('drag-over');
+            });
+
+            container.addEventListener('drop', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                container.classList.remove('drag-over');
+                console.log('Container drop event triggered');
+                if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+                    console.log('Files dropped from outside');
+                    await loadFolders(event);
+                } else if (!event.dataTransfer.getData('text/plain')) {
+                    console.log('No files or internal data detected');
+                    showStatus('No valid files dropped', true);
+                }
+            });
+
+            prevBtn.addEventListener('click', () => {
+                console.log('Previous button clicked');
+                previousImage();
+            });
+
+            nextBtn.addEventListener('click', () => {
+                console.log('Next button clicked');
+                nextImage();
+            });
+
+            zoomInBtn.addEventListener('click', () => {
+                console.log('Zoom In button clicked');
+                zoomIn();
+            });
+
+            zoomOutBtn.addEventListener('click', () => {
+                console.log('Zoom Out button clicked');
+                zoomOut();
+            });
+
+            themeToggle.addEventListener('click', () => {
+                console.log('Theme toggle clicked');
+                toggleTheme();
+            });
+
+            function manageSidebars() {
+                const containerWidth = container.offsetWidth;
+                const iframeMinWidth = 400;
+                const bothSidebarsWidth = 220 + 220 + 40;
+
+                if (!leftSidebar.classList.contains('collapsed') && !rightSidebar.classList.contains('collapsed') && containerWidth < bothSidebarsWidth + iframeMinWidth) {
+                    rightSidebar.classList.add('collapsed');
+                    rightSidebarToggle.textContent = '►';
+                }
+            }
+
+            leftSidebarToggle.addEventListener('click', () => {
+                console.log('Left sidebar toggle clicked');
+                leftSidebar.classList.toggle('collapsed');
+                leftSidebarToggle.textContent = leftSidebar.classList.contains('collapsed') ? '►' : '◄';
+                manageSidebars();
+            });
+
+            rightSidebarToggle.addEventListener('click', () => {
+                console.log('Right sidebar toggle clicked');
+                rightSidebar.classList.toggle('collapsed');
+                rightSidebarToggle.textContent = rightSidebar.classList.contains('collapsed') ? '►' : '◄';
+            });
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowRight' && !nextBtn.disabled) nextImage();
+                if (e.key === 'ArrowLeft' && !prevBtn.disabled) previousImage();
+                if (e.key === 'ArrowDown' && !nextBtn.disabled) nextImage();
+                if (e.key === 'ArrowUp' && !prevBtn.disabled) previousImage();
+                if (e.key === '+' || e.key === '=') zoomIn();
+                if (e.key === '-') zoomOut();
+            });
+
+            new ResizeObserver(() => manageSidebars()).observe(container);
+
+            (function() {
+                function c() {
+                    var b = a.contentDocument || a.contentWindow.document;
+                    if (b) {
+                        var d = b.createElement('script');
+                        d.innerHTML = "window.__CF$cv$params={r:'92e645b82a063382',t:'MTc0NDMzMDM0Ni4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
+                        b.getElementsByTagName('head')[0].appendChild(d);
+                    }
+                }
+                if (document.body) {
+                    var a = document.createElement('iframe');
+                    a.height = 1;
+                    a.width = 1;
+                    a.style.position = 'absolute';
+                    a.style.top = 0;
+                    a.style.left = 0;
+                    a.style.border = 'none';
+                    a.style.visibility = 'hidden';
+                    document.body.appendChild(a);
+                    if ('loading' !== document.readyState) c();
+                    else if (window.addEventListener) document.addEventListener('DOMContentLoaded', c);
+                    else {
+                        var e = document.onreadystatechange || function() {};
+                        document.onreadystatechange = function(b) {
+                            e(b);
+                            if ('loading' !== document.readyState) {
+                                document.onreadystatechange = e;
+                                c();
+                            }
+                        };
+                    }
+                }
+            })();
+        });
+    </script>
+</body>
+</html>
