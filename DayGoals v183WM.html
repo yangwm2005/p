@@ -261,6 +261,21 @@
     opacity: 0.9;
 }
 
+/* Add to your existing CSS */
+.dropdown-toggle {
+    padding: 5px 3px;
+    cursor: pointer;
+    margin-left: -4px;
+    border-radius: 0 2px 2px 0;
+}
+
+.dropdown-content button {
+    white-space: nowrap;
+    text-align: left;
+    padding: 5px 10px;
+    font-size: 12px;
+}
+
     </style>
 </head>
 <body>
@@ -340,7 +355,17 @@
     <!-- File Operations -->
     <button id="saveButton" onclick="saveFile()" style="background-color:purple;">Save</button>
     <button id="openButton" onclick="openFile()" class="gray">Open</button>
-<button onclick="openYesterdayFile()" style="background-color:#6c757d;" title="Open file with a new tab window">Open-Y</button>
+
+<!-- Replace the existing Open-Y button with this: -->
+<div class="dropdown" style="display: inline-block;">
+    <button onclick="openYesterdayFile()" style="background-color:#6c757d;" title="Open yesterday's file">Open-Y</button>
+    <button class="dropdown-toggle" style="background-color:#6c757d; margin-left: -4px;" title="Open options">▼</button>
+    <div class="dropdown-content" style="min-width: 120px;">
+        <button onclick="openYesterdayFileInTab()">Open in Tab</button>
+        <button onclick="openYesterdayFileInPopup()">Open in Popup</button>
+    </div>
+</div>
+
     <button id="printButton" onclick="printContent()" class="gray">Print</button>
     <span class="separator">|</span>
     
@@ -677,41 +702,86 @@ function printContent() {
         }
     }
 
-async function openYesterdayFile() {
-    try {
-        const now = new Date();
-        now.setDate(now.getDate() - 1); // Get yesterday's date
-        
-        const year = now.getFullYear();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const dayNum = String(now.getDate()).padStart(2, '0');
-        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        const dayName = days[now.getDay()];
-        
-        const yesterdayDate = `${year}${month}${dayNum}`;
-        const fileName = `Daily Goals ${yesterdayDate} ${dayName}.html`;
+// Global variable to store the last opened file handle
+let lastFileHandle = null;
 
-        // Try to open the file
-        const fileHandles = await window.showOpenFilePicker({
+async function openYesterdayFileInTab() {
+    try {
+        const { file, fileName } = await getYesterdayFile();
+        const content = await file.text();
+        
+        const newTab = window.open('', '_blank');
+        newTab.document.write(content);
+        newTab.document.close();
+    } catch (error) {
+        console.error('Error:', error);
+        alert(`Could not open yesterday's file. ${error.message}`);
+    }
+}
+
+async function openYesterdayFileInPopup() {
+    try {
+        const { file, fileName } = await getYesterdayFile();
+        const content = await file.text();
+        
+        // Open as popup window (centered on screen)
+        const width = 1000;
+        const height = 700;
+        const left = (screen.width - width) / 2;
+        const top = (screen.height - height) / 2;
+        
+        const popup = window.open('', '_blank', 
+            `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`);
+        
+        popup.document.write(content);
+        popup.document.close();
+    } catch (error) {
+        console.error('Error:', error);
+        alert(`Could not open yesterday's file. ${error.message}`);
+    }
+}
+
+async function getYesterdayFile() {
+    const now = new Date();
+    now.setDate(now.getDate() - 1); // Get yesterday's date
+    
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const dayNum = String(now.getDate()).padStart(2, '0');
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dayName = days[now.getDay()];
+    
+    const yesterdayDate = `${year}${month}${dayNum}`;
+    const fileName = `Daily Goals ${yesterdayDate} ${dayName}.html`;
+
+    try {
+        // Try to use the last file handle first
+        if (lastFileHandle) {
+            const file = await lastFileHandle.getFile();
+            return { file, fileName };
+        }
+        
+        // Otherwise prompt for file selection
+        const [fileHandle] = await window.showOpenFilePicker({
             suggestedName: fileName,
             types: [{
                 description: 'HTML Files',
                 accept: { 'text/html': ['.html'] },
             }],
         });
-
-        const file = await fileHandles[0].getFile();
-        const content = await file.text();
         
-        // Open in new window
-        const newWindow = window.open('', '_blank');
-        newWindow.document.write(content);
-        newWindow.document.close();
-        
+        // Store the file handle for future use
+        lastFileHandle = fileHandle;
+        const file = await fileHandle.getFile();
+        return { file, fileName };
     } catch (error) {
-        console.error('Error opening yesterday\'s file:', error);
-        alert(`Could not find yesterday's file (expected format: "Daily Goals YYYYMMDD Day.html"). Please check the filename or save a file first.`);
+        throw new Error(`Could not find yesterday's file: "${fileName}"`);
     }
+}
+
+// Keep the original openYesterdayFile as default (opens in tab)
+async function openYesterdayFile() {
+    await openYesterdayFileInTab();
 }
 
     function insertBulletPoint() {
@@ -1180,7 +1250,7 @@ function insertNewBulletLine(currentLine) {
 </script>
 
 <footer>
-    Copyright © 2025 Dr. Wen-Ming Yang 20250519 v1.82 Daily Goals setting (Checkbox in cell) WM
+    Copyright © 2025 Dr. Wen-Ming Yang 20250619 v1.83 Daily Goals setting (Open Y with tab/popout) WM
 </footer>
 </body>
 </html>
