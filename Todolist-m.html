@@ -259,6 +259,7 @@
             min-width: 0;
             background-color: white;
             -webkit-appearance: none;
+            width: 100%;
         }
         
         .delete-btn {
@@ -600,14 +601,21 @@
             checkForSavedFiles();
             setupDirectEditing();
             setupDragAndDrop();
+            setupMobileEvents();
             
             // Add event listeners for format changes
             document.querySelectorAll('input[name="export-format"]').forEach(radio => {
                 radio.addEventListener('change', updateExportContent);
             });
             
-            // Setup touch events for mobile
-            setupMobileEvents();
+            // Add click listener for todo items
+            document.getElementById('todo-list').addEventListener('click', function(e) {
+                if (e.target.classList.contains('item-checkbox')) {
+                    toggleComplete(e.target);
+                } else if (e.target.classList.contains('delete-btn')) {
+                    deleteItem(e.target);
+                }
+            });
         });
 
         function setupMobileEvents() {
@@ -726,27 +734,6 @@
         }
 
         /* ========== CORE FUNCTIONALITY ========== */
-        function addSectionBreak() {
-            const li = document.createElement('li');
-            li.className = 'todo-item section-break';
-            li.draggable = true;
-            li.innerHTML = `
-                <span class="drag-handle">☰</span>
-                <span class="item-text">New Section</span>
-                <input type="text" class="item-edit" value="New Section">
-                <button class="delete-btn" onclick="deleteItem(this)">×</button>
-            `;
-            
-            // Remove empty state if present
-            const todoList = document.getElementById('todo-list');
-            if (todoList.querySelector('.empty-state')) {
-                todoList.innerHTML = '';
-            }
-            
-            todoList.appendChild(li);
-            showStatus('Section added', 'success');
-        }
-
         function setupDirectEditing() {
             document.getElementById('todo-list').addEventListener('click', function(e) {
                 // Don't start editing if we're dragging
@@ -803,6 +790,80 @@
             const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
             const dayName = days[today.getDay()];
             document.getElementById('title').value = `Tasks ${year}${month}${day}-${dayName}`;
+        }
+
+        function addItem() {
+            const input = document.getElementById('new-item');
+            const text = input.value.trim();
+            if (text === '') {
+                showStatus('Please enter a task', 'warning');
+                return;
+            }
+            
+            const li = document.createElement('li');
+            li.className = 'todo-item';
+            li.draggable = true;
+            li.innerHTML = `
+                <span class="drag-handle">☰</span>
+                <input type="checkbox" class="item-checkbox">
+                <span class="item-text">${text}</span>
+                <input type="text" class="item-edit" value="${text}">
+                <button class="delete-btn">×</button>
+            `;
+            
+            // Remove empty state if present
+            const todoList = document.getElementById('todo-list');
+            if (todoList.querySelector('.empty-state')) {
+                todoList.innerHTML = '';
+            }
+            
+            todoList.appendChild(li);
+            input.value = '';
+            input.focus();
+            showStatus('Task added', 'success');
+        }
+
+        function addSectionBreak() {
+            const li = document.createElement('li');
+            li.className = 'todo-item section-break';
+            li.draggable = true;
+            li.innerHTML = `
+                <span class="drag-handle">☰</span>
+                <span class="item-text">New Section</span>
+                <input type="text" class="item-edit" value="New Section">
+                <button class="delete-btn">×</button>
+            `;
+            
+            // Remove empty state if present
+            const todoList = document.getElementById('todo-list');
+            if (todoList.querySelector('.empty-state')) {
+                todoList.innerHTML = '';
+            }
+            
+            todoList.appendChild(li);
+            showStatus('Section added', 'success');
+        }
+
+        function toggleComplete(checkbox) {
+            const li = checkbox.closest('.todo-item');
+            li.classList.toggle('completed', checkbox.checked);
+        }
+
+        function deleteItem(button) {
+            const li = button.closest('.todo-item');
+            li.style.transform = 'translateX(-100%)';
+            li.style.opacity = '0';
+            setTimeout(() => {
+                li.remove();
+                
+                // Show empty state if no items left
+                const todoList = document.getElementById('todo-list');
+                if (todoList.children.length === 0) {
+                    todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
+                }
+                
+                showStatus(li.classList.contains('section-break') ? 'Section deleted' : 'Task deleted', 'warning');
+            }, 200);
         }
 
         /* ========== IMPORT/EXPORT FUNCTIONALITY ========== */
@@ -1000,7 +1061,7 @@
                                 <span class="drag-handle">☰</span>
                                 <span class="item-text">${item.text}</span>
                                 <input type="text" class="item-edit" value="${item.text}">
-                                <button class="delete-btn" onclick="deleteItem(this)">×</button>
+                                <button class="delete-btn">×</button>
                             `;
                             todoList.appendChild(li);
                         } else {
@@ -1013,7 +1074,7 @@
                                 <input type="checkbox" class="item-checkbox" ${item.completed ? 'checked' : ''}>
                                 <span class="item-text">${item.text}</span>
                                 <input type="text" class="item-edit" value="${item.text}">
-                                <button class="delete-btn" onclick="deleteItem(this)">×</button>
+                                <button class="delete-btn">×</button>
                             `;
                             todoList.appendChild(li);
                         }
@@ -1069,59 +1130,6 @@
             }
         }
 
-        function addItem() {
-            const input = document.getElementById('new-item');
-            const text = input.value.trim();
-            if (text === '') {
-                showStatus('Please enter a task', 'warning');
-                return;
-            }
-            
-            const li = document.createElement('li');
-            li.className = 'todo-item';
-            li.draggable = true;
-            li.innerHTML = `
-                <span class="drag-handle">☰</span>
-                <input type="checkbox" class="item-checkbox">
-                <span class="item-text">${text}</span>
-                <input type="text" class="item-edit" value="${text}">
-                <button class="delete-btn" onclick="deleteItem(this)">×</button>
-            `;
-            
-            // Remove empty state if present
-            const todoList = document.getElementById('todo-list');
-            if (todoList.querySelector('.empty-state')) {
-                todoList.innerHTML = '';
-            }
-            
-            todoList.appendChild(li);
-            input.value = '';
-            input.focus();
-            showStatus('Task added', 'success');
-        }
-
-        function toggleComplete(checkbox) {
-            const li = checkbox.closest('.todo-item');
-            li.classList.toggle('completed', checkbox.checked);
-        }
-
-        function deleteItem(button) {
-            const li = button.closest('.todo-item');
-            li.style.transform = 'translateX(-100%)';
-            li.style.opacity = '0';
-            setTimeout(() => {
-                li.remove();
-                
-                // Show empty state if no items left
-                const todoList = document.getElementById('todo-list');
-                if (todoList.children.length === 0) {
-                    todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
-                }
-                
-                showStatus(li.classList.contains('section-break') ? 'Section deleted' : 'Task deleted', 'warning');
-            }, 200);
-        }
-
         async function saveToFile() {
             try {
                 const title = document.getElementById('title').value.trim();
@@ -1159,9 +1167,7 @@
                     timestamp: new Date().toISOString()
                 };
                 
-                // Changed from .json to .todo
                 const fileName = `${title.replace(/[^a-z0-9]/gi, '_')}.todo`;
-                
                 const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
                 const writable = await fileHandle.createWritable();
                 await writable.write(JSON.stringify(todoData, null, 2));
@@ -1229,7 +1235,7 @@
                                 <span class="drag-handle">☰</span>
                                 <span class="item-text">${item.text}</span>
                                 <input type="text" class="item-edit" value="${item.text}">
-                                <button class="delete-btn" onclick="deleteItem(this)">×</button>
+                                <button class="delete-btn">×</button>
                             `;
                             todoList.appendChild(li);
                         } else {
@@ -1242,7 +1248,7 @@
                                 <input type="checkbox" class="item-checkbox" ${item.completed ? 'checked' : ''}>
                                 <span class="item-text">${item.text}</span>
                                 <input type="text" class="item-edit" value="${item.text}">
-                                <button class="delete-btn" onclick="deleteItem(this)">×</button>
+                                <button class="delete-btn">×</button>
                             `;
                             todoList.appendChild(li);
                         }
