@@ -14,7 +14,7 @@
         --success-color: #4cc9f0;
         --danger-color: #f72585;
         --section-color: #7209b7;
-        --border-color: #dee2e6;
+        --border-color: grey;
         --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     }
     
@@ -75,7 +75,7 @@
     
     #new-item {
         flex: 1 1 500px;
-        padding: 0.1rem;
+        padding: 0.5rem;
         border: 1px solid var(--border-color);
         border-radius: 8px;
         font-size: 1rem;
@@ -223,6 +223,7 @@
         flex-shrink: 0;
         appearance: none;
         background-color: white;
+        
         border: 1px solid var(--border-color);
         border-radius: 4px;
         position: relative;
@@ -522,6 +523,102 @@
             font-size: 1.3rem;
         }
     }
+
+@media print {
+    body * {
+        visibility: hidden;
+    }
+    
+    .print-container, .print-container * {
+        visibility: visible;
+    }
+    
+    .print-container {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+    }
+    
+    .no-print {
+        display: none !important;
+    }
+    
+    /* Style for printed content */
+    .print-title {
+        font-size: 24px;
+        font-weight: bold;
+        margin-bottom: 20px;
+        color: #000;
+        border-bottom: 2px solid #333;
+        padding-bottom: 10px;
+    }
+    
+    .print-section {
+        font-size: 18px;
+        font-weight: bold;
+        margin: 15px 0 10px 0;
+        color: #333;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 5px;
+    }
+    
+    .print-item {
+        font-size: 14px;
+        margin: 5px 0;
+        padding-left: 20px;
+        position: relative;
+    }
+    
+    .print-item.completed {
+        text-decoration: line-through;
+        color: #777;
+    }
+    
+    .print-item::before {
+        content: "•";
+        position: absolute;
+        left: 0;
+    }
+    
+        .print-checkbox {
+        margin-right: 8px;
+        -webkit-appearance: none;
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        border: 1px solid #333;
+        border-radius: 3px;
+        vertical-align: middle;
+        position: relative;
+    }
+    
+    .print-checkbox:checked {
+        background-color: #333;
+    }
+    
+    .print-checkbox:checked::after {
+        content: "✓";
+        position: absolute;
+        color: white;
+        font-size: 10px;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+    }
+    
+    .print-item {
+        display: flex;
+        align-items: center;
+        padding-left: 0;
+    }
+    
+    .print-item::before {
+        display: none;
+    }
+}
+}
+
 </style>
 </head>
 <body>
@@ -540,12 +637,13 @@
         <div id="status"></div>
         
         <div class="controls">
+            <button class="section-btn" onclick="addSectionBreak()">⏸️ Add Section</button>
             <button onclick="saveToFile()">💾 Save</button>
             <button onclick="loadFromFile()">📂 Load</button>
             <button onclick="showExportModal()">📤 Export</button>
             <button onclick="showImportModal()">📥 Import</button>
             <button onclick="clearList()">🗑️ Clear</button>
-            <button class="section-btn" onclick="addSectionBreak()">⏸️ Add Section</button>
+ 			<button onclick="printToPDF()">🖨️ Print/PDF</button>
         </div>
         
         <div id="current-folder"></div>
@@ -759,53 +857,150 @@
         }
 
         /* ========== CORE FUNCTIONALITY ========== */
-        function setupDirectEditing() {
-            document.getElementById('todo-list').addEventListener('click', function(e) {
-                // Don't start editing if we're dragging
-                if (document.querySelector('.todo-item.dragging')) return;
+function setupDirectEditing() {
+    document.getElementById('todo-list').addEventListener('click', function(e) {
+        // Don't start editing if we're dragging
+        if (document.querySelector('.todo-item.dragging')) return;
+        
+        const textSpan = e.target.closest('.item-text');
+        if (textSpan) {
+            const li = textSpan.closest('.todo-item');
+            const editInput = li.querySelector('.item-edit');
+            
+            textSpan.style.display = 'none';
+            editInput.style.display = 'block';
+            editInput.value = textSpan.textContent;
+            editInput.focus();
+            
+            // Move cursor to end and open keyboard on mobile
+            setTimeout(() => {
+                editInput.setSelectionRange(editInput.value.length, editInput.value.length);
+                editInput.focus();
+            }, 50);
+            
+            function saveEdit() {
+                const newText = editInput.value.trim();
+                if (newText) {
+                    textSpan.textContent = newText;
+                    showStatus(li.classList.contains('section-break') ? 'Section updated' : 'Task updated', 'success');
+                } else if (li.classList.contains('blank-item')) {
+                    // Remove blank item if empty
+                    li.remove();
+                    
+                    // Show empty state if no items left
+                    const todoList = document.getElementById('todo-list');
+                    if (todoList.children.length === 0) {
+                        todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
+                    }
+                }
+                textSpan.style.display = 'block';
+                editInput.style.display = 'none';
                 
-                const textSpan = e.target.closest('.item-text');
-                if (textSpan) {
-                    const li = textSpan.closest('.todo-item');
-                    const editInput = li.querySelector('.item-edit');
+                editInput.removeEventListener('blur', saveEdit);
+                editInput.removeEventListener('keyup', handleKeyUp);
+            }
+            
+            function handleKeyUp(e) {
+                if (e.key === 'Enter') {
+                    // Save current item
+                    saveEdit();
                     
-                    textSpan.style.display = 'none';
-                    editInput.style.display = 'block';
-                    editInput.value = textSpan.textContent;
-                    editInput.focus();
-                    
-                    // Move cursor to end and open keyboard on mobile
-                    setTimeout(() => {
-                        editInput.setSelectionRange(editInput.value.length, editInput.value.length);
-                        editInput.focus();
-                    }, 50);
-                    
-                    function saveEdit() {
-                        const newText = editInput.value.trim();
-                        if (newText) {
-                            textSpan.textContent = newText;
-                            showStatus(li.classList.contains('section-break') ? 'Section updated' : 'Task updated', 'success');
-                        }
-                        textSpan.style.display = 'block';
-                        editInput.style.display = 'none';
-                        
-                        editInput.removeEventListener('blur', saveEdit);
-                        editInput.removeEventListener('keyup', handleKeyUp);
+                    // Create new blank item below
+                    if (!li.classList.contains('blank-item')) {
+                        createBlankItem(li);
                     }
+                }
+                if (e.key === 'Escape') {
+                    textSpan.style.display = 'block';
+                    editInput.style.display = 'none';
+                }
+            }
+            
+            editInput.addEventListener('blur', saveEdit);
+            editInput.addEventListener('keyup', handleKeyUp);
+        }
+    });
+    
+    // Add click listener to document to remove empty blank items
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.todo-item') && !e.target.closest('.input-group')) {
+            const blankItems = document.querySelectorAll('.todo-item.blank-item');
+            blankItems.forEach(item => {
+                if (item.querySelector('.item-edit').value.trim() === '') {
+                    item.remove();
                     
-                    function handleKeyUp(e) {
-                        if (e.key === 'Enter') saveEdit();
-                        if (e.key === 'Escape') {
-                            textSpan.style.display = 'block';
-                            editInput.style.display = 'none';
-                        }
+                    // Show empty state if no items left
+                    const todoList = document.getElementById('todo-list');
+                    if (todoList.children.length === 0) {
+                        todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
                     }
-                    
-                    editInput.addEventListener('blur', saveEdit);
-                    editInput.addEventListener('keyup', handleKeyUp);
                 }
             });
         }
+    });
+}
+
+function createBlankItem(afterItem) {
+    const li = document.createElement('li');
+    li.className = 'todo-item blank-item';
+    li.draggable = true;
+    li.innerHTML = `
+        <span class="drag-handle">☰</span>
+        <input type="checkbox" class="item-checkbox">
+        <span class="item-text">New Item</span>
+        <input type="text" class="item-edit" value="">
+        <button class="delete-btn">×</button>
+    `;
+    
+    afterItem.parentNode.insertBefore(li, afterItem.nextSibling);
+    
+    // Focus on the new item's edit field
+    const editInput = li.querySelector('.item-edit');
+    li.querySelector('.item-text').style.display = 'none';
+    editInput.style.display = 'block';
+    editInput.focus();
+    
+    // Set up event listeners for this new item
+    function saveEdit() {
+        const textSpan = li.querySelector('.item-text');
+        const newText = editInput.value.trim();
+        if (newText) {
+            textSpan.textContent = newText;
+            li.classList.remove('blank-item');
+            showStatus('Task added', 'success');
+        } else {
+            li.remove();
+            
+            // Show empty state if no items left
+            const todoList = document.getElementById('todo-list');
+            if (todoList.children.length === 0) {
+                todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
+            }
+        }
+        textSpan.style.display = 'block';
+        editInput.style.display = 'none';
+        
+        editInput.removeEventListener('blur', saveEdit);
+        editInput.removeEventListener('keyup', handleKeyUp);
+    }
+    
+    function handleKeyUp(e) {
+        if (e.key === 'Enter') {
+            saveEdit();
+            if (!li.classList.contains('blank-item')) {
+                createBlankItem(li);
+            }
+        }
+        if (e.key === 'Escape') {
+            li.querySelector('.item-text').style.display = 'block';
+            editInput.style.display = 'none';
+            li.remove();
+        }
+    }
+    
+    editInput.addEventListener('blur', saveEdit);
+    editInput.addEventListener('keyup', handleKeyUp);
+}
 
         function updateTitleWithCurrentDate() {
             const today = new Date();
@@ -1413,6 +1608,58 @@ function displaySavedFiles(files) {
                 addItem();
             }
         });
+
+function printToPDF() {
+    // Create a print-friendly version of the list
+    const printContainer = document.createElement('div');
+    printContainer.className = 'print-container';
+    
+    // Add title
+    const title = document.getElementById('title').value || 'To-Do List';
+    const titleElement = document.createElement('div');
+    titleElement.className = 'print-title';
+    titleElement.textContent = title;
+    printContainer.appendChild(titleElement);
+    
+    // Add date
+    const dateElement = document.createElement('div');
+    dateElement.className = 'print-date';
+    dateElement.textContent = new Date().toLocaleDateString();
+    printContainer.appendChild(dateElement);
+    
+    // Add items
+    const todoList = document.getElementById('todo-list');
+    let currentSection = null;
+    
+    Array.from(todoList.children).forEach(item => {
+        if (item.classList.contains('section-break')) {
+            // Add section header
+            currentSection = document.createElement('div');
+            currentSection.className = 'print-section';
+            currentSection.textContent = item.querySelector('.item-text').textContent;
+            printContainer.appendChild(currentSection);
+        } else {
+            // Add regular item
+            const itemElement = document.createElement('div');
+            itemElement.className = 'print-item';
+            if (item.classList.contains('completed')) {
+                itemElement.classList.add('completed');
+            }
+            itemElement.textContent = item.querySelector('.item-text').textContent;
+            printContainer.appendChild(itemElement);
+        }
+    });
+    
+    // Add to document and print
+    document.body.appendChild(printContainer);
+    window.print();
+    
+    // Clean up after printing
+    setTimeout(() => {
+        document.body.removeChild(printContainer);
+    }, 1000);
+}
+
     </script>
 </body>
 </html>

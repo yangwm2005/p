@@ -129,8 +129,8 @@
         .todo-item {
             display: flex;
             align-items: center;
-            padding: 0.8rem;
-            margin-bottom: 0.8rem;
+            padding: 0.2rem;
+            margin-bottom: 0.0rem;
             background-color: white;
             border-radius: 4px;
             box-shadow: var(--shadow);
@@ -548,45 +548,150 @@
         window.addEventListener('orientationchange', setViewportScale);
 
         /* ========== CORE FUNCTIONALITY ========== */
-        function setupDirectEditing() {
-            document.getElementById('todo-list').addEventListener('click', function(e) {
-                const textSpan = e.target.closest('.item-text');
-                if (textSpan) {
-                    const li = textSpan.closest('.todo-item');
-                    const editInput = li.querySelector('.item-edit');
+function setupDirectEditing() {
+    document.getElementById('todo-list').addEventListener('click', function(e) {
+        // Don't start editing if we're dragging
+        if (document.querySelector('.todo-item.dragging')) return;
+        
+        const textSpan = e.target.closest('.item-text');
+        if (textSpan) {
+            const li = textSpan.closest('.todo-item');
+            const editInput = li.querySelector('.item-edit');
+            
+            textSpan.style.display = 'none';
+            editInput.style.display = 'block';
+            editInput.value = textSpan.textContent;
+            editInput.focus();
+            
+            // Move cursor to end and open keyboard on mobile
+            setTimeout(() => {
+                editInput.setSelectionRange(editInput.value.length, editInput.value.length);
+                editInput.focus();
+            }, 50);
+            
+            function saveEdit() {
+                const newText = editInput.value.trim();
+                if (newText) {
+                    textSpan.textContent = newText;
+                    showStatus(li.classList.contains('section-break') ? 'Section updated' : 'Task updated', 'success');
+                } else if (li.classList.contains('blank-item')) {
+                    // Remove blank item if empty
+                    li.remove();
                     
-                    textSpan.style.display = 'none';
-                    editInput.style.display = 'block';
-                    editInput.value = textSpan.textContent;
-                    editInput.focus();
-                    
-                    function saveEdit() {
-                        const newText = editInput.value.trim();
-                        if (newText) {
-                            textSpan.textContent = newText;
-                            showStatus('Task updated', 'success');
-                        }
-                        textSpan.style.display = 'block';
-                        editInput.style.display = 'none';
-                        
-                        editInput.removeEventListener('blur', saveEdit);
-                        editInput.removeEventListener('keyup', handleKeyUp);
+                    // Show empty state if no items left
+                    const todoList = document.getElementById('todo-list');
+                    if (todoList.children.length === 0) {
+                        todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
                     }
+                }
+                textSpan.style.display = 'block';
+                editInput.style.display = 'none';
+                
+                editInput.removeEventListener('blur', saveEdit);
+                editInput.removeEventListener('keyup', handleKeyUp);
+            }
+            
+            function handleKeyUp(e) {
+                if (e.key === 'Enter') {
+                    // Save current item
+                    saveEdit();
                     
-                    function handleKeyUp(e) {
-                        if (e.key === 'Enter') saveEdit();
-                        if (e.key === 'Escape') {
-                            textSpan.style.display = 'block';
-                            editInput.style.display = 'none';
-                        }
+                    // Create new blank item below
+                    if (!li.classList.contains('blank-item')) {
+                        createBlankItem(li);
                     }
+                }
+                if (e.key === 'Escape') {
+                    textSpan.style.display = 'block';
+                    editInput.style.display = 'none';
+                }
+            }
+            
+            editInput.addEventListener('blur', saveEdit);
+            editInput.addEventListener('keyup', handleKeyUp);
+        }
+    });
+    
+    // Add click listener to document to remove empty blank items
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.todo-item') && !e.target.closest('.input-group')) {
+            const blankItems = document.querySelectorAll('.todo-item.blank-item');
+            blankItems.forEach(item => {
+                if (item.querySelector('.item-edit').value.trim() === '') {
+                    item.remove();
                     
-                    editInput.addEventListener('blur', saveEdit);
-                    editInput.addEventListener('keyup', handleKeyUp);
+                    // Show empty state if no items left
+                    const todoList = document.getElementById('todo-list');
+                    if (todoList.children.length === 0) {
+                        todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
+                    }
                 }
             });
         }
+    });
+}
 
+function createBlankItem(afterItem) {
+    const li = document.createElement('li');
+    li.className = 'todo-item blank-item';
+    li.draggable = true;
+    li.innerHTML = `
+        <span class="drag-handle">☰</span>
+        <input type="checkbox" class="item-checkbox">
+        <span class="item-text">New Item</span>
+        <input type="text" class="item-edit" value="">
+        <button class="delete-btn">×</button>
+    `;
+    
+    afterItem.parentNode.insertBefore(li, afterItem.nextSibling);
+    
+    // Focus on the new item's edit field
+    const editInput = li.querySelector('.item-edit');
+    li.querySelector('.item-text').style.display = 'none';
+    editInput.style.display = 'block';
+    editInput.focus();
+    
+    // Set up event listeners for this new item
+    function saveEdit() {
+        const textSpan = li.querySelector('.item-text');
+        const newText = editInput.value.trim();
+        if (newText) {
+            textSpan.textContent = newText;
+            li.classList.remove('blank-item');
+            showStatus('Task added', 'success');
+        } else {
+            li.remove();
+            
+            // Show empty state if no items left
+            const todoList = document.getElementById('todo-list');
+            if (todoList.children.length === 0) {
+                todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
+            }
+        }
+        textSpan.style.display = 'block';
+        editInput.style.display = 'none';
+        
+        editInput.removeEventListener('blur', saveEdit);
+        editInput.removeEventListener('keyup', handleKeyUp);
+    }
+    
+    function handleKeyUp(e) {
+        if (e.key === 'Enter') {
+            saveEdit();
+            if (!li.classList.contains('blank-item')) {
+                createBlankItem(li);
+            }
+        }
+        if (e.key === 'Escape') {
+            li.querySelector('.item-text').style.display = 'block';
+            editInput.style.display = 'none';
+            li.remove();
+        }
+    }
+    
+    editInput.addEventListener('blur', saveEdit);
+    editInput.addEventListener('keyup', handleKeyUp);
+}
         function setupDragAndDrop() {
             const list = document.getElementById('todo-list');
             
