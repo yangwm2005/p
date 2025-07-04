@@ -619,6 +619,101 @@
 }
 }
 
+/* Share modal specific styles */
+.share-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.share-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background-color: white;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    min-height: 80px;
+    border: none;
+    background-color: var(--light-color);
+}
+
+.share-option:hover {
+    background-color: #e9ecef;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow);
+}
+
+.share-option span {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+#share-text {
+    width: 100%;
+    height: 150px;
+    margin: 1rem 0;
+    padding: 0.8rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    resize: none;
+}
+
+/* Email-specific formatting */
+.email-html {
+    font-family: Arial, sans-serif;
+    line-height: 1.5;
+    color: #333;
+}
+
+.email-html h2 {
+    color: #4361ee;
+    border-bottom: 2px solid #4361ee;
+    padding-bottom: 5px;
+}
+
+.email-html h3 {
+    color: #7209b7;
+    margin-top: 15px;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 3px;
+}
+
+.email-html ul {
+    padding-left: 20px;
+    list-style-type: none;
+}
+
+.email-html li {
+    margin-bottom: 8px;
+    position: relative;
+    padding-left: 25px;
+}
+
+.email-html li:before {
+    content: "•";
+    position: absolute;
+    left: 0;
+    color: #4361ee;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 1.5rem;
+    color: #6c757d;
+    font-size: 0.9rem;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    margin: 1rem 0;
+}
+
 </style>
 </head>
 <body>
@@ -644,6 +739,7 @@
             <button onclick="showImportModal()">📥 Import</button>
             <button onclick="clearList()">🗑️ Clear</button>
  			<button onclick="printToPDF()">🖨️ Print/PDF</button>
+ 			<button onclick="shareList()">📤 Share</button>
         </div>
         
         <div id="current-folder"></div>
@@ -654,7 +750,7 @@
         </div>
         
         <div class="footer">
-            &copy; 2025 Dr. Wen-Ming Yang Lab. All rights reserved.
+            &copy; 2025 Dr. Wen-Ming Yang Lab. All rights reserved. (m verion)
         </div>
     </div>
 
@@ -1322,6 +1418,35 @@ function createBlankItem(afterItem) {
             });
         }
 
+// clear list
+function clearList() {
+    const todoList = document.getElementById('todo-list');
+    
+    // Check if there are items to clear
+    if (todoList.children.length === 0 || 
+        (todoList.children.length === 1 && todoList.querySelector('.empty-state'))) {
+        showStatus('List is already empty', 'warning');
+        return;
+    }
+    
+    // Confirm before clearing
+    if (confirm('Are you sure you want to clear the entire list?')) {
+        // Clear all items
+        todoList.innerHTML = '';
+        
+        // Add empty state message
+        const emptyState = document.createElement('div');
+        emptyState.className = 'empty-state';
+        emptyState.textContent = 'No tasks yet';
+        todoList.appendChild(emptyState);
+        
+        // Reset the title to default
+        updateTitleWithCurrentDate();
+        
+        showStatus('List cleared', 'success');
+    }
+}
+
         /* ========== FILE MANAGEMENT ========== */
         async function selectFolder() {
             try {
@@ -1532,6 +1657,8 @@ async function loadFromFile(fileName) {
             }
         }
 
+
+
 function displaySavedFiles(files) {
     const container = document.getElementById('saved-files-container');
     
@@ -1609,6 +1736,7 @@ function displaySavedFiles(files) {
             }
         });
 
+
 function printToPDF() {
     // Create a print-friendly version of the list
     const printContainer = document.createElement('div');
@@ -1658,6 +1786,196 @@ function printToPDF() {
     setTimeout(() => {
         document.body.removeChild(printContainer);
     }, 1000);
+}
+
+
+function shareList() {
+    try {
+        // Get the list title or use default
+        const title = document.getElementById('title').value || 'My To-Do List';
+        let text = `${title}\n\n`;
+        
+        // Format all items in the list
+        document.querySelectorAll('#todo-list .todo-item').forEach(item => {
+            const itemText = item.querySelector('.item-text').textContent;
+            if (item.classList.contains('section-break')) {
+                text += `\n${itemText}\n${'-'.repeat(itemText.length)}\n`;
+            } else {
+                const checked = item.querySelector('.item-checkbox')?.checked ? '[✓]' : '[ ]';
+                text += `${checked} ${itemText}\n`;
+            }
+        });
+        
+        // Try to use the Web Share API if available
+        if (navigator.share) {
+            navigator.share({
+                title: title,
+                text: text
+            }).catch(() => {
+                // If sharing fails, show our custom modal
+                showShareModal(title, text);
+            });
+        } else {
+            // If Web Share API isn't available, show our modal
+            showShareModal(title, text);
+        }
+    } catch (error) {
+        console.error('Sharing error:', error);
+        showStatus('Error preparing share options. Try exporting instead.', 'error');
+    }
+}
+
+function showShareModal(title, text) {
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay';
+    overlay.id = 'share-overlay';
+    overlay.style.display = 'block';
+    
+    // Create modal
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.id = 'share-modal';
+    modal.style.display = 'block';
+    modal.innerHTML = `
+        <h3>Share "${title}"</h3>
+        <div class="modal-content">
+            <div class="share-options">
+                <div class="share-option" id="email-share">
+                    <span>✉️</span> Email (Gmail)
+                </div>
+                <div class="share-option" id="copy-share">
+                    <span>📋</span> Copy Text
+                </div>
+                <div class="share-option" id="download-share">
+                    <span>📥</span> Download
+                </div>
+            </div>
+            <textarea id="share-text" readonly>${text}</textarea>
+            <div class="modal-actions">
+                <button class="secondary" id="close-share">Close</button>
+            </div>
+        </div>
+    `;
+    
+    // Add to page
+    document.body.appendChild(overlay);
+    document.body.appendChild(modal);
+    document.body.style.overflow = 'hidden';
+    
+    // Add event listeners
+document.getElementById('email-share').addEventListener('click', (e) => {
+    e.preventDefault();
+    
+    // Get the list title
+    const title = document.getElementById('title').value || 'My To-Do List';
+    
+    // Build HTML content for email body
+    let htmlContent = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #333; max-width: 600px;">
+            <h2 style="color: #4361ee; border-bottom: 2px solid #4361ee; padding-bottom: 5px; margin-bottom: 15px;">
+                ${title}
+            </h2>
+            <ul style="padding-left: 20px; list-style-type: none; margin: 0;">
+    `;
+
+    // Add all todo items to email body
+    document.querySelectorAll('#todo-list .todo-item').forEach(item => {
+        const itemText = item.querySelector('.item-text').textContent;
+        if (item.classList.contains('section-break')) {
+            htmlContent += `
+                </ul>
+                <h3 style="color: #7209b7; margin-top: 15px; border-bottom: 1px solid #ddd; padding-bottom: 3px;">
+                    ${itemText}
+                </h3>
+                <ul style="padding-left: 20px; list-style-type: none; margin: 0;">
+            `;
+        } else {
+            const checked = item.querySelector('.item-checkbox')?.checked ? '✓' : '◻';
+            const textColor = item.classList.contains('completed') ? '#777' : '#333';
+            const textDecoration = item.classList.contains('completed') ? 'line-through' : 'none';
+            
+            htmlContent += `
+                <li style="margin-bottom: 8px; position: relative; padding-left: 25px; color: ${textColor}; text-decoration: ${textDecoration}">
+                    <span style="position: absolute; left: 0; color: #4361ee;">${checked}</span>
+                    ${itemText}
+                </li>
+            `;
+        }
+    });
+
+    htmlContent += `
+            </ul>
+            <p style="margin-top: 20px; font-size: 0.9em; color: #777;">
+                Shared from Smart To-Do List
+            </p>
+        </div>
+    `;
+
+    // Create plain text version as fallback
+    const plainText = `${title}\n${'='.repeat(title.length)}\n\n` + 
+        Array.from(document.querySelectorAll('#todo-list .todo-item')).map(item => {
+            const text = item.querySelector('.item-text').textContent;
+            if (item.classList.contains('section-break')) {
+                return `\n${text}\n${'-'.repeat(text.length)}\n`;
+            } else {
+                const checked = item.querySelector('.item-checkbox')?.checked ? '[✓]' : '[ ]';
+                return `${checked} ${text}`;
+            }
+        }).join('\n') + 
+        `\n\nShared from Smart To-Do List`;
+
+    // Special handling for Chrome browser
+    if (navigator.userAgent.indexOf('Chrome') > -1) {
+        // Chrome-specific Gmail handling
+        const gmailUrl = new URL('https://mail.google.com/mail/u/0/?view=cm&fs=1');
+        gmailUrl.searchParams.set('su', title);
+        gmailUrl.searchParams.set('body', plainText);
+        
+        // Open in new window with specific size
+        window.open(gmailUrl.toString(), '_blank', 'width=800,height=600');
+    } 
+    // For other browsers, use standard mailto
+    else {
+        window.location.href = `mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(plainText)}`;
+    }
+    
+    hideShareModal();
+});
+    
+    document.getElementById('copy-share').addEventListener('click', () => {
+        const textarea = document.getElementById('share-text');
+        textarea.select();
+        document.execCommand('copy');
+        showStatus('Copied to clipboard!', 'success');
+        hideShareModal();
+    });
+    
+    document.getElementById('download-share').addEventListener('click', () => {
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${title.replace(/[^a-z0-9]/gi, '_')}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            hideShareModal();
+        }, 100);
+    });
+    
+    document.getElementById('close-share').addEventListener('click', hideShareModal);
+    overlay.addEventListener('click', hideShareModal);
+}
+
+function hideShareModal() {
+    const modal = document.getElementById('share-modal');
+    const overlay = document.getElementById('share-overlay');
+    if (modal) modal.remove();
+    if (overlay) overlay.remove();
+    document.body.style.overflow = '';
 }
 
     </script>
