@@ -919,151 +919,290 @@ button.help-btn:hover {
     </div>
 
     <script>
-        // File system variables
-        let directoryHandle;
-        let fileHandles = {};
-        let draggedItem = null;
+    // File system variables
+    let directoryHandle;
+    let fileHandles = {};
+    let draggedItem = null;
+    let touchStartY = 0;
+    let isDragging = false;
+    
+    // Initialize
+    document.addEventListener('DOMContentLoaded', function() {
+        updateTitleWithCurrentDate();
+        checkForSavedFiles();
+        setupDirectEditing();
+        setupDragAndDrop();
+        setupMobileEvents();
         
-        // Initialize
-        document.addEventListener('DOMContentLoaded', function() {
-            updateTitleWithCurrentDate();
-            checkForSavedFiles();
-            setupDirectEditing();
-            setupDragAndDrop();
-            setupMobileEvents();
-            
-            // Add event listeners for format changes
-            document.querySelectorAll('input[name="export-format"]').forEach(radio => {
-                radio.addEventListener('change', updateExportContent);
-            });
-            
-            // Add click listener for todo items
-            document.getElementById('todo-list').addEventListener('click', function(e) {
-                if (e.target.classList.contains('item-checkbox')) {
-                    toggleComplete(e.target);
-                } else if (e.target.classList.contains('delete-btn')) {
-                    deleteItem(e.target);
-                }
+        // Add event listeners for format changes
+        document.querySelectorAll('input[name="export-format"]').forEach(radio => {
+            radio.addEventListener('change', updateExportContent);
+        });
+    });
+
+    function setupMobileEvents() {
+        // Prevent zooming on double-tap
+        let lastTap = 0;
+        document.addEventListener('touchend', function(e) {
+            const currentTime = new Date().getTime();
+            const tapLength = currentTime - lastTap;
+            if (tapLength < 300 && tapLength > 0) {
+                e.preventDefault();
+            }
+            lastTap = currentTime;
+        }, { passive: false });
+        
+        // Better handling for virtual keyboard
+        const inputs = document.querySelectorAll('input[type="text"], textarea');
+        inputs.forEach(input => {
+            input.addEventListener('focus', function() {
+                setTimeout(() => {
+                    this.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
             });
         });
+    }
 
-        function setupMobileEvents() {
-            // Prevent zooming on double-tap
-            let lastTap = 0;
-            document.addEventListener('touchend', function(e) {
-                const currentTime = new Date().getTime();
-                const tapLength = currentTime - lastTap;
-                if (tapLength < 300 && tapLength > 0) {
-                    e.preventDefault();
-                }
-                lastTap = currentTime;
-            }, { passive: false });
+    function setupDragAndDrop() {
+        const list = document.getElementById('todo-list');
+        
+        // For desktop
+        list.addEventListener('dragstart', function(e) {
+            if (e.target.classList.contains('todo-item')) {
+                draggedItem = e.target;
+                e.target.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', '');
+            }
+        });
+        
+        list.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
             
-            // Better handling for virtual keyboard
-            const inputs = document.querySelectorAll('input[type="text"], textarea');
-            inputs.forEach(input => {
-                input.addEventListener('focus', function() {
-                    setTimeout(() => {
-                        this.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    }, 300);
-                });
-            });
-        }
-
-        function setupDragAndDrop() {
-            const list = document.getElementById('todo-list');
+            const targetItem = e.target.closest('.todo-item');
+            if (targetItem && targetItem !== draggedItem) {
+                const rect = targetItem.getBoundingClientRect();
+                const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
+                list.insertBefore(draggedItem, next ? targetItem.nextSibling : targetItem);
+            }
+        });
+        
+        list.addEventListener('dragend', function(e) {
+            if (e.target.classList.contains('todo-item')) {
+                e.target.classList.remove('dragging');
+                draggedItem = null;
+            }
+        });
+        
+        // For touch devices
+        list.addEventListener('touchstart', function(e) {
+            const item = e.target.closest('.todo-item');
+            if (!item) return;
             
-            // For desktop
-            list.addEventListener('dragstart', function(e) {
-                if (e.target.classList.contains('todo-item')) {
-                    draggedItem = e.target;
-                    e.target.classList.add('dragging');
-                    e.dataTransfer.effectAllowed = 'move';
-                    e.dataTransfer.setData('text/plain', ''); // Required for Firefox
-                }
-            });
+            // Check if we're touching a delete button or checkbox
+            if (e.target.closest('.delete-btn') || e.target.closest('.item-checkbox')) {
+                return;
+            }
             
-            list.addEventListener('dragover', function(e) {
+            // Check if we're touching the drag handle
+            if (e.target.closest('.drag-handle')) {
+                touchStartY = e.touches[0].clientY;
+                isDragging = true;
+                item.classList.add('dragging');
                 e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
+                return;
+            }
+            
+            // Otherwise prepare for possible text edit
+            touchStartY = e.touches[0].clientY;
+            isDragging = false;
+        }, { passive: false });
+        
+        list.addEventListener('touchmove', function(e) {
+            if (!isDragging) return;
+            
+            const touchY = e.touches[0].clientY;
+            const deltaY = touchY - touchStartY;
+            
+            const item = document.querySelector('.todo-item.dragging');
+            if (!item) return;
+            
+            // Move the dragged item visually
+            item.style.transform = `translateY(${deltaY}px)`;
+            
+            // Find the item we're hovering over
+            const hoverY = e.touches[0].clientY;
+            const items = Array.from(list.children).filter(i => i !== item);
+            
+            for (const targetItem of items) {
+                const rect = targetItem.getBoundingClientRect();
+                const middle = rect.top + rect.height / 2;
                 
-                const targetItem = e.target.closest('.todo-item');
-                if (targetItem && targetItem !== draggedItem) {
-                    const rect = targetItem.getBoundingClientRect();
-                    const next = (e.clientY - rect.top) / (rect.bottom - rect.top) > 0.5;
-                    list.insertBefore(draggedItem, next ? targetItem.nextSibling : targetItem);
+                if (hoverY < middle) {
+                    list.insertBefore(item, targetItem);
+                    break;
+                } else if (targetItem === items[items.length - 1]) {
+                    list.appendChild(item);
                 }
-            });
+            }
             
-            list.addEventListener('dragend', function(e) {
-                if (e.target.classList.contains('todo-item')) {
-                    e.target.classList.remove('dragging');
-                    draggedItem = null;
-                }
-            });
-            
-            // For touch devices
-            let touchStartY = 0;
-            let touchMoved = false;
-            let touchDraggedItem = null;
-            
-            list.addEventListener('touchstart', function(e) {
-                if (e.target.closest('.todo-item')) {
-                    touchDraggedItem = e.target.closest('.todo-item');
-                    touchStartY = e.touches[0].clientY;
-                    touchMoved = false;
-                    touchDraggedItem.classList.add('dragging');
-                    e.preventDefault(); // Prevent scrolling
-                }
-            }, { passive: false });
-            
-            list.addEventListener('touchmove', function(e) {
-                if (touchDraggedItem) {
-                    const touchY = e.touches[0].clientY;
-                    const deltaY = touchY - touchStartY;
-                    
-                    if (Math.abs(deltaY) > 10) {
-                        touchMoved = true;
-                        
-                        // Move the dragged item visually
-                        touchDraggedItem.style.transform = `translateY(${deltaY}px)`;
-                        
-                        // Find the item we're hovering over
-                        const hoverY = e.touches[0].clientY;
-                        const items = Array.from(list.children).filter(item => item !== touchDraggedItem);
-                        
-                        for (const item of items) {
-                            const rect = item.getBoundingClientRect();
-                            const middle = rect.top + rect.height / 2;
-                            
-                            if (hoverY < middle) {
-                                list.insertBefore(touchDraggedItem, item);
-                                break;
-                            } else if (item === items[items.length - 1]) {
-                                list.appendChild(touchDraggedItem);
-                            }
-                        }
-                        
-                        e.preventDefault(); // Prevent scrolling
-                    }
-                }
-            }, { passive: false });
-            
-            list.addEventListener('touchend', function(e) {
-                if (touchDraggedItem) {
-                    touchDraggedItem.classList.remove('dragging');
-                    touchDraggedItem.style.transform = '';
-                    touchDraggedItem = null;
-                    
-                    if (touchMoved) {
-                        e.preventDefault(); // Prevent click event
-                    }
-                }
-            }, { passive: false });
-        }
+            e.preventDefault();
+        }, { passive: false });
+        
+        list.addEventListener('touchend', function(e) {
+            const item = document.querySelector('.todo-item.dragging');
+            if (item) {
+                item.classList.remove('dragging');
+                item.style.transform = '';
+                isDragging = false;
+                e.preventDefault();
+            }
+        }, { passive: false });
+    }
 
-        /* ========== CORE FUNCTIONALITY ========== */
-setupDirectEditing
+    function setupDirectEditing() {
+        const todoList = document.getElementById('todo-list');
+        
+        // Handle clicks and touches
+        todoList.addEventListener('click', handleItemClick);
+        todoList.addEventListener('touchend', handleItemTouch, { passive: false });
+        
+        function handleItemClick(e) {
+            // Don't edit if dragging
+            if (document.querySelector('.todo-item.dragging')) return;
+            
+            // Handle checkbox clicks
+            if (e.target.classList.contains('item-checkbox')) {
+                setTimeout(() => {
+                    toggleComplete(e.target);
+                }, 0);
+                return;
+            }
+            
+            // Handle delete button
+            if (e.target.classList.contains('delete-btn')) {
+                deleteItem(e.target);
+                return;
+            }
+            
+            // Handle item text editing
+            const textSpan = e.target.closest('.item-text');
+            if (textSpan && !isDragging) {
+                startEditing(textSpan.closest('.todo-item'));
+            }
+        }
+        
+        function handleItemTouch(e) {
+            if (isDragging) return;
+            
+            const touch = e.changedTouches[0];
+            const target = document.elementFromPoint(touch.clientX, touch.clientY);
+            
+            // Handle checkbox
+            const checkbox = target.closest('.item-checkbox');
+            if (checkbox) {
+                e.preventDefault();
+                checkbox.checked = !checkbox.checked;
+                toggleComplete(checkbox);
+                return;
+            }
+            
+            // Handle delete button
+            const deleteBtn = target.closest('.delete-btn');
+            if (deleteBtn) {
+                e.preventDefault();
+                deleteItem(deleteBtn);
+                return;
+            }
+            
+            // Handle item text editing
+            const textSpan = target.closest('.item-text');
+            if (textSpan) {
+                e.preventDefault();
+                startEditing(textSpan.closest('.todo-item'));
+            }
+        }
+        
+        function startEditing(li) {
+            const textSpan = li.querySelector('.item-text');
+            const editInput = li.querySelector('.item-edit');
+            
+            textSpan.style.display = 'none';
+            editInput.style.display = 'block';
+            editInput.value = textSpan.textContent;
+            
+            // Focus and open keyboard
+            setTimeout(() => {
+                editInput.focus();
+                editInput.setSelectionRange(editInput.value.length, editInput.value.length);
+                
+                // iOS keyboard fix
+                if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {
+                    const fakeInput = document.createElement('input');
+                    fakeInput.style.position = 'absolute';
+                    fakeInput.style.opacity = 0;
+                    fakeInput.style.height = '0';
+                    document.body.appendChild(fakeInput);
+                    fakeInput.focus();
+                    setTimeout(() => {
+                        document.body.removeChild(fakeInput);
+                        editInput.focus();
+                    }, 100);
+                }
+            }, 50);
+            
+            function saveEdit() {
+                const newText = editInput.value.trim();
+                if (newText) {
+                    textSpan.textContent = newText;
+                    showStatus(li.classList.contains('section-break') ? 'Section updated' : 'Task updated', 'success');
+                } else if (li.classList.contains('blank-item')) {
+                    li.remove();
+                    if (todoList.children.length === 0) {
+                        todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
+                    }
+                }
+                textSpan.style.display = 'block';
+                editInput.style.display = 'none';
+                
+                // Clean up event listeners
+                editInput.removeEventListener('blur', saveEdit);
+                editInput.removeEventListener('keyup', handleKeyUp);
+            }
+            
+            function handleKeyUp(e) {
+                if (e.key === 'Enter') {
+                    saveEdit();
+                    if (!li.classList.contains('blank-item')) {
+                        createBlankItem(li);
+                    }
+                }
+                if (e.key === 'Escape') {
+                    textSpan.style.display = 'block';
+                    editInput.style.display = 'none';
+                }
+            }
+            
+            editInput.addEventListener('blur', saveEdit);
+            editInput.addEventListener('keyup', handleKeyUp);
+        }
+        
+        // Keep existing blank item cleanup
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.todo-item') && !e.target.closest('.input-group')) {
+                const blankItems = document.querySelectorAll('.todo-item.blank-item');
+                blankItems.forEach(item => {
+                    if (item.querySelector('.item-edit').value.trim() === '') {
+                        item.remove();
+                        if (todoList.children.length === 0) {
+                            todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
+                        }
+                    }
+                });
+            }
+        });
+    }
 
 function createBlankItem(afterItem) {
     const li = document.createElement('li');
