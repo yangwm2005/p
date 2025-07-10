@@ -828,10 +828,170 @@ button.help-btn:hover {
             display: none !important;
         }
     }
+
+/* Template button style */
+button.template-btn {
+    background-color: #6c757d;
+}
+button.template-btn:hover {
+    background-color: #5a6268;
+}
+
+/* Template options grid */
+.template-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 0.8rem;
+    margin-bottom: 1.5rem;
+}
+
+.template-option {
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.template-option:hover {
+    background-color: var(--light-color);
+    transform: translateY(-2px);
+}
+
+.template-option h4 {
+    color: var(--primary-color);
+    margin: 0 0 0.5rem 0;
+}
+
+.template-option p {
+    font-size: 0.8rem;
+    color: var(--border-color);
+    margin: 0;
+}
+
+/* File upload */
+.file-upload {
+    margin: 1.5rem 0;
+}
+.file-upload label {
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
     /*  👇 Add drag-and-drop loading support */
 #drop-button.dragover {
     background-color: #dbeafe !important;
     border: 2px dashed #4361ee;
+}
+
+.note-btn {
+    background: none;
+    border: none;
+    color: var(--accent-color);
+    cursor: pointer;
+    font-size: 1.2rem;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    padding: 0.2rem;
+    flex-shrink: 0;
+    min-width: 30px;
+    max-width: 40px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 0.3rem;
+}
+
+.note-btn:hover {
+    opacity: 1;
+}
+
+.todo-item.section-break .note-btn {
+    display: none;
+}
+
+/* Floating arrow buttons */
+#scroll-down-btn, #scroll-up-btn {
+    position: fixed;
+    left: 1rem;
+    z-index: 9999;
+    width: 44px;
+    height: 44px;
+    font-size: 1.5rem;
+    line-height: 44px;
+    text-align: center;
+    border-radius: 50%;
+    border: none;
+    background-color: var(--section-color);
+    color: white;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    transition: background-color 0.2s ease, opacity 0.3s ease;
+}
+
+/* Hover effect */
+#scroll-down-btn:hover, #scroll-up-btn:hover {
+    background-color: #5a189a;
+}
+
+/* Position: top-left for down button */
+#scroll-down-btn {
+    top: 1rem;
+    right: 1rem;
+    left: auto;
+}
+
+/* Position: bottom-left for up button */
+#scroll-up-btn {
+    bottom: 1rem;
+    right: 1rem;
+    left: auto;
+}
+
+/* Hide buttons on small screens (max-width: 700px) */
+@media (max-width: 700px) {
+    #scroll-down-btn, #scroll-up-btn {
+        display: none !important;
+    }
+}
+
+/* Scroll-down button base style */
+#scroll-down-btn {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 9999;
+    width: 36px;
+    height: 36px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    line-height: 36px;
+    text-align: center;
+    border-radius: 50%;
+    border: none;
+    background-color: transparent;
+    color: var(--section-color);
+    cursor: pointer;
+    transition: opacity 0.5s ease, background-color 0.2s ease;
+    opacity: 1;
+}
+
+/* Hover glow effect */
+#scroll-down-btn:hover {
+    background-color: rgba(114, 9, 183, 0.1);
+}
+
+/* Fade-out state */
+#scroll-down-btn.fade-out {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Hide on small screens */
+@media (max-width: 700px) {
+    #scroll-down-btn {
+        display: none !important;
+    }
 }
 
 
@@ -870,6 +1030,9 @@ button.help-btn:hover {
     <button onclick="printToPDF()">🖨️ Print/PDF</button>
     <button onclick="printVisibleList()">🖨️ Print View</button>
     <button onclick="shareList()">📤 Share</button>
+    <button onclick="showTemplateImport()" class="template-btn">📋 Template</button>
+    <button onclick="setDefaultTemplate('office')" class="template-btn">Set Office Default</button>
+    <button onclick="clearDefaultTemplate()" class="danger">Clear Default</button>
     <button onclick="showHelpModal()" class="help-btn">❓ Help</button>
 </div>
         
@@ -879,10 +1042,9 @@ button.help-btn:hover {
             <h2>Saved Lists</h2>
             <div id="saved-files-container" class="saved-files-container"></div>
         </div>
-
         
         <div class="footer">
-            &copy; 2025 Dr. Wen-Ming Yang Lab. All rights reserved. (m41 mobile)
+            &copy; 2025 Dr. Wen-Ming Yang Lab. All rights reserved. (m611 Note)
         </div>
     </div>
 
@@ -963,13 +1125,25 @@ document.addEventListener('DOMContentLoaded', function() {
     setupDirectEditing();
     setupDragAndDrop();
     setupMobileEvents();
-
+    
+    // Add this check for default template
+    const defaultTemplate = localStorage.getItem('defaultTemplate');
+    if (defaultTemplate && templates[defaultTemplate]) {
+        loadTemplate(defaultTemplate);
+    } else {
+        // Show empty state if no default template
+        const todoList = document.getElementById('todo-list');
+        if (todoList.children.length === 0) {
+            todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
+        }
+    }
+    
     // Add event listeners for format changes
     document.querySelectorAll('input[name="export-format"]').forEach(radio => {
         radio.addEventListener('change', updateExportContent);
     });
 
-    // 👇 Add drag-and-drop loading support
+// 👇 Add drag-and-drop loading support
 const dropButton = document.getElementById('drop-button');
 
 if (dropButton) {
@@ -1014,8 +1188,18 @@ if (dropButton) {
                         ${item.isSection ? '' : `<input type="checkbox" class="item-checkbox" ${item.completed ? 'checked' : ''}>`}
                         <span class="item-text">${item.text}</span>
                         <input type="text" class="item-edit" value="${item.text}">
+                        <button class="note-btn" onclick="showNoteModal(this)">📝</button>
                         <button class="delete-btn">×</button>
                     `;
+
+                    // Add note data if it exists
+                    if (item.note) {
+                        li.dataset.note = item.note;
+                        const noteBtn = li.querySelector('.note-btn');
+                        if (noteBtn && item.note.trim()) {
+                            noteBtn.style.fontWeight = 'bold';
+                        }
+                    }
 
                     todoList.appendChild(li);
                 });
@@ -1307,6 +1491,8 @@ function createBlankItem(afterItem) {
         <input type="checkbox" class="item-checkbox">
         <span class="item-text">New Item</span>
         <input type="text" class="item-edit" value="">
+    <button class="note-btn" onclick="showNoteModal(this)">📝</button>
+
         <button class="delete-btn">×</button>
     `;
     
@@ -1386,6 +1572,8 @@ function createBlankItem(afterItem) {
                 <input type="checkbox" class="item-checkbox">
                 <span class="item-text">${text}</span>
                 <input type="text" class="item-edit" value="${text}">
+    <button class="note-btn" onclick="showNoteModal(this)">📝</button>
+
                 <button class="delete-btn">×</button>
             `;
             
@@ -1659,6 +1847,8 @@ function importList() {
                         <input type="checkbox" class="item-checkbox" ${item.completed ? 'checked' : ''}>
                         <span class="item-text">${item.text}</span>
                         <input type="text" class="item-edit" value="${item.text}">
+    <button class="note-btn" onclick="showNoteModal(this)">📝</button>
+
                         <button class="delete-btn">×</button>
                     `;
                     todoList.appendChild(li);
@@ -1743,58 +1933,59 @@ function clearList() {
             }
         }
 
-        async function saveToFile() {
-            try {
-                const title = document.getElementById('title').value.trim();
-                if (!title) {
-                    showStatus('Please enter a title for your list', 'warning');
-                    return;
-                }
-                
-                // Check if we're on mobile
-                const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-                
-                if (isMobile || !window.showDirectoryPicker) {
-                    // Mobile fallback - use export instead
-                    showExportModal();
-                    return;
-                }
-                
-                if (!directoryHandle) {
-                    showStatus('Please select a folder first', 'warning');
-                    return await selectFolder();
-                }
-                
-                const items = [];
-                document.querySelectorAll('#todo-list .todo-item').forEach(li => {
-                    items.push({
-                        text: li.querySelector('.item-text').textContent,
-                        completed: li.classList.contains('completed'),
-                        isSection: li.classList.contains('section-break')
-                    });
-                });
-                
-                const todoData = {
-                    title: title,
-                    items: items,
-                    timestamp: new Date().toISOString()
-                };
-                
-                const fileName = `${title.replace(/[^a-z0-9]/gi, '_')}.todo`;
-                const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
-                const writable = await fileHandle.createWritable();
-                await writable.write(JSON.stringify(todoData, null, 2));
-                await writable.close();
-                
-                fileHandles[fileName] = fileHandle;
-                
-                showStatus(`Saved as "${fileName}"`, 'success');
-                checkForSavedFiles();
-            } catch (error) {
-                showStatus(`Error saving: ${error.message}`, 'error');
-                console.error(error);
-            }
+async function saveToFile() {
+    try {
+        const title = document.getElementById('title').value.trim();
+        if (!title) {
+            showStatus('Please enter a title for your list', 'warning');
+            return;
         }
+        
+        // Check if we're on mobile
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        if (isMobile || !window.showDirectoryPicker) {
+            // Mobile fallback - use export instead
+            showExportModal();
+            return;
+        }
+        
+        if (!directoryHandle) {
+            showStatus('Please select a folder first', 'warning');
+            return await selectFolder();
+        }
+        
+        const items = [];
+        document.querySelectorAll('#todo-list .todo-item').forEach(li => {
+            items.push({
+                text: li.querySelector('.item-text').textContent,
+                completed: li.classList.contains('completed'),
+                isSection: li.classList.contains('section-break'),
+                note: li.dataset.note || ''  // Add note to saved data
+            });
+        });
+        
+        const todoData = {
+            title: title,
+            items: items,
+            timestamp: new Date().toISOString()
+        };
+        
+        const fileName = `${title.replace(/[^a-z0-9]/gi, '_')}.todo`;
+        const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(JSON.stringify(todoData, null, 2));
+        await writable.close();
+        
+        fileHandles[fileName] = fileHandle;
+        
+        showStatus(`Saved as "${fileName}"`, 'success');
+        checkForSavedFiles();
+    } catch (error) {
+        showStatus(`Error saving: ${error.message}`, 'error');
+        console.error(error);
+    }
+}
 
 async function loadFromFile(fileName) {
     try {
@@ -1862,8 +2053,19 @@ async function loadFromFile(fileName) {
                         <input type="checkbox" class="item-checkbox" ${item.completed ? 'checked' : ''}>
                         <span class="item-text">${item.text}</span>
                         <input type="text" class="item-edit" value="${item.text}">
+                        <button class="note-btn" onclick="showNoteModal(this)">📝</button>
                         <button class="delete-btn">×</button>
                     `;
+                    
+                    // Add note data if it exists (this is the key fix)
+                    if (item.note) {
+                        li.dataset.note = item.note;
+                        const noteBtn = li.querySelector('.note-btn');
+                        if (noteBtn && item.note.trim()) {
+                            noteBtn.style.fontWeight = 'bold';
+                        }
+                    }
+                    
                     todoList.appendChild(li);
                 }
             });
@@ -2418,6 +2620,230 @@ function hideModal(type) {
     document.body.style.overflow = '';
 }
 
+// Template data (could also load from external files)
+const templates = {
+     office: {
+        title: "Office starting",
+        items: [
+            { isSection: true, text: "Prep" },
+            { text: "Timer start", completed: false },
+            { text: "Self-Chat of officestarting", completed: false },
+            { text: "Tea-making", completed: false },
+            { isSection: true, text: "Review" },
+            { text: "Review what I have done", completed: false },
+            { text: "Preview what's coming", completed: false },
+            { isSection: true, text: "Goal-setting" },
+            { text: "Project checking", completed: false },
+            { text: "Teaching", completed: false },
+            { text: "Social", completed: false },
+            { text: "Lab", completed: false },
+            { isSection: true, text: "Info-update" },
+            { text: "Line", completed: false },
+            { text: "Email", completed: false },
+            
+        ]
+    },
+    basic: {
+        title: "Daily Tasks",
+        items: [
+            { text: "Morning routine", completed: false },
+            { text: "Check emails", completed: false },
+            { text: "Exercise", completed: false },
+            { isSection: true, text: "Evening" },
+            { text: "Plan tomorrow", completed: false }
+        ]
+    },
+    shopping: {
+        title: "Shopping List",
+        items: [
+            { isSection: true, text: "Groceries" },
+            { text: "Milk", completed: false },
+            { text: "Eggs", completed: false },
+            { text: "Bread", completed: false }
+        ]
+    },
+    work: {
+        title: "Work Projects",
+        items: [
+            { isSection: true, text: "Urgent" },
+            { text: "Finish report", completed: false },
+            { isSection: true, text: "Ongoing" },
+            { text: "Client meeting", completed: false }
+        ]
+    }
+};
+
+function showTemplateImport() {
+    showModal('template');
+}
+
+function loadTemplate(templateName) {
+    const template = templates[templateName];
+    if (!template) return;
+    
+    // Clear current list if not empty
+    if (document.querySelectorAll('#todo-list .todo-item').length > 0) {
+        if (!confirm("Replace current list with template?")) return;
+    }
+    
+    // Set title
+    document.getElementById('title').value = template.title;
+    
+    // Clear and add items
+    const todoList = document.getElementById('todo-list');
+    todoList.innerHTML = '';
+    
+    template.items.forEach(item => {
+        if (item.isSection) {
+            const li = document.createElement('li');
+            li.className = 'todo-item section-break';
+            li.innerHTML = `
+                <span class="drag-handle">☰</span>
+                <span class="item-text">${item.text}</span>
+                <input type="text" class="item-edit" value="${item.text}">
+                <button class="delete-btn">×</button>
+            `;
+            todoList.appendChild(li);
+        } else {
+            const li = document.createElement('li');
+            li.className = 'todo-item';
+            li.innerHTML = `
+                <span class="drag-handle">☰</span>
+                <input type="checkbox" class="item-checkbox" ${item.completed ? 'checked' : ''}>
+                <span class="item-text">${item.text}</span>
+                <input type="text" class="item-edit" value="${item.text}">
+     <button class="note-btn" onclick="showNoteModal(this)">📝</button>
+
+                <button class="delete-btn">×</button>
+            `;
+            if (item.completed) li.classList.add('completed');
+            todoList.appendChild(li);
+        }
+    });
+    
+    hideModal('template');
+    showStatus(`Loaded "${templateName}" template`, 'success');
+}
+
+function uploadTemplate() {
+    const fileInput = document.getElementById('template-file');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        showStatus('No file selected', 'warning');
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const template = JSON.parse(e.target.result);
+            loadTemplateData(template);
+        } catch (error) {
+            showStatus('Invalid template file', 'error');
+            console.error(error);
+        }
+    };
+    reader.readAsText(file);
+}
+
+function loadTemplateData(templateData) {
+    // Same implementation as loadTemplate()
+    // but using the uploaded templateData instead
+}
+
+function setDefaultTemplate(templateName) {
+    localStorage.setItem('defaultTemplate', templateName);
+    showStatus(`"${templateName}" set as default template`, 'success');
+}
+
+function clearDefaultTemplate() {
+    localStorage.removeItem('defaultTemplate');
+    showStatus('Default template cleared', 'success');
+}
+
+let currentNoteItem = null;
+
+function showNoteModal(button) {
+    const item = button.closest('.todo-item');
+    const itemText = item.querySelector('.item-text').textContent;
+    
+    currentNoteItem = item;
+    
+    // Get existing note if any
+    const existingNote = item.dataset.note || '';
+    
+    document.getElementById('note-item-title').textContent = itemText;
+    document.getElementById('note-content').value = existingNote;
+    
+    showModal('note');
+}
+
+function saveNote() {
+    if (!currentNoteItem) return;
+    
+    const noteContent = document.getElementById('note-content').value;
+    currentNoteItem.dataset.note = noteContent;
+    
+    // Visual indicator if note exists
+    const noteBtn = currentNoteItem.querySelector('.note-btn');
+    if (noteContent.trim()) {
+        noteBtn.style.fontWeight = 'bold';
+        showStatus('Note saved', 'success');
+    } else {
+        noteBtn.style.fontWeight = '';
+    }
+    
+    hideModal('note');
+    currentNoteItem = null;
+}
+
+// Scroll to Saved Files
+function scrollToSaved() {
+    const savedSection = document.querySelector('.saved-lists');
+    if (savedSection) {
+        savedSection.scrollIntoView({ behavior: 'smooth' });
+    }
+}
+
+// Scroll back to top
+function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Show/hide scroll-up button near bottom
+window.addEventListener('scroll', () => {
+    const scrollUpBtn = document.getElementById('scroll-up-btn');
+    const showAt = document.body.scrollHeight - window.innerHeight - 300;
+    if (window.scrollY > showAt) {
+        scrollUpBtn.style.display = 'block';
+    } else {
+        scrollUpBtn.style.display = 'none';
+    }
+});
+
+// Fade away after 5 seconds of inactivity
+let fadeTimeout;
+const scrollDownBtn = document.getElementById('scroll-down-btn');
+
+function resetFadeTimer() {
+    if (!scrollDownBtn) return;
+
+    scrollDownBtn.classList.remove('fade-out');
+    clearTimeout(fadeTimeout);
+    fadeTimeout = setTimeout(() => {
+        scrollDownBtn.classList.add('fade-out');
+    }, 5000);
+}
+
+// Reset timer on mousemove
+document.addEventListener('mousemove', resetFadeTimer);
+
+// Initialize on load
+window.addEventListener('DOMContentLoaded', () => {
+    resetFadeTimer(); // start fade timer immediately
+});
+
 
     </script>
 
@@ -2452,6 +2878,71 @@ function hideModal(type) {
         </div>
     </div>
 </div>
+
+<!-- Template Import Modal -->
+<div class="overlay" id="template-overlay"></div>
+<div class="modal" id="template-modal">
+    <h3>Template Options</h3>
+    <div class="modal-content">
+        <div class="template-options">
+            <div class="template-option" onclick="loadTemplate('basic')">
+                <h4>Basic Tasks</h4>
+                <p>Daily to-do list template</p>
+            </div>
+            <div class="template-option" onclick="loadTemplate('shopping')">
+                <h4>Shopping List</h4>
+                <p>Grocery store template</p>
+            </div>
+            <div class="template-option" onclick="loadTemplate('work')">
+                <h4>Work Projects</h4>
+                <p>Task management template</p>
+            </div>
+            <div class="template-option" onclick="loadTemplate('office')">
+                <h4>Office Tasks</h4>
+                <p>Office starting routine</p>
+            </div>
+        </div>
+        
+        <div class="default-template-section" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+            <h4>Default Template Settings</h4>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0;">
+                <button onclick="setDefaultTemplate('basic')">Set Basic Default</button>
+                <button onclick="setDefaultTemplate('office')">Set Office Default</button>
+                <button onclick="clearDefaultTemplate()" class="secondary">Clear Default</button>
+            </div>
+        </div>
+        
+        <div class="file-upload" style="margin-top: 1.5rem;">
+            <label for="template-file">Upload your own template (.todo or .json):</label>
+            <input type="file" id="template-file" accept=".todo,.json">
+            <button onclick="uploadTemplate()" style="margin-top: 0.5rem;">Upload Template</button>
+        </div>
+        
+        <div class="modal-actions">
+            <button class="secondary" onclick="hideModal('template')">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Note Modal -->
+<div class="overlay" id="note-overlay"></div>
+<div class="modal" id="note-modal">
+    <h3>Task Notes</h3>
+    <div class="modal-content">
+        <div id="note-item-title" style="font-weight: bold; margin-bottom: 1rem;"></div>
+        <textarea id="note-content" placeholder="Add your notes here..." style="width: 100%; height: 200px; padding: 0.8rem; border: 1px solid var(--border-color); border-radius: 8px; font-family: inherit;"></textarea>
+        <div class="modal-actions">
+            <button onclick="saveNote()">Save</button>
+            <button class="secondary" onclick="hideModal('note')">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Floating Scroll Buttons -->
+<button id="scroll-down-btn" onclick="scrollToSaved()">↓</button>
+
+<button id="scroll-up-btn" onclick="scrollToTop()">⬆️</button>
+
 
 </body>
 </html>

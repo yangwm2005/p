@@ -877,6 +877,12 @@ button.template-btn:hover {
     margin-bottom: 0.5rem;
 }
 
+    /*  👇 Add drag-and-drop loading support */
+#drop-button.dragover {
+    background-color: #dbeafe !important;
+    border: 2px dashed #4361ee;
+}
+
 </style>
 </head>
 <body>
@@ -901,6 +907,8 @@ button.template-btn:hover {
     <!-- Desktop buttons -->
     <button class="desktop-only" onclick="saveToFile()">💾 Save</button>
     <button class="desktop-only" onclick="loadFromFile()">📂 Load</button>
+<!-- 👇 Add drag-and-drop loading support  -->
+    <button id="drop-button" class="desktop-only secondary">📂 Drop File</button>    
     
     <!-- Mobile buttons (alternative actions)
     <button class="mobile-only" onclick="showExportModal()">💾 Save</button>
@@ -1009,6 +1017,70 @@ button.template-btn:hover {
         document.querySelectorAll('input[name="export-format"]').forEach(radio => {
             radio.addEventListener('change', updateExportContent);
         });
+
+    // 👇 Add drag-and-drop loading support
+const dropButton = document.getElementById('drop-button');
+
+if (dropButton) {
+    // Highlight button on drag over
+    dropButton.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropButton.classList.add('dragover');
+    });
+
+    dropButton.addEventListener('dragleave', () => {
+        dropButton.classList.remove('dragover');
+    });
+
+    dropButton.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        dropButton.classList.remove('dragover');
+
+        const file = e.dataTransfer.files[0];
+        if (!file || (!file.name.endsWith('.json') && !file.name.endsWith('.todo'))) {
+            showStatus('Invalid file format. Only .json or .todo allowed.', 'error');
+            return;
+        }
+
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+
+            document.getElementById('title').value = data.title || 'Imported List';
+            const todoList = document.getElementById('todo-list');
+            todoList.innerHTML = '';
+
+            if (Array.isArray(data.items)) {
+                data.items.forEach(item => {
+                    const li = document.createElement('li');
+                    li.className = 'todo-item';
+                    li.draggable = true;
+                    if (item.isSection) li.classList.add('section-break');
+                    if (item.completed) li.classList.add('completed');
+
+                    li.innerHTML = `
+                        <span class="drag-handle">☰</span>
+                        ${item.isSection ? '' : `<input type="checkbox" class="item-checkbox" ${item.completed ? 'checked' : ''}>`}
+                        <span class="item-text">${item.text}</span>
+                        <input type="text" class="item-edit" value="${item.text}">
+                        <button class="delete-btn">×</button>
+                    `;
+
+                    todoList.appendChild(li);
+                });
+
+                showStatus(`Loaded "${file.name}" via drag & drop`, 'success');
+            } else {
+                showStatus('Invalid file structure', 'error');
+            }
+
+        } catch (err) {
+            console.error(err);
+            showStatus('Failed to load file', 'error');
+        }
+    });
+}
+
     });
 
     function setupMobileEvents() {
@@ -1924,17 +1996,18 @@ function displaySavedFiles(files) {
         `;
         
         // Modified click handler to properly load the file
-        fileElement.addEventListener('click', async (e) => {
-            // Don't trigger if clicking the delete button
-            if (e.target.classList.contains('delete-saved-btn')) return;
-            
-            try {
-                await loadFromFile(file.name);
-            } catch (error) {
-                showStatus(`Error loading file: ${error.message}`, 'error');
-                console.error(error);
-            }
-        });
+fileElement.addEventListener('click', async (e) => {
+    if (e.target.classList.contains('delete-saved-btn')) return;
+
+    try {
+        await loadFromFile(file.name);
+        window.scrollTo({ top: 0, behavior: 'smooth' }); // <-- scroll to top after loading
+    } catch (error) {
+        showStatus(`Error loading file: ${error.message}`, 'error');
+        console.error(error);
+    }
+});
+
         
         container.appendChild(fileElement);
     });
