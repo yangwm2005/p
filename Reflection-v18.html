@@ -333,6 +333,49 @@
             border-left: 3px solid var(--primary-color);
         }
         
+        /* --- Sleeker formatting toolbar --- */
+        .formatting-toolbar {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 8px;
+            padding: 4px 0;
+        }
+        .format-btn {
+            background: white;
+            border: 1px solid var(--gray-light);
+            border-radius: 20px;          /* pill shape for compactness */
+            padding: 4px 14px;
+            font-weight: 500;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.15s ease;
+            color: var(--dark-color);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+            line-height: 1.4;
+        }
+        .format-btn:hover {
+            background: var(--light-color);
+            border-color: var(--gray-medium);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .format-btn:active {
+            transform: translateY(0);
+        }
+        .format-btn span {
+            font-size: 1rem;
+            font-weight: 600;
+            opacity: 0.8;
+        }
+        /* morning/self/night subtle context colors (optional) */
+        .morning-reflection .format-btn:hover { background: #fff2e0; }
+        .selfaware-reflection .format-btn:hover { background: #dcfce7; }
+        .night-reflection .format-btn:hover { background: #f0ebff; }
+        /* --- end formatting toolbar --- */
+        
         textarea {
             width: 100%;
             min-height: 200px;
@@ -345,7 +388,6 @@
             transition: all 0.2s;
             font-family: 'Inter', sans-serif;
         }
-        
         textarea:focus {
             outline: none;
             border-color: var(--primary-color);
@@ -1872,7 +1914,7 @@
             </section>
             
             <section class="reflection-section">
-                <!-- Morning Reflection Card -->
+                <!-- Morning Reflection Card with compact toolbar -->
                 <div class="reflection-card morning-reflection">
                     <div class="reflection-header">
                         <h2 class="reflection-title morning-title">
@@ -1884,10 +1926,14 @@
                         </div>
                     </div>
                     <p class="reflection-prompt">What intentions will guide your day? What are you grateful for this morning?</p>
+                    <div class="formatting-toolbar" data-target="morning-text">
+                        <button class="format-btn" data-format="bullet"><span>•</span> Bullet</button>
+                        <button class="format-btn" data-format="number"><span>1.</span> Number</button>
+                    </div>
                     <textarea id="morning-text" placeholder="Begin your day with positive intentions and gratitude..."></textarea>
                 </div>
                 
-                <!-- NEW: Self-awareness Card (midday check-in) -->
+                <!-- Self-awareness Card with toolbar -->
                 <div class="reflection-card selfaware-reflection">
                     <div class="reflection-header">
                         <h2 class="reflection-title selfaware-title">
@@ -1899,10 +1945,14 @@
                         </div>
                     </div>
                     <p class="reflection-prompt">Pause and notice: What thoughts, emotions, or body sensations are present? Observe without judgment.</p>
+                    <div class="formatting-toolbar" data-target="selfaware-text">
+                        <button class="format-btn" data-format="bullet"><span>•</span> Bullet</button>
+                        <button class="format-btn" data-format="number"><span>1.</span> Number</button>
+                    </div>
                     <textarea id="selfaware-text" placeholder="e.g., feeling tense before meeting, curious about a new idea, aware of impatience..."></textarea>
                 </div>
                 
-                <!-- Evening Reflection Card -->
+                <!-- Evening Reflection Card with toolbar -->
                 <div class="reflection-card night-reflection">
                     <div class="reflection-header">
                         <h2 class="reflection-title night-title">
@@ -1914,6 +1964,10 @@
                         </div>
                     </div>
                     <p class="reflection-prompt">How did your day unfold? What lessons did you learn? How can you grow?</p>
+                    <div class="formatting-toolbar" data-target="night-text">
+                        <button class="format-btn" data-format="bullet"><span>•</span> Bullet</button>
+                        <button class="format-btn" data-format="number"><span>1.</span> Number</button>
+                    </div>
                     <textarea id="night-text" placeholder="Reflect on your day's experiences and insights..."></textarea>
                 </div>
                 
@@ -2169,6 +2223,100 @@
         let tooltipTimer = null;
         let activeTooltipAnchor = null;
         let activeTooltipDate = null;
+        
+        // --- Sleeker formatting with auto-indent on Enter ---
+function applyFormatting(textarea, formatType) {
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const selectedText = text.substring(start, end);
+
+    if (selectedText.trim().length === 0) {
+        // If no selection, insert a new list item at cursor
+        const prefix = formatType === 'bullet' ? '• ' : '1. ';
+        const newText = text.substring(0, start) + prefix + text.substring(end);
+        textarea.value = newText;
+        textarea.setSelectionRange(start + prefix.length, start + prefix.length);
+    } else {
+        // Wrap each line with the appropriate prefix
+        const lines = selectedText.split('\n');
+        const prefix = formatType === 'bullet' ? '• ' : '1. ';
+        const formattedLines = lines.map(line => {
+            // Avoid double-prefixing if line already starts with • or number
+            if (line.trim().startsWith('•') || line.trim().match(/^\d+\./)) {
+                return line;
+            }
+            return prefix + line;
+        });
+        const newText = text.substring(0, start) + formattedLines.join('\n') + text.substring(end);
+        textarea.value = newText;
+        // Set selection to the end of the formatted block
+        const newEnd = start + formattedLines.join('\n').length;
+        textarea.setSelectionRange(newEnd, newEnd);
+    }
+    // Trigger input event for autosave
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+    // --- THE NEW LINE ---
+    // Return focus to the textarea so the cursor is active
+    textarea.focus();
+    // --- END NEW LINE ---
+}
+
+        // Handle Enter key for list continuation
+        function handleTextareaKeydown(e) {
+            const textarea = e.target;
+            if (e.key !== 'Enter' || e.shiftKey) return;
+            
+            const start = textarea.selectionStart;
+            const text = textarea.value;
+            const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+            const currentLine = text.substring(lineStart, start);
+            
+            // Check if line starts with bullet or number pattern
+            const bulletMatch = currentLine.match(/^(\s*)(•)\s+/);
+            const numberMatch = currentLine.match(/^(\s*)(\d+\.)\s+/);
+            
+            if (bulletMatch) {
+                e.preventDefault();
+                const indent = bulletMatch[1];
+                const bullet = bulletMatch[2];
+                const newLine = `\n${indent}${bullet} `;
+                const newText = text.substring(0, start) + newLine + text.substring(start);
+                textarea.value = newText;
+                textarea.setSelectionRange(start + newLine.length, start + newLine.length);
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            } else if (numberMatch) {
+                e.preventDefault();
+                const indent = numberMatch[1];
+                let num = parseInt(numberMatch[2], 10);
+                const nextNum = isNaN(num) ? 1 : num + 1;
+                const newLine = `\n${indent}${nextNum}. `;
+                const newText = text.substring(0, start) + newLine + text.substring(start);
+                textarea.value = newText;
+                textarea.setSelectionRange(start + newLine.length, start + newLine.length);
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        }
+
+        // Attach formatting listeners
+        document.querySelectorAll('.formatting-toolbar .format-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const toolbar = e.currentTarget.closest('.formatting-toolbar');
+                const targetId = toolbar.dataset.target;
+                const textarea = document.getElementById(targetId);
+                if (!textarea) return;
+                const format = e.currentTarget.dataset.format;
+                applyFormatting(textarea, format);
+            });
+        });
+
+        // Attach keydown for auto-indent on all three textareas
+        [morningTextElement, selfawareTextElement, nightTextElement].forEach(ta => {
+            if (ta) ta.addEventListener('keydown', handleTextareaKeydown);
+        });
+        // --- end formatting functions ---
         
         // Helper to count entries for a date
         function getEntryCount(dateString) {
