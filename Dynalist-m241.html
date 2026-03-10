@@ -44,9 +44,14 @@
             display: inline-flex;
             align-items: center;
             gap: 5px;
+            z-index: 1000;
+            position: relative;
         }
         .control-btn:hover {
             background-color: #f9f9f9;
+        }
+        .control-btn:active {
+            transform: translateY(1px);
         }
         .api-status {
             display: inline-block;
@@ -104,6 +109,7 @@
             gap: 10px;
             margin-bottom: 10px;
             align-items: center;
+            flex-wrap: wrap;
         }
         .button-container button {
             padding: 12px;
@@ -117,6 +123,7 @@
         }
         #enterButton {
             flex: 1;
+            min-width: 80px;
             background-color: #06D85F;
             color: white;
         }
@@ -125,6 +132,7 @@
         }
         .open-dynalist-btn {
             flex: 1;
+            min-width: 80px;
             background-color: #007bff;
             color: white;
         }
@@ -132,7 +140,7 @@
             background-color: #0056b3;
         }
         .preset-btn {
-            width: 30px;
+            width: 40px;
             height: 40px;
             padding: 0;
             border: none;
@@ -160,7 +168,7 @@
             background-color: #660066;
         }
         .filter-btn {
-            width: 30px;
+            width: 40px;
             height: 40px;
             padding: 0;
             border: none;
@@ -187,7 +195,7 @@
             background-color: #9f1167;
         }
         .date-btn {
-            width: 30px;
+            width: 40px;
             height: 40px;
             padding: 0;
             border: none;
@@ -211,7 +219,7 @@
             border: 1px solid #ddd;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            z-index: 10;
+            z-index: 2000;
             overflow: hidden;
             transition: opacity 0.2s ease, transform 0.2s ease;
             opacity: 0;
@@ -252,7 +260,7 @@
             overflow-y: auto;
         }
         .dropdown-item {
-            padding: 4px 8px;
+            padding: 8px 12px;
             font-size: 14px;
             cursor: pointer;
             transition: background-color 0.2s ease;
@@ -281,6 +289,7 @@
         .status-message.hidden {
             opacity: 0;
             transform: scale(0.9);
+            pointer-events: none;
         }
         .success {
             background-color: #dff8d8;
@@ -292,7 +301,7 @@
         }
         iframe {
             width: 100%;
-            height: calc(100% - 220px);
+            height: calc(100% - 250px);
             border: none;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
@@ -328,20 +337,20 @@
                 <button id="enterButton">Enter</button>
                 <div style="position: relative;">
                     <button id="hashPresetButton" class="preset-btn hash">#</button>
-                    <div id="hashPresetMenu" class="dropdown-menu hidden"></div>
+                    <div id="hashPresetMenu" class="dropdown-menu"></div>
                 </div>
                 <div style="position: relative;">
                     <button id="atPresetButton" class="preset-btn at">@</button>
-                    <div id="atPresetMenu" class="dropdown-menu hidden"></div>
+                    <div id="atPresetMenu" class="dropdown-menu"></div>
                 </div>
                 <button class="open-dynalist-btn" id="openDynalistBtn">Dynalist</button>
                 <div style="position: relative;">
                     <button id="hashFilterButton" class="filter-btn hash">🔍#</button>
-                    <div id="hashFilterMenu" class="dropdown-menu hidden"></div>
+                    <div id="hashFilterMenu" class="dropdown-menu"></div>
                 </div>
                 <div style="position: relative;">
                     <button id="atFilterButton" class="filter-btn at">🔍@</button>
-                    <div id="atFilterMenu" class="dropdown-menu hidden"></div>
+                    <div id="atFilterMenu" class="dropdown-menu"></div>
                 </div>
             </div>
             <p id="statusMessage" class="status-message hidden"></p>
@@ -352,7 +361,7 @@
     </div>
 
     <script>
-        // Make functions globally accessible
+        // Ensure all functions are in global scope
         window.apiKey = null;
         window.docId = localStorage.getItem('dynalistDocId') || "QBPYSvxs9JO2gYfbf0sPhsoF";
         window.hashPresetTerms = [];
@@ -381,11 +390,7 @@
                     return false;
                 }
                 console.log("Document fetched successfully");
-                console.log(`Total nodes: ${result.nodes.length}`);
                 const rootNode = result.nodes.find(node => node.id === "root");
-                console.log("Root node:", rootNode);
-                const rootNodes = result.nodes.filter(node => node.parent === rootNode?.id || node.parent === "root");
-                console.log("Root nodes:", rootNodes.map(node => node.content));
                 const presetNode = result.nodes.find(node => 
                     node.content?.toLowerCase() === "preset terms" && (node.parent === rootNode?.id || node.parent === "root")
                 );
@@ -394,7 +399,7 @@
                     return false;
                 }
                 window.presetTermsNodeId = presetNode.id;
-                console.log(`Found 'Preset Terms' node with ID: ${window.presetTermsNodeId}, content: ${presetNode.content}`);
+                console.log(`Found 'Preset Terms' node with ID: ${window.presetTermsNodeId}`);
                 const termsNodes = result.nodes.filter(node => 
                     node.parent === window.presetTermsNodeId && node.content?.startsWith("PRESET_TERMS:")
                 );
@@ -404,27 +409,8 @@
                 }
                 const termsNode = termsNodes[termsNodes.length - 1];
                 window.termsNodeId = termsNode.id;
-                console.log(`Selected terms node ID: ${window.termsNodeId}, content: ${termsNode.content}`);
-                if (termsNodes.length > 1) {
-                    console.log(`Found ${termsNodes.length} PRESET_TERMS nodes, cleaning up duplicates`);
-                    const deleteChanges = termsNodes
-                        .filter(node => node.id !== window.termsNodeId)
-                        .map(node => ({
-                            action: 'delete',
-                            node_id: node.id
-                        }));
-                    const cleanupResponse = await fetch('https://dynalist.io/api/v1/doc/edit', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ token: window.apiKey, file_id: window.docId, changes: deleteChanges })
-                    });
-                    const cleanupResult = await cleanupResponse.json();
-                    if (cleanupResult._code === "Ok") {
-                        console.log("Duplicate PRESET_TERMS nodes deleted");
-                    } else {
-                        console.error("Failed to clean up duplicates:", cleanupResult._msg);
-                    }
-                }
+                console.log(`Selected terms node ID: ${window.termsNodeId}`);
+                
                 const content = termsNode.content;
                 if (!content.startsWith("PRESET_TERMS:")) {
                     console.log("Invalid PRESET_TERMS format");
@@ -513,7 +499,7 @@
             }
         };
 
-        // Function to render preset dropdown menu (for inserting tags)
+        // Function to render preset dropdown menu
         window.renderPresetMenu = function(menuId, terms, prefix, storageKey) {
             const menu = document.getElementById(menuId);
             if (!menu) {
@@ -526,7 +512,8 @@
                 item.className = 'dropdown-item';
                 item.setAttribute('data-term', `${prefix}${term}`);
                 item.textContent = term;
-                item.addEventListener('click', () => {
+                item.onclick = (e) => {
+                    e.stopPropagation();
                     console.log(`Clicked preset term: ${prefix}${term}`);
                     const textarea = document.getElementById('dynalistInput');
                     const termWithPrefix = `${prefix}${term}`;
@@ -537,16 +524,17 @@
                     }
                     textarea.focus();
                     menu.classList.remove('show');
-                });
+                };
                 menu.appendChild(item);
             });
             const editItem = document.createElement('div');
             editItem.className = 'dropdown-item edit';
             editItem.textContent = 'Edit Presets';
-            editItem.addEventListener('click', () => {
+            editItem.onclick = (e) => {
+                e.stopPropagation();
                 console.log(`Editing presets for ${prefix}`);
                 window.editPresetTerms(menuId, terms, prefix, storageKey);
-            });
+            };
             menu.appendChild(editItem);
         };
 
@@ -567,10 +555,11 @@
                 item.className = 'dropdown-item';
                 item.setAttribute('data-term', `#${term}`);
                 item.textContent = `#${term}`;
-                item.addEventListener('click', () => {
+                item.onclick = (e) => {
+                    e.stopPropagation();
                     window.insertTerm(`#${term}`);
                     menu.classList.remove('show');
-                });
+                };
                 hashColumn.appendChild(item);
             });
             window.atPresetTerms.forEach(term => {
@@ -578,10 +567,11 @@
                 item.className = 'dropdown-item';
                 item.setAttribute('data-term', `@${term}`);
                 item.textContent = `@${term}`;
-                item.addEventListener('click', () => {
+                item.onclick = (e) => {
+                    e.stopPropagation();
                     window.insertTerm(`@${term}`);
                     menu.classList.remove('show');
-                });
+                };
                 atColumn.appendChild(item);
             });
             menu.appendChild(hashColumn);
@@ -607,15 +597,15 @@
                 item.className = 'dropdown-item';
                 item.setAttribute('data-term', `${prefix}${term}`);
                 item.textContent = `${prefix}${term}`;
-                item.addEventListener('click', () => {
+                item.onclick = (e) => {
+                    e.stopPropagation();
                     window.insertTerm(`${prefix}${term}`);
                     menu.classList.remove('show');
-                });
+                };
                 menu.appendChild(item);
             });
             const textarea = document.getElementById('dynalistInput');
             if (show && terms.length > 0) {
-                // Calculate cursor position
                 const cursorPos = textarea.selectionStart;
                 const textBefore = textarea.value.substring(0, cursorPos);
                 const tempSpan = document.createElement('span');
@@ -639,8 +629,8 @@
                 let cursorX = rects.length > 0 ? rects[0].left : textareaRect.left;
                 let cursorY = rects.length > 0 ? rects[0].bottom : textareaRect.top;
                 document.body.removeChild(tempSpan);
-                // Adjust menu position
-                const menuHeight = Math.min(terms.length * 24 + 10, 200);
+                
+                const menuHeight = Math.min(terms.length * 30 + 10, 200);
                 const viewportHeight = window.innerHeight;
                 const viewportWidth = window.innerWidth;
                 let top = cursorY - textareaRect.top + textarea.scrollTop + 5;
@@ -659,7 +649,7 @@
             }
         };
 
-        // Function to insert term (for slash or tag menu)
+        // Function to insert term
         window.insertTerm = function(term) {
             const textarea = document.getElementById('dynalistInput');
             const value = textarea.value;
@@ -673,7 +663,7 @@
             textarea.setSelectionRange(newCursorPos, newCursorPos);
         };
 
-        // Function to render filter dropdown menu (for opening filtered views)
+        // Function to render filter menu
         window.renderFilterMenu = function(menuId, terms, prefix) {
             const menu = document.getElementById(menuId);
             if (!menu) {
@@ -686,22 +676,24 @@
                 item.className = 'dropdown-item';
                 item.setAttribute('data-term', term);
                 item.textContent = term;
-                item.addEventListener('click', () => {
+                item.onclick = (e) => {
+                    e.stopPropagation();
                     const encodedTerm = encodeURIComponent(`${prefix}${term}`);
                     const filterUrl = `https://dynalist.io/d/${window.docId}#q=${encodedTerm}`;
                     console.log(`Filtering Dynalist with URL: ${filterUrl}`);
                     window.open(filterUrl, '_blank');
                     menu.classList.remove('show');
-                });
+                };
                 menu.appendChild(item);
             });
             const editItem = document.createElement('div');
             editItem.className = 'dropdown-item edit';
             editItem.textContent = 'Edit Presets';
-            editItem.addEventListener('click', () => {
+            editItem.onclick = (e) => {
+                e.stopPropagation();
                 console.log(`Editing presets for ${prefix} from filter menu`);
                 window.editPresetTerms(menuId, terms, prefix, menuId.includes('hash') ? 'hashPresetTerms' : 'atPresetTerms');
-            });
+            };
             menu.appendChild(editItem);
         };
 
@@ -799,7 +791,7 @@
             }, 3000);
         };
 
-        // Function to get the current date and day in "YYYYMMDD: Day" format
+        // Function to get the current date and day
         window.getCurrentDateAndDay = function() {
             const now = new Date();
             const year = now.getFullYear();
@@ -810,7 +802,7 @@
             return `${year}${month}${day}: ${dayName}`;
         };
 
-        // Function to add date to Dynalist using API
+        // Function to add date via API
         window.addDateToDynalistWithApi = async function() {
             const dateStr = window.getCurrentDateAndDay();
             window.showStatus("Adding date via API...");
@@ -857,7 +849,7 @@
             }
         };
 
-        // Fallback method for adding date
+        // Manual date addition
         window.addDateToDynalistManually = function() {
             const dateStr = window.getCurrentDateAndDay();
             window.showStatus("Ready! Now manually add this date in Dynalist.", true);
@@ -872,7 +864,7 @@
             }
         };
 
-        // Main function to add date
+        // Main date function
         window.addDateToDynalist = function() {
             if (window.apiKey) {
                 return window.addDateToDynalistWithApi();
@@ -881,7 +873,7 @@
             }
         };
 
-        // Show API settings dialog
+        // Show API settings
         window.showApiSettings = function() {
             console.log("Opening API settings");
             const newApiKey = prompt("Enter your Dynalist API key (copy from your other device if syncing):", window.apiKey || '');
@@ -928,7 +920,7 @@
             }
         };
 
-        // Show Document ID settings dialog
+        // Show Document ID settings
         window.showDocIdSettings = function() {
             console.log("Opening Document ID settings");
             const newDocId = prompt("Enter your Dynalist Document ID:", window.docId);
@@ -989,7 +981,7 @@
             window.open(`https://dynalist.io/d/${window.docId}`, '_blank');
         };
 
-        // Function to get the current time in hh:mm format
+        // Function to get current time
         window.getCurrentTime = function() {
             const now = new Date();
             const hours = String(now.getHours()).padStart(2, '0');
@@ -997,7 +989,7 @@
             return `${hours}:${minutes}`;
         };
 
-        // Function to add note to Dynalist using API
+        // Function to add note via API
         window.addNoteToDynalistWithApi = async function(note) {
             window.showStatus("Adding note via API...");
             try {
@@ -1045,7 +1037,7 @@
             }
         };
 
-        // Fallback method using URL parameters if no API is available
+        // Manual note addition
         window.addNoteToDynalistManually = function(note) {
             window.showStatus("Ready! Now manually add this note in Dynalist.", true);
             try {
@@ -1060,7 +1052,7 @@
             }
         };
 
-        // Main function to add a note
+        // Main note function
         window.addNoteToDynalist = function(note) {
             if (window.apiKey) {
                 return window.addNoteToDynalistWithApi(note);
@@ -1078,7 +1070,7 @@
                 console.log("API key found in local storage");
                 window.updateApiStatus(true);
             } else {
-                console.log("No API key found, prompting user");
+                console.log("No API key found");
                 window.hashPresetTerms = [];
                 window.atPresetTerms = [];
             }
@@ -1119,16 +1111,57 @@
             window.renderTagMenu('', false);
             window.fetchDocumentTitle();
             window.refreshDynalist();
+        };
 
-            // Set up event listeners
-            document.getElementById('apiSettingsBtn').addEventListener('click', window.showApiSettings);
-            document.getElementById('docIdSettingsBtn').addEventListener('click', window.showDocIdSettings);
-            document.getElementById('openDynalistBtn').addEventListener('click', window.openDynalist);
+        // Set up event listeners after DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log("DOM loaded, setting up event listeners");
+            
+            // Initialize the app
+            window.initializeApp();
 
-            const enterButton = document.getElementById('enterButton');
-            if (enterButton) {
-                console.log("Enter button initialized");
-                enterButton.addEventListener('click', () => {
+            // API Settings button
+            const apiBtn = document.getElementById('apiSettingsBtn');
+            if (apiBtn) {
+                apiBtn.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log("API Settings button clicked");
+                    window.showApiSettings();
+                    return false;
+                };
+            }
+
+            // Document ID Settings button
+            const docBtn = document.getElementById('docIdSettingsBtn');
+            if (docBtn) {
+                docBtn.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log("Document ID button clicked");
+                    window.showDocIdSettings();
+                    return false;
+                };
+            }
+
+            // Open Dynalist button
+            const openBtn = document.getElementById('openDynalistBtn');
+            if (openBtn) {
+                openBtn.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log("Open Dynalist button clicked");
+                    window.openDynalist();
+                    return false;
+                };
+            }
+
+            // Enter button
+            const enterBtn = document.getElementById('enterButton');
+            if (enterBtn) {
+                enterBtn.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
                     console.log("Enter button clicked");
                     const textarea = document.getElementById('dynalistInput');
                     const note = textarea.value.trim();
@@ -1139,54 +1172,28 @@
                     } else {
                         window.showStatus("Please enter a note first", false);
                     }
-                });
-            } else {
-                console.error("Enter button not found");
+                    return false;
+                };
             }
 
-            const dynalistInput = document.getElementById('dynalistInput');
-            if (dynalistInput) {
-                console.log("Textarea initialized");
-                dynalistInput.addEventListener('input', () => {
-                    const value = dynalistInput.value;
-                    const cursorPos = dynalistInput.selectionStart;
-                    const textBefore = value.substring(0, cursorPos);
-                    window.renderSlashMenu(textBefore.endsWith('/'));
-                    window.renderTagMenu(textBefore.endsWith('#') ? '#' : textBefore.endsWith('@') ? '@' : '', textBefore.endsWith('#') || textBefore.endsWith('@'));
-                });
-                dynalistInput.addEventListener('keydown', (event) => {
-                    const slashMenu = document.getElementById('slashMenu');
-                    const tagMenu = document.getElementById('tagMenu');
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        console.log("Enter key pressed in textarea");
-                        document.getElementById('enterButton').click();
-                    } else if (event.key === 'Escape' && (slashMenu.classList.contains('show') || tagMenu.classList.contains('show'))) {
-                        event.preventDefault();
-                        slashMenu.classList.remove('show');
-                        tagMenu.classList.remove('show');
-                        dynalistInput.focus();
-                    }
-                });
-            } else {
-                console.error("Textarea not found");
-            }
-
-            const dateButton = document.getElementById('dateButton');
-            if (dateButton) {
-                console.log("Date button initialized");
-                dateButton.addEventListener('click', () => {
+            // Date button
+            const dateBtn = document.getElementById('dateButton');
+            if (dateBtn) {
+                dateBtn.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
                     console.log("Date button clicked");
                     window.addDateToDynalist();
-                });
-            } else {
-                console.error("Date button not found");
+                    return false;
+                };
             }
 
-            const hashPresetButton = document.getElementById('hashPresetButton');
-            if (hashPresetButton) {
-                console.log("Hash preset button initialized");
-                hashPresetButton.addEventListener('click', () => {
+            // Hash preset button
+            const hashPresetBtn = document.getElementById('hashPresetButton');
+            if (hashPresetBtn) {
+                hashPresetBtn.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
                     console.log("Hash preset button clicked");
                     const menu = document.getElementById('hashPresetMenu');
                     if (menu) {
@@ -1197,15 +1204,16 @@
                         document.getElementById('slashMenu')?.classList.remove('show');
                         document.getElementById('tagMenu')?.classList.remove('show');
                     }
-                });
-            } else {
-                console.error("Hash preset button not found");
+                    return false;
+                };
             }
 
-            const atPresetButton = document.getElementById('atPresetButton');
-            if (atPresetButton) {
-                console.log("At preset button initialized");
-                atPresetButton.addEventListener('click', () => {
+            // At preset button
+            const atPresetBtn = document.getElementById('atPresetButton');
+            if (atPresetBtn) {
+                atPresetBtn.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
                     console.log("At preset button clicked");
                     const menu = document.getElementById('atPresetMenu');
                     if (menu) {
@@ -1216,15 +1224,16 @@
                         document.getElementById('slashMenu')?.classList.remove('show');
                         document.getElementById('tagMenu')?.classList.remove('show');
                     }
-                });
-            } else {
-                console.error("At preset button not found");
+                    return false;
+                };
             }
 
-            const hashFilterButton = document.getElementById('hashFilterButton');
-            if (hashFilterButton) {
-                console.log("Hash filter button initialized");
-                hashFilterButton.addEventListener('click', () => {
+            // Hash filter button
+            const hashFilterBtn = document.getElementById('hashFilterButton');
+            if (hashFilterBtn) {
+                hashFilterBtn.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
                     console.log("Hash filter button clicked");
                     const menu = document.getElementById('hashFilterMenu');
                     if (menu) {
@@ -1235,15 +1244,16 @@
                         document.getElementById('slashMenu')?.classList.remove('show');
                         document.getElementById('tagMenu')?.classList.remove('show');
                     }
-                });
-            } else {
-                console.error("Hash filter button not found");
+                    return false;
+                };
             }
 
-            const atFilterButton = document.getElementById('atFilterButton');
-            if (atFilterButton) {
-                console.log("At filter button initialized");
-                atFilterButton.addEventListener('click', () => {
+            // At filter button
+            const atFilterBtn = document.getElementById('atFilterButton');
+            if (atFilterBtn) {
+                atFilterBtn.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
                     console.log("At filter button clicked");
                     const menu = document.getElementById('atFilterMenu');
                     if (menu) {
@@ -1254,56 +1264,72 @@
                         document.getElementById('slashMenu')?.classList.remove('show');
                         document.getElementById('tagMenu')?.classList.remove('show');
                     }
-                });
-            } else {
-                console.error("At filter button not found");
+                    return false;
+                };
             }
 
-            document.addEventListener('click', (event) => {
-                const hashPresetButton = document.getElementById('hashPresetButton');
+            // Textarea input handling
+            const textarea = document.getElementById('dynalistInput');
+            if (textarea) {
+                textarea.oninput = function() {
+                    const value = this.value;
+                    const cursorPos = this.selectionStart;
+                    const textBefore = value.substring(0, cursorPos);
+                    window.renderSlashMenu(textBefore.endsWith('/'));
+                    window.renderTagMenu(textBefore.endsWith('#') ? '#' : textBefore.endsWith('@') ? '@' : '', textBefore.endsWith('#') || textBefore.endsWith('@'));
+                };
+                
+                textarea.onkeydown = function(event) {
+                    const slashMenu = document.getElementById('slashMenu');
+                    const tagMenu = document.getElementById('tagMenu');
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        console.log("Enter key pressed in textarea");
+                        document.getElementById('enterButton').click();
+                    } else if (event.key === 'Escape' && (slashMenu.classList.contains('show') || tagMenu.classList.contains('show'))) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        slashMenu.classList.remove('show');
+                        tagMenu.classList.remove('show');
+                        this.focus();
+                    }
+                };
+            }
+
+            // Click outside to close menus
+            document.addEventListener('click', function(event) {
                 const hashPresetMenu = document.getElementById('hashPresetMenu');
-                const atPresetButton = document.getElementById('atPresetButton');
                 const atPresetMenu = document.getElementById('atPresetMenu');
-                const hashFilterButton = document.getElementById('hashFilterButton');
                 const hashFilterMenu = document.getElementById('hashFilterMenu');
-                const atFilterButton = document.getElementById('atFilterButton');
                 const atFilterMenu = document.getElementById('atFilterMenu');
                 const slashMenu = document.getElementById('slashMenu');
                 const tagMenu = document.getElementById('tagMenu');
-                const dynalistInput = document.getElementById('dynalistInput');
-                const apiSettingsBtn = document.getElementById('apiSettingsBtn');
-                const docIdSettingsBtn = document.getElementById('docIdSettingsBtn');
-
-                if (hashPresetButton && hashPresetMenu && !hashPresetButton.contains(event.target) && !hashPresetMenu.contains(event.target)) {
+                
+                if (hashPresetMenu && !event.target.closest('#hashPresetButton') && !event.target.closest('#hashPresetMenu')) {
                     hashPresetMenu.classList.remove('show');
                 }
-                if (atPresetButton && atPresetMenu && !atPresetButton.contains(event.target) && !atPresetMenu.contains(event.target)) {
+                if (atPresetMenu && !event.target.closest('#atPresetButton') && !event.target.closest('#atPresetMenu')) {
                     atPresetMenu.classList.remove('show');
                 }
-                if (hashFilterButton && hashFilterMenu && !hashFilterButton.contains(event.target) && !hashFilterMenu.contains(event.target)) {
+                if (hashFilterMenu && !event.target.closest('#hashFilterButton') && !event.target.closest('#hashFilterMenu')) {
                     hashFilterMenu.classList.remove('show');
                 }
-                if (atFilterButton && atFilterMenu && !atFilterButton.contains(event.target) && !atFilterMenu.contains(event.target)) {
+                if (atFilterMenu && !event.target.closest('#atFilterButton') && !event.target.closest('#atFilterMenu')) {
                     atFilterMenu.classList.remove('show');
                 }
-                if (slashMenu && !slashMenu.contains(event.target) && !dynalistInput.contains(event.target)) {
+                if (slashMenu && !event.target.closest('#dynalistInput') && !event.target.closest('#slashMenu')) {
                     slashMenu.classList.remove('show');
                 }
-                if (tagMenu && !tagMenu.contains(event.target) && !dynalistInput.contains(event.target)) {
+                if (tagMenu && !event.target.closest('#dynalistInput') && !event.target.closest('#tagMenu')) {
                     tagMenu.classList.remove('show');
                 }
             });
-        };
-
-        // Run initialization
-        window.addEventListener('load', () => {
-            console.log("Window loaded, starting initialization");
-            window.initializeApp();
         });
 
         // Handle messages for API key
         window.addEventListener('message', (event) => {
-            if (event.data.apiKey) {
+            if (event.data && event.data.apiKey) {
                 console.log("Received API key via message");
                 window.apiKey = event.data.apiKey;
                 localStorage.setItem('dynalistApiKey', window.apiKey);
