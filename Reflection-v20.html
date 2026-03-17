@@ -2150,6 +2150,52 @@
             background: linear-gradient(135deg, var(--success-color), #38a169);
             color: white;
         }
+
+/* Add this to your existing CSS if the switch styles aren't already present */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 24px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .3s;
+    border-radius: 24px;
+}
+
+.slider:before {
+    position: absolute;
+    content: '';
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .3s;
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background-color: var(--success-color);
+}
+
+input:checked + .slider:before {
+    transform: translateX(26px);
+}
         
     </style>
 </head>
@@ -2297,6 +2343,18 @@
                         </div>
                     </div>
                     <p class="reflection-prompt">Pause and notice: What thoughts, emotions, or body sensations are present? Observe without judgment.</p>
+ 
+     <!-- ADD THIS NEW TOGGLE SECTION HERE -->
+    <div style="display: flex; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: var(--light-color); border-radius: 8px;">
+        <span style="margin-right: 12px; font-size: 0.9rem; font-weight: 500;">⏎ + • + ⏰</span>
+        <label class="switch" style="margin-right: 10px;">
+            <input type="checkbox" id="bullet-timestamp-enter-toggle" checked>
+            <span class="slider"></span>
+        </label>
+        <span id="bullet-timestamp-enter-status" style="font-size: 0.9rem; color: var(--success-color); font-weight: 500;">ON</span>
+        <span style="margin-left: auto; font-size: 0.8rem; color: var(--gray-medium);">Enter creates bullet + timestamp</span>
+    </div>
+ 
                     
                     <!-- FORMATTING TOOLBAR - Only bullet and number buttons -->
                     <div class="formatting-toolbar" data-target="selfaware-text">
@@ -3166,6 +3224,142 @@
                     insertBulletTimestamp(fullpageSelfawareText);
                 });
             }
+
+// Add this in the DOMContentLoaded event handler or in the init() function
+
+// Get references to the toggle elements
+const bulletTimestampToggle = document.getElementById('bullet-timestamp-enter-toggle');
+const bulletTimestampStatus = document.getElementById('bullet-timestamp-enter-status');
+let bulletTimestampEnabled = true; // Default ON
+
+// Custom Enter key handler for Self-awareness textarea - COMPLETELY OVERRIDES default behavior
+function handleSelfawareEnterKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault(); // ALWAYS prevent default when feature is enabled
+        
+        if (bulletTimestampEnabled) {
+            const textarea = e.target;
+            
+            // Get current time
+            const now = new Date();
+            let hours = now.getHours();
+            const minutes = now.getMinutes();
+            const ampm = hours >= 12 ? 'pm' : 'am';
+            
+            // Convert to 12-hour format
+            hours = hours % 12;
+            hours = hours ? hours : 12;
+            const minutesStr = minutes < 10 ? '0' + minutes : minutes;
+            
+            // Create bullet with timestamp - just this, no extra newline
+            const bulletTimestamp = `• ${hours}:${minutesStr} ${ampm} `;
+            
+            // Get cursor position
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const currentText = textarea.value;
+            
+            // Check if we're at the beginning of a line or not
+            const isAtLineStart = start === 0 || currentText[start - 1] === '\n';
+            
+            let insertText;
+            if (isAtLineStart) {
+                // At line start, just insert the bullet+timestamp
+                insertText = bulletTimestamp;
+            } else {
+                // Not at line start, add newline first then bullet+timestamp
+                insertText = '\n' + bulletTimestamp;
+            }
+            
+            // Insert at cursor position
+            textarea.value = currentText.substring(0, start) + insertText + currentText.substring(end);
+            
+            // Move cursor to end of inserted text
+            textarea.setSelectionRange(start + insertText.length, start + insertText.length);
+            
+            // Trigger autosave
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+            // When disabled, insert a plain newline
+            const textarea = e.target;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const currentText = textarea.value;
+            
+            textarea.value = currentText.substring(0, start) + '\n' + currentText.substring(end);
+            textarea.setSelectionRange(start + 1, start + 1);
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }
+}
+
+// Remove the existing keydown listener that might be causing conflicts
+function removeExistingListeners() {
+    // Find and remove any existing Enter key handlers
+    const oldHandler = handleTextareaKeydown;
+    if (oldHandler) {
+        selfawareTextElement.removeEventListener('keydown', oldHandler);
+        fullpageSelfawareText.removeEventListener('keydown', oldHandler);
+    }
+}
+
+// Toggle event listener
+bulletTimestampToggle.addEventListener('change', function(e) {
+    bulletTimestampEnabled = e.target.checked;
+    
+    // Update status display
+    bulletTimestampStatus.textContent = bulletTimestampEnabled ? 'ON' : 'OFF';
+    bulletTimestampStatus.style.color = bulletTimestampEnabled ? 'var(--success-color)' : 'var(--gray-medium)';
+    
+    // First, remove the old handler to prevent conflicts
+    selfawareTextElement.removeEventListener('keydown', handleTextareaKeydown);
+    fullpageSelfawareText.removeEventListener('keydown', handleTextareaKeydown);
+    
+    // Remove our custom handler first to prevent duplicates
+    selfawareTextElement.removeEventListener('keydown', handleSelfawareEnterKey);
+    fullpageSelfawareText.removeEventListener('keydown', handleSelfawareEnterKey);
+    
+    if (bulletTimestampEnabled) {
+        // When enabled, use our custom handler
+        selfawareTextElement.addEventListener('keydown', handleSelfawareEnterKey);
+        fullpageSelfawareText.addEventListener('keydown', handleSelfawareEnterKey);
+        showStatus('Bullet + Timestamp on Enter: ON', 'success');
+    } else {
+        // When disabled, reattach the original formatting handler
+        selfawareTextElement.addEventListener('keydown', handleTextareaKeydown);
+        fullpageSelfawareText.addEventListener('keydown', handleTextareaKeydown);
+        showStatus('Bullet + Timestamp on Enter: OFF', 'info');
+    }
+});
+
+// Initialize: set up event listeners (run this when the page loads)
+function initializeBulletTimestampFeature() {
+    // Set initial state
+    bulletTimestampEnabled = bulletTimestampToggle.checked;
+    bulletTimestampStatus.textContent = bulletTimestampEnabled ? 'ON' : 'OFF';
+    bulletTimestampStatus.style.color = bulletTimestampEnabled ? 'var(--success-color)' : 'var(--gray-medium)';
+    
+    // Remove any existing listeners to prevent conflicts
+    selfawareTextElement.removeEventListener('keydown', handleTextareaKeydown);
+    selfawareTextElement.removeEventListener('keydown', handleSelfawareEnterKey);
+    fullpageSelfawareText.removeEventListener('keydown', handleTextareaKeydown);
+    fullpageSelfawareText.removeEventListener('keydown', handleSelfawareEnterKey);
+    
+    // Add listeners based on initial state
+    if (bulletTimestampEnabled) {
+        selfawareTextElement.addEventListener('keydown', handleSelfawareEnterKey);
+        fullpageSelfawareText.addEventListener('keydown', handleSelfawareEnterKey);
+    } else {
+        selfawareTextElement.addEventListener('keydown', handleTextareaKeydown);
+        fullpageSelfawareText.addEventListener('keydown', handleTextareaKeydown);
+    }
+}
+
+// Call this after the DOM is fully loaded
+// Add this line inside your init() function or DOMContentLoaded event
+initializeBulletTimestampFeature();
+
+
             
             // Calendar toolbar buttons
             const calendarAutosaveBtn = document.getElementById('calendar-autosave-json-btn');
