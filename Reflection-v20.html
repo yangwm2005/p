@@ -1498,33 +1498,86 @@
                 visibility: hidden;
             }
             
-            .modal-overlay.active,
-            .modal-overlay.active * {
+            #summary-modal .modal,
+            #summary-modal .modal *,
+            .summary-content,
+            .summary-content * {
                 visibility: visible;
             }
             
-            .modal-overlay.active {
+            #summary-modal.modal-overlay {
                 position: absolute;
                 left: 0;
                 top: 0;
                 width: 100%;
-                height: 100%;
-                background-color: white;
+                height: auto;
+                background: white;
+                display: block !important;
+                opacity: 1 !important;
+                visibility: visible !important;
+                backdrop-filter: none;
+            }
+            
+            #summary-modal .modal {
+                position: relative;
+                transform: none;
+                width: 100%;
+                max-width: 100%;
+                margin: 0;
+                padding: 20px;
+                box-shadow: none;
+                border: none;
+                background: white;
+                max-height: none;
                 overflow: visible;
             }
             
-            .modal {
-                box-shadow: none;
-                width: 100%;
-                max-width: 100%;
+            #summary-modal .modal-body {
+                overflow: visible;
                 max-height: none;
-                transform: none;
+            }
+            
+            .summary-content {
+                background: white;
+                padding: 20px;
+                page-break-inside: avoid;
+            }
+            
+            .summary-day {
+                page-break-inside: avoid;
+                break-inside: avoid;
+                margin-bottom: 20px;
+            }
+            
+            .summary-day-header {
+                background: #5d7ba6 !important;
+                color: white !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            .summary-reflection {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
             }
             
             .modal-header,
+            .close-btn,
             .summary-actions,
-            .close-btn {
-                display: none;
+            #print-summary-btn,
+            #save-summary-btn {
+                display: none !important;
+            }
+            
+            footer,
+            .calendar-section,
+            .reflection-section {
+                display: none !important;
+            }
+            
+            @page {
+                margin: 1.5cm;
+                size: auto;
             }
         }
         
@@ -2250,6 +2303,11 @@ input:checked + .slider:before {
                         <span class="btn-icon">📂</span> Load
                     </label>
                     <input type="file" id="calendar-file-input" class="file-input" accept=".json" style="display: none;">
+ 
+ <button class="btn-secondary" id="timestripe-horizons-btn">
+    <span class="btn-icon">🎯</span> Timestripe Horizons
+</button>
+          
                 </div>
 
                 <div class="week-navigation" id="week-navigation" aria-label="7-day navigation">
@@ -2442,6 +2500,11 @@ input:checked + .slider:before {
                         <button class="btn-success" id="fullpage-writing-btn2">
                             <span class="btn-icon">✍️</span> Full Page Writing
                         </button>
+                        
+                        <button class="btn-secondary" id="timestripe-horizons-btn">
+    <span class="btn-icon">🎯</span> Timestripe Horizons
+</button>
+                        
                         <button class="btn-secondary" id="change-save-location-btn">
                             <span class="btn-icon">📁</span> Change Save Location
                         </button>
@@ -2466,28 +2529,7 @@ input:checked + .slider:before {
                 </div>
             </section>
 
-            <!-- Embedded Clip2Dynalist Webpage -->
-            <section class="reflection-card" style="margin-top: 25px;">
-                <div class="reflection-header">
-                    <h2 class="reflection-title" style="color: var(--primary-color);">
-                        <span class="reflection-icon">🔗</span> Clip2Dynalist
-                    </h2>
-                    <a href="https://yangwm2005.github.io/p/Dynalist-m241.html" target="_blank" class="reflection-date" style="text-decoration: none;">Open in new tab ↗</a>
-                </div>
-                <div style="border-radius: 8px; overflow: hidden; border: 1px solid var(--gray-light);">
-                    <iframe 
-                        src="https://yangwm2005.github.io/p/Dynalist-m241.html"
-                        style="width: 100%; height: 600px; border: none; background: white;"
-                        title="Clip2Dynalist"
-                        loading="lazy"
-                        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation allow-modals"
-                        allow="clipboard-read; clipboard-write"
-                    ></iframe>
-                </div>
-                <p style="font-size: 0.8rem; color: var(--gray-medium); margin-top: 8px; text-align: right;">
-                    ⚡ Clip2Dynalist - Save clips to Dynalist
-                </p>
-            </section>
+
 
         </div>
     </div>
@@ -3000,6 +3042,13 @@ input:checked + .slider:before {
             popoutButton.addEventListener('click', openPopoutWindow);
             if (popoutButton2) popoutButton2.addEventListener('click', openPopoutWindow);
             
+const timestripeBtn = document.getElementById('timestripe-horizons-btn');
+if (timestripeBtn) {
+    timestripeBtn.addEventListener('click', () => {
+        window.open('https://timestripe.com/horizons/', 'TimestripeHorizons', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+    });
+}
+
             // Search event listeners
             searchBtn.addEventListener('click', () => {
                 searchModal.classList.add('active');
@@ -4210,8 +4259,428 @@ initializeBulletTimestampFeature();
             return paragraphs.join('');
         }
         
-        function printSummary() { window.print(); }
-        function saveSummaryAsPDF() { showStatus('PDF export feature would be implemented in a production version', 'info'); }
+        function printSummary() { 
+            // Store the original modal content
+            const originalContent = summaryContent.innerHTML;
+            
+            // Create a new window for printing
+            const printWindow = window.open('', '_blank', 'width=800,height=600');
+            if (!printWindow) {
+                showStatus('Please allow pop-ups to print', 'error');
+                return;
+            }
+            
+            // Get the date range for the title
+            const weekDates = getWeekDates(selectedDate);
+            const startDate = weekDates[0];
+            const endDate = weekDates[6];
+            const dateRange = `${startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
+            
+            // Get the full content with all reflections
+            const summaryElement = document.querySelector('.summary-content');
+            const fullContent = summaryElement ? summaryElement.outerHTML : '';
+            
+            // Create HTML content for printing
+            const printHTML = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Weekly Reflection Summary - ${dateRange}</title>
+                <meta charset="UTF-8">
+                <style>
+                    body {
+                        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        line-height: 1.6;
+                        color: #2d3748;
+                        max-width: 1000px;
+                        margin: 0 auto;
+                        padding: 30px;
+                    }
+                    
+                    .summary-content {
+                        background: white;
+                        padding: 20px;
+                    }
+                    
+                    .summary-header {
+                        text-align: center;
+                        margin-bottom: 30px;
+                        padding-bottom: 20px;
+                        border-bottom: 3px solid #5d7ba6;
+                    }
+                    
+                    .summary-title {
+                        font-size: 28px;
+                        color: #5d7ba6;
+                        margin-bottom: 10px;
+                    }
+                    
+                    .summary-date-range {
+                        font-size: 18px;
+                        color: #4a5568;
+                    }
+                    
+                    .summary-intro {
+                        margin-bottom: 25px;
+                        padding: 15px;
+                        background: #f7fafc;
+                        border-left: 4px solid #667eea;
+                        font-style: italic;
+                    }
+                    
+                    .summary-day {
+                        margin-bottom: 30px;
+                        page-break-inside: avoid;
+                        break-inside: avoid;
+                        border: 1px solid #e2e8f0;
+                        border-radius: 8px;
+                        overflow: hidden;
+                    }
+                    
+                    .summary-day-header {
+                        background: #5d7ba6;
+                        color: white;
+                        padding: 15px 20px;
+                        font-size: 18px;
+                        font-weight: 600;
+                    }
+                    
+                    .summary-reflection {
+                        padding: 20px;
+                        border-left: 4px solid;
+                    }
+                    
+                    .summary-reflection.morning {
+                        border-left-color: #f6ad55;
+                        background: linear-gradient(to right, #fffaf0, #ffffff);
+                    }
+                    
+                    .summary-reflection.selfaware {
+                        border-left-color: #4c9a8a;
+                        background: linear-gradient(to right, #ecfdf5, #ffffff);
+                    }
+                    
+                    .summary-reflection.night {
+                        border-left-color: #7e6bc9;
+                        background: linear-gradient(to right, #f8f4ff, #ffffff);
+                    }
+                    
+                    .summary-reflection-header {
+                        display: flex;
+                        align-items: center;
+                        gap: 10px;
+                        font-size: 16px;
+                        font-weight: 600;
+                        margin-bottom: 12px;
+                    }
+                    
+                    .summary-reflection.morning .summary-reflection-header {
+                        color: #f6ad55;
+                    }
+                    
+                    .summary-reflection.selfaware .summary-reflection-header {
+                        color: #4c9a8a;
+                    }
+                    
+                    .summary-reflection.night .summary-reflection-header {
+                        color: #7e6bc9;
+                    }
+                    
+                    .summary-reflection-icon {
+                        font-size: 18px;
+                    }
+                    
+                    .summary-reflection-text {
+                        white-space: pre-wrap;
+                        font-size: 14px;
+                        line-height: 1.7;
+                    }
+                    
+                    .summary-reflection-text p {
+                        margin: 0 0 10px 0;
+                    }
+                    
+                    .summary-reflection-text p:last-child {
+                        margin-bottom: 0;
+                    }
+                    
+                    .summary-conclusion {
+                        margin-top: 30px;
+                        padding: 20px;
+                        background: #f0fff4;
+                        border-left: 4px solid #48bb78;
+                        font-style: italic;
+                        text-align: center;
+                    }
+                    
+                    .footer {
+                        margin-top: 40px;
+                        text-align: center;
+                        font-size: 12px;
+                        color: #a0aec0;
+                        border-top: 1px solid #e2e8f0;
+                        padding-top: 20px;
+                    }
+                    
+                    @media print {
+                        body {
+                            padding: 0.5in;
+                        }
+                        
+                        .summary-day {
+                            break-inside: avoid;
+                        }
+                        
+                        .summary-day-header {
+                            -webkit-print-color-adjust: exact;
+                            print-color-adjust: exact;
+                        }
+                        
+                        .summary-reflection {
+                            -webkit-print-color-adjust: exact;
+                            print-color-adjust: exact;
+                        }
+                    }
+                </style>
+            </head>
+            <body>
+                ${fullContent}
+                <div class="footer">
+                    Generated by Mindful Reflections Journal on ${new Date().toLocaleDateString()}
+                </div>
+            </body>
+            </html>
+            `;
+            
+            // Write to the new window and print
+            printWindow.document.write(printHTML);
+            printWindow.document.close();
+            
+            printWindow.onload = function() {
+                printWindow.focus();
+                printWindow.print();
+                printWindow.onafterprint = function() {
+                    printWindow.close();
+                };
+            };
+            
+            showStatus('Print dialog opened', 'success');
+        }
+        
+        function saveSummaryAsPDF() {
+            showStatus('Generating PDF...', 'info');
+            
+            // Get the summary content
+            const summaryElement = document.querySelector('.summary-content');
+            if (!summaryElement) {
+                showStatus('No summary content to save', 'error');
+                return;
+            }
+            
+            // Clone the summary content to avoid modifying the original
+            const summaryClone = summaryElement.cloneNode(true);
+            
+            // Remove any interactive elements from the clone
+            summaryClone.querySelectorAll('[data-action]').forEach(el => {
+                el.removeAttribute('data-action');
+            });
+            
+            // Create a new window for printing
+            const printWindow = window.open('', '_blank', 'width=800,height=600');
+            if (!printWindow) {
+                showStatus('Please allow pop-ups to save PDF', 'error');
+                return;
+            }
+            
+            // Get the date range for the filename
+            const weekDates = getWeekDates(selectedDate);
+            const startDate = weekDates[0];
+            const endDate = weekDates[6];
+            const dateRange = `${startDate.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}-${endDate.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })}`;
+            
+            // Create HTML content for the PDF
+            const pdfHTML = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Weekly Reflection Summary - ${dateRange}</title>
+                <style>
+                    body {
+                        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        line-height: 1.6;
+                        color: #2d3748;
+                        max-width: 1000px;
+                        margin: 0 auto;
+                        padding: 30px;
+                    }
+                    
+                    .summary-content {
+                        background: white;
+                        padding: 20px;
+                    }
+                    
+                    .summary-header {
+                        text-align: center;
+                        margin-bottom: 30px;
+                        padding-bottom: 20px;
+                        border-bottom: 3px solid #5d7ba6;
+                    }
+                    
+                    .summary-title {
+                        font-size: 28px;
+                        color: #5d7ba6;
+                        margin-bottom: 10px;
+                    }
+                    
+                    .summary-date-range {
+                        font-size: 18px;
+                        color: #4a5568;
+                    }
+                    
+                    .summary-intro {
+                        margin-bottom: 25px;
+                        padding: 15px;
+                        background: #f7fafc;
+                        border-left: 4px solid #667eea;
+                        font-style: italic;
+                    }
+                    
+                    .summary-day {
+                        margin-bottom: 30px;
+                        page-break-inside: avoid;
+                        break-inside: avoid;
+                        border: 1px solid #e2e8f0;
+                        border-radius: 8px;
+                        overflow: hidden;
+                    }
+                    
+                    .summary-day-header {
+                        background: #5d7ba6;
+                        color: white;
+                        padding: 15px 20px;
+                        font-size: 18px;
+                        font-weight: 600;
+                    }
+                    
+                    .summary-reflection {
+                        padding: 20px;
+                        border-left: 4px solid;
+                    }
+                    
+                    .summary-reflection.morning {
+                        border-left-color: #f6ad55;
+                        background: linear-gradient(to right, #fffaf0, #ffffff);
+                    }
+                    
+                    .summary-reflection.selfaware {
+                        border-left-color: #4c9a8a;
+                        background: linear-gradient(to right, #ecfdf5, #ffffff);
+                    }
+                    
+                    .summary-reflection.night {
+                        border-left-color: #7e6bc9;
+                        background: linear-gradient(to right, #f8f4ff, #ffffff);
+                    }
+                    
+                    .summary-reflection-header {
+                        display: flex;
+                        align-items: center;
+                        gap: 10px;
+                        font-size: 16px;
+                        font-weight: 600;
+                        margin-bottom: 12px;
+                    }
+                    
+                    .summary-reflection.morning .summary-reflection-header {
+                        color: #f6ad55;
+                    }
+                    
+                    .summary-reflection.selfaware .summary-reflection-header {
+                        color: #4c9a8a;
+                    }
+                    
+                    .summary-reflection.night .summary-reflection-header {
+                        color: #7e6bc9;
+                    }
+                    
+                    .summary-reflection-icon {
+                        font-size: 18px;
+                    }
+                    
+                    .summary-reflection-text {
+                        white-space: pre-wrap;
+                        font-size: 14px;
+                        line-height: 1.7;
+                    }
+                    
+                    .summary-reflection-text p {
+                        margin: 0 0 10px 0;
+                    }
+                    
+                    .summary-reflection-text p:last-child {
+                        margin-bottom: 0;
+                    }
+                    
+                    .summary-conclusion {
+                        margin-top: 30px;
+                        padding: 20px;
+                        background: #f0fff4;
+                        border-left: 4px solid #48bb78;
+                        font-style: italic;
+                        text-align: center;
+                    }
+                    
+                    .footer {
+                        margin-top: 40px;
+                        text-align: center;
+                        font-size: 12px;
+                        color: #a0aec0;
+                        border-top: 1px solid #e2e8f0;
+                        padding-top: 20px;
+                    }
+                    
+                    @media print {
+                        body {
+                            padding: 0.5in;
+                        }
+                        
+                        .summary-day {
+                            break-inside: avoid;
+                        }
+                        
+                        .summary-day-header {
+                            -webkit-print-color-adjust: exact;
+                            print-color-adjust: exact;
+                        }
+                        
+                        .summary-reflection {
+                            -webkit-print-color-adjust: exact;
+                            print-color-adjust: exact;
+                        }
+                    }
+                </style>
+            </head>
+            <body>
+                ${summaryClone.outerHTML}
+                <div class="footer">
+                    Generated by Mindful Reflections Journal on ${new Date().toLocaleDateString()}
+                </div>
+            </body>
+            </html>
+            `;
+            
+            // Write to the new window
+            printWindow.document.write(pdfHTML);
+            printWindow.document.close();
+            
+            // Wait for content to load then trigger print dialog
+            printWindow.onload = function() {
+                printWindow.focus();
+                printWindow.print();
+            };
+            
+            showStatus('PDF dialog opened. Choose "Save as PDF" in the print dialog.', 'success');
+        }
         
         function updateReflectionDisplay() {
             const dateString = formatDate(selectedDate);
