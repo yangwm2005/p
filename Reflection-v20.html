@@ -2249,6 +2249,30 @@ input:checked + .slider {
 input:checked + .slider:before {
     transform: translateX(26px);
 }
+
+
+/* Improve summary text display */
+.summary-reflection-text {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    line-height: 1.6;
+}
+
+.summary-reflection-text p {
+    margin: 0 0 12px 0;
+    white-space: pre-wrap;
+}
+
+.summary-reflection-text p:last-child {
+    margin-bottom: 0;
+}
+
+/* Style for bullet points in summary */
+.summary-reflection-text p:first-letter {
+    font-size: inherit;
+    font-weight: inherit;
+    color: inherit;
+}
         
     </style>
 </head>
@@ -4245,19 +4269,68 @@ initializeBulletTimestampFeature();
             container.appendChild(refDiv);
         }
         
-        function formatAsParagraph(text) {
-            if (!text) return '';
-            const sentences = text.split(/(?<=[.!?])\s+/);
-            let paragraphs = [];
-            let current = '';
-            sentences.forEach(s => {
-                if ((current + s).length < 500) current += s + ' ';
-                else { if (current.trim()) paragraphs.push(`<p>${current.trim()}</p>`); current = s + ' '; }
-            });
-            if (current.trim()) paragraphs.push(`<p>${current.trim()}</p>`);
-            if (paragraphs.length === 0 && text.trim()) paragraphs.push(`<p>${text.trim()}</p>`);
-            return paragraphs.join('');
+function formatAsParagraph(text) {
+    if (!text) return '';
+    
+    // Check if the text contains bullet points or timestamps (common in self-awareness logs)
+    const hasBullets = text.includes('•') || text.includes('•');
+    const hasTimestamps = /(\d{1,2}:\d{2}\s*(am|pm)?)/i.test(text);
+    
+    // If it has bullet points or timestamps, preserve line breaks
+    if (hasBullets || hasTimestamps) {
+        // Split by newlines and create paragraphs for each line
+        const lines = text.split('\n');
+        const paragraphs = [];
+        
+        for (let line of lines) {
+            if (line.trim()) {
+                // Format bullet points and timestamps specially
+                if (line.trim().startsWith('•') || /^\d{1,2}:\d{2}/.test(line.trim())) {
+                    // Keep as-is with a line break
+                    paragraphs.push(`<p>${escapeHtmlForParagraph(line)}</p>`);
+                } else {
+                    paragraphs.push(`<p>${escapeHtmlForParagraph(line)}</p>`);
+                }
+            } else {
+                // Empty line - add a paragraph break
+                paragraphs.push('<p>&nbsp;</p>');
+            }
         }
+        
+        return paragraphs.join('');
+    }
+    
+    // For regular text without bullets, use the original paragraph logic
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    let paragraphs = [];
+    let current = '';
+    
+    sentences.forEach(s => {
+        if ((current + s).length < 500) {
+            current += s + ' ';
+        } else {
+            if (current.trim()) paragraphs.push(`<p>${escapeHtmlForParagraph(current.trim())}</p>`);
+            current = s + ' ';
+        }
+    });
+    
+    if (current.trim()) paragraphs.push(`<p>${escapeHtmlForParagraph(current.trim())}</p>`);
+    if (paragraphs.length === 0 && text.trim()) paragraphs.push(`<p>${escapeHtmlForParagraph(text.trim())}</p>`);
+    
+    return paragraphs.join('');
+}
+
+// Helper function to escape HTML in paragraphs
+function escapeHtmlForParagraph(str) {
+    if (!str) return '';
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/\n/g, '<br>'); // Convert any remaining newlines to <br> tags
+}
         
         function printSummary() { 
             // Store the original modal content
