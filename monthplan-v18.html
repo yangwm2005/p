@@ -389,16 +389,19 @@
             font-size: 13px; font-weight: 600; color: #94a3b8;
             position: sticky; left: 0;
         }
+        .wv-time-label .wv-lbl-range {
+            font-size: 10px; color: #c0c9d9; margin-top: 4px; display: block; text-align: right;
+        }
 
         .wv-hour-cell {
             height: var(--cell-h);
             border-right: 1px solid #e8ecf0;
             border-bottom: 1px solid #f0f0f0;
-            display: flex;          /* events sit side-by-side */
+            display: flex;
             align-items: stretch;
             cursor: pointer;
             transition: background .15s;
-            overflow: hidden;
+            overflow: visible;   /* allow multi-hour blocks to extend below */
             position: relative;
         }
         .wv-hour-cell:hover { background: #f8faff; }
@@ -565,7 +568,8 @@
             border-radius: 14px;
             box-shadow: 0 12px 40px rgba(0,0,0,0.22);
             z-index: 10500;
-            width: 320px;
+            width: 360px;
+            max-width: calc(100vw - 16px);
             padding: 0;
             overflow: hidden;
             border: 1px solid #e0e0e0;
@@ -590,6 +594,8 @@
         .gcal-popup-close:hover { background: rgba(255,255,255,0.4); }
         .gcal-popup-body {
             padding: 12px 16px 14px;
+            max-height: 400px;
+            overflow-y: auto;
         }
         .gcal-popup-row {
             display: flex; align-items: flex-start; gap: 10px;
@@ -1053,6 +1059,19 @@
             body.appendChild(row);
         }
 
+        // Description / notes row
+        if (ev.description) {
+            const row = document.createElement('div');
+            row.className = 'gcal-popup-row';
+            row.style.cssText = 'align-items:flex-start;background:#f8faff;border-radius:8px;padding:8px 10px;margin-top:4px;';
+            const icon = document.createElement('span'); icon.className='gcal-popup-icon'; icon.textContent='📝'; row.appendChild(icon);
+            const txt  = document.createElement('span');
+            txt.style.cssText = 'font-size:13px;color:#374151;line-height:1.5;white-space:pre-wrap;word-break:break-word;';
+            txt.textContent = ev.description;
+            row.appendChild(txt);
+            body.appendChild(row);
+        }
+
         // Open in Google Calendar button
         if (ev.htmlLink) {
             const openBtn = document.createElement('button');
@@ -1078,8 +1097,8 @@
         const rect = anchorEl.getBoundingClientRect();
         let left = rect.left;
         let top  = rect.bottom + 8;
-        if (left + 320 > window.innerWidth - 8) left = window.innerWidth - 328;
-        if (top  + 260 > window.innerHeight - 8) top = rect.top - 268;
+        if (left + 360 > window.innerWidth - 8) left = window.innerWidth - 368;
+        if (top  + 320 > window.innerHeight - 8) top = rect.top - 328;
         left = Math.max(8, left);
         top  = Math.max(8, top);
         popup.style.left = left + 'px';
@@ -1124,7 +1143,7 @@
                     + new URLSearchParams({
                         timeMin: tMin, timeMax: tMax,
                         singleEvents: true, orderBy: 'startTime',
-                        maxResults: 500, fields: 'items(id,summary,start,end,colorId,htmlLink)'
+                        maxResults: 500, fields: 'items(id,summary,description,start,end,colorId,htmlLink)'
                     });
                 const r = await fetch(url, { headers: { Authorization: 'Bearer ' + gcalAccessToken } });
                 if (!r.ok) return;
@@ -1147,7 +1166,7 @@
                             if (!gcalEvents[dk]) gcalEvents[dk] = [];
                             gcalEvents[dk].push({ id:ev.id, title:ev.summary||'(No title)',
                                 start:fdk(s), end:fdk(e), color:cal.color, calendarId:cal.id,
-                                allDay:true, htmlLink:ev.htmlLink||'' });
+                                allDay:true, htmlLink:ev.htmlLink||'', description:ev.description||'' });
                             cur.setDate(cur.getDate() + 1);
                         }
                     } else {
@@ -1156,7 +1175,7 @@
                         if (!gcalEvents[dk]) gcalEvents[dk] = [];
                         gcalEvents[dk].push({ id:ev.id, title:ev.summary||'(No title)',
                             startDt, endDt, color:cal.color, calendarId:cal.id, allDay:false,
-                            hour, startStr, endStr, htmlLink:ev.htmlLink||'' });
+                            hour, startStr, endStr, htmlLink:ev.htmlLink||'', description:ev.description||'' });
                     }
                 });
             }));
@@ -1555,8 +1574,9 @@
             <div class="tt-row"><span class="tt-title" style="font-weight:700;font-size:13px;">${esc(gev.title)}</span></div>
             ${timeText?`<div class="tt-row"><span class="tt-time">${esc(timeText)}</span></div>`:''}
             <div class="tt-row" style="margin-top:2px;"><span style="font-size:10px;opacity:0.75;">● ${esc(calName)}</span></div>
-            ${gev.htmlLink?`<div style="font-size:10px;color:#93c5fd;margin-top:4px;">Click to open ↗</div>`:''}`;
-        positionTip(tip, anchor);
+            ${gev.description?`<div style="font-size:11px;color:#d1d5db;margin-top:5px;font-style:italic;border-top:1px solid rgba(255,255,255,0.15);padding-top:5px;">📝 ${esc(gev.description.length>150?gev.description.substring(0,148)+'…':gev.description)}</div>`:''}
+            ${gev.htmlLink?`<div style="font-size:10px;color:#93c5fd;margin-top:4px;">Click to open ↗</div>`:''}
+        `;        positionTip(tip, anchor);
         anchor.addEventListener('mouseleave',()=>tip.remove(),{once:true});
     }
 
@@ -2198,79 +2218,107 @@
         });
         panel.appendChild(hdrRow);
 
-        // ── 3. Scrollable time grid — SAME column template ──
+        // ── 3. Scrollable time grid ──
         const scroll = document.createElement('div');
         scroll.className = 'wv-time-scroll';
 
         const inner = document.createElement('div');
         inner.className = 'wv-time-inner';
 
-        for (let h=8; h<=18; h++) {
-            // Time label (column 1)
-            const lbl=document.createElement('div'); lbl.className='wv-time-label'; lbl.textContent=timeStr(h);
+        // Simple flat grid — one label + 7 cells per hour row, always exactly 8 items.
+        // Multi-hour events use an absolutely-positioned overlay block that visually
+        // extends downward, but the cell itself stays in its correct grid column.
+        for (let h = 8; h <= 18; h++) {
+            // Time label
+            const lbl = document.createElement('div');
+            lbl.className = 'wv-time-label';
+            lbl.textContent = timeStr(h);
             inner.appendChild(lbl);
 
-            // 7 day cells (columns 2-8)
+            // 7 day cells — always one per day per hour row
             days.forEach(d => {
-                const dk     = fdk(d);
-                const isToday = dk===todayK;
-                const isSel   = dk===fdk(weekSelectedDate);
+                const dk      = fdk(d);
+                const isToday = dk === todayK;
+                const isSel   = dk === fdk(weekSelectedDate);
 
                 const cell = document.createElement('div');
                 cell.className = 'wv-hour-cell'
-                    +(isToday?' wv-today':'')
-                    +(isSel  ?' wv-selcol':'');
+                    + (isToday ? ' wv-today'  : '')
+                    + (isSel   ? ' wv-selcol' : '');
 
-                // Collect all events for this slot
-                const localTasks = events[`${dk}-${h}`]||[];
-                const gcalEvs    = gcalGetForDate(dk).filter(e=>!e.allDay&&e.hour===h);
-                const allSlotEvs = [
-                    ...localTasks.map(t=>({kind:'local',data:t})),
-                    ...gcalEvs.map(g=>({kind:'gcal', data:g}))
-                ];
+                const localTasks = events[`${dk}-${h}`] || [];
+                const gcalEvs    = gcalGetForDate(dk).filter(e => !e.allDay && e.hour === h);
 
-                allSlotEvs.forEach(({kind,data}) => {
+                // Render local tasks
+                localTasks.forEach(task => {
+                    const span = (task.endHour && task.endHour > h && task.endHour <= 18)
+                        ? task.endHour - h : 1;
+
                     const ev = document.createElement('div');
                     ev.className = 'wv-event';
 
-                    if (kind==='local') {
-                        ev.style.background = '#eef2ff';
-                        ev.style.color       = '#1e293b';
-
-                        const title=document.createElement('div'); title.className='wv-event-title'; title.textContent=data.title; ev.appendChild(title);
-                        const timeLabel = data.endHour && data.endHour > h
-                            ? `${timeStr(h)}–${timeStr(data.endHour)}`
-                            : timeStr(h);
-                        const time=document.createElement('div'); time.className='wv-event-time'; time.textContent=timeLabel; ev.appendChild(time);
-
-                        const del=document.createElement('button'); del.className='wv-event-del'; del.textContent='✕';
-                        del.addEventListener('mousedown',e=>e.preventDefault());
-                        del.addEventListener('click',e=>{e.stopPropagation();deleteTask(dk,h,data.id);});
-                        ev.appendChild(del);
-                        ev.addEventListener('mouseenter', ()=>showTaskTip(ev, data, h));
-
-                    } else {
-                        const base = data.color||'#ea4335';
-                        ev.style.background    = base+'28';
-                        ev.style.color         = '#1e293b';
-                        ev.style.borderLeft    = `3px solid ${base}`;
-                        ev.style.cursor        = 'pointer';
-
-                        const badge=document.createElement('div'); badge.className='wv-event-time'; badge.textContent='🗓 Google'; ev.appendChild(badge);
-                        const title=document.createElement('div'); title.className='wv-event-title'; title.textContent=data.title; ev.appendChild(title);
-                        const st=data.startDt?data.startDt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}):'';
-                        const et=data.endDt  ?data.endDt.toLocaleTimeString('en-US',  {hour:'2-digit',minute:'2-digit',hour12:true}):'';
-                        if (st){ const t2=document.createElement('div'); t2.className='wv-event-time'; t2.textContent=st+(et?' – '+et:''); ev.appendChild(t2); }
-                        ev.addEventListener('click', (function(gev){ return e=>{ e.stopPropagation(); showGcalEventPopup(gev, ev); }; })(data));
-                        ev.addEventListener('mouseenter', (function(gev){ return ()=>showGcalTip(ev, gev); })(data));
+                    // Multi-hour: make the block absolutely positioned and extend downward
+                    if (span > 1) {
+                        ev.style.position = 'absolute';
+                        ev.style.top      = '0';
+                        ev.style.left     = '0';
+                        ev.style.right    = '0';
+                        // height = span rows minus border gap
+                        ev.style.height   = `calc(${span} * var(--cell-h) - 2px)`;
+                        ev.style.zIndex   = '3';
+                        ev.style.flex     = 'none';
+                        ev.style.borderLeft = 'none';
+                        cell.style.position = 'relative';
+                        cell.style.overflow = 'visible';
                     }
 
+                    ev.style.background = '#eef2ff';
+                    ev.style.color      = '#1e293b';
+
+                    const timeLabel = span > 1
+                        ? `${timeStr(h)} – ${timeStr(task.endHour)}`
+                        : timeStr(h);
+
+                    const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = task.title; ev.appendChild(title);
+                    const time  = document.createElement('div'); time.className  = 'wv-event-time';  time.textContent  = timeLabel;   ev.appendChild(time);
+                    if (task.notes) {
+                        const notes = document.createElement('div'); notes.className = 'wv-event-time';
+                        notes.style.fontStyle = 'italic'; notes.textContent = '📝 ' + task.notes; ev.appendChild(notes);
+                    }
+                    const del = document.createElement('button'); del.className = 'wv-event-del'; del.textContent = '✕';
+                    del.addEventListener('mousedown', e => e.preventDefault());
+                    del.addEventListener('click', e => { e.stopPropagation(); deleteTask(dk, h, task.id); });
+                    ev.appendChild(del);
+                    ev.addEventListener('mouseenter', () => showTaskTip(ev, task, h));
                     cell.appendChild(ev);
                 });
 
-                // Click empty cell → select that day
-                cell.addEventListener('click',(function(date){
-                    return ()=>{ weekSelectedDate=new Date(date.getFullYear(),date.getMonth(),date.getDate()); renderWeekSchedule(); renderWeekView(); };
+                // Render Google Calendar events
+                gcalEvs.forEach(gev => {
+                    const ev = document.createElement('div');
+                    ev.className = 'wv-event';
+                    const base = gev.color || '#ea4335';
+                    ev.style.background = base + '28';
+                    ev.style.color      = '#1e293b';
+                    ev.style.borderLeft = `3px solid ${base}`;
+                    ev.style.cursor     = 'pointer';
+                    const badge = document.createElement('div'); badge.className = 'wv-event-time'; badge.textContent = '🗓 Google'; ev.appendChild(badge);
+                    const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = gev.title; ev.appendChild(title);
+                    const st = gev.startDt ? gev.startDt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+                    const et = gev.endDt   ? gev.endDt.toLocaleTimeString('en-US',   { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+                    if (st) { const t2 = document.createElement('div'); t2.className = 'wv-event-time'; t2.textContent = st + (et ? ' – ' + et : ''); ev.appendChild(t2); }
+                    ev.addEventListener('click',      (function(g){ return e => { e.stopPropagation(); showGcalEventPopup(g, ev); }; })(gev));
+                    ev.addEventListener('mouseenter', (function(g){ return ()  => showGcalTip(ev, g); })(gev));
+                    cell.appendChild(ev);
+                });
+
+                // Click empty area → select day
+                cell.addEventListener('click', (function(date) {
+                    return () => {
+                        weekSelectedDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+                        renderWeekSchedule();
+                        renderWeekView();
+                    };
                 })(d));
 
                 inner.appendChild(cell);
