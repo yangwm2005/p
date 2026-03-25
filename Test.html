@@ -139,7 +139,7 @@
             cursor: pointer;
             transition: background 0.2s;
             position: relative;
-            overflow: hidden;
+            overflow: hidden;           /* clip all-day bars that extend outside */
             display: flex;
             flex-direction: column;
             min-height: 0;
@@ -149,18 +149,33 @@
         .day-cell.selected { background: #e6f0ff !important; outline: 2px solid #667eea; outline-offset: -2px; }
         .day-cell.today { background: #fef5e7 !important; }
         .day-number { font-size: 15px; font-weight: bold; margin-bottom: 3px; flex-shrink: 0; }
-        .event-item { background: #667eea; color: white; font-size: 11px; padding: 1px 5px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help; flex-shrink: 0; }
+
+        /* Individual event pill in classic calendar cell */
+        .event-item {
+            background: #667eea; color: white;
+            font-size: 11px; font-weight: 500;
+            padding: 2px 6px; border-radius: 5px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            cursor: pointer; flex-shrink: 0;
+            transition: filter 0.15s;
+            line-height: 1.4;
+        }
+        .event-item:hover { filter: brightness(0.88); }
 
         /* Scrollable event list inside each classic-view day cell */
         .cell-ev-list {
             display: flex; flex-direction: column; gap: 2px;
             overflow-y: auto; overflow-x: hidden;
             flex: 1; min-height: 0;
+            /* make scrollbar always slightly visible so user knows it's scrollable */
             scrollbar-width: thin;
-            scrollbar-color: #c7d2fe transparent;
+            scrollbar-color: rgba(102,126,234,0.35) transparent;
         }
-        .cell-ev-list::-webkit-scrollbar { width: 3px; }
-        .cell-ev-list::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 3px; }
+        .cell-ev-list::-webkit-scrollbar { width: 4px; }
+        .cell-ev-list::-webkit-scrollbar-thumb { background: rgba(102,126,234,0.4); border-radius: 4px; }
+        /* on hover make scrollbar more prominent */
+        .day-cell:hover .cell-ev-list { scrollbar-color: rgba(102,126,234,0.7) transparent; }
+        .day-cell:hover .cell-ev-list::-webkit-scrollbar-thumb { background: rgba(102,126,234,0.7); }
 
         /* Add-allday button that floats in corner of each week row */
         .week-add-allday {
@@ -1821,29 +1836,50 @@
                 const snap=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate());
                 const tasks=getTasksForDate(cur);
                 const gEvs = gcalGetForDate(dk).filter(e => !e.allDay);
-                const totalEvs = tasks.length + gEvs.length;
 
                 // Scrollable events container inside each cell
                 const evList = document.createElement('div');
                 evList.className = 'cell-ev-list';
 
-                tasks.forEach(task=>{
-                    const td=document.createElement('div'); td.className='event-item';
-                    td.textContent=task.title.length>18?task.title.substring(0,16)+'…':task.title;
-                    td.addEventListener('mouseenter',e=>{e.stopPropagation();showTip(td,snap,[task]);});
-                    evList.appendChild(td);
-                });
-                gEvs.forEach(gev => {
-                    const td = document.createElement('div');
-                    td.className = 'event-item-gcal';
-                    td.style.background = gev.color || '#ea4335';
-                    td.innerHTML = `<span style="font-size:9px;opacity:0.85;">🗓</span><span style="overflow:hidden;text-overflow:ellipsis;">${esc(gev.title.length>16?gev.title.substring(0,14)+'…':gev.title)}</span>`;
-                    td.addEventListener('mouseenter', e => { e.stopPropagation(); showGcalTip(td, gev); });
-                    evList.appendChild(td);
+                // Sort all timed events by hour for a unified chronological list
+                const allTimed = [
+                    ...tasks.map(t => ({type:'local', data:t, hour: t.hour||0})),
+                    ...gEvs.map(g => ({type:'gcal',  data:g, hour: g.hour||0}))
+                ].sort((a,b) => a.hour - b.hour);
+
+                allTimed.forEach(ev => {
+                    if (ev.type === 'local') {
+                        const task = ev.data;
+                        const td = document.createElement('div');
+                        td.className = 'event-item';
+                        // Show time prefix + full title (no truncation — cell scrolls)
+                        const timePrefix = timeStr(task.hour);
+                        td.textContent = timePrefix + ' ' + task.title;
+                        td.title = task.title + (task.notes ? '\n📝 ' + task.notes : '');
+                        td.addEventListener('mouseenter', e => { e.stopPropagation(); showTaskTip(td, task, task.hour); });
+                        td.addEventListener('click', e => e.stopPropagation());
+                        evList.appendChild(td);
+                    } else {
+                        const gev = ev.data;
+                        const td = document.createElement('div');
+                        td.className = 'event-item';
+                        td.style.background = gev.color || '#ea4335';
+                        const st = gev.startDt
+                            ? gev.startDt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true})
+                            : '';
+                        td.textContent = (st ? st + ' ' : '🗓 ') + gev.title;
+                        td.title = gev.title;
+                        td.addEventListener('mouseenter', e => { e.stopPropagation(); showGcalTip(td, gev); });
+                        td.addEventListener('click', e => { e.stopPropagation(); showGcalEventPopup(gev, td); });
+                        evList.appendChild(td);
+                    }
                 });
                 cell.appendChild(evList);
 
-                cell.addEventListener('mouseenter',(function(sd){return()=>{ showDayTip(cell, sd); };})(snap));
+                // Cell-level hover only fires when not hovering a child event pill
+                cell.addEventListener('mouseenter', (function(sd){ return e => {
+                    if (!e.target.closest('.event-item, .event-item-gcal')) showDayTip(cell, sd);
+                }; })(snap));
                 cell.onclick=(function(y,m,d){return()=>{classicSelectedDate=new Date(y,m,d);renderClassicCalendar();renderClassicSchedule();};})(cur.getFullYear(),cur.getMonth(),cur.getDate());
                 weekRow.appendChild(cell);
             }
