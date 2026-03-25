@@ -1585,6 +1585,82 @@
         anchor.addEventListener('mouseleave',()=>tip.remove(),{once:true});
     }
 
+    // ── Unified day tooltip: shows ALL events for a date (all-day, tasks, GCal) ──
+    function showDayTip(anchor, date) {
+        const ex = document.getElementById('__tip'); if (ex) ex.remove();
+        const dk = fdk(date);
+        const adEvs  = getAllDayForDate(dk);
+        const tasks  = getTasksForDate(date);
+        const gEvs   = gcalGetForDate(dk);
+        if (!adEvs.length && !tasks.length && !gEvs.length) return;
+
+        const tip = document.createElement('div'); tip.className = 'tooltip'; tip.id = '__tip';
+
+        const hdr = document.createElement('div'); hdr.className = 'tt-date';
+        hdr.textContent = `📅 ${date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}`;
+        tip.appendChild(hdr);
+
+        // All-day local events
+        adEvs.forEach(ev => {
+            const r = document.createElement('div'); r.className = 'tt-row';
+            const dot = document.createElement('span'); dot.className = 'tt-time';
+            dot.style.cssText = `color:${ev.color||'#667eea'};`;
+            dot.textContent = '📌';
+            const t = document.createElement('span'); t.className = 'tt-title'; t.textContent = ev.title;
+            r.appendChild(dot); r.appendChild(t); tip.appendChild(r);
+        });
+
+        // GCal all-day
+        gEvs.filter(e => e.allDay).forEach(ev => {
+            const r = document.createElement('div'); r.className = 'tt-row';
+            const dot = document.createElement('span'); dot.className = 'tt-time';
+            dot.style.cssText = `color:${ev.color||'#ea4335'};`;
+            dot.textContent = '🗓';
+            const t = document.createElement('span'); t.className = 'tt-title'; t.textContent = ev.title;
+            r.appendChild(dot); r.appendChild(t); tip.appendChild(r);
+        });
+
+        // Separator if we have both all-day and timed
+        const hasAllDay = adEvs.length + gEvs.filter(e=>e.allDay).length;
+        const hasTimed  = tasks.length + gEvs.filter(e=>!e.allDay).length;
+        if (hasAllDay && hasTimed) {
+            const sep = document.createElement('div');
+            sep.style.cssText = 'border-top:1px solid rgba(255,255,255,0.15);margin:4px 0;';
+            tip.appendChild(sep);
+        }
+
+        // Local timed tasks
+        tasks.forEach(task => {
+            const r = document.createElement('div'); r.className = 'tt-row';
+            const timeLabel = task.endHour && task.endHour > task.hour
+                ? `${timeStr(task.hour)}–${timeStr(task.endHour)}`
+                : `🕐 ${timeStr(task.hour)}`;
+            const tl = document.createElement('span'); tl.className = 'tt-time'; tl.textContent = timeLabel;
+            const tt = document.createElement('span'); tt.className = 'tt-title'; tt.textContent = task.title;
+            r.appendChild(tl); r.appendChild(tt); tip.appendChild(r);
+            if (task.notes) {
+                const n = document.createElement('div');
+                n.style.cssText = 'font-size:11px;color:#d1d5db;padding:1px 0 3px 20px;font-style:italic;';
+                n.textContent = '📝 ' + task.notes; tip.appendChild(n);
+            }
+        });
+
+        // GCal timed events
+        gEvs.filter(e => !e.allDay).forEach(ev => {
+            const r = document.createElement('div'); r.className = 'tt-row';
+            const st = ev.startDt ? ev.startDt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '';
+            const et = ev.endDt   ? ev.endDt.toLocaleTimeString('en-US',  {hour:'2-digit',minute:'2-digit',hour12:true}) : '';
+            const tl = document.createElement('span'); tl.className = 'tt-time';
+            tl.style.cssText = `color:${ev.color||'#ea4335'};`;
+            tl.textContent = st ? `🕐 ${st}${et?' – '+et:''}` : '🗓';
+            const tt = document.createElement('span'); tt.className = 'tt-title'; tt.textContent = ev.title;
+            r.appendChild(tl); r.appendChild(tt); tip.appendChild(r);
+        });
+
+        positionTip(tip, anchor);
+        anchor.addEventListener('mouseleave', () => tip.remove(), {once:true});
+    }
+
     function refreshView() {
         if(document.getElementById('classicView').style.display!=='none') { renderClassicCalendar(); }
         else if(document.getElementById('weekView').style.display!=='none') { renderWeekView(); renderWeekSchedule(); }
@@ -1660,7 +1736,7 @@
                     cell.appendChild(m);
                 }
 
-                cell.addEventListener('mouseenter',(function(sd){return()=>{const t=getTasksForDate(sd);if(t.length)showTip(cell,sd,t);};})(snap));
+                cell.addEventListener('mouseenter',(function(sd){return()=>{ showDayTip(cell, sd); };})(snap));
                 cell.onclick=(function(y,m,d){return()=>{classicSelectedDate=new Date(y,m,d);renderClassicCalendar();renderClassicSchedule();};})(cur.getFullYear(),cur.getMonth(),cur.getDate());
                 weekRow.appendChild(cell);
             }
@@ -1968,47 +2044,7 @@
             const snap=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate());
 
             // Tooltip shows all-day + hourly + GCal events
-            dd.addEventListener('mouseenter',(function(sd2, sdk){
-                return()=>{
-                    const t=getTasksForDate(sd2);
-                    const adE=getAllDayForDate(sdk);
-                    const gE=gcalGetForDate(sdk);
-                    const ex=document.getElementById('__tip'); if(ex) ex.remove();
-                    if(!t.length&&!adE.length&&!gE.length) return;
-                    const tip=document.createElement('div'); tip.className='tooltip'; tip.id='__tip';
-                    const dateDiv=document.createElement('div'); dateDiv.className='tt-date';
-                    dateDiv.textContent=`📅 ${sd2.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}`;
-                    tip.appendChild(dateDiv);
-                    adE.forEach(ev=>{
-                        const r=document.createElement('div'); r.className='tt-row';
-                        r.innerHTML=`<span class="tt-time" style="color:#a5b4fc;">📌</span><span class="tt-title">${esc(ev.title)}</span>`;
-                        tip.appendChild(r);
-                    });
-                    gE.filter(e=>e.allDay).forEach(ev=>{
-                        const r=document.createElement('div'); r.className='tt-row';
-                        r.innerHTML=`<span class="tt-time" style="color:#86efac;">🗓</span><span class="tt-title">${esc(ev.title)}</span>`;
-                        tip.appendChild(r);
-                    });
-                    gE.filter(e=>!e.allDay).slice(0,3).forEach(ev=>{
-                        const r=document.createElement('div'); r.className='tt-row';
-                        r.innerHTML=`<span class="tt-time" style="color:#86efac;">🕐 ${timeStr(ev.hour)}</span><span class="tt-title">${esc(ev.title)}</span>`;
-                        tip.appendChild(r);
-                    });
-                    t.slice(0,3).forEach(task=>{
-                        const r=document.createElement('div'); r.className='tt-row';
-                        r.innerHTML=`<span class="tt-time">🕐 ${timeStr(task.hour)}</span><span class="tt-title">${esc(task.title)}</span>`;
-                        tip.appendChild(r);
-                    });
-                    if(t.length>3){const m=document.createElement('div');m.className='tt-more';m.textContent=`+${t.length-3} more`;tip.appendChild(m);}
-                    document.body.appendChild(tip);
-                    const rect=dd.getBoundingClientRect();
-                    let l=rect.left+rect.width/2-tip.offsetWidth/2, t2=rect.top-tip.offsetHeight-8;
-                    if(t2<8)t2=rect.bottom+8;
-                    l=Math.max(8,Math.min(l,window.innerWidth-tip.offsetWidth-8));
-                    tip.style.left=l+'px'; tip.style.top=t2+'px';
-                    dd.addEventListener('mouseleave',()=>tip.remove(),{once:true});
-                };
-            })(snap, dk));
+            dd.addEventListener('mouseenter',(function(sd2){ return () => showDayTip(dd, sd2); })(snap));
 
             dd.onclick=(function(y,m,d,mk){return()=>{multiSelectedDates[mk]=new Date(y,m,d);renderMultiMonthCalendar();};})(cur.getFullYear(),cur.getMonth(),cur.getDate(),mKey);
             daysDiv.appendChild(dd);
@@ -2221,6 +2257,7 @@
             col.addEventListener('click',(function(date){
                 return ()=>{ weekSelectedDate=new Date(date); renderWeekSchedule(); renderWeekView(); };
             })(d));
+            col.addEventListener('mouseenter', (function(date){ return () => showDayTip(col, date); })(d));
             hdrRow.appendChild(col);
         });
         panel.appendChild(hdrRow);
