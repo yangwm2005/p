@@ -133,21 +133,49 @@
         /* Day cells */
         .day-cell {
             padding: 4px 6px 6px 6px;
+            padding-top: 26px;          /* push content below the all-day bar zone */
             border-right: 1px solid #e0e0e0;
             border-bottom: 1px solid #e0e0e0;
             cursor: pointer;
             transition: background 0.2s;
             position: relative;
-            overflow: hidden;
-            /* push content below the all-day bar zone */
-            padding-top: 26px;
+            overflow: hidden;           /* clip all-day bars that extend outside */
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
         }
         .day-cell:hover { background: #f7fafc; }
         .day-cell.other-month { background: #f9f9f9; color: #bbb; }
         .day-cell.selected { background: #e6f0ff !important; outline: 2px solid #667eea; outline-offset: -2px; }
         .day-cell.today { background: #fef5e7 !important; }
-        .day-number { font-size: 15px; font-weight: bold; margin-bottom: 3px; }
-        .event-item { background: #667eea; color: white; font-size: 11px; padding: 1px 5px; border-radius: 6px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help; }
+        .day-number { font-size: 15px; font-weight: bold; margin-bottom: 3px; flex-shrink: 0; }
+
+        /* Individual event pill in classic calendar cell */
+        .event-item {
+            background: #667eea; color: white;
+            font-size: 11px; font-weight: 500;
+            padding: 2px 6px; border-radius: 5px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            cursor: pointer; flex-shrink: 0;
+            transition: filter 0.15s;
+            line-height: 1.4;
+        }
+        .event-item:hover { filter: brightness(0.88); }
+
+        /* Scrollable event list inside each classic-view day cell */
+        .cell-ev-list {
+            display: flex; flex-direction: column; gap: 2px;
+            overflow-y: auto; overflow-x: hidden;
+            flex: 1; min-height: 0;
+            /* make scrollbar always slightly visible so user knows it's scrollable */
+            scrollbar-width: thin;
+            scrollbar-color: rgba(102,126,234,0.35) transparent;
+        }
+        .cell-ev-list::-webkit-scrollbar { width: 4px; }
+        .cell-ev-list::-webkit-scrollbar-thumb { background: rgba(102,126,234,0.4); border-radius: 4px; }
+        /* on hover make scrollbar more prominent */
+        .day-cell:hover .cell-ev-list { scrollbar-color: rgba(102,126,234,0.7) transparent; }
+        .day-cell:hover .cell-ev-list::-webkit-scrollbar-thumb { background: rgba(102,126,234,0.7); }
 
         /* Add-allday button that floats in corner of each week row */
         .week-add-allday {
@@ -164,12 +192,42 @@
         .week-row:hover .week-add-allday { opacity: 1; }
 
         /* Tooltip */
-        .tooltip { position: fixed; background: #1f2937; color: #f3f4f6; padding: 10px 14px; border-radius: 12px; font-size: 13px; max-width: 280px; z-index: 10000; pointer-events: none; box-shadow: 0 8px 20px rgba(0,0,0,0.35); border-left: 4px solid #667eea; line-height: 1.5; }
-        .tooltip .tt-date { font-weight: 700; font-size: 12px; color: #c4b5fd; margin-bottom: 5px; }
+        .tooltip {
+            position: fixed;
+            background: #1f2937; color: #f3f4f6;
+            border-radius: 12px; font-size: 13px;
+            max-width: 300px; min-width: 180px;
+            max-height: 340px;
+            z-index: 10000;
+            pointer-events: all;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+            border-left: 4px solid #667eea;
+            line-height: 1.5;
+            display: flex; flex-direction: column;
+        }
+        .tooltip .tt-header {
+            padding: 10px 14px 6px;
+            flex-shrink: 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .tooltip .tt-body {
+            padding: 6px 14px 10px;
+            overflow-y: auto;
+            flex: 1;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.2) transparent;
+        }
+        .tooltip .tt-body::-webkit-scrollbar { width: 4px; }
+        .tooltip .tt-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+        .tooltip .tt-date { font-weight: 700; font-size: 12px; color: #c4b5fd; }
         .tooltip .tt-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; }
         .tooltip .tt-time { font-weight: 700; color: #93c5fd; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
         .tooltip .tt-title { color: #f3f4f6; font-size: 12px; }
         .tooltip .tt-more { color: #9ca3af; font-size: 11px; margin-top: 3px; }
+        .tooltip .tt-scroll-hint {
+            text-align: center; font-size: 10px; color: rgba(255,255,255,0.35);
+            padding: 3px 0 5px; flex-shrink: 0; letter-spacing: 0.05em;
+        }
 
         /* Modal */
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 9000; display: flex; align-items: center; justify-content: center; }
@@ -1505,7 +1563,30 @@
     };
 
     // ── Tooltip helpers ──
+    // Tracks whether the mouse is currently over the active anchor or tooltip.
+    // The tooltip stays visible as long as either is hovered.
+    let _tipAnchor = null;
+    let _tipHideTimer = null;
+
+    function _clearTipHideTimer() {
+        if (_tipHideTimer) { clearTimeout(_tipHideTimer); _tipHideTimer = null; }
+    }
+    function _scheduleTipRemove() {
+        _clearTipHideTimer();
+        _tipHideTimer = setTimeout(() => {
+            const t = document.getElementById('__tip'); if (t) t.remove();
+            _tipAnchor = null;
+        }, 120);  // small grace period so mouse can travel anchor → tooltip
+    }
+    // Dismiss tooltip on click anywhere outside it
+    document.addEventListener('click', (e) => {
+        const t = document.getElementById('__tip');
+        if (t && !t.contains(e.target)) { t.remove(); _tipAnchor = null; _clearTipHideTimer(); }
+    });
+
     function positionTip(tip, anchor) {
+        // Cancel any pending removal from a previous tooltip
+        _clearTipHideTimer();
         document.body.appendChild(tip);
         const rect = anchor.getBoundingClientRect();
         let l = rect.left + rect.width/2 - tip.offsetWidth/2;
@@ -1513,32 +1594,61 @@
         if (t < 8) t = rect.bottom + 8;
         l = Math.max(8, Math.min(l, window.innerWidth - tip.offsetWidth - 8));
         tip.style.left = l+'px'; tip.style.top = t+'px';
+
+        // Add scroll-hint if content overflows
+        requestAnimationFrame(() => {
+            const body = tip.querySelector('.tt-body');
+            if (body && body.scrollHeight > body.clientHeight) {
+                let hint = tip.querySelector('.tt-scroll-hint');
+                if (!hint) {
+                    hint = document.createElement('div');
+                    hint.className = 'tt-scroll-hint';
+                    hint.textContent = '▼ scroll for more';
+                    tip.appendChild(hint);
+                    body.addEventListener('scroll', () => {
+                        const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 4;
+                        hint.style.opacity = atBottom ? '0' : '1';
+                    });
+                }
+            }
+        });
+
+        // Sticky hover: tooltip stays while mouse is over it
+        _tipAnchor = anchor;
+        tip.addEventListener('mouseenter', _clearTipHideTimer);
+        tip.addEventListener('mouseleave', _scheduleTipRemove);
+    }
+
+    function attachAnchorLeave(anchor) {
+        anchor.addEventListener('mouseleave', _scheduleTipRemove, {once: true});
     }
 
     // Calendar cell tooltip (shows tasks + notes)
     function showTip(anchor, date, tasks) {
         const ex=document.getElementById('__tip'); if(ex) ex.remove();
         const tip=document.createElement('div'); tip.className='tooltip'; tip.id='__tip';
+        const hdr=document.createElement('div'); hdr.className='tt-header';
         const dd=document.createElement('div'); dd.className='tt-date';
         dd.textContent=`📅 ${date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}`;
-        tip.appendChild(dd);
-        tasks.slice(0,6).forEach(t=>{
+        hdr.appendChild(dd); tip.appendChild(hdr);
+        const body=document.createElement('div'); body.className='tt-body';
+        tasks.forEach(t=>{
             const r=document.createElement('div'); r.className='tt-row';
             const timeLabel = t.endHour && t.endHour > t.hour
                 ? `${timeStr(t.hour)}–${timeStr(t.endHour)}`
                 : `🕐 ${timeStr(t.hour)}`;
             r.innerHTML=`<span class="tt-time">${timeLabel}</span><span class="tt-title">${esc(t.title)}</span>`;
-            tip.appendChild(r);
+            body.appendChild(r);
             if (t.notes) {
                 const n=document.createElement('div');
                 n.style.cssText='font-size:11px;color:#d1d5db;padding:1px 0 3px 20px;font-style:italic;';
                 n.textContent='📝 '+t.notes;
-                tip.appendChild(n);
+                body.appendChild(n);
             }
         });
-        if(tasks.length>6){const m=document.createElement('div');m.className='tt-more';m.textContent=`+${tasks.length-6} more`;tip.appendChild(m);}
+        tip.appendChild(body);
         positionTip(tip, anchor);
-        anchor.addEventListener('mouseleave',()=>tip.remove(),{once:true});
+        attachAnchorLeave(anchor);
     }
 
     // Rich tooltip for a single task in the schedule panel
@@ -1548,11 +1658,15 @@
         const timeLabel = task.endHour && task.endHour > hour
             ? `${timeStr(hour)} – ${timeStr(task.endHour)}`
             : timeStr(hour);
-        tip.innerHTML = `<div class="tt-date">🕐 ${timeLabel}</div>
-            <div class="tt-row"><span class="tt-title" style="font-weight:700;">${esc(task.title)}</span></div>
+        const hdr=document.createElement('div'); hdr.className='tt-header';
+        hdr.innerHTML=`<div class="tt-date">🕐 ${timeLabel}</div>`;
+        tip.appendChild(hdr);
+        const body=document.createElement('div'); body.className='tt-body';
+        body.innerHTML=`<div class="tt-row"><span class="tt-title" style="font-weight:700;">${esc(task.title)}</span></div>
             ${task.notes ? `<div style="font-size:11px;color:#d1d5db;margin-top:4px;font-style:italic;">📝 ${esc(task.notes)}</div>` : ''}`;
+        tip.appendChild(body);
         positionTip(tip, anchor);
-        anchor.addEventListener('mouseleave',()=>tip.remove(),{once:true});
+        attachAnchorLeave(anchor);
     }
 
     // Rich tooltip for Google Calendar events
@@ -1574,15 +1688,20 @@
         const cal = gcalCalendars.find(c=>c.id===gev.calendarId);
         const calName = cal ? cal.summary : 'Google Calendar';
 
-        tip.innerHTML = `
-            <div class="tt-date" style="color:#fca5a5;">🗓 Google Calendar</div>
+        const hdr=document.createElement('div'); hdr.className='tt-header';
+        hdr.innerHTML=`<div class="tt-date" style="color:#fca5a5;">🗓 Google Calendar</div>`;
+        tip.appendChild(hdr);
+        const body=document.createElement('div'); body.className='tt-body';
+        body.innerHTML=`
             <div class="tt-row"><span class="tt-title" style="font-weight:700;font-size:13px;">${esc(gev.title)}</span></div>
             ${timeText?`<div class="tt-row"><span class="tt-time">${esc(timeText)}</span></div>`:''}
             <div class="tt-row" style="margin-top:2px;"><span style="font-size:10px;opacity:0.75;">● ${esc(calName)}</span></div>
             ${gev.description?`<div style="font-size:11px;color:#d1d5db;margin-top:5px;font-style:italic;border-top:1px solid rgba(255,255,255,0.15);padding-top:5px;">📝 ${esc(gev.description.length>150?gev.description.substring(0,148)+'…':gev.description)}</div>`:''}
             ${gev.htmlLink?`<div style="font-size:10px;color:#93c5fd;margin-top:4px;">Click to open ↗</div>`:''}
-        `;        positionTip(tip, anchor);
-        anchor.addEventListener('mouseleave',()=>tip.remove(),{once:true});
+        `;
+        tip.appendChild(body);
+        positionTip(tip, anchor);
+        attachAnchorLeave(anchor);
     }
 
     // ── Unified day tooltip: shows ALL events for a date (all-day, tasks, GCal) ──
@@ -1596,9 +1715,14 @@
 
         const tip = document.createElement('div'); tip.className = 'tooltip'; tip.id = '__tip';
 
-        const hdr = document.createElement('div'); hdr.className = 'tt-date';
-        hdr.textContent = `📅 ${date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}`;
-        tip.appendChild(hdr);
+        // Sticky header
+        const hdr = document.createElement('div'); hdr.className = 'tt-header';
+        const dateDiv = document.createElement('div'); dateDiv.className = 'tt-date';
+        dateDiv.textContent = `📅 ${date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}`;
+        hdr.appendChild(dateDiv); tip.appendChild(hdr);
+
+        // Scrollable body
+        const body = document.createElement('div'); body.className = 'tt-body';
 
         // All-day local events
         adEvs.forEach(ev => {
@@ -1607,7 +1731,7 @@
             dot.style.cssText = `color:${ev.color||'#667eea'};`;
             dot.textContent = '📌';
             const t = document.createElement('span'); t.className = 'tt-title'; t.textContent = ev.title;
-            r.appendChild(dot); r.appendChild(t); tip.appendChild(r);
+            r.appendChild(dot); r.appendChild(t); body.appendChild(r);
         });
 
         // GCal all-day
@@ -1617,7 +1741,7 @@
             dot.style.cssText = `color:${ev.color||'#ea4335'};`;
             dot.textContent = '🗓';
             const t = document.createElement('span'); t.className = 'tt-title'; t.textContent = ev.title;
-            r.appendChild(dot); r.appendChild(t); tip.appendChild(r);
+            r.appendChild(dot); r.appendChild(t); body.appendChild(r);
         });
 
         // Separator if we have both all-day and timed
@@ -1626,7 +1750,7 @@
         if (hasAllDay && hasTimed) {
             const sep = document.createElement('div');
             sep.style.cssText = 'border-top:1px solid rgba(255,255,255,0.15);margin:4px 0;';
-            tip.appendChild(sep);
+            body.appendChild(sep);
         }
 
         // Local timed tasks
@@ -1637,11 +1761,11 @@
                 : `🕐 ${timeStr(task.hour)}`;
             const tl = document.createElement('span'); tl.className = 'tt-time'; tl.textContent = timeLabel;
             const tt = document.createElement('span'); tt.className = 'tt-title'; tt.textContent = task.title;
-            r.appendChild(tl); r.appendChild(tt); tip.appendChild(r);
+            r.appendChild(tl); r.appendChild(tt); body.appendChild(r);
             if (task.notes) {
                 const n = document.createElement('div');
                 n.style.cssText = 'font-size:11px;color:#d1d5db;padding:1px 0 3px 20px;font-style:italic;';
-                n.textContent = '📝 ' + task.notes; tip.appendChild(n);
+                n.textContent = '📝 ' + task.notes; body.appendChild(n);
             }
         });
 
@@ -1654,11 +1778,12 @@
             tl.style.cssText = `color:${ev.color||'#ea4335'};`;
             tl.textContent = st ? `🕐 ${st}${et?' – '+et:''}` : '🗓';
             const tt = document.createElement('span'); tt.className = 'tt-title'; tt.textContent = ev.title;
-            r.appendChild(tl); r.appendChild(tt); tip.appendChild(r);
+            r.appendChild(tl); r.appendChild(tt); body.appendChild(r);
         });
 
+        tip.appendChild(body);
         positionTip(tip, anchor);
-        anchor.addEventListener('mouseleave', () => tip.remove(), {once:true});
+        attachAnchorLeave(anchor);
     }
 
     function refreshView() {
@@ -1710,33 +1835,51 @@
 
                 const snap=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate());
                 const tasks=getTasksForDate(cur);
-                tasks.slice(0,2).forEach(task=>{
-                    const td=document.createElement('div'); td.className='event-item';
-                    td.textContent=task.title.length>18?task.title.substring(0,16)+'…':task.title;
-                    td.addEventListener('mouseenter',e=>{e.stopPropagation();showTip(td,snap,[task]);});
-                    cell.appendChild(td);
-                });
-                if(tasks.length>2){const m=document.createElement('div');m.className='event-item';m.style.background='#999';m.textContent=`+${tasks.length-2} more`;cell.appendChild(m);}
-
-                // Google Calendar events in this cell
                 const gEvs = gcalGetForDate(dk).filter(e => !e.allDay);
-                gEvs.slice(0, 2).forEach(gev => {
-                    const td = document.createElement('div');
-                    td.className = 'event-item-gcal';
-                    td.style.background = gev.color || '#ea4335';
-                    td.innerHTML = `<span style="font-size:9px;opacity:0.85;">🗓</span><span style="overflow:hidden;text-overflow:ellipsis;">${esc(gev.title.length>16?gev.title.substring(0,14)+'…':gev.title)}</span>`;
-                    td.addEventListener('mouseenter', e => { e.stopPropagation(); showGcalTip(td, gev); });
-                    cell.appendChild(td);
-                });
-                const gAllDay = gcalGetForDate(dk).filter(e => e.allDay);
-                if (gEvs.length + gAllDay.length > 0 && (gEvs.length > 2)) {
-                    const m = document.createElement('div'); m.className='event-item-gcal';
-                    m.style.background='#9ca3af';
-                    m.innerHTML=`<span>+${gEvs.length-2} GCal</span>`;
-                    cell.appendChild(m);
-                }
 
-                cell.addEventListener('mouseenter',(function(sd){return()=>{ showDayTip(cell, sd); };})(snap));
+                // Scrollable events container inside each cell
+                const evList = document.createElement('div');
+                evList.className = 'cell-ev-list';
+
+                // Sort all timed events by hour for a unified chronological list
+                const allTimed = [
+                    ...tasks.map(t => ({type:'local', data:t, hour: t.hour||0})),
+                    ...gEvs.map(g => ({type:'gcal',  data:g, hour: g.hour||0}))
+                ].sort((a,b) => a.hour - b.hour);
+
+                allTimed.forEach(ev => {
+                    if (ev.type === 'local') {
+                        const task = ev.data;
+                        const td = document.createElement('div');
+                        td.className = 'event-item';
+                        // Show time prefix + full title (no truncation — cell scrolls)
+                        const timePrefix = timeStr(task.hour);
+                        td.textContent = timePrefix + ' ' + task.title;
+                        td.title = task.title + (task.notes ? '\n📝 ' + task.notes : '');
+                        td.addEventListener('mouseenter', e => { e.stopPropagation(); showTaskTip(td, task, task.hour); });
+                        td.addEventListener('click', e => e.stopPropagation());
+                        evList.appendChild(td);
+                    } else {
+                        const gev = ev.data;
+                        const td = document.createElement('div');
+                        td.className = 'event-item';
+                        td.style.background = gev.color || '#ea4335';
+                        const st = gev.startDt
+                            ? gev.startDt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true})
+                            : '';
+                        td.textContent = (st ? st + ' ' : '🗓 ') + gev.title;
+                        td.title = gev.title;
+                        td.addEventListener('mouseenter', e => { e.stopPropagation(); showGcalTip(td, gev); });
+                        td.addEventListener('click', e => { e.stopPropagation(); showGcalEventPopup(gev, td); });
+                        evList.appendChild(td);
+                    }
+                });
+                cell.appendChild(evList);
+
+                // Cell-level hover only fires when not hovering a child event pill
+                cell.addEventListener('mouseenter', (function(sd){ return e => {
+                    if (!e.target.closest('.event-item, .event-item-gcal')) showDayTip(cell, sd);
+                }; })(snap));
                 cell.onclick=(function(y,m,d){return()=>{classicSelectedDate=new Date(y,m,d);renderClassicCalendar();renderClassicSchedule();};})(cur.getFullYear(),cur.getMonth(),cur.getDate());
                 weekRow.appendChild(cell);
             }
@@ -1822,14 +1965,14 @@
                     const ex=document.getElementById('__tip'); if(ex) ex.remove();
                     const tip=document.createElement('div'); tip.className='tooltip'; tip.id='__tip';
                     const fmt=d=>pdk(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-                    tip.innerHTML=`<div class="tt-date">📌 ${esc(ev.title)}</div><div class="tt-row"><span class="tt-time">${fmt(ev.start)}</span><span class="tt-title"> → ${fmt(ev.end)}</span></div>`;
-                    document.body.appendChild(tip);
-                    const r=bar.getBoundingClientRect();
-                    let l=r.left+r.width/2-tip.offsetWidth/2, t=r.top-tip.offsetHeight-6;
-                    if(t<8)t=r.bottom+6;
-                    l=Math.max(8,Math.min(l,window.innerWidth-tip.offsetWidth-8));
-                    tip.style.left=l+'px';tip.style.top=t+'px';
-                    bar.addEventListener('mouseleave',()=>tip.remove(),{once:true});
+                    const hdr=document.createElement('div'); hdr.className='tt-header';
+                    hdr.innerHTML=`<div class="tt-date">📌 ${esc(ev.title)}</div>`;
+                    tip.appendChild(hdr);
+                    const body=document.createElement('div'); body.className='tt-body';
+                    body.innerHTML=`<div class="tt-row"><span class="tt-time">${fmt(ev.start)}</span><span class="tt-title"> → ${fmt(ev.end)}</span></div>`;
+                    tip.appendChild(body);
+                    positionTip(tip, bar);
+                    attachAnchorLeave(bar);
                 });
 
                 weekRow.appendChild(bar);
@@ -2221,12 +2364,14 @@
                     const ex=document.getElementById('__tip'); if(ex)ex.remove();
                     const tip=document.createElement('div'); tip.className='tooltip'; tip.id='__tip';
                     const fmt=d=>pdk(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-                    tip.innerHTML=`<div class="tt-date">📌 ${esc(ev.title)}</div><div class="tt-row"><span class="tt-time">${fmt(ev.start)}</span><span class="tt-title"> → ${fmt(ev.end)}</span></div>`;
-                    document.body.appendChild(tip);
-                    const r=bar.getBoundingClientRect(); let l=r.left+r.width/2-tip.offsetWidth/2,t=r.top-tip.offsetHeight-6;
-                    if(t<8)t=r.bottom+6; l=Math.max(8,Math.min(l,window.innerWidth-tip.offsetWidth-8));
-                    tip.style.left=l+'px'; tip.style.top=t+'px';
-                    bar.addEventListener('mouseleave',()=>tip.remove(),{once:true});
+                    const hdr2=document.createElement('div'); hdr2.className='tt-header';
+                    hdr2.innerHTML=`<div class="tt-date">📌 ${esc(ev.title)}</div>`;
+                    tip.appendChild(hdr2);
+                    const body2=document.createElement('div'); body2.className='tt-body';
+                    body2.innerHTML=`<div class="tt-row"><span class="tt-time">${fmt(ev.start)}</span><span class="tt-title"> → ${fmt(ev.end)}</span></div>`;
+                    tip.appendChild(body2);
+                    positionTip(tip, bar);
+                    attachAnchorLeave(bar);
                 });
                 adOverlay.appendChild(bar);
                 const bot=4+lane*22+22; if(bot>maxBot)maxBot=bot;
