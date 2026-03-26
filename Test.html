@@ -1562,6 +1562,73 @@
         renderClassicCalendar(); renderClassicSchedule();
     };
 
+    // Popup for local task detail (click on event pill in classic calendar)
+    function showTaskPopup(task, hour, date, anchorEl) {
+        const existing = document.getElementById('gcalEventPopup');
+        if (existing) { existing.remove(); return; }
+
+        const popup = document.createElement('div');
+        popup.className = 'gcal-event-popup';
+        popup.id = 'gcalEventPopup';
+
+        // Header
+        const hdr = document.createElement('div');
+        hdr.className = 'gcal-popup-header';
+        hdr.style.background = '#667eea';
+        const titleEl = document.createElement('div');
+        titleEl.className = 'gcal-popup-title';
+        titleEl.textContent = task.title;
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'gcal-popup-close';
+        closeBtn.textContent = '✕';
+        closeBtn.addEventListener('click', () => popup.remove());
+        hdr.appendChild(titleEl); hdr.appendChild(closeBtn);
+        popup.appendChild(hdr);
+
+        // Body
+        const body = document.createElement('div');
+        body.className = 'gcal-popup-body';
+
+        // Date row
+        const dateRow = document.createElement('div'); dateRow.className = 'gcal-popup-row';
+        const dateStr = date.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+        dateRow.innerHTML = `<span class="gcal-popup-icon">📅</span><span>${esc(dateStr)}</span>`;
+        body.appendChild(dateRow);
+
+        // Time row
+        const timeRow = document.createElement('div'); timeRow.className = 'gcal-popup-row';
+        const timeLabel = (task.endHour && task.endHour > hour)
+            ? `${timeStr(hour)} – ${timeStr(task.endHour)}`
+            : timeStr(hour);
+        timeRow.innerHTML = `<span class="gcal-popup-icon">🕐</span><span>${esc(timeLabel)}</span>`;
+        body.appendChild(timeRow);
+
+        // Notes row
+        if (task.notes) {
+            const noteRow = document.createElement('div'); noteRow.className = 'gcal-popup-row';
+            noteRow.style.cssText = 'align-items:flex-start;background:#f8faff;border-radius:8px;padding:8px 10px;margin-top:4px;';
+            noteRow.innerHTML = `<span class="gcal-popup-icon">📝</span><span style="font-size:13px;color:#374151;line-height:1.5;">${esc(task.notes)}</span>`;
+            body.appendChild(noteRow);
+        }
+
+        popup.appendChild(body);
+        document.body.appendChild(popup);
+
+        // Position near anchor
+        const r = anchorEl.getBoundingClientRect();
+        let left = r.left;
+        let top  = r.bottom + 6;
+        if (top + 300 > window.innerHeight) top = r.top - 300 - 6;
+        if (left + 360 > window.innerWidth) left = window.innerWidth - 368;
+        if (left < 4) left = 4;
+        popup.style.left = left + 'px';
+        popup.style.top  = top  + 'px';
+
+        // Close on outside click
+        const onOutside = e => { if (!popup.contains(e.target) && e.target !== anchorEl) { popup.remove(); document.removeEventListener('click', onOutside, true); } };
+        setTimeout(() => document.addEventListener('click', onOutside, true), 0);
+    }
+
     // ── Tooltip helpers ──
     // Strategy: the tooltip has pointer-events:all and sits directly adjacent to
     // the anchor. We use a hide-timer that is cancelled whenever the mouse enters
@@ -1899,7 +1966,7 @@
                         td.textContent = timePrefix + ' ' + task.title;
                         td.title = task.title + (task.notes ? '\n📝 ' + task.notes : '');
                         td.addEventListener('mouseenter', () => showTaskTip(td, task, task.hour));
-                        td.addEventListener('click', e => e.stopPropagation());
+                        td.addEventListener('click', e => { e.stopPropagation(); showTaskPopup(task, task.hour, snap, td); });
                         evList.appendChild(td);
                     } else {
                         const gev = ev.data;
