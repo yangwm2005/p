@@ -1565,11 +1565,16 @@
     // Popup for local task detail (click on event pill in classic calendar)
     function showTaskPopup(task, hour, date, anchorEl) {
         const existing = document.getElementById('gcalEventPopup');
-        if (existing) { existing.remove(); return; }
+        if (existing) {
+            // If same anchor clicked again → just close (toggle off)
+            if (existing._anchorEl === anchorEl) { existing.remove(); return; }
+            existing.remove();
+        }
 
         const popup = document.createElement('div');
         popup.className = 'gcal-event-popup';
         popup.id = 'gcalEventPopup';
+        popup._anchorEl = anchorEl;
 
         // Header
         const hdr = document.createElement('div');
@@ -1603,13 +1608,16 @@
         timeRow.innerHTML = `<span class="gcal-popup-icon">🕐</span><span>${esc(timeLabel)}</span>`;
         body.appendChild(timeRow);
 
-        // Notes row
+        // Notes row — always visible, shows placeholder when empty
+        const noteRow = document.createElement('div'); noteRow.className = 'gcal-popup-row';
+        noteRow.style.cssText = 'align-items:flex-start;background:#f8faff;border-radius:8px;padding:8px 10px;margin-top:4px;';
         if (task.notes) {
-            const noteRow = document.createElement('div'); noteRow.className = 'gcal-popup-row';
-            noteRow.style.cssText = 'align-items:flex-start;background:#f8faff;border-radius:8px;padding:8px 10px;margin-top:4px;';
-            noteRow.innerHTML = `<span class="gcal-popup-icon">📝</span><span style="font-size:13px;color:#374151;line-height:1.5;">${esc(task.notes)}</span>`;
-            body.appendChild(noteRow);
+            const notesHtml = esc(task.notes).replace(/\n/g, '<br>');
+            noteRow.innerHTML = `<span class="gcal-popup-icon">📝</span><span style="font-size:13px;color:#374151;line-height:1.6;word-break:break-word;">${notesHtml}</span>`;
+        } else {
+            noteRow.innerHTML = `<span class="gcal-popup-icon">📝</span><span style="font-size:12px;color:#94a3b8;font-style:italic;">No notes</span>`;
         }
+        body.appendChild(noteRow);
 
         popup.appendChild(body);
         document.body.appendChild(popup);
@@ -1618,8 +1626,9 @@
         const r = anchorEl.getBoundingClientRect();
         let left = r.left;
         let top  = r.bottom + 6;
-        if (top + 300 > window.innerHeight) top = r.top - 300 - 6;
-        if (left + 360 > window.innerWidth) left = window.innerWidth - 368;
+        const popH = Math.min(400, popup.scrollHeight + 20);
+        if (top + popH > window.innerHeight) top = Math.max(4, r.top - popH - 6);
+        if (left + 368 > window.innerWidth) left = window.innerWidth - 372;
         if (left < 4) left = 4;
         popup.style.left = left + 'px';
         popup.style.top  = top  + 'px';
@@ -2178,6 +2187,12 @@
                 del.addEventListener('click',e=>{e.stopPropagation();deleteTask(fdk(classicSelectedDate),hour,task.id);});
                 td.appendChild(tv); td.appendChild(del); content.appendChild(td);
                 td.addEventListener('mouseenter',()=>showTaskTip(td,task,hour));
+                td.style.cursor='pointer';
+                td.addEventListener('click', e => {
+                    if (e.target === del || del.contains(e.target)) return;
+                    e.stopPropagation();
+                    showTaskPopup(task, hour, classicSelectedDate, td);
+                });
             });
 
             // Input row with duration selector
@@ -2351,10 +2366,15 @@
             const content=document.createElement('div'); content.className='slot-content-compact';
             hourTasks.forEach(task=>{
                 const td=document.createElement('div'); td.className='task-display-compact';
-                td.innerHTML=`<div style="flex:1"><strong>${esc(task.title)}</strong></div><button class="delete-task-btn" style="font-size:13px">🗑️</button>`;
+                td.style.cursor='pointer';
+                td.innerHTML=`<div style="flex:1"><strong>${esc(task.title)}</strong>${task.notes?`<div style="font-size:11px;color:#4b5563;margin-top:1px;">${esc(task.notes)}</div>`:''}</div><button class="delete-task-btn" style="font-size:13px">🗑️</button>`;
                 const del=td.querySelector('.delete-task-btn');
                 del.addEventListener('mousedown',e=>e.preventDefault());
                 del.addEventListener('click',e=>{e.stopPropagation();deleteTask(dk,hour,task.id);});
+                (function(t,h,d){ td.addEventListener('click',e=>{
+                    if(e.target===del||del.contains(e.target)) return;
+                    e.stopPropagation(); showTaskPopup(t,h,d,td);
+                }); })(task,hour,date);
                 content.appendChild(td);
             });
             gEvs.forEach(gev=>{
@@ -2587,7 +2607,15 @@
                     del.addEventListener('mousedown', e => e.preventDefault());
                     del.addEventListener('click', e => { e.stopPropagation(); deleteTask(dk, h, task.id); });
                     ev.appendChild(del);
+                    ev.style.cursor = 'pointer';
                     ev.addEventListener('mouseenter', () => showTaskTip(ev, task, h));
+                    (function(capturedTask, capturedH, capturedDate) {
+                        ev.addEventListener('click', e => {
+                            if (e.target === del || del.contains(e.target)) return;
+                            e.stopPropagation();
+                            showTaskPopup(capturedTask, capturedH, capturedDate, ev);
+                        });
+                    })(task, h, new Date(d.getFullYear(), d.getMonth(), d.getDate()));
                     cell.appendChild(ev);
                 });
 
@@ -2699,6 +2727,14 @@
                 del.addEventListener('click',e=>{ e.stopPropagation(); deleteTask(dk,hour,task.id); });
                 td.appendChild(tv); td.appendChild(del); content.appendChild(td);
                 td.addEventListener('mouseenter',()=>showTaskTip(td,task,hour));
+                td.style.cursor='pointer';
+                (function(capturedTask, capturedHour) {
+                    td.addEventListener('click', e => {
+                        if (e.target === del || del.contains(e.target)) return;
+                        e.stopPropagation();
+                        showTaskPopup(capturedTask, capturedHour, pdk(dk), td);
+                    });
+                })(task, hour);
             });
 
             // GCal timed events
