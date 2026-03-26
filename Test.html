@@ -271,20 +271,25 @@
         .sad-item .sad-del:hover { opacity: 1; }
 
         .time-slots-full {
-            display: grid;
-            grid-template-rows: repeat(11, 1fr);  /* 8am–6pm = 11 slots */
+            display: flex;
+            flex-direction: column;
             gap: 3px;
             flex: 1; min-height: 0; overflow-y: auto;
+            padding-bottom: 8px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(102,126,234,0.35) transparent;
         }
+        .time-slots-full::-webkit-scrollbar { width: 5px; }
+        .time-slots-full::-webkit-scrollbar-thumb { background: rgba(102,126,234,0.4); border-radius: 4px; }
         .time-slot-full {
             display: flex; border: 1px solid #e0e0e0; border-radius: 10px;
             background: white; min-height: 72px; flex-shrink: 0;
         }
         /* Slots that span multiple hours */
-        .time-slot-span-2 { grid-row: span 2; min-height: 147px; }
-        .time-slot-span-3 { grid-row: span 3; min-height: 222px; }
-        .time-slot-span-4 { grid-row: span 4; min-height: 297px; }
-        .time-slot-span-5 { grid-row: span 5; min-height: 372px; }
+        .time-slot-span-2 { min-height: 147px; }
+        .time-slot-span-3 { min-height: 222px; }
+        .time-slot-span-4 { min-height: 297px; }
+        .time-slot-span-5 { min-height: 372px; }
         .time-label-full { width: 90px; padding: 8px 10px; background: #f7fafc; font-weight: 700; border-right: 1px solid #e0e0e0; flex-shrink: 0; font-size: 14px; display: flex; align-items: center; justify-content: center; border-radius: 10px 0 0 10px; color: #374151; }
         .slot-content-full { flex: 1; padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; justify-content: center; }
         .task-display { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #eef2ff; padding: 5px 10px; border-radius: 8px; border-left: 3px solid #667eea; }
@@ -1690,27 +1695,42 @@
         const t = document.getElementById('__tip');
         if (t && !t.contains(e.target)) _removeTip();
     });
+    // Also dismiss on mousedown so the click target receives the event cleanly
+    document.addEventListener('mousedown', (e) => {
+        const t = document.getElementById('__tip');
+        if (t && !t.contains(e.target)) _removeTip();
+    });
 
     function _buildBridge(anchorRect, tipRect) {
-        // Creates an invisible rectangle that covers the gap between anchor and tooltip
+        // Creates an invisible rectangle that covers the gap between anchor and tooltip.
+        // pointer-events:none so it NEVER blocks clicks on underlying elements.
+        // We track mouse position via document mousemove instead.
         if (_tipBridge) { _tipBridge.remove(); _tipBridge = null; }
-        const b = document.createElement('div');
-        b.id = '__tip_bridge';
         const left   = Math.min(anchorRect.left, tipRect.left) - 4;
         const right  = Math.max(anchorRect.right, tipRect.right) + 4;
         const top    = Math.min(anchorRect.top, tipRect.top) - 4;
         const bottom = Math.max(anchorRect.bottom, tipRect.bottom) + 4;
-        b.style.cssText = [
-            'position:fixed',
-            `left:${left}px`, `top:${top}px`,
-            `width:${right - left}px`, `height:${bottom - top}px`,
-            'z-index:9999',           // just below the tooltip (10000)
-            'pointer-events:all',
-            'background:transparent',
-        ].join(';');
-        b.addEventListener('mouseenter', _clearTipHideTimer);
-        b.addEventListener('mouseleave', _scheduleTipRemove);
-        document.body.appendChild(b);
+
+        // Instead of a DOM bridge, use a mousemove listener on document to detect
+        // when the cursor leaves the combined anchor+tooltip area.
+        const onMove = (e) => {
+            const cx = e.clientX, cy = e.clientY;
+            const inBridge = cx >= left && cx <= right && cy >= top && cy <= bottom;
+            const tip = document.getElementById('__tip');
+            if (!tip) { document.removeEventListener('mousemove', onMove); return; }
+            const tr = tip.getBoundingClientRect();
+            const inTip = cx >= tr.left && cx <= tr.right && cy >= tr.top && cy <= tr.bottom;
+            const inAnchor = cx >= anchorRect.left && cx <= anchorRect.right && cy >= anchorRect.top && cy <= anchorRect.bottom;
+            if (!inBridge && !inTip && !inAnchor) {
+                _scheduleTipRemove();
+                document.removeEventListener('mousemove', onMove);
+            } else {
+                _clearTipHideTimer();
+            }
+        };
+        document.addEventListener('mousemove', onMove);
+        // Store cleanup ref on bridge sentinel
+        const b = { remove: () => document.removeEventListener('mousemove', onMove) };
         _tipBridge = b;
     }
 
@@ -2082,7 +2102,24 @@
                 cell.addEventListener('mouseenter', (function(sd){ return e => {
                     if (!e.target.closest('.event-item, .event-item-gcal')) showDayTip(cell, sd);
                 }; })(snap));
-                cell.onclick=(function(y,m,d){return()=>{classicSelectedDate=new Date(y,m,d);renderClassicCalendar();renderClassicSchedule();};})(cur.getFullYear(),cur.getMonth(),cur.getDate());
+
+                // Select date on click — fires on cell background OR evList (but not on event pills)
+                const selectThisDay = (function(y,m,d){ return () => {
+                    classicSelectedDate = new Date(y,m,d);
+                    renderClassicCalendar();
+                    renderClassicSchedule();
+                }; })(cur.getFullYear(), cur.getMonth(), cur.getDate());
+
+                cell.onclick = e => {
+                    // Don't trigger if clicking an event pill or the all-day delete button
+                    if (e.target.closest('.event-item, .event-item-gcal, .allday-bar, .bar-del')) return;
+                    selectThisDay();
+                };
+                evList.addEventListener('click', e => {
+                    if (e.target.closest('.event-item, .event-item-gcal')) return;
+                    e.stopPropagation();
+                    selectThisDay();
+                });
                 weekRow.appendChild(cell);
             }
 
