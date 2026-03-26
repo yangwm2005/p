@@ -1067,13 +1067,17 @@
 
     // ── GCal Event Popup ──
     function showGcalEventPopup(ev, anchorEl) {
-        // Remove any existing popup
+        // Remove any existing popup (toggle off if same anchor, replace if different)
         const existing = document.getElementById('gcalEventPopup');
-        if (existing) { existing.remove(); return; }
+        if (existing) {
+            if (existing._anchorEl === anchorEl) { existing.remove(); return; }
+            existing.remove();
+        }
 
         const popup = document.createElement('div');
         popup.className = 'gcal-event-popup';
         popup.id = 'gcalEventPopup';
+        popup._anchorEl = anchorEl;
 
         // Header
         const hdr = document.createElement('div');
@@ -1576,66 +1580,71 @@
         popup.id = 'gcalEventPopup';
         popup._anchorEl = anchorEl;
 
-        // Header
+        // ── Header (matches showGcalEventPopup style) ──
         const hdr = document.createElement('div');
         hdr.className = 'gcal-popup-header';
         hdr.style.background = '#667eea';
+
         const titleEl = document.createElement('div');
         titleEl.className = 'gcal-popup-title';
         titleEl.textContent = task.title;
+
         const closeBtn = document.createElement('button');
         closeBtn.className = 'gcal-popup-close';
         closeBtn.textContent = '✕';
         closeBtn.addEventListener('click', () => popup.remove());
-        hdr.appendChild(titleEl); hdr.appendChild(closeBtn);
+
+        hdr.appendChild(titleEl);
+        hdr.appendChild(closeBtn);
         popup.appendChild(hdr);
 
-        // Body
+        // ── Body ──
         const body = document.createElement('div');
         body.className = 'gcal-popup-body';
 
-        // Date row
-        const dateRow = document.createElement('div'); dateRow.className = 'gcal-popup-row';
-        const dateStr = date.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
-        dateRow.innerHTML = `<span class="gcal-popup-icon">📅</span><span>${esc(dateStr)}</span>`;
-        body.appendChild(dateRow);
-
-        // Time row
-        const timeRow = document.createElement('div'); timeRow.className = 'gcal-popup-row';
+        // Date + time row (combined, like GCal popup's timeText row)
         const timeLabel = (task.endHour && task.endHour > hour)
             ? `${timeStr(hour)} – ${timeStr(task.endHour)}`
             : timeStr(hour);
-        timeRow.innerHTML = `<span class="gcal-popup-icon">🕐</span><span>${esc(timeLabel)}</span>`;
+        const dateStr = date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+        const timeRow = document.createElement('div');
+        timeRow.className = 'gcal-popup-row';
+        timeRow.innerHTML = `<span class="gcal-popup-icon">🗓</span><span>${esc(dateStr)}, ${esc(timeLabel)}</span>`;
         body.appendChild(timeRow);
 
-        // Notes row — always visible, shows placeholder when empty
-        const noteRow = document.createElement('div'); noteRow.className = 'gcal-popup-row';
-        noteRow.style.cssText = 'align-items:flex-start;background:#f8faff;border-radius:8px;padding:8px 10px;margin-top:4px;';
+        // Notes row — only shown when notes exist (matches GCal description row exactly)
         if (task.notes) {
-            const notesHtml = esc(task.notes).replace(/\n/g, '<br>');
-            noteRow.innerHTML = `<span class="gcal-popup-icon">📝</span><span style="font-size:13px;color:#374151;line-height:1.6;word-break:break-word;">${notesHtml}</span>`;
-        } else {
-            noteRow.innerHTML = `<span class="gcal-popup-icon">📝</span><span style="font-size:12px;color:#94a3b8;font-style:italic;">No notes</span>`;
+            const row = document.createElement('div');
+            row.className = 'gcal-popup-row';
+            row.style.cssText = 'align-items:flex-start;background:#f8faff;border-radius:8px;padding:8px 10px;margin-top:4px;';
+            const icon = document.createElement('span'); icon.className = 'gcal-popup-icon'; icon.textContent = '📝'; row.appendChild(icon);
+            const txt = document.createElement('span');
+            txt.style.cssText = 'font-size:13px;color:#374151;line-height:1.5;white-space:pre-wrap;word-break:break-word;';
+            txt.textContent = task.notes;
+            row.appendChild(txt);
+            body.appendChild(row);
         }
-        body.appendChild(noteRow);
 
         popup.appendChild(body);
         document.body.appendChild(popup);
 
-        // Position near anchor
-        const r = anchorEl.getBoundingClientRect();
-        let left = r.left;
-        let top  = r.bottom + 6;
-        const popH = Math.min(400, popup.scrollHeight + 20);
-        if (top + popH > window.innerHeight) top = Math.max(4, r.top - popH - 6);
-        if (left + 368 > window.innerWidth) left = window.innerWidth - 372;
-        if (left < 4) left = 4;
+        // ── Smart position near anchor (identical to showGcalEventPopup) ──
+        const rect = anchorEl.getBoundingClientRect();
+        let left = rect.left;
+        let top  = rect.bottom + 8;
+        if (left + 360 > window.innerWidth - 8) left = window.innerWidth - 368;
+        if (top  + 320 > window.innerHeight - 8) top = rect.top - 328;
+        left = Math.max(8, left);
+        top  = Math.max(8, top);
         popup.style.left = left + 'px';
         popup.style.top  = top  + 'px';
 
         // Close on outside click
-        const onOutside = e => { if (!popup.contains(e.target) && e.target !== anchorEl) { popup.remove(); document.removeEventListener('click', onOutside, true); } };
-        setTimeout(() => document.addEventListener('click', onOutside, true), 0);
+        setTimeout(() => {
+            document.addEventListener('click', function handler(e) {
+                if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', handler); }
+            });
+        }, 10);
     }
 
     // ── Tooltip helpers ──
