@@ -1563,91 +1563,107 @@
     };
 
     // ── Tooltip helpers ──
-    // Uses document-level mousemove to decide whether the mouse is still
-    // over the anchor subtree OR the tooltip. This is immune to child-element
-    // mouseleave events and stopPropagation calls.
-    let _tipAnchor = null;      // the element that owns the current tooltip
+    // Strategy: the tooltip has pointer-events:all and sits directly adjacent to
+    // the anchor. We use a hide-timer that is cancelled whenever the mouse enters
+    // either the anchor OR the tooltip, and restarted whenever it leaves either.
+    // A transparent "bridge" element fills the gap between anchor and tooltip so
+    // the mouse never passes through dead space.
+    let _tipAnchor  = null;
     let _tipHideTimer = null;
+    let _tipBridge  = null;   // transparent rectangle bridging anchor ↔ tooltip gap
 
     function _clearTipHideTimer() {
         if (_tipHideTimer) { clearTimeout(_tipHideTimer); _tipHideTimer = null; }
     }
 
-    function _isOverAnchorOrTip(x, y) {
-        const tip = document.getElementById('__tip');
-        if (tip) {
-            const tr = tip.getBoundingClientRect();
-            if (x >= tr.left && x <= tr.right && y >= tr.top && y <= tr.bottom) return true;
-        }
-        if (_tipAnchor) {
-            const ar = _tipAnchor.getBoundingClientRect();
-            if (x >= ar.left && x <= ar.right && y >= ar.top && y <= ar.bottom) return true;
-        }
-        return false;
+    function _removeTip() {
+        _clearTipHideTimer();
+        const t = document.getElementById('__tip'); if (t) t.remove();
+        if (_tipBridge) { _tipBridge.remove(); _tipBridge = null; }
+        _tipAnchor = null;
     }
 
-    // One shared mousemove watcher — only active while a tooltip is open
-    function _onMouseMove(e) {
-        if (!_isOverAnchorOrTip(e.clientX, e.clientY)) {
-            _clearTipHideTimer();
-            _tipHideTimer = setTimeout(() => {
-                const t = document.getElementById('__tip'); if (t) t.remove();
-                _tipAnchor = null;
-                document.removeEventListener('mousemove', _onMouseMove);
-            }, 80);
-        } else {
-            _clearTipHideTimer();
-        }
+    function _scheduleTipRemove() {
+        _clearTipHideTimer();
+        // generous 300ms — enough for any mouse movement across the gap
+        _tipHideTimer = setTimeout(_removeTip, 300);
     }
 
-    // Dismiss tooltip on click anywhere outside it
+    // Dismiss on click outside
     document.addEventListener('click', (e) => {
         const t = document.getElementById('__tip');
-        if (t && !t.contains(e.target)) {
-            t.remove(); _tipAnchor = null; _clearTipHideTimer();
-            document.removeEventListener('mousemove', _onMouseMove);
-        }
+        if (t && !t.contains(e.target)) _removeTip();
     });
 
+    function _buildBridge(anchorRect, tipRect) {
+        // Creates an invisible rectangle that covers the gap between anchor and tooltip
+        if (_tipBridge) { _tipBridge.remove(); _tipBridge = null; }
+        const b = document.createElement('div');
+        b.id = '__tip_bridge';
+        const left   = Math.min(anchorRect.left, tipRect.left) - 4;
+        const right  = Math.max(anchorRect.right, tipRect.right) + 4;
+        const top    = Math.min(anchorRect.top, tipRect.top) - 4;
+        const bottom = Math.max(anchorRect.bottom, tipRect.bottom) + 4;
+        b.style.cssText = [
+            'position:fixed',
+            `left:${left}px`, `top:${top}px`,
+            `width:${right - left}px`, `height:${bottom - top}px`,
+            'z-index:9999',           // just below the tooltip (10000)
+            'pointer-events:all',
+            'background:transparent',
+        ].join(';');
+        b.addEventListener('mouseenter', _clearTipHideTimer);
+        b.addEventListener('mouseleave', _scheduleTipRemove);
+        document.body.appendChild(b);
+        _tipBridge = b;
+    }
+
     function positionTip(tip, anchor) {
-        // Remove any existing tooltip and reset watcher
-        const old = document.getElementById('__tip'); if (old) old.remove();
-        _clearTipHideTimer();
-        document.removeEventListener('mousemove', _onMouseMove);
+        _removeTip();   // clean up any previous tooltip + bridge
 
         document.body.appendChild(tip);
-        const rect = anchor.getBoundingClientRect();
-        let l = rect.left + rect.width/2 - tip.offsetWidth/2;
-        let t = rect.top - tip.offsetHeight - 10;
-        if (t < 8) t = rect.bottom + 8;
+        const aRect = anchor.getBoundingClientRect();
+        let l = aRect.left + aRect.width/2 - tip.offsetWidth/2;
+        let t = aRect.top - tip.offsetHeight - 10;
+        const below = t < 8;
+        if (below) t = aRect.bottom + 8;
         l = Math.max(8, Math.min(l, window.innerWidth - tip.offsetWidth - 8));
         tip.style.left = l+'px'; tip.style.top = t+'px';
 
-        // Add scroll-hint if content overflows
+        // Scroll-hint when content overflows
         requestAnimationFrame(() => {
             const body = tip.querySelector('.tt-body');
             if (body && body.scrollHeight > body.clientHeight) {
-                let hint = tip.querySelector('.tt-scroll-hint');
-                if (!hint) {
-                    hint = document.createElement('div');
+                if (!tip.querySelector('.tt-scroll-hint')) {
+                    const hint = document.createElement('div');
                     hint.className = 'tt-scroll-hint';
                     hint.textContent = '▼ scroll for more';
                     tip.appendChild(hint);
                     body.addEventListener('scroll', () => {
-                        const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 4;
-                        hint.style.opacity = atBottom ? '0' : '1';
+                        hint.style.opacity =
+                            (body.scrollTop + body.clientHeight >= body.scrollHeight - 4)
+                            ? '0' : '1';
                     });
                 }
             }
+            // Build bridge AFTER tip is rendered so getBoundingClientRect is accurate
+            const tRect = tip.getBoundingClientRect();
+            _buildBridge(aRect, tRect);
         });
 
-        // Start watching mouse position
+        // Wire up anchor hover — cancel timer on enter, schedule removal on leave
         _tipAnchor = anchor;
-        document.addEventListener('mousemove', _onMouseMove);
+        anchor.addEventListener('mouseenter', _clearTipHideTimer);
+        anchor.addEventListener('mouseleave', _scheduleTipRemove);
+
+        // Wire up tooltip hover
+        tip.addEventListener('mouseenter', _clearTipHideTimer);
+        tip.addEventListener('mouseleave', _scheduleTipRemove);
     }
 
-    // attachAnchorLeave is now a no-op — the mousemove watcher handles everything
-    function attachAnchorLeave(anchor) { /* handled by _onMouseMove */ }
+    // Called after positionTip by each show* function — no-op now since
+    // positionTip already wires up the anchor events directly.
+    function attachAnchorLeave(anchor) { /* wired inside positionTip */ }
 
     // Calendar cell tooltip (shows tasks + notes)
     function showTip(anchor, date, tasks) {
