@@ -196,8 +196,8 @@
             position: fixed;
             background: #1f2937; color: #f3f4f6;
             border-radius: 12px; font-size: 13px;
-            max-width: 300px; min-width: 180px;
-            max-height: 340px;
+            max-width: 420px; min-width: 200px;
+            max-height: 420px;
             z-index: 10000;
             pointer-events: all;
             box-shadow: 0 8px 20px rgba(0,0,0,0.35);
@@ -224,6 +224,17 @@
         .tooltip .tt-time { font-weight: 700; color: #93c5fd; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
         .tooltip .tt-title { color: #f3f4f6; font-size: 12px; }
         .tooltip .tt-more { color: #9ca3af; font-size: 11px; margin-top: 3px; }
+        .tooltip .tt-notes {
+            font-size: 12px; color: #d1d5db; margin-top: 5px; font-style: italic;
+            border-top: 1px solid rgba(255,255,255,0.12); padding-top: 6px;
+            white-space: pre-wrap; word-break: break-word; line-height: 1.55;
+        }
+        .tooltip .tt-open-link {
+            display: inline-block; margin-top: 7px;
+            font-size: 11px; color: #93c5fd; cursor: pointer;
+            text-decoration: underline; text-underline-offset: 2px;
+        }
+        .tooltip .tt-open-link:hover { color: #bfdbfe; }
         .tooltip .tt-scroll-hint {
             text-align: center; font-size: 10px; color: rgba(255,255,255,0.35);
             padding: 3px 0 5px; flex-shrink: 0; letter-spacing: 0.05em;
@@ -1786,11 +1797,22 @@
             ? `${timeStr(hour)} – ${timeStr(task.endHour)}`
             : timeStr(hour);
         const hdr=document.createElement('div'); hdr.className='tt-header';
-        hdr.innerHTML=`<div class="tt-date">🕐 ${timeLabel}</div>`;
+        hdr.innerHTML=`<div class="tt-date">🕐 ${esc(timeLabel)}</div>`;
         tip.appendChild(hdr);
         const body=document.createElement('div'); body.className='tt-body';
-        body.innerHTML=`<div class="tt-row"><span class="tt-title" style="font-weight:700;">${esc(task.title)}</span></div>
-            ${task.notes ? `<div style="font-size:11px;color:#d1d5db;margin-top:4px;font-style:italic;">📝 ${esc(task.notes)}</div>` : ''}`;
+
+        // Title
+        const titleRow=document.createElement('div'); titleRow.className='tt-row';
+        titleRow.innerHTML=`<span class="tt-title" style="font-weight:700;font-size:13px;">${esc(task.title)}</span>`;
+        body.appendChild(titleRow);
+
+        // Full notes — no truncation
+        if (task.notes) {
+            const n=document.createElement('div'); n.className='tt-notes';
+            n.textContent='📝 '+task.notes;
+            body.appendChild(n);
+        }
+
         tip.appendChild(body);
         positionTip(tip, anchor);
         attachAnchorLeave(anchor);
@@ -1818,14 +1840,47 @@
         const hdr=document.createElement('div'); hdr.className='tt-header';
         hdr.innerHTML=`<div class="tt-date" style="color:#fca5a5;">🗓 Google Calendar</div>`;
         tip.appendChild(hdr);
+
         const body=document.createElement('div'); body.className='tt-body';
-        body.innerHTML=`
-            <div class="tt-row"><span class="tt-title" style="font-weight:700;font-size:13px;">${esc(gev.title)}</span></div>
-            ${timeText?`<div class="tt-row"><span class="tt-time">${esc(timeText)}</span></div>`:''}
-            <div class="tt-row" style="margin-top:2px;"><span style="font-size:10px;opacity:0.75;">● ${esc(calName)}</span></div>
-            ${gev.description?`<div style="font-size:11px;color:#d1d5db;margin-top:5px;font-style:italic;border-top:1px solid rgba(255,255,255,0.15);padding-top:5px;">📝 ${esc(gev.description.length>150?gev.description.substring(0,148)+'…':gev.description)}</div>`:''}
-            ${gev.htmlLink?`<div style="font-size:10px;color:#93c5fd;margin-top:4px;">Click to open ↗</div>`:''}
-        `;
+
+        // Title
+        const titleRow=document.createElement('div'); titleRow.className='tt-row';
+        titleRow.innerHTML=`<span class="tt-title" style="font-weight:700;font-size:13px;">${esc(gev.title)}</span>`;
+        body.appendChild(titleRow);
+
+        // Time
+        if (timeText) {
+            const tr=document.createElement('div'); tr.className='tt-row';
+            tr.innerHTML=`<span class="tt-time">${esc(timeText)}</span>`;
+            body.appendChild(tr);
+        }
+
+        // Calendar name
+        const cr=document.createElement('div'); cr.className='tt-row'; cr.style.marginTop='2px';
+        cr.innerHTML=`<span style="font-size:10px;opacity:0.75;">● ${esc(calName)}</span>`;
+        body.appendChild(cr);
+
+        // Full description — no truncation
+        if (gev.description) {
+            const n=document.createElement('div'); n.className='tt-notes';
+            n.textContent='📝 '+gev.description;
+            body.appendChild(n);
+        }
+
+        // Clickable "Open in Google Calendar" link
+        if (gev.htmlLink) {
+            const link=document.createElement('div'); link.className='tt-open-link';
+            link.textContent='🔗 Open in Google Calendar ↗';
+            link.addEventListener('click', e => {
+                e.stopPropagation();
+                const w=900, h=700;
+                const left=Math.round(window.screenX+(window.outerWidth-w)/2);
+                const top =Math.round(window.screenY+(window.outerHeight-h)/2);
+                window.open(gev.htmlLink,'gcal_event',`width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes,toolbar=no,menubar=no`);
+            });
+            body.appendChild(link);
+        }
+
         tip.appendChild(body);
         positionTip(tip, anchor);
         attachAnchorLeave(anchor);
@@ -1890,9 +1945,10 @@
             const tt = document.createElement('span'); tt.className = 'tt-title'; tt.textContent = task.title;
             r.appendChild(tl); r.appendChild(tt); body.appendChild(r);
             if (task.notes) {
-                const n = document.createElement('div');
-                n.style.cssText = 'font-size:11px;color:#d1d5db;padding:1px 0 3px 20px;font-style:italic;';
-                n.textContent = '📝 ' + task.notes; body.appendChild(n);
+                const n = document.createElement('div'); n.className = 'tt-notes';
+                n.style.paddingLeft = '20px';
+                n.textContent = '📝 ' + task.notes;
+                body.appendChild(n);
             }
         });
 
@@ -1906,6 +1962,25 @@
             tl.textContent = st ? `🕐 ${st}${et?' – '+et:''}` : '🗓';
             const tt = document.createElement('span'); tt.className = 'tt-title'; tt.textContent = ev.title;
             r.appendChild(tl); r.appendChild(tt); body.appendChild(r);
+            if (ev.description) {
+                const n = document.createElement('div'); n.className = 'tt-notes';
+                n.style.paddingLeft = '20px';
+                n.textContent = '📝 ' + ev.description;
+                body.appendChild(n);
+            }
+            if (ev.htmlLink) {
+                const link = document.createElement('div'); link.className = 'tt-open-link';
+                link.style.paddingLeft = '20px';
+                link.textContent = '🔗 Open in Google Calendar ↗';
+                link.addEventListener('click', e => {
+                    e.stopPropagation();
+                    const w=900, h=700;
+                    const left=Math.round(window.screenX+(window.outerWidth-w)/2);
+                    const top =Math.round(window.screenY+(window.outerHeight-h)/2);
+                    window.open(ev.htmlLink,'gcal_event',`width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes,toolbar=no,menubar=no`);
+                });
+                body.appendChild(link);
+            }
         });
 
         tip.appendChild(body);
