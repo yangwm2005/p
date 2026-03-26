@@ -1563,30 +1563,58 @@
     };
 
     // ── Tooltip helpers ──
-    // Tracks whether the mouse is currently over the active anchor or tooltip.
-    // The tooltip stays visible as long as either is hovered.
-    let _tipAnchor = null;
+    // Uses document-level mousemove to decide whether the mouse is still
+    // over the anchor subtree OR the tooltip. This is immune to child-element
+    // mouseleave events and stopPropagation calls.
+    let _tipAnchor = null;      // the element that owns the current tooltip
     let _tipHideTimer = null;
 
     function _clearTipHideTimer() {
         if (_tipHideTimer) { clearTimeout(_tipHideTimer); _tipHideTimer = null; }
     }
-    function _scheduleTipRemove() {
-        _clearTipHideTimer();
-        _tipHideTimer = setTimeout(() => {
-            const t = document.getElementById('__tip'); if (t) t.remove();
-            _tipAnchor = null;
-        }, 120);  // small grace period so mouse can travel anchor → tooltip
+
+    function _isOverAnchorOrTip(x, y) {
+        const tip = document.getElementById('__tip');
+        if (tip) {
+            const tr = tip.getBoundingClientRect();
+            if (x >= tr.left && x <= tr.right && y >= tr.top && y <= tr.bottom) return true;
+        }
+        if (_tipAnchor) {
+            const ar = _tipAnchor.getBoundingClientRect();
+            if (x >= ar.left && x <= ar.right && y >= ar.top && y <= ar.bottom) return true;
+        }
+        return false;
     }
+
+    // One shared mousemove watcher — only active while a tooltip is open
+    function _onMouseMove(e) {
+        if (!_isOverAnchorOrTip(e.clientX, e.clientY)) {
+            _clearTipHideTimer();
+            _tipHideTimer = setTimeout(() => {
+                const t = document.getElementById('__tip'); if (t) t.remove();
+                _tipAnchor = null;
+                document.removeEventListener('mousemove', _onMouseMove);
+            }, 80);
+        } else {
+            _clearTipHideTimer();
+        }
+    }
+
     // Dismiss tooltip on click anywhere outside it
     document.addEventListener('click', (e) => {
         const t = document.getElementById('__tip');
-        if (t && !t.contains(e.target)) { t.remove(); _tipAnchor = null; _clearTipHideTimer(); }
+        if (t && !t.contains(e.target)) {
+            t.remove(); _tipAnchor = null; _clearTipHideTimer();
+            document.removeEventListener('mousemove', _onMouseMove);
+        }
     });
 
     function positionTip(tip, anchor) {
-        // Cancel any pending removal from a previous tooltip
+        // Remove any existing tooltip and reset watcher
+        const old = document.getElementById('__tip'); if (old) old.remove();
         _clearTipHideTimer();
+        document.removeEventListener('mousemove', _onMouseMove);
+
         document.body.appendChild(tip);
         const rect = anchor.getBoundingClientRect();
         let l = rect.left + rect.width/2 - tip.offsetWidth/2;
@@ -1613,15 +1641,13 @@
             }
         });
 
-        // Sticky hover: tooltip stays while mouse is over it
+        // Start watching mouse position
         _tipAnchor = anchor;
-        tip.addEventListener('mouseenter', _clearTipHideTimer);
-        tip.addEventListener('mouseleave', _scheduleTipRemove);
+        document.addEventListener('mousemove', _onMouseMove);
     }
 
-    function attachAnchorLeave(anchor) {
-        anchor.addEventListener('mouseleave', _scheduleTipRemove, {once: true});
-    }
+    // attachAnchorLeave is now a no-op — the mousemove watcher handles everything
+    function attachAnchorLeave(anchor) { /* handled by _onMouseMove */ }
 
     // Calendar cell tooltip (shows tasks + notes)
     function showTip(anchor, date, tasks) {
@@ -1856,7 +1882,7 @@
                         const timePrefix = timeStr(task.hour);
                         td.textContent = timePrefix + ' ' + task.title;
                         td.title = task.title + (task.notes ? '\n📝 ' + task.notes : '');
-                        td.addEventListener('mouseenter', e => { e.stopPropagation(); showTaskTip(td, task, task.hour); });
+                        td.addEventListener('mouseenter', () => showTaskTip(td, task, task.hour));
                         td.addEventListener('click', e => e.stopPropagation());
                         evList.appendChild(td);
                     } else {
@@ -1869,7 +1895,7 @@
                             : '';
                         td.textContent = (st ? st + ' ' : '🗓 ') + gev.title;
                         td.title = gev.title;
-                        td.addEventListener('mouseenter', e => { e.stopPropagation(); showGcalTip(td, gev); });
+                        td.addEventListener('mouseenter', () => showGcalTip(td, gev));
                         td.addEventListener('click', e => { e.stopPropagation(); showGcalEventPopup(gev, td); });
                         evList.appendChild(td);
                     }
