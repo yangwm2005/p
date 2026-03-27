@@ -204,12 +204,42 @@
             border-left: 4px solid #667eea;
             line-height: 1.5;
             display: flex; flex-direction: column;
+            transition: box-shadow 0.15s, opacity 0.12s;
+        }
+        .tooltip.tt-pinned {
+            box-shadow: 0 12px 36px rgba(0,0,0,0.5);
+            border-left-color: #a78bfa;
+        }
+        .tooltip.tt-dragging {
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+            user-select: none; opacity: 0.92;
         }
         .tooltip .tt-header {
-            padding: 10px 14px 6px;
+            padding: 8px 8px 6px 14px;
             flex-shrink: 0;
             border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex; align-items: center; gap: 4px;
         }
+        .tooltip.tt-pinned .tt-header { cursor: grab; }
+        .tooltip.tt-pinned .tt-header:active { cursor: grabbing; }
+        .tooltip .tt-header-content { flex: 1; }
+        .tooltip .tt-pin {
+            flex-shrink: 0;
+            background: rgba(255,255,255,0.1); border: none; color: rgba(255,255,255,0.5);
+            border-radius: 6px; width: 22px; height: 22px; cursor: pointer;
+            font-size: 12px; display: flex; align-items: center; justify-content: center;
+            transition: all 0.15s; line-height: 1; title: 'Pin tooltip';
+        }
+        .tooltip .tt-pin:hover { background: rgba(255,255,255,0.22); color: #f3f4f6; }
+        .tooltip.tt-pinned .tt-pin { background: #7c3aed; color: white; }
+        .tooltip .tt-close {
+            flex-shrink: 0;
+            background: rgba(255,255,255,0.1); border: none; color: rgba(255,255,255,0.5);
+            border-radius: 6px; width: 22px; height: 22px; cursor: pointer;
+            font-size: 11px; display: flex; align-items: center; justify-content: center;
+            transition: all 0.15s; line-height: 1;
+        }
+        .tooltip .tt-close:hover { background: rgba(220,38,38,0.5); color: white; }
         .tooltip .tt-body {
             padding: 6px 14px 10px;
             overflow-y: auto;
@@ -841,7 +871,7 @@
         </div>
     </div>
     <div style="text-align:center;padding:10px 20px;font-size:12px;color:#94a3b8;border-top:1px solid #e0e0e0;background:#fafafa;letter-spacing:0.03em;">
-        Copyright © 2026 Dr. Wen-Ming Yang &nbsp;·&nbsp; Monthplan v19
+        Copyright © 2026 Dr. Wen-Ming Yang &nbsp;·&nbsp; Monthplan v18
     </div>
 </div>
 
@@ -1664,87 +1694,132 @@
     }
 
     // ── Tooltip helpers ──
-    // Strategy: the tooltip has pointer-events:all and sits directly adjacent to
-    // the anchor. We use a hide-timer that is cancelled whenever the mouse enters
-    // either the anchor OR the tooltip, and restarted whenever it leaves either.
-    // A transparent "bridge" element fills the gap between anchor and tooltip so
-    // the mouse never passes through dead space.
-    let _tipAnchor  = null;
-    let _tipHideTimer = null;
-    let _tipBridge  = null;   // transparent rectangle bridging anchor ↔ tooltip gap
+    // Behaviour:
+    //  • Tooltip appears after a short hover delay (no instant pop = no accidental blocking).
+    //  • Moves to a new tooltip immediately when you hover a different element.
+    //  • Auto-dismisses when you move the mouse away (300 ms grace).
+    //  • 📌 pin button in header locks it in place → draggable, stays until ✕ or outside click.
+    //  • Pinned tooltip: click outside closes it; unpinned tooltip closes on mouseleave.
 
-    function _clearTipHideTimer() {
+    let _tipHideTimer  = null;
+    let _tipShowTimer  = null;   // delay before showing
+    let _tipPinned     = false;  // whether current tip is pinned
+
+    const TIP_SHOW_DELAY = 450;  // ms before tooltip appears
+    const TIP_HIDE_DELAY = 500;  // ms grace after cursor leaves both anchor and tooltip
+
+    function _clearTimers() {
         if (_tipHideTimer) { clearTimeout(_tipHideTimer); _tipHideTimer = null; }
+        if (_tipShowTimer) { clearTimeout(_tipShowTimer); _tipShowTimer = null; }
     }
 
     function _removeTip() {
-        _clearTipHideTimer();
+        _clearTimers();
+        _tipPinned = false;
         const t = document.getElementById('__tip'); if (t) t.remove();
-        if (_tipBridge) { _tipBridge.remove(); _tipBridge = null; }
-        _tipAnchor = null;
     }
 
-    function _scheduleTipRemove() {
-        _clearTipHideTimer();
-        // generous 300ms — enough for any mouse movement across the gap
-        _tipHideTimer = setTimeout(_removeTip, 300);
+    function _scheduleHide() {
+        if (_tipPinned) return;  // pinned tooltips don't auto-hide
+        _clearTimers();
+        _tipHideTimer = setTimeout(() => { if (!_tipPinned) _removeTip(); }, TIP_HIDE_DELAY);
     }
 
-    // Dismiss on click outside
-    document.addEventListener('click', (e) => {
-        const t = document.getElementById('__tip');
-        if (t && !t.contains(e.target)) _removeTip();
-    });
-    // Also dismiss on mousedown so the click target receives the event cleanly
+    // Click outside dismisses pinned tooltips
     document.addEventListener('mousedown', (e) => {
         const t = document.getElementById('__tip');
         if (t && !t.contains(e.target)) _removeTip();
     });
 
-    function _buildBridge(anchorRect, tipRect) {
-        // Creates an invisible rectangle that covers the gap between anchor and tooltip.
-        // pointer-events:none so it NEVER blocks clicks on underlying elements.
-        // We track mouse position via document mousemove instead.
-        if (_tipBridge) { _tipBridge.remove(); _tipBridge = null; }
-        const left   = Math.min(anchorRect.left, tipRect.left) - 4;
-        const right  = Math.max(anchorRect.right, tipRect.right) + 4;
-        const top    = Math.min(anchorRect.top, tipRect.top) - 4;
-        const bottom = Math.max(anchorRect.bottom, tipRect.bottom) + 4;
+    // Make a pinned tooltip draggable via its header
+    function _makeDraggable(tip) {
+        const hdr = tip.querySelector('.tt-header');
+        if (!hdr) return;
+        let startX, startY, startL, startT, dragging = false;
 
-        // Instead of a DOM bridge, use a mousemove listener on document to detect
-        // when the cursor leaves the combined anchor+tooltip area.
-        const onMove = (e) => {
-            const cx = e.clientX, cy = e.clientY;
-            const inBridge = cx >= left && cx <= right && cy >= top && cy <= bottom;
-            const tip = document.getElementById('__tip');
-            if (!tip) { document.removeEventListener('mousemove', onMove); return; }
-            const tr = tip.getBoundingClientRect();
-            const inTip = cx >= tr.left && cx <= tr.right && cy >= tr.top && cy <= tr.bottom;
-            const inAnchor = cx >= anchorRect.left && cx <= anchorRect.right && cy >= anchorRect.top && cy <= anchorRect.bottom;
-            if (!inBridge && !inTip && !inAnchor) {
-                _scheduleTipRemove();
+        hdr.addEventListener('mousedown', (e) => {
+            if (!_tipPinned) return;  // only draggable when pinned
+            if (e.button !== 0) return;
+            // Don't drag if clicking pin/close buttons
+            if (e.target.closest('.tt-pin,.tt-close')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            dragging = true;
+            startX = e.clientX; startY = e.clientY;
+            startL = parseInt(tip.style.left) || 0;
+            startT = parseInt(tip.style.top)  || 0;
+            tip.classList.add('tt-dragging');
+
+            const onMove = (ev) => {
+                if (!dragging) return;
+                let nl = startL + (ev.clientX - startX);
+                let nt = startT + (ev.clientY - startY);
+                nl = Math.max(0, Math.min(nl, window.innerWidth  - tip.offsetWidth));
+                nt = Math.max(0, Math.min(nt, window.innerHeight - tip.offsetHeight));
+                tip.style.left = nl + 'px';
+                tip.style.top  = nt + 'px';
+            };
+            const onUp = () => {
+                dragging = false;
+                tip.classList.remove('tt-dragging');
                 document.removeEventListener('mousemove', onMove);
-            } else {
-                _clearTipHideTimer();
-            }
-        };
-        document.addEventListener('mousemove', onMove);
-        // Store cleanup ref on bridge sentinel
-        const b = { remove: () => document.removeEventListener('mousemove', onMove) };
-        _tipBridge = b;
+                document.removeEventListener('mouseup',   onUp);
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup',   onUp);
+        });
     }
 
     function positionTip(tip, anchor) {
-        _removeTip();   // clean up any previous tooltip + bridge
+        // If currently pinned, don't replace it — leave it alone
+        if (_tipPinned) return;
+
+        _clearTimers();
+        const existing = document.getElementById('__tip');
+        if (existing) existing.remove();
+
+        // Add pin + close buttons to the header
+        const hdr = tip.querySelector('.tt-header');
+        if (hdr) {
+            const existing = Array.from(hdr.childNodes);
+            const wrap = document.createElement('div');
+            wrap.className = 'tt-header-content';
+            existing.forEach(n => wrap.appendChild(n));
+            hdr.appendChild(wrap);
+
+            const pinBtn = document.createElement('button');
+            pinBtn.className = 'tt-pin';
+            pinBtn.textContent = '📌';
+            pinBtn.title = 'Pin — keep open & drag';
+            pinBtn.addEventListener('mousedown', e => e.stopPropagation());
+            pinBtn.addEventListener('click', e => {
+                e.stopPropagation();
+                _tipPinned = !_tipPinned;
+                tip.classList.toggle('tt-pinned', _tipPinned);
+                pinBtn.title = _tipPinned ? 'Unpin' : 'Pin — keep open & drag';
+            });
+            hdr.appendChild(pinBtn);
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'tt-close';
+            closeBtn.textContent = '✕';
+            closeBtn.title = 'Close';
+            closeBtn.addEventListener('mousedown', e => e.stopPropagation());
+            closeBtn.addEventListener('click', e => { e.stopPropagation(); _removeTip(); });
+            hdr.appendChild(closeBtn);
+        }
 
         document.body.appendChild(tip);
+
+        // Position near anchor
         const aRect = anchor.getBoundingClientRect();
-        let l = aRect.left + aRect.width/2 - tip.offsetWidth/2;
+        let l = aRect.left + aRect.width / 2 - tip.offsetWidth / 2;
         let t = aRect.top - tip.offsetHeight - 10;
-        const below = t < 8;
-        if (below) t = aRect.bottom + 8;
-        l = Math.max(8, Math.min(l, window.innerWidth - tip.offsetWidth - 8));
-        tip.style.left = l+'px'; tip.style.top = t+'px';
+        if (t < 8) t = aRect.bottom + 8;
+        l = Math.max(8, Math.min(l, window.innerWidth  - tip.offsetWidth  - 8));
+        t = Math.max(8, Math.min(t, window.innerHeight - tip.offsetHeight - 8));
+        tip.style.left = l + 'px';
+        tip.style.top  = t + 'px';
 
         // Scroll-hint when content overflows
         requestAnimationFrame(() => {
@@ -1762,24 +1837,53 @@
                     });
                 }
             }
-            // Build bridge AFTER tip is rendered so getBoundingClientRect is accurate
-            const tRect = tip.getBoundingClientRect();
-            _buildBridge(aRect, tRect);
         });
 
-        // Wire up anchor hover — cancel timer on enter, schedule removal on leave
-        _tipAnchor = anchor;
-        anchor.addEventListener('mouseenter', _clearTipHideTimer);
-        anchor.addEventListener('mouseleave', _scheduleTipRemove);
+        // Auto-hide: track mouse position continuously so the gap between
+        // anchor and tooltip doesn't accidentally trigger dismissal.
+        // Hide only when cursor has been outside BOTH anchor and tooltip for TIP_HIDE_DELAY ms.
+        const aRect2 = anchor.getBoundingClientRect();
+        let _trackMove;
+        _trackMove = (ev) => {
+            if (_tipPinned) { document.removeEventListener('mousemove', _trackMove); return; }
+            const tip2 = document.getElementById('__tip'); if (!tip2) { document.removeEventListener('mousemove', _trackMove); return; }
+            const tr = tip2.getBoundingClientRect();
+            const ar = anchor.getBoundingClientRect();
+            const cx = ev.clientX, cy = ev.clientY;
+            const inTip    = cx >= tr.left && cx <= tr.right && cy >= tr.top && cy <= tr.bottom;
+            const inAnchor = cx >= ar.left && cx <= ar.right && cy >= ar.top && cy <= ar.bottom;
+            if (inTip || inAnchor) {
+                _clearTimers();
+            } else {
+                if (!_tipHideTimer) _scheduleHide();
+            }
+        };
+        document.addEventListener('mousemove', _trackMove);
+        // Clean up tracker when tip is removed
+        const _stopTrack = () => document.removeEventListener('mousemove', _trackMove);
+        tip.addEventListener('remove', _stopTrack);   // custom removal hook
+        // Patch _removeTip to also stop tracking (via observer)
+        const _obs = new MutationObserver(() => { if (!document.getElementById('__tip')) { _stopTrack(); _obs.disconnect(); } });
+        _obs.observe(document.body, { childList: true, subtree: false });
 
-        // Wire up tooltip hover
-        tip.addEventListener('mouseenter', _clearTipHideTimer);
-        tip.addEventListener('mouseleave', _scheduleTipRemove);
+        _makeDraggable(tip);
     }
 
-    // Called after positionTip by each show* function — no-op now since
-    // positionTip already wires up the anchor events directly.
-    function attachAnchorLeave(anchor) { /* wired inside positionTip */ }
+    // Wrap every show*Tip call with a hover delay so the tip only appears
+    // when the user pauses — fast sweeps across the calendar show nothing.
+    function _delayedShow(anchor, buildFn) {
+        if (_tipPinned) return;  // don't replace a pinned tooltip
+        _clearTimers();
+        _tipShowTimer = setTimeout(() => {
+            if (!_tipPinned) buildFn();
+        }, TIP_SHOW_DELAY);
+        // Cancel if mouse leaves before delay fires
+        const cancel = () => { _clearTimers(); anchor.removeEventListener('mouseleave', cancel); };
+        anchor.addEventListener('mouseleave', cancel);
+    }
+
+    // Called after positionTip — no-op kept for compatibility
+    function attachAnchorLeave(anchor) { }
 
     // Calendar cell tooltip (shows tasks + notes)
     function showTip(anchor, date, tasks) {
@@ -2078,7 +2182,7 @@
                         const timePrefix = timeStr(task.hour);
                         td.textContent = timePrefix + ' ' + task.title;
                         td.title = task.title + (task.notes ? '\n📝 ' + task.notes : '');
-                        td.addEventListener('mouseenter', () => showTaskTip(td, task, task.hour));
+                        td.addEventListener('mouseenter', () => _delayedShow(td, () => showTaskTip(td, task, task.hour)));
                         td.addEventListener('click', e => { e.stopPropagation(); showTaskPopup(task, task.hour, snap, td); });
                         evList.appendChild(td);
                     } else {
@@ -2091,7 +2195,7 @@
                             : '';
                         td.textContent = (st ? st + ' ' : '🗓 ') + gev.title;
                         td.title = gev.title;
-                        td.addEventListener('mouseenter', () => showGcalTip(td, gev));
+                        td.addEventListener('mouseenter', () => _delayedShow(td, () => showGcalTip(td, gev)));
                         td.addEventListener('click', e => { e.stopPropagation(); showGcalEventPopup(gev, td); });
                         evList.appendChild(td);
                     }
@@ -2100,7 +2204,7 @@
 
                 // Cell-level hover only fires when not hovering a child event pill
                 cell.addEventListener('mouseenter', (function(sd){ return e => {
-                    if (!e.target.closest('.event-item, .event-item-gcal')) showDayTip(cell, sd);
+                    if (!e.target.closest('.event-item, .event-item-gcal')) _delayedShow(cell, () => showDayTip(cell, sd));
                 }; })(snap));
 
                 // Select date on click — fires on cell background OR evList (but not on event pills)
@@ -2307,7 +2411,7 @@
                 del.addEventListener('mousedown',e=>e.preventDefault());
                 del.addEventListener('click',e=>{e.stopPropagation();deleteTask(fdk(classicSelectedDate),hour,task.id);});
                 td.appendChild(tv); td.appendChild(del); content.appendChild(td);
-                td.addEventListener('mouseenter',()=>showTaskTip(td,task,hour));
+                td.addEventListener('mouseenter',()=>_delayedShow(td,()=>showTaskTip(td,task,hour)));
                 td.style.cursor='pointer';
                 td.addEventListener('click', e => {
                     if (e.target === del || del.contains(e.target)) return;
@@ -2365,7 +2469,7 @@
                 badge.textContent='🔗 Open';
                 td.appendChild(badge);
                 td.addEventListener('click', (e) => { e.stopPropagation(); showGcalEventPopup(gev, td); });
-                td.addEventListener('mouseenter', () => showGcalTip(td, gev));
+                td.addEventListener('mouseenter', () => _delayedShow(td, () => showGcalTip(td, gev)));
                 content.appendChild(td);
             });
 
@@ -2432,7 +2536,7 @@
             const snap=new Date(cur.getFullYear(),cur.getMonth(),cur.getDate());
 
             // Tooltip shows all-day + hourly + GCal events
-            dd.addEventListener('mouseenter',(function(sd2){ return () => showDayTip(dd, sd2); })(snap));
+            dd.addEventListener('mouseenter',(function(sd2){ return () => _delayedShow(dd, () => showDayTip(dd, sd2)); })(snap));
 
             dd.onclick=(function(y,m,d,mk){return()=>{multiSelectedDates[mk]=new Date(y,m,d);renderMultiMonthCalendar();};})(cur.getFullYear(),cur.getMonth(),cur.getDate(),mKey);
             daysDiv.appendChild(dd);
@@ -2652,7 +2756,7 @@
             col.addEventListener('click',(function(date){
                 return ()=>{ weekSelectedDate=new Date(date); renderWeekSchedule(); renderWeekView(); };
             })(d));
-            col.addEventListener('mouseenter', (function(date){ return () => showDayTip(col, date); })(d));
+            col.addEventListener('mouseenter', (function(date){ return () => _delayedShow(col, () => showDayTip(col, date)); })(d));
             hdrRow.appendChild(col);
         });
         panel.appendChild(hdrRow);
@@ -2729,7 +2833,7 @@
                     del.addEventListener('click', e => { e.stopPropagation(); deleteTask(dk, h, task.id); });
                     ev.appendChild(del);
                     ev.style.cursor = 'pointer';
-                    ev.addEventListener('mouseenter', () => showTaskTip(ev, task, h));
+                    ev.addEventListener('mouseenter', () => _delayedShow(ev, () => showTaskTip(ev, task, h)));
                     (function(capturedTask, capturedH, capturedDate) {
                         ev.addEventListener('click', e => {
                             if (e.target === del || del.contains(e.target)) return;
@@ -2755,7 +2859,7 @@
                     const et = gev.endDt   ? gev.endDt.toLocaleTimeString('en-US',   { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
                     if (st) { const t2 = document.createElement('div'); t2.className = 'wv-event-time'; t2.textContent = st + (et ? ' – ' + et : ''); ev.appendChild(t2); }
                     ev.addEventListener('click',      (function(g){ return e => { e.stopPropagation(); showGcalEventPopup(g, ev); }; })(gev));
-                    ev.addEventListener('mouseenter', (function(g){ return ()  => showGcalTip(ev, g); })(gev));
+                    ev.addEventListener('mouseenter', (function(g){ return () => _delayedShow(ev, () => showGcalTip(ev, g)); })(gev));
                     cell.appendChild(ev);
                 });
 
@@ -2847,7 +2951,7 @@
                 del.addEventListener('mousedown',e=>e.preventDefault());
                 del.addEventListener('click',e=>{ e.stopPropagation(); deleteTask(dk,hour,task.id); });
                 td.appendChild(tv); td.appendChild(del); content.appendChild(td);
-                td.addEventListener('mouseenter',()=>showTaskTip(td,task,hour));
+                td.addEventListener('mouseenter',()=>_delayedShow(td,()=>showTaskTip(td,task,hour)));
                 td.style.cursor='pointer';
                 (function(capturedTask, capturedHour) {
                     td.addEventListener('click', e => {
@@ -2874,7 +2978,7 @@
                 const badge=document.createElement('span'); badge.style.cssText='font-size:10px;background:rgba(255,255,255,0.25);color:white;padding:2px 6px;border-radius:10px;white-space:nowrap;flex-shrink:0;'; badge.textContent='🔗 Open';
                 td.appendChild(badge);
                 td.addEventListener('click',(e)=>{ e.stopPropagation(); showGcalEventPopup(gev,td); });
-                td.addEventListener('mouseenter',()=>showGcalTip(td,gev));
+                td.addEventListener('mouseenter',()=>_delayedShow(td,()=>showGcalTip(td,gev)));
                 content.appendChild(td);
             });
 
