@@ -204,11 +204,32 @@
             border-left: 4px solid #667eea;
             line-height: 1.5;
             display: flex; flex-direction: column;
+            transition: box-shadow 0.15s;
+        }
+        .tooltip.tt-dragging {
+            box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+            user-select: none;
         }
         .tooltip .tt-header {
-            padding: 10px 14px 6px;
+            padding: 8px 10px 6px 14px;
             flex-shrink: 0;
             border-bottom: 1px solid rgba(255,255,255,0.1);
+            cursor: grab;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .tooltip .tt-header:active { cursor: grabbing; }
+        .tooltip .tt-header-content { flex: 1; }
+        .tooltip .tt-close {
+            flex-shrink: 0;
+            background: rgba(255,255,255,0.12); border: none; color: #f3f4f6;
+            border-radius: 50%; width: 20px; height: 20px; cursor: pointer;
+            font-size: 11px; display: flex; align-items: center; justify-content: center;
+            transition: background 0.15s; line-height: 1;
+        }
+        .tooltip .tt-close:hover { background: rgba(255,255,255,0.28); }
+        .tooltip .tt-drag-hint {
+            font-size: 9px; color: rgba(255,255,255,0.3); letter-spacing: 0.04em;
+            padding: 0 14px 4px; flex-shrink: 0; text-align: right;
         }
         .tooltip .tt-body {
             padding: 6px 14px 10px;
@@ -1664,87 +1685,91 @@
     }
 
     // ── Tooltip helpers ──
-    // Strategy: the tooltip has pointer-events:all and sits directly adjacent to
-    // the anchor. We use a hide-timer that is cancelled whenever the mouse enters
-    // either the anchor OR the tooltip, and restarted whenever it leaves either.
-    // A transparent "bridge" element fills the gap between anchor and tooltip so
-    // the mouse never passes through dead space.
-    let _tipAnchor  = null;
-    let _tipHideTimer = null;
-    let _tipBridge  = null;   // transparent rectangle bridging anchor ↔ tooltip gap
-
-    function _clearTipHideTimer() {
-        if (_tipHideTimer) { clearTimeout(_tipHideTimer); _tipHideTimer = null; }
-    }
+    // Tooltips are now STICKY: they appear on hover and stay put.
+    // • Drag by clicking and holding the header to reposition.
+    // • Click anywhere outside to dismiss.
+    // • ✕ button in header also closes.
+    // No auto-hide timers or bridge elements needed.
 
     function _removeTip() {
-        _clearTipHideTimer();
         const t = document.getElementById('__tip'); if (t) t.remove();
-        if (_tipBridge) { _tipBridge.remove(); _tipBridge = null; }
-        _tipAnchor = null;
     }
 
-    function _scheduleTipRemove() {
-        _clearTipHideTimer();
-        // generous 300ms — enough for any mouse movement across the gap
-        _tipHideTimer = setTimeout(_removeTip, 300);
-    }
-
-    // Dismiss on click outside
-    document.addEventListener('click', (e) => {
-        const t = document.getElementById('__tip');
-        if (t && !t.contains(e.target)) _removeTip();
-    });
-    // Also dismiss on mousedown so the click target receives the event cleanly
+    // Dismiss on click outside (mousedown so the underlying click still lands)
     document.addEventListener('mousedown', (e) => {
         const t = document.getElementById('__tip');
         if (t && !t.contains(e.target)) _removeTip();
     });
 
-    function _buildBridge(anchorRect, tipRect) {
-        // Creates an invisible rectangle that covers the gap between anchor and tooltip.
-        // pointer-events:none so it NEVER blocks clicks on underlying elements.
-        // We track mouse position via document mousemove instead.
-        if (_tipBridge) { _tipBridge.remove(); _tipBridge = null; }
-        const left   = Math.min(anchorRect.left, tipRect.left) - 4;
-        const right  = Math.max(anchorRect.right, tipRect.right) + 4;
-        const top    = Math.min(anchorRect.top, tipRect.top) - 4;
-        const bottom = Math.max(anchorRect.bottom, tipRect.bottom) + 4;
+    // Make a tooltip draggable via its header
+    function _makeDraggable(tip) {
+        const hdr = tip.querySelector('.tt-header');
+        if (!hdr) return;
+        let startX, startY, startL, startT, dragging = false;
 
-        // Instead of a DOM bridge, use a mousemove listener on document to detect
-        // when the cursor leaves the combined anchor+tooltip area.
-        const onMove = (e) => {
-            const cx = e.clientX, cy = e.clientY;
-            const inBridge = cx >= left && cx <= right && cy >= top && cy <= bottom;
-            const tip = document.getElementById('__tip');
-            if (!tip) { document.removeEventListener('mousemove', onMove); return; }
-            const tr = tip.getBoundingClientRect();
-            const inTip = cx >= tr.left && cx <= tr.right && cy >= tr.top && cy <= tr.bottom;
-            const inAnchor = cx >= anchorRect.left && cx <= anchorRect.right && cy >= anchorRect.top && cy <= anchorRect.bottom;
-            if (!inBridge && !inTip && !inAnchor) {
-                _scheduleTipRemove();
+        hdr.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.stopPropagation();   // don't trigger outside-click dismissal
+            dragging = true;
+            startX = e.clientX; startY = e.clientY;
+            startL = parseInt(tip.style.left) || 0;
+            startT = parseInt(tip.style.top)  || 0;
+            tip.classList.add('tt-dragging');
+
+            const onMove = (ev) => {
+                if (!dragging) return;
+                let nl = startL + (ev.clientX - startX);
+                let nt = startT + (ev.clientY - startY);
+                // Keep within viewport
+                nl = Math.max(0, Math.min(nl, window.innerWidth  - tip.offsetWidth));
+                nt = Math.max(0, Math.min(nt, window.innerHeight - tip.offsetHeight));
+                tip.style.left = nl + 'px';
+                tip.style.top  = nt + 'px';
+            };
+            const onUp = () => {
+                dragging = false;
+                tip.classList.remove('tt-dragging');
                 document.removeEventListener('mousemove', onMove);
-            } else {
-                _clearTipHideTimer();
-            }
-        };
-        document.addEventListener('mousemove', onMove);
-        // Store cleanup ref on bridge sentinel
-        const b = { remove: () => document.removeEventListener('mousemove', onMove) };
-        _tipBridge = b;
+                document.removeEventListener('mouseup',   onUp);
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup',   onUp);
+        });
     }
 
     function positionTip(tip, anchor) {
-        _removeTip();   // clean up any previous tooltip + bridge
+        _removeTip();   // remove any existing tooltip
+
+        // Add ✕ close button to every tooltip header
+        const hdr = tip.querySelector('.tt-header');
+        if (hdr) {
+            // Wrap existing header content so close btn can sit alongside
+            const existing = Array.from(hdr.childNodes);
+            const wrap = document.createElement('div');
+            wrap.className = 'tt-header-content';
+            existing.forEach(n => wrap.appendChild(n));
+            hdr.appendChild(wrap);
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'tt-close';
+            closeBtn.textContent = '✕';
+            closeBtn.title = 'Close';
+            closeBtn.addEventListener('mousedown', e => e.stopPropagation()); // don't start drag
+            closeBtn.addEventListener('click', e => { e.stopPropagation(); _removeTip(); });
+            hdr.appendChild(closeBtn);
+        }
 
         document.body.appendChild(tip);
+
+        // Position near anchor
         const aRect = anchor.getBoundingClientRect();
-        let l = aRect.left + aRect.width/2 - tip.offsetWidth/2;
+        let l = aRect.left + aRect.width / 2 - tip.offsetWidth / 2;
         let t = aRect.top - tip.offsetHeight - 10;
-        const below = t < 8;
-        if (below) t = aRect.bottom + 8;
-        l = Math.max(8, Math.min(l, window.innerWidth - tip.offsetWidth - 8));
-        tip.style.left = l+'px'; tip.style.top = t+'px';
+        if (t < 8) t = aRect.bottom + 8;
+        l = Math.max(8, Math.min(l, window.innerWidth  - tip.offsetWidth  - 8));
+        t = Math.max(8, Math.min(t, window.innerHeight - tip.offsetHeight - 8));
+        tip.style.left = l + 'px';
+        tip.style.top  = t + 'px';
 
         // Scroll-hint when content overflows
         requestAnimationFrame(() => {
@@ -1762,24 +1787,13 @@
                     });
                 }
             }
-            // Build bridge AFTER tip is rendered so getBoundingClientRect is accurate
-            const tRect = tip.getBoundingClientRect();
-            _buildBridge(aRect, tRect);
         });
 
-        // Wire up anchor hover — cancel timer on enter, schedule removal on leave
-        _tipAnchor = anchor;
-        anchor.addEventListener('mouseenter', _clearTipHideTimer);
-        anchor.addEventListener('mouseleave', _scheduleTipRemove);
-
-        // Wire up tooltip hover
-        tip.addEventListener('mouseenter', _clearTipHideTimer);
-        tip.addEventListener('mouseleave', _scheduleTipRemove);
+        _makeDraggable(tip);
     }
 
-    // Called after positionTip by each show* function — no-op now since
-    // positionTip already wires up the anchor events directly.
-    function attachAnchorLeave(anchor) { /* wired inside positionTip */ }
+    // Called after positionTip — no-op kept for compatibility
+    function attachAnchorLeave(anchor) { }
 
     // Calendar cell tooltip (shows tasks + notes)
     function showTip(anchor, date, tasks) {
