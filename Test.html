@@ -1706,7 +1706,7 @@
     let _tipPinned     = false;  // whether current tip is pinned
 
     const TIP_SHOW_DELAY = 450;  // ms before tooltip appears
-    const TIP_HIDE_DELAY = 300;  // ms grace after mouseleave
+    const TIP_HIDE_DELAY = 500;  // ms grace after cursor leaves both anchor and tooltip
 
     function _clearTimers() {
         if (_tipHideTimer) { clearTimeout(_tipHideTimer); _tipHideTimer = null; }
@@ -1839,12 +1839,32 @@
             }
         });
 
-        // Auto-hide on mouseleave (unless pinned)
-        tip.addEventListener('mouseenter', () => _clearTimers());
-        tip.addEventListener('mouseleave', () => _scheduleHide());
-
-        // Wire anchor hover-leave
-        anchor.addEventListener('mouseleave', () => _scheduleHide());
+        // Auto-hide: track mouse position continuously so the gap between
+        // anchor and tooltip doesn't accidentally trigger dismissal.
+        // Hide only when cursor has been outside BOTH anchor and tooltip for TIP_HIDE_DELAY ms.
+        const aRect2 = anchor.getBoundingClientRect();
+        let _trackMove;
+        _trackMove = (ev) => {
+            if (_tipPinned) { document.removeEventListener('mousemove', _trackMove); return; }
+            const tip2 = document.getElementById('__tip'); if (!tip2) { document.removeEventListener('mousemove', _trackMove); return; }
+            const tr = tip2.getBoundingClientRect();
+            const ar = anchor.getBoundingClientRect();
+            const cx = ev.clientX, cy = ev.clientY;
+            const inTip    = cx >= tr.left && cx <= tr.right && cy >= tr.top && cy <= tr.bottom;
+            const inAnchor = cx >= ar.left && cx <= ar.right && cy >= ar.top && cy <= ar.bottom;
+            if (inTip || inAnchor) {
+                _clearTimers();
+            } else {
+                if (!_tipHideTimer) _scheduleHide();
+            }
+        };
+        document.addEventListener('mousemove', _trackMove);
+        // Clean up tracker when tip is removed
+        const _stopTrack = () => document.removeEventListener('mousemove', _trackMove);
+        tip.addEventListener('remove', _stopTrack);   // custom removal hook
+        // Patch _removeTip to also stop tracking (via observer)
+        const _obs = new MutationObserver(() => { if (!document.getElementById('__tip')) { _stopTrack(); _obs.disconnect(); } });
+        _obs.observe(document.body, { childList: true, subtree: false });
 
         _makeDraggable(tip);
     }
