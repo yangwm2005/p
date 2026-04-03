@@ -189,22 +189,39 @@
       color: white;
       text-align: left;
       border-radius: 10px;
-      padding: 4px 8px;
+      padding: 8px 12px;
       position: absolute;
-      z-index: 200;
-      bottom: 120%;
+      z-index: 9000;
+      bottom: calc(100% + 8px);
       left: 50%;
       transform: translateX(-50%);
-      white-space: nowrap;
-      font-size: 0.65rem;
-      max-width: 180px;
+      font-size: 0.72rem;
+      line-height: 1.55;
+      min-width: 220px;
+      max-width: 300px;
+      width: max-content;
       white-space: normal;
       word-break: break-word;
       pointer-events: none;
-      transition: 0.05s;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+      border-left: 3px solid #4a90d9;
+      transition: opacity 0.08s;
+      opacity: 0;
     }
     .mini-day:hover .mini-tooltip {
       visibility: visible;
+      opacity: 1;
+    }
+    /* keep tooltip on screen when near left/right edges */
+    .mini-day:first-child .mini-tooltip,
+    .mini-day:nth-child(7n+1) .mini-tooltip {
+      left: 0;
+      transform: none;
+    }
+    .mini-day:nth-child(7n) .mini-tooltip {
+      left: auto;
+      right: 0;
+      transform: none;
     }
 
     /* stats row */
@@ -348,6 +365,49 @@
       }
     }
 
+    /* ===== FILE TOOLBAR ===== */
+    .file-toolbar {
+      background: #f8faff;
+      border-bottom: 1px solid #e0e0e0;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .file-toolbar-label {
+      font-size: 13px; font-weight: 600; color: #64748b; white-space: nowrap;
+    }
+    .filename-input {
+      flex: 1; min-width: 200px; max-width: 320px;
+      border: 1px solid #c7d2fe; border-radius: 8px;
+      padding: 6px 12px; font-size: 13px;
+      font-family: 'Courier New', monospace; color: #1e293b;
+      background: white; transition: border-color 0.2s;
+    }
+    .filename-input:focus { outline: none; border-color: #2c628f; }
+    .autosave-badge {
+      font-size: 12px; padding: 4px 10px; border-radius: 20px;
+      font-weight: 600; white-space: nowrap; transition: all 0.3s;
+    }
+    .autosave-badge.saved   { background: #dcfce7; color: #166534; }
+    .autosave-badge.saving  { background: #fef9c3; color: #854d0e; }
+    .autosave-badge.unsaved { background: #fee2e2; color: #991b1b; }
+    .file-btn {
+      display: flex; align-items: center; gap: 6px;
+      border: none; border-radius: 8px; padding: 7px 16px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: all 0.2s; white-space: nowrap;
+    }
+    .file-btn.save-btn  { background: #2c628f; color: white; }
+    .file-btn.save-btn:hover  { background: #1e4a6e; }
+    .file-btn.load-btn  { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+    .file-btn.load-btn:hover  { background: #e2e8f0; }
+    .file-btn.new-btn   { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+    .file-btn.new-btn:hover   { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+    .file-divider { width: 1px; height: 28px; background: #e0e0e0; flex-shrink: 0; }
+    #loadFileInput { display: none; }
+
     /* ===== GOOGLE CALENDAR TOOLBAR ===== */
     .gcal-toolbar {
       background: #fff8f0;
@@ -488,6 +548,20 @@
     <p>Compact calendars (top) + aligned daily lists below each month · Hover day → preview · Click to edit</p>
   </div>
 
+  <!-- file toolbar -->
+  <div class="file-toolbar">
+    <span class="file-toolbar-label">💾 File:</span>
+    <input class="filename-input" id="filenameInput" type="text" spellcheck="false" placeholder="yearplan-YYYYMMDD.json">
+    <span class="autosave-badge saved" id="autosaveBadge">✓ Saved to browser</span>
+    <div class="file-divider"></div>
+    <button class="file-btn save-btn" id="saveFileBtn" title="Pick a file — all changes will auto-save to it">💾 Set Auto-save File</button>
+    <button class="file-btn" id="downloadBtn" style="background:#f1f5f9;color:#334155;border:1px solid #cbd5e1;" title="Download a copy as JSON">⬇ Download Copy</button>
+    <button class="file-btn load-btn" id="loadFileBtn">📂 Load JSON</button>
+    <input type="file" id="loadFileInput" accept=".json">
+    <div class="file-divider"></div>
+    <button class="file-btn new-btn" id="newFileBtn">🗑 Clear All</button>
+  </div>
+
   <!-- quarter navigation -->
   <div class="quarter-nav">
     <div class="nav-group">
@@ -535,7 +609,7 @@
     <div class="three-columns-details" id="threeColumnsDetailsContainer"></div>
   </div>
   <div class="footer-note">
-    💾 All changes auto-save. Each day stores big events, due dates, milestones.
+    💾 Copyright @ 2026 for Dr. Wen-Ming Yang All rights resevrved.  yearplan-v10.
   </div>
 </div>
 
@@ -650,7 +724,7 @@
     } else {
       eventsMap.set(dateKey, trimmed);
     }
-    saveEvents();
+    fileSave();
     // full refresh: both top calendars and bottom detailed columns
     renderTopCalendars();
     renderDetailedColumns();
@@ -849,7 +923,7 @@
         } else {
           previewSpan = document.createElement('div');
           previewSpan.className = 'empty-preview';
-          previewSpan.innerText = '➕ No event yet — click to add';
+          previewSpan.innerText = '';
         }
         
         dayRow.appendChild(dayNumSpan);
@@ -1007,6 +1081,147 @@
     const startQ = Math.floor(currentMonthIdx / 3) * 3;
     setQuarterFromBaseYear(today.getFullYear(), startQ);
   }
+
+  // ============================================
+  //  SWIPE / TRACKPAD GESTURE NAVIGATION
+  // ============================================
+
+  // Shift by N months (positive = forward, negative = backward)
+  function shiftMonths(n) {
+    let newStart = currentMonths[0] + n;
+    let newYear  = currentYear;
+    while (newStart > 11) { newStart -= 12; newYear++; }
+    while (newStart < 0)  { newStart += 12; newYear--; }
+    setQuarterFromBaseYear(newYear, newStart);
+  }
+
+  // ── Swipe hint overlay ──
+  let _hintEl = null;
+  function showSwipeHint(direction, months) {
+    if (!_hintEl) {
+      _hintEl = document.createElement('div');
+      _hintEl.style.cssText = [
+        'position:fixed','bottom:32px','left:50%','transform:translateX(-50%)',
+        'background:rgba(15,43,66,0.88)','color:white',
+        'padding:10px 22px','border-radius:40px',
+        'font-size:14px','font-weight:600',
+        'pointer-events:none','z-index:99999',
+        'box-shadow:0 4px 16px rgba(0,0,0,0.3)',
+        'transition:opacity 0.15s',
+        'white-space:nowrap',
+      ].join(';');
+      document.body.appendChild(_hintEl);
+    }
+    const arrow = direction > 0 ? '→' : '←';
+    const label = months === 1 ? '1 month' : `${months} months`;
+    _hintEl.textContent = `${arrow} ${label}`;
+    _hintEl.style.opacity = '1';
+    clearTimeout(_hintEl._hide);
+    _hintEl._hide = setTimeout(() => { if(_hintEl) _hintEl.style.opacity = '0'; }, 700);
+  }
+
+  // ── Trackpad / mouse-wheel horizontal scroll ──
+  // Accumulate deltaX; fire when threshold crossed; speed → month count
+  (function() {
+    let accumX   = 0;
+    let lastTime = 0;
+    let cooldown = false;
+
+    const THRESHOLD = 60;   // px of accumulated horizontal scroll to trigger
+    const COOLDOWN  = 420;  // ms before next swipe accepted (animation feel)
+
+    function onWheel(e) {
+      // Only act on horizontal scroll (trackpad two-finger swipe)
+      // Ignore pure vertical scroll
+      if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 0.4) return;
+      if (Math.abs(e.deltaX) < 2) return;
+
+      e.preventDefault();
+      if (cooldown) return;
+
+      const now = Date.now();
+      // Reset accumulator if gap > 300ms (new gesture)
+      if (now - lastTime > 300) accumX = 0;
+      lastTime = now;
+      accumX += e.deltaX;
+
+      if (Math.abs(accumX) >= THRESHOLD) {
+        // Speed: pixels per ms since gesture started → map to 1-3 months
+        const velocity = Math.abs(e.deltaX);  // per-frame px as speed proxy
+        const months = velocity > 80 ? 3 : velocity > 35 ? 2 : 1;
+        const dir = accumX > 0 ? 1 : -1;
+        accumX = 0;
+        cooldown = true;
+        setTimeout(() => { cooldown = false; }, COOLDOWN);
+        showSwipeHint(dir, months);
+        shiftMonths(dir * months);
+      }
+    }
+
+    // Attach to the whole dashboard so any hover position works
+    document.addEventListener('DOMContentLoaded', () => {
+      const el = document.querySelector('.planner-dashboard') || document.body;
+      el.addEventListener('wheel', onWheel, { passive: false });
+    });
+  })();
+
+  // ── Touch swipe (mobile / touchpad as touch) ──
+  (function() {
+    let startX = 0, startY = 0, startTime = 0;
+    let active = false;
+
+    function onTouchStart(e) {
+      if (e.touches.length !== 1) return;
+      startX    = e.touches[0].clientX;
+      startY    = e.touches[0].clientY;
+      startTime = Date.now();
+      active    = true;
+    }
+
+    function onTouchEnd(e) {
+      if (!active) return;
+      active = false;
+      const dx   = e.changedTouches[0].clientX - startX;
+      const dy   = e.changedTouches[0].clientY - startY;
+      const dt   = Date.now() - startTime;
+
+      // Must be more horizontal than vertical, and travel ≥ 40px
+      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
+
+      const speed  = Math.abs(dx) / dt;   // px/ms
+      const months = speed > 1.4 ? 3 : speed > 0.7 ? 2 : 1;
+      const dir    = dx < 0 ? 1 : -1;    // swipe left = forward
+      showSwipeHint(dir, months);
+      shiftMonths(dir * months);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const el = document.querySelector('.planner-dashboard') || document.body;
+      el.addEventListener('touchstart', onTouchStart, { passive: true });
+      el.addEventListener('touchend',   onTouchEnd,   { passive: true });
+    });
+  })();
+
+  // ── Keyboard arrow navigation (bonus) ──
+  // Left/Right arrows shift 1 month; with Shift key shift 3 months
+  // (only when focus is not inside an input/textarea)
+  document.addEventListener('keydown', (e) => {
+    if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) return;
+    if (e.key === 'ArrowLeft'  && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      const n = e.shiftKey ? 3 : 1;
+      showSwipeHint(-1, n); shiftMonths(-n);
+    }
+    if (e.key === 'ArrowRight' && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      const n = e.shiftKey ? 3 : 1;
+      showSwipeHint(1, n); shiftMonths(n);
+    }
+  });
+
+  // ============================================
+  //  END SWIPE / GESTURE NAVIGATION
+  // ============================================
   
   function updateQuarterLabel() {
     if (!currentMonths.length) return;
@@ -1019,6 +1234,193 @@
     document.getElementById('quarterRangeLabel').innerHTML = `Q${quarterNum} · ${startMonthName} - ${endMonthName} ${displayYear}`;
   }
   
+  // ============================================
+  //  FILE SAVE / LOAD SYSTEM
+  // ============================================
+  let fileHandle = null;
+  let autosaveTimer = null;
+  const FSA_SUPPORTED = ('showSaveFilePicker' in window);
+
+  function todayStamp() {
+    const n = new Date();
+    return `${n.getFullYear()}${String(n.getMonth()+1).padStart(2,'0')}${String(n.getDate()).padStart(2,'0')}`;
+  }
+  function defaultFilename() { return `yearplan-${todayStamp()}.json`; }
+  function getFilename() {
+    let n = document.getElementById('filenameInput').value.trim();
+    if (!n) n = defaultFilename();
+    if (!n.endsWith('.json')) n += '.json';
+    return n;
+  }
+
+  function setBadge(state, msg) {
+    const b = document.getElementById('autosaveBadge');
+    b.className = 'autosave-badge ' + state;
+    const labels = { saved: '✓ Auto-saved', saving: '⏳ Saving…', unsaved: '● Unsaved', error: '✗ Save failed' };
+    b.textContent = msg || labels[state] || state;
+  }
+
+  function buildPayload() {
+    return {
+      version: 1,
+      filename: getFilename(),
+      savedAt: new Date().toISOString(),
+      events: Object.fromEntries(eventsMap)
+    };
+  }
+
+  function applyPayload(payload) {
+    if (payload.events) {
+      eventsMap = new Map(Object.entries(payload.events));
+    }
+  }
+
+  async function writeToHandle() {
+    if (!fileHandle) return false;
+    try {
+      const writable = await fileHandle.createWritable();
+      await writable.write(JSON.stringify(buildPayload(), null, 2));
+      await writable.close();
+      return true;
+    } catch(e) {
+      console.warn('Auto-save write failed:', e);
+      return false;
+    }
+  }
+
+  function fileSave() {
+    setBadge('saving');
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(eventsMap)));
+    localStorage.setItem('yearplanFilename', getFilename());
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(async () => {
+      if (fileHandle) {
+        const ok = await writeToHandle();
+        setBadge(ok ? 'saved' : 'error');
+      } else {
+        setBadge('saved', '✓ Saved to browser');
+      }
+    }, 300);
+  }
+
+  function fileLoad() {
+    const e = localStorage.getItem(STORAGE_KEY);
+    if (e) {
+      try { eventsMap = new Map(Object.entries(JSON.parse(e))); } catch(err) {}
+    }
+    const f = localStorage.getItem('yearplanFilename');
+    document.getElementById('filenameInput').value = f || defaultFilename();
+    setBadge('saved', '✓ Saved to browser');
+  }
+
+  async function pickSaveFile() {
+    if (!FSA_SUPPORTED) {
+      alert('Your browser does not support the File System Access API.\nUse the "Download Copy" button instead.');
+      return;
+    }
+    try {
+      fileHandle = await window.showSaveFilePicker({
+        suggestedName: getFilename(),
+        types: [{ description: 'JSON file', accept: { 'application/json': ['.json'] } }]
+      });
+      document.getElementById('filenameInput').value = fileHandle.name;
+      localStorage.setItem('yearplanFilename', fileHandle.name);
+      setBadge('saving');
+      const ok = await writeToHandle();
+      setBadge(ok ? 'saved' : 'error');
+      updateFileSaveBtn();
+    } catch(e) {
+      if (e.name !== 'AbortError') console.warn('pickSaveFile:', e);
+    }
+  }
+
+  function updateFileSaveBtn() {
+    const btn = document.getElementById('saveFileBtn');
+    if (fileHandle) {
+      btn.textContent = '💾 ' + fileHandle.name;
+      btn.title = 'Auto-saving to this file. Click to change.';
+      btn.style.background = '#10b981';
+    } else {
+      btn.innerHTML = FSA_SUPPORTED ? '💾 Set Auto-save File' : '⬇ Download JSON';
+      btn.title = FSA_SUPPORTED ? 'Pick a file — all changes will auto-save to it' : 'Download current data as JSON';
+      btn.style.background = '#2c628f';
+    }
+  }
+
+  function downloadJSON() {
+    const filename = getFilename();
+    const json = JSON.stringify(buildPayload(), null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+    setBadge('saved', '✓ Downloaded');
+  }
+
+  function loadJSONFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const payload = JSON.parse(e.target.result);
+        if (!payload.events) throw new Error('Unrecognised format — missing "events" key');
+        applyPayload(payload);
+        document.getElementById('filenameInput').value = file.name;
+        fileHandle = null;
+        updateFileSaveBtn();
+        fileSave();
+        renderTopCalendars(); renderDetailedColumns(); updateStatsTotal();
+        setBadge('saved', '✓ Loaded & saved to browser');
+      } catch(err) { alert('Could not load file: ' + err.message); }
+    };
+    reader.readAsText(file);
+  }
+
+  // Toolbar wiring (deferred so DOM is ready)
+  function wireFileToolbar() {
+    document.getElementById('saveFileBtn').addEventListener('click', () => {
+      if (FSA_SUPPORTED) pickSaveFile(); else { fileSave(); downloadJSON(); }
+    });
+    document.getElementById('downloadBtn').addEventListener('click', () => {
+      fileSave(); downloadJSON();
+    });
+    document.getElementById('loadFileBtn').addEventListener('click', () => {
+      document.getElementById('loadFileInput').value = '';
+      document.getElementById('loadFileInput').click();
+    });
+    document.getElementById('loadFileInput').addEventListener('change', (e) => {
+      loadJSONFile(e.target.files[0]);
+    });
+    document.getElementById('newFileBtn').addEventListener('click', () => {
+      if (!confirm('Clear all data and start fresh?')) return;
+      eventsMap = new Map();
+      fileHandle = null;
+      document.getElementById('filenameInput').value = defaultFilename();
+      updateFileSaveBtn(); fileSave();
+      renderTopCalendars(); renderDetailedColumns(); updateStatsTotal();
+    });
+    document.getElementById('filenameInput').addEventListener('input', () => {
+      setBadge('unsaved');
+      clearTimeout(autosaveTimer);
+      autosaveTimer = setTimeout(() => fileSave(), 800);
+    });
+    // Ctrl/Cmd+S
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        if (fileHandle) fileSave();
+        else if (FSA_SUPPORTED) pickSaveFile();
+        else { fileSave(); downloadJSON(); }
+      }
+    });
+    updateFileSaveBtn();
+  }
+  // ============================================
+  //  END FILE SAVE / LOAD SYSTEM
+  // ============================================
+
   // ============================================
   //  GOOGLE CALENDAR INTEGRATION
   // ============================================
@@ -1374,21 +1776,182 @@
     const today = new Date();
     const startQuarterMonth = Math.floor(today.getMonth() / 3) * 3;
     currentYear = today.getFullYear();
+    // load data first (file system), then init demo if empty
+    fileLoad();
     setQuarterFromBaseYear(currentYear, startQuarterMonth);
-    loadEvents();     // loads and injects demo if needed
+    // inject demo data if still empty after loading
+    if (eventsMap.size < 6 && currentMonths.length === 3) {
+      const demoEvents = [
+        { monthOffset: 0, day: 5,  text: "🚀 Milestone: prototype review" },
+        { monthOffset: 0, day: 15, text: "📊 Quarterly planning due" },
+        { monthOffset: 0, day: 22, text: "🎯 Team sync & roadmap" },
+        { monthOffset: 1, day: 10, text: "📝 Client presentation deadline" },
+        { monthOffset: 1, day: 18, text: "🏆 Launch preparation" },
+        { monthOffset: 2, day: 3,  text: "✅ Final report & deliverables" },
+        { monthOffset: 2, day: 14, text: "🎉 Milestone celebration" }
+      ];
+      demoEvents.forEach(ev => {
+        const m = currentMonths[ev.monthOffset];
+        const key = getDateKey(currentYear, m, ev.day);
+        if (!eventsMap.has(key)) eventsMap.set(key, ev.text);
+      });
+      for (let i = 0; i < currentMonths.length; i++) {
+        const m = currentMonths[i];
+        const firstKey = getDateKey(currentYear, m, 1);
+        if (!eventsMap.has(firstKey)) eventsMap.set(firstKey, `📌 ${new Date(currentYear, m, 1).toLocaleDateString(undefined, { month: 'long' })} kickoff`);
+      }
+      fileSave();
+    }
     renderTopCalendars();
     renderDetailedColumns();
     updateStatsTotal();
-    
-    // attach events
+
+    // attach nav events
     document.getElementById('prevQuarterBtn').addEventListener('click', goPrevQuarter);
     document.getElementById('nextQuarterBtn').addEventListener('click', goNextQuarter);
     document.getElementById('gotoTodayQuarterBtn').addEventListener('click', goToTodayQuarter);
 
+    wireFileToolbar();
     gcalInit();
   }
   
   document.addEventListener('DOMContentLoaded', init);
+
+  // ============================================
+  //  SWIPE / TRACKPAD GESTURE NAVIGATION
+  //  - Touch swipe: left/right → 1–3 months based on speed
+  //  - Trackpad horizontal scroll: accumulates delta, snaps at threshold
+  //  - Visual feedback: slide animation + swipe hint indicator
+  // ============================================
+  function initSwipeNavigation() {
+    const target = document.querySelector('.planner-dashboard');
+
+    // ── Shared shift function with animation ──
+    function shiftMonths(delta) {
+      // delta > 0 = forward (next), delta < 0 = backward (prev)
+      const steps = Math.min(Math.max(Math.abs(delta), 1), 3);
+      const dir   = delta > 0 ? 1 : -1;
+
+      // Slide animation on the calendar + details rows
+      const calRow     = document.getElementById('tripleCalendarGrid');
+      const detailsRow = document.getElementById('threeColumnsDetailsContainer');
+      const slideOut   = dir > 0 ? '-60px' : '60px';
+      const slideIn    = dir > 0 ? '60px'  : '-60px';
+
+      [calRow, detailsRow].forEach(el => {
+        if (!el) return;
+        el.style.transition = 'transform 0.18s ease-in, opacity 0.18s ease-in';
+        el.style.transform  = `translateX(${slideOut})`;
+        el.style.opacity    = '0';
+      });
+
+      setTimeout(() => {
+        // navigate
+        let newStartMonth = currentMonths[0] + dir * steps;
+        let newYear = currentYear;
+        while (newStartMonth > 11) { newStartMonth -= 12; newYear++; }
+        while (newStartMonth < 0)  { newStartMonth += 12; newYear--; }
+        setQuarterFromBaseYear(newYear, newStartMonth);
+
+        // slide in from opposite side
+        [calRow, detailsRow].forEach(el => {
+          if (!el) return;
+          el.style.transition = 'none';
+          el.style.transform  = `translateX(${slideIn})`;
+          el.style.opacity    = '0';
+          // force reflow
+          void el.offsetWidth;
+          el.style.transition = 'transform 0.22s ease-out, opacity 0.22s ease-out';
+          el.style.transform  = 'translateX(0)';
+          el.style.opacity    = '1';
+        });
+
+        // show toast hint
+        showSwipeToast(dir, steps);
+      }, 160);
+    }
+
+    // ── Toast hint ──
+    let toastEl = null, toastTimer = null;
+    function showSwipeToast(dir, steps) {
+      if (!toastEl) {
+        toastEl = document.createElement('div');
+        toastEl.style.cssText = `
+          position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+          background: rgba(15,30,50,0.88); color: white;
+          padding: 8px 20px; border-radius: 30px;
+          font-size: 13px; font-weight: 600;
+          pointer-events: none; z-index: 99999;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+          transition: opacity 0.25s;
+        `;
+        document.body.appendChild(toastEl);
+      }
+      const arrow  = dir > 0 ? '→' : '←';
+      const months = steps === 1 ? '1 month' : `${steps} months`;
+      toastEl.textContent = `${arrow}  Jumped ${months} ${dir > 0 ? 'forward' : 'back'}`;
+      toastEl.style.opacity = '1';
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toastEl.style.opacity = '0'; }, 1600);
+    }
+
+    // ── TOUCH SWIPE (phone / tablet / trackpad tap-swipe) ──
+    let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
+
+    target.addEventListener('touchstart', e => {
+      touchStartX    = e.touches[0].clientX;
+      touchStartY    = e.touches[0].clientY;
+      touchStartTime = Date.now();
+    }, { passive: true });
+
+    target.addEventListener('touchend', e => {
+      const dx   = e.changedTouches[0].clientX - touchStartX;
+      const dy   = e.changedTouches[0].clientY - touchStartY;
+      const dt   = (Date.now() - touchStartTime) / 1000; // seconds
+      const dist = Math.abs(dx);
+
+      // must be mostly horizontal and at least 40px
+      if (dist < 40 || Math.abs(dy) > dist * 0.7) return;
+
+      // velocity px/s → map to 1-3 months
+      const velocity = dist / Math.max(dt, 0.05);
+      const months   = velocity > 1200 ? 3 : velocity > 600 ? 2 : 1;
+      shiftMonths(dx < 0 ? months : -months);
+    }, { passive: true });
+
+    // ── TRACKPAD HORIZONTAL SCROLL (wheel events) ──
+    // Accumulate deltaX; fire once threshold is crossed, then cool down
+    let wheelAccum  = 0;
+    let wheelCooldown = false;
+    const WHEEL_THRESHOLD = 120; // pixels of horizontal scroll to trigger 1 month
+    const COOLDOWN_MS     = 500; // prevent rapid-fire after each jump
+
+    target.addEventListener('wheel', e => {
+      // Only act on predominantly horizontal scroll
+      if (Math.abs(e.deltaX) < Math.abs(e.deltaY) * 0.5) return;
+      // Don't intercept inside the scrollable details panel
+      if (e.target.closest('.triple-details-row, .days-list-scroll')) return;
+
+      e.preventDefault();
+
+      if (wheelCooldown) return;
+
+      wheelAccum += e.deltaX;
+
+      if (Math.abs(wheelAccum) >= WHEEL_THRESHOLD) {
+        // speed heuristic: large single delta = fast flick → more months
+        const absDelta = Math.abs(e.deltaX);
+        const months   = absDelta > 150 ? 3 : absDelta > 60 ? 2 : 1;
+        const dir      = wheelAccum > 0 ? months : -months;
+        wheelAccum     = 0;
+        wheelCooldown  = true;
+        setTimeout(() => { wheelCooldown = false; }, COOLDOWN_MS);
+        shiftMonths(dir);
+      }
+    }, { passive: false });
+  }
+
+  document.addEventListener('DOMContentLoaded', initSwipeNavigation);
 </script>
 </body>
 </html>
