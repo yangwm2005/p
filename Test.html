@@ -786,12 +786,7 @@
         cell.className = 'mini-day';
         if (hasEvent) cell.classList.add('has-event');
         if (isTodayMonth && d === todayDate) cell.classList.add('today-highlight');
-        // also tint if has gcal events but no local event
-        if (!hasEvent && gcalGetForDate(dateKey).length) {
-          cell.style.background = '#eef3fc';
-          cell.style.borderColor = '#b8cff0';
-        }
-        
+
         const dayNumSpan = document.createElement('div');
         dayNumSpan.className = 'day-num-mini';
         dayNumSpan.innerText = d;
@@ -803,13 +798,18 @@
           cell.appendChild(dot);
         }
         
-        // GCal dots
+        // GCal dots — single call, reused for tint, dots, and tooltip
         const gcEvs = gcalGetForDate(dateKey);
+
+        // tint cell if it has GCal events but no local event
+        if (!hasEvent && gcEvs.length) {
+          cell.style.background = '#eef3fc';
+          cell.style.borderColor = '#b8cff0';
+        }
         if (gcEvs.length) {
           const dotsRow = document.createElement('div');
           dotsRow.className = 'gcal-dots-row';
-          const shown = gcEvs.slice(0, 4);
-          shown.forEach(ge => {
+          gcEvs.slice(0, 4).forEach(ge => {
             const dot = document.createElement('div');
             dot.className = 'gcal-dot';
             dot.style.background = ge.color || '#2c628f';
@@ -818,14 +818,13 @@
           cell.appendChild(dotsRow);
         }
         
-        // ── Tooltip (shared element on body) ──
+        // ── Tooltip (shared element on body) — reuse gcEvs, no second gcalGetForDate call ──
         const tipContent = (() => {
           let h = '';
           const d2 = new Date(year, month, d).toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' });
           h += `<div style="font-size:0.7rem;font-weight:700;color:#7ec8f5;margin-bottom:5px;">${d2}</div>`;
           if (hasEvent) h += `<div style="margin-bottom:3px;">📌 <strong>${eventText}</strong></div>`;
-          const gc2 = gcalGetForDate(dateKey);
-          gc2.forEach(ge => {
+          gcEvs.forEach(ge => {
             let tStr = '';
             if (!ge.allDay && ge.startDt) {
               tStr = ge.startDt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
@@ -837,7 +836,7 @@
                + (tStr ? `<span style="font-size:0.7rem;opacity:0.7;margin-left:5px;">${tStr}</span>` : '')
                + `</span></div>`;
           });
-          if (!hasEvent && !gc2.length) h += `<span style="opacity:0.5;font-size:0.75rem;">No events — click to add</span>`;
+          if (!hasEvent && !gcEvs.length) h += `<span style="opacity:0.5;font-size:0.75rem;">No events — click to add</span>`;
           return h;
         })();
 
@@ -991,8 +990,7 @@
           const editDiv = document.createElement('div');
           editDiv.className = 'detail-edit-area-compact';
           
-          // GCal events for this day
-          const gcEvs = gcalGetForDate(dateKey);
+          // GCal events for this day — reuse gcEvs already fetched above
           if (gcEvs.length) {
             const gcSection = document.createElement('div');
             gcSection.style.cssText = 'margin-bottom:6px;';
