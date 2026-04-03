@@ -179,36 +179,27 @@
       border-radius: 10px;
       margin-top: 2px;
     }
-    /* tooltip for mini calendar */
-    .mini-day {
-      position: relative;
-    }
-    .mini-tooltip {
-      visibility: hidden;
-      background-color: #1e2f3f;
-      color: white;
-      text-align: left;
-      border-radius: 10px;
-      padding: 8px 12px;
+    /* tooltip for mini calendar — attached to body, positioned via JS */
+    .mini-day { position: relative; }
+    #miniTooltip {
       position: fixed;
-      z-index: 9999;
-      font-size: 0.72rem;
-      line-height: 1.55;
-      min-width: 220px;
-      max-width: 300px;
-      width: max-content;
-      white-space: normal;
-      word-break: break-word;
+      z-index: 99999;
+      background: #1a2e42;
+      color: #f0f6ff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      min-width: 230px;
+      max-width: 320px;
       pointer-events: none;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.35);
-      border-left: 3px solid #4a90d9;
-      opacity: 0;
-      transition: opacity 0.08s;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+      border-left: 4px solid #4a90d9;
+      word-break: break-word;
+      white-space: normal;
+      display: none;
     }
-    .mini-tooltip.tt-visible {
-      visibility: visible;
-      opacity: 1;
-    }
+    #miniTooltip.visible { display: block; }
 
     /* stats row */
     .stats-row {
@@ -827,57 +818,55 @@
           cell.appendChild(dotsRow);
         }
         
-        // tooltip with full event + GCal events — smart viewport-aware positioning
-        const tooltipSpan = document.createElement('div');
-        tooltipSpan.className = 'mini-tooltip';
-        const gcEvs2 = gcalGetForDate(dateKey);
-        let tipHtml = '';
-        if (hasEvent) tipHtml += `<strong>📌 ${eventText.substring(0, 60)}</strong>`;
-        if (gcEvs2.length) {
-          if (tipHtml) tipHtml += '<br>';
-          tipHtml += gcEvs2.slice(0, 3).map(ge => `<span style="color:${ge.color||'#93c5fd'}">●</span> ${ge.title.substring(0,40)}`).join('<br>');
-          if (gcEvs2.length > 3) tipHtml += `<br>+${gcEvs2.length - 3} more`;
-        }
-        if (!tipHtml) tipHtml = `✨ No events — click to add`;
-        tooltipSpan.innerHTML = tipHtml;
-        cell.appendChild(tooltipSpan);
+        // ── Tooltip (shared element on body) ──
+        const tipContent = (() => {
+          let h = '';
+          const d2 = new Date(year, month, d).toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' });
+          h += `<div style="font-size:0.7rem;font-weight:700;color:#7ec8f5;margin-bottom:5px;">${d2}</div>`;
+          if (hasEvent) h += `<div style="margin-bottom:3px;">📌 <strong>${eventText}</strong></div>`;
+          const gc2 = gcalGetForDate(dateKey);
+          gc2.forEach(ge => {
+            let tStr = '';
+            if (!ge.allDay && ge.startDt) {
+              tStr = ge.startDt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+              if (ge.endDt) tStr += ' – ' + ge.endDt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+            } else if (ge.allDay) tStr = 'All day';
+            h += `<div style="display:flex;gap:6px;align-items:baseline;margin-top:2px;">`
+               + `<span style="color:${ge.color||'#7ec8f5'};font-size:0.85em;">●</span>`
+               + `<span><span style="font-weight:600;">${ge.title}</span>`
+               + (tStr ? `<span style="font-size:0.7rem;opacity:0.7;margin-left:5px;">${tStr}</span>` : '')
+               + `</span></div>`;
+          });
+          if (!hasEvent && !gc2.length) h += `<span style="opacity:0.5;font-size:0.75rem;">No events — click to add</span>`;
+          return h;
+        })();
 
         cell.addEventListener('mouseenter', () => {
-          // Position tooltip after it's visible so we can measure its size
-          tooltipSpan.style.visibility = 'hidden';
-          tooltipSpan.style.opacity = '0';
-          tooltipSpan.classList.add('tt-visible');
-
-          const cellRect = cell.getBoundingClientRect();
-          const tipW = tooltipSpan.offsetWidth || 240;
-          const tipH = tooltipSpan.offsetHeight || 80;
-          const GAP  = 8;
-          const vpW  = window.innerWidth;
-          const vpH  = window.innerHeight;
-
-          // Vertical: prefer above; flip below if not enough room above
-          let top;
-          if (cellRect.top - tipH - GAP >= 8) {
-            top = cellRect.top - tipH - GAP;           // above
-          } else {
-            top = cellRect.bottom + GAP;               // below
-          }
-
-          // Horizontal: centre on cell, then clamp to viewport
-          let left = cellRect.left + cellRect.width / 2 - tipW / 2;
-          left = Math.max(8, Math.min(left, vpW - tipW - 8));
-
-          // Clamp vertical too
-          top = Math.max(8, Math.min(top, vpH - tipH - 8));
-
-          tooltipSpan.style.left = left + 'px';
-          tooltipSpan.style.top  = top  + 'px';
-          tooltipSpan.style.visibility = '';
-          tooltipSpan.style.opacity = '';
+          const tip = document.getElementById('miniTooltip');
+          if (!tip) return;
+          tip.innerHTML = tipContent;
+          tip.classList.add('visible');
+          const cr  = cell.getBoundingClientRect();
+          const vpW = window.innerWidth, vpH = window.innerHeight;
+          tip.style.left = '-9999px'; tip.style.top = '-9999px';
+          // measure
+          requestAnimationFrame(() => {
+            const tw = tip.offsetWidth || 260;
+            const th = tip.offsetHeight || 90;
+            const GAP = 10;
+            let left = cr.left + cr.width / 2 - tw / 2;
+            let top  = cr.top - th - GAP;
+            if (top < 8) top = cr.bottom + GAP;
+            left = Math.max(8, Math.min(left, vpW - tw - 8));
+            top  = Math.max(8, Math.min(top,  vpH - th - 8));
+            tip.style.left = left + 'px';
+            tip.style.top  = top  + 'px';
+          });
         });
 
         cell.addEventListener('mouseleave', () => {
-          tooltipSpan.classList.remove('tt-visible');
+          const tip = document.getElementById('miniTooltip');
+          if (tip) tip.classList.remove('visible');
         });
         
         // click on mini calendar cell: expand the detailed row for this day in its column
@@ -953,7 +942,7 @@
         } else {
           previewSpan = document.createElement('div');
           previewSpan.className = 'empty-preview';
-          previewSpan.innerText = '➕ No event yet — click to add';
+          previewSpan.innerText = '';
         }
         
         dayRow.appendChild(dayNumSpan);
@@ -1116,59 +1105,90 @@
   //  FULL MONTH GRID POPUP (new window)
   // ============================================
   function openMonthPopup(year, month) {
-    const monthLong  = new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-    const totalDays  = getDaysInMonth(year, month);
-    const firstDay   = getFirstDayOfMonth(year, month);
-    const today      = new Date();
+    const monthLong   = new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const totalDays   = getDaysInMonth(year, month);
+    const firstDay    = getFirstDayOfMonth(year, month);
+    const today       = new Date();
     const isThisMonth = today.getFullYear() === year && today.getMonth() === month;
 
     function esc(s) {
-      return String(s)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    function escJs(s) {
+      return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n').replace(/\r/g,'');
     }
 
-    // ── Gather all data ──
+    // ── Gather all day data + build a JS-safe events registry ──
+    const eventRegistry = {}; // id → { type, title, dateLabel, timeLabel, notes, color, htmlLink }
+    let evIdCounter = 0;
+
     const dayData = [];
     for (let d = 1; d <= totalDays; d++) {
       const dk      = getDateKey(year, month, d);
       const date    = new Date(year, month, d);
       const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
+      const localEv = getEvent(dk);
+      const gcEvs   = gcalGetForDate(dk);
+
+      // register local event
+      let localEvId = null;
+      if (localEv) {
+        localEvId = 'ev' + (evIdCounter++);
+        const dateLabel = date.toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+        eventRegistry[localEvId] = {
+          type: 'local', title: '📌 Local Note',
+          dateLabel, timeLabel: 'All day / milestone',
+          notes: localEv, color: '#f5a623', htmlLink: ''
+        };
+      }
+
+      // register gcal events
+      const gcEvIds = gcEvs.map(ge => {
+        const id = 'ev' + (evIdCounter++);
+        let timeLabel = '';
+        if (!ge.allDay && ge.startDt) {
+          timeLabel = ge.startDt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+          if (ge.endDt) timeLabel += ' – ' + ge.endDt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+        } else { timeLabel = 'All day'; }
+        const dateLabel = date.toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+        eventRegistry[id] = {
+          type: 'gcal', title: ge.title,
+          dateLabel, timeLabel,
+          notes: ge.description || '',
+          color: ge.color || '#2c628f',
+          htmlLink: ge.htmlLink || ''
+        };
+        return { id, ge };
+      });
+
       dayData.push({
         d, dk, weekday,
         isToday:   isThisMonth && d === today.getDate(),
         isWeekend: date.getDay() === 0 || date.getDay() === 6,
-        localEv:   getEvent(dk),
-        gcEvs:     gcalGetForDate(dk)
+        localEv, localEvId, gcEvIds
       });
     }
 
-    // ── Build each cell's HTML ──
+    // ── Build cell HTML — all events are clickable ──
     function cellHTML(info) {
       if (!info) return `<div class="day-cell empty"></div>`;
-      const { d, weekday, isToday, isWeekend, localEv, gcEvs } = info;
+      const { d, weekday, isToday, isWeekend, localEv, localEvId, gcEvIds } = info;
       const cls = ['day-cell',
         isToday   ? 'today'   : '',
         isWeekend ? 'weekend' : '',
-        (localEv || gcEvs.length) ? 'has-content' : ''
+        (localEv || gcEvIds.length) ? 'has-content' : ''
       ].filter(Boolean).join(' ');
 
       const localBlock = localEv
-        ? `<div class="ev-local">📌 ${esc(localEv)}</div>`
+        ? `<div class="ev-local ev-clickable" onclick="showDetail('${localEvId}')">📌 ${esc(localEv)}</div>`
         : '';
 
-      const gcBlocks = gcEvs.map(ge => {
-        let timeStr = '';
-        if (!ge.allDay && ge.startDt) {
-          timeStr = ge.startDt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          if (ge.endDt) timeStr += ' – ' + ge.endDt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        } else if (ge.allDay) {
-          timeStr = 'All day';
-        }
-        return `<div class="ev-gcal" style="background:${esc(ge.color||'#2c628f')}">`
-          + `<span class="ev-gcal-title">${esc(ge.title)}</span>`
-          + (timeStr ? `<span class="ev-gcal-time">${esc(timeStr)}</span>` : '')
-          + `</div>`;
+      const gcBlocks = gcEvIds.map(({ id, ge }) => {
+        const reg  = eventRegistry[id];
+        return `<div class="ev-gcal ev-clickable" style="background:${esc(ge.color||'#2c628f')}" onclick="showDetail('${id}')">
+          <span class="ev-gcal-title">${esc(ge.title)}</span>
+          <span class="ev-gcal-time">${esc(reg.timeLabel)}</span>
+        </div>`;
       }).join('');
 
       const todayNumCls = isToday ? ' today-num' : '';
@@ -1177,14 +1197,16 @@
           <span class="day-num${todayNumCls}">${d}</span>
           <span class="day-name">${esc(weekday.substring(0,3).toUpperCase())}</span>
         </div>
-        <div class="day-events">${localBlock}${gcBlocks}${(!localEv && !gcEvs.length) ? '<span class="ev-empty">—</span>' : ''}</div>
+        <div class="day-events">${localBlock}${gcBlocks}${(!localEv && !gcEvIds.length) ? '<span class="ev-empty">—</span>' : ''}</div>
       </div>`;
     }
 
-    // empty leading cells + day cells
     let gridCells = '';
     for (let i = 0; i < firstDay; i++) gridCells += `<div class="day-cell empty"></div>`;
     dayData.forEach(info => { gridCells += cellHTML(info); });
+
+    // Serialize registry for embedding in popup JS
+    const registryJson = JSON.stringify(eventRegistry).replace(/<\/script>/gi,'<\\/script>');
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -1194,176 +1216,110 @@
 <title>${esc(monthLong)} — Full View</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: system-ui, 'Segoe UI', 'Inter', sans-serif;
-    background: #eef2f8;
-    padding: 24px;
-    min-height: 100vh;
-  }
-  .popup-wrap {
-    max-width: 1400px;
-    margin: 0 auto;
-    background: white;
-    border-radius: 1.5rem;
-    box-shadow: 0 20px 50px rgba(0,0,0,0.18);
-    overflow: hidden;
-  }
+  body { font-family: system-ui, 'Segoe UI', 'Inter', sans-serif; background: #eef2f8; padding: 24px; min-height: 100vh; }
+  .popup-wrap { max-width: 1400px; margin: 0 auto; background: white; border-radius: 1.5rem; box-shadow: 0 20px 50px rgba(0,0,0,0.18); overflow: hidden; }
+
   /* Header */
-  .popup-header {
-    background: linear-gradient(135deg, #1a3c5e, #0f2b42);
-    color: white;
-    padding: 1.2rem 2rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
+  .popup-header { background: linear-gradient(135deg, #1a3c5e, #0f2b42); color: white; padding: 1.2rem 2rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
   .popup-header h1 { font-size: 1.8rem; font-weight: 700; }
   .popup-header p  { font-size: 0.82rem; opacity: 0.65; margin-top: 4px; }
-  .popup-print-btn {
-    background: rgba(255,255,255,0.15);
-    border: 1px solid rgba(255,255,255,0.3);
-    color: white;
-    padding: 8px 20px;
-    border-radius: 30px;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
-    transition: background 0.2s;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
+  .popup-print-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 8px 20px; border-radius: 30px; cursor: pointer; font-size: 13px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
   .popup-print-btn:hover { background: rgba(255,255,255,0.28); }
-  /* Weekday header row */
-  .weekday-row {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    background: #f0f5fa;
-    border-bottom: 2px solid #dce8f0;
-  }
-  .weekday-row span {
-    text-align: center;
-    padding: 0.6rem 0;
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: #3a6b8c;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-  }
+
+  /* Weekday row */
+  .weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); background: #f0f5fa; border-bottom: 2px solid #dce8f0; }
+  .weekday-row span { text-align: center; padding: 0.6rem 0; font-size: 0.78rem; font-weight: 700; color: #3a6b8c; text-transform: uppercase; letter-spacing: 0.07em; }
   .weekday-row span.wkend { color: #b45309; }
+
   /* Grid */
-  .cal-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 1px;
-    background: #d0dde8;
-  }
-  .day-cell {
-    background: white;
-    min-height: 140px;
-    display: flex;
-    flex-direction: column;
-  }
-  .day-cell.empty   { background: #f4f8fc; min-height: 140px; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background: #d0dde8; }
+  .day-cell { background: white; min-height: 148px; display: flex; flex-direction: column; }
+  .day-cell.empty   { background: #f4f8fc; }
   .day-cell.weekend { background: #fdf8f3; }
   .day-cell.today   { background: #e6f2ff !important; outline: 2px solid #2c628f; outline-offset: -2px; }
   .day-cell.has-content { background: #fffef9; }
   .day-cell.weekend.has-content { background: #fffaf3; }
-  /* Day header inside cell */
-  .day-header {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 8px 10px 5px;
-    border-bottom: 1px solid #eff4f9;
+
+  .day-header { display: flex; align-items: center; gap: 7px; padding: 8px 10px 5px; border-bottom: 1px solid #eff4f9; flex-shrink: 0; }
+  .day-num { font-size: 1.1rem; font-weight: 800; color: #1e4a6e; min-width: 28px; line-height: 1; }
+  .day-num.today-num { background: #2c628f; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 0.92rem; min-width: unset; }
+  .day-name { font-size: 0.66rem; color: #9ab0c8; font-weight: 700; letter-spacing: 0.06em; }
+
+  .day-events { padding: 5px 8px 8px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .ev-empty { font-size: 0.65rem; color: #d0dde8; padding: 2px 0; }
+
+  /* Clickable event cards */
+  .ev-clickable { cursor: pointer; transition: filter 0.12s, transform 0.1s; }
+  .ev-clickable:hover { filter: brightness(0.9); transform: translateY(-1px); }
+
+  .ev-local { background: #fff8e8; border-left: 3px solid #f5a623; color: #7c4b00; font-size: 0.76rem; font-weight: 600; padding: 5px 9px; border-radius: 0 6px 6px 0; line-height: 1.45; word-break: break-word; }
+  .ev-gcal  { border-radius: 5px; padding: 5px 9px; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+  .ev-gcal-title { font-size: 0.74rem; font-weight: 600; color: white; word-break: break-word; line-height: 1.35; }
+  .ev-gcal-time  { font-size: 0.64rem; color: rgba(255,255,255,0.78); }
+
+  /* ── Detail Modal ── */
+  .detail-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(10,25,45,0.55);
+    backdrop-filter: blur(3px);
+    z-index: 9000;
+    align-items: center; justify-content: center;
+  }
+  .detail-overlay.open { display: flex; }
+  .detail-box {
+    background: white;
+    border-radius: 18px;
+    width: min(520px, 92vw);
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.35);
+    display: flex; flex-direction: column;
+  }
+  .detail-header {
+    padding: 18px 22px 14px;
+    border-radius: 18px 18px 0 0;
+    display: flex; align-items: flex-start; gap: 12px;
     flex-shrink: 0;
   }
-  .day-num {
-    font-size: 1.1rem;
-    font-weight: 800;
-    color: #1e4a6e;
-    min-width: 28px;
-    line-height: 1;
+  .detail-header-text { flex: 1; min-width: 0; }
+  .detail-title { font-size: 1.15rem; font-weight: 700; color: white; line-height: 1.3; word-break: break-word; }
+  .detail-date  { font-size: 0.78rem; color: rgba(255,255,255,0.75); margin-top: 5px; }
+  .detail-close {
+    background: rgba(255,255,255,0.2); border: none; color: white;
+    border-radius: 8px; width: 28px; height: 28px; font-size: 14px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
-  .day-num.today-num {
-    background: #2c628f;
-    color: white;
-    border-radius: 50%;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.92rem;
-    min-width: unset;
+  .detail-close:hover { background: rgba(255,255,255,0.38); }
+  .detail-body { padding: 18px 22px 22px; flex: 1; }
+  .detail-row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 14px; font-size: 0.88rem; color: #374151; }
+  .detail-row:last-child { margin-bottom: 0; }
+  .detail-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+  .detail-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #9ca3af; margin-bottom: 3px; }
+  .detail-notes {
+    background: #f8faff; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 12px 14px; font-size: 0.85rem; color: #1e293b;
+    line-height: 1.65; white-space: pre-wrap; word-break: break-word;
+    max-height: 260px; overflow-y: auto;
   }
-  .day-name {
-    font-size: 0.66rem;
-    color: #9ab0c8;
-    font-weight: 700;
-    letter-spacing: 0.06em;
+  .detail-open-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 14px; background: #2c628f; color: white;
+    border: none; border-radius: 8px; padding: 9px 18px;
+    font-size: 0.84rem; font-weight: 600; cursor: pointer; text-decoration: none;
   }
-  /* Events area */
-  .day-events {
-    padding: 5px 8px 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    flex: 1;
-  }
-  .ev-empty { font-size: 0.65rem; color: #d0dde8; padding: 2px 0; }
-  /* Local note */
-  .ev-local {
-    background: #fff8e8;
-    border-left: 3px solid #f5a623;
-    color: #7c4b00;
-    font-size: 0.76rem;
-    font-weight: 600;
-    padding: 4px 8px;
-    border-radius: 0 6px 6px 0;
-    line-height: 1.45;
-    word-break: break-word;
-  }
-  /* GCal event */
-  .ev-gcal {
-    border-radius: 5px;
-    padding: 4px 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    overflow: hidden;
-  }
-  .ev-gcal-title {
-    font-size: 0.74rem;
-    font-weight: 600;
-    color: white;
-    word-break: break-word;
-    line-height: 1.35;
-  }
-  .ev-gcal-time {
-    font-size: 0.62rem;
-    color: rgba(255,255,255,0.78);
-  }
+  .detail-open-btn:hover { background: #1e4a6e; }
+
   /* Legend */
-  .popup-legend {
-    background: #f7fafd;
-    border-top: 1px solid #dce8f0;
-    padding: 12px 24px;
-    display: flex;
-    gap: 24px;
-    flex-wrap: wrap;
-    align-items: center;
-    font-size: 0.75rem;
-    color: #4b6e8a;
-  }
+  .popup-legend { background: #f7fafd; border-top: 1px solid #dce8f0; padding: 12px 24px; display: flex; gap: 24px; flex-wrap: wrap; align-items: center; font-size: 0.75rem; color: #4b6e8a; }
   .legend-item { display: flex; align-items: center; gap: 7px; }
   .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
-  /* Print */
+  .legend-hint { margin-left: auto; font-size: 0.72rem; color: #9ab0c8; font-style: italic; }
+
   @media print {
     body { background: white; padding: 0; }
     .popup-wrap { box-shadow: none; border-radius: 0; max-width: none; }
-    .popup-print-btn { display: none !important; }
+    .popup-print-btn, .detail-overlay { display: none !important; }
     .day-cell { min-height: 100px; }
     .cal-grid { gap: 0.5px; }
   }
@@ -1374,7 +1330,7 @@
   <div class="popup-header">
     <div>
       <h1>📅 ${esc(monthLong)}</h1>
-      <p>Full month overview &nbsp;·&nbsp; local milestones + Google Calendar events</p>
+      <p>Click any event card to see full details &nbsp;·&nbsp; local notes + Google Calendar</p>
     </div>
     <button class="popup-print-btn" onclick="window.print()">🖨 Print / Save PDF</button>
   </div>
@@ -1389,29 +1345,70 @@
 
   <div class="popup-legend">
     <strong style="color:#1e4a6e;">Legend</strong>
-    <div class="legend-item">
-      <div class="legend-swatch" style="background:#fff8e8;border-left:3px solid #f5a623;"></div>
-      <span>📌 Local note / milestone</span>
-    </div>
-    <div class="legend-item">
-      <div class="legend-swatch" style="background:#2c628f;"></div>
-      <span>🗓 Google Calendar event</span>
-    </div>
-    <div class="legend-item">
-      <div class="legend-swatch" style="background:#e6f2ff;outline:2px solid #2c628f;outline-offset:-1px;"></div>
-      <span>Today</span>
-    </div>
-    <div class="legend-item">
-      <div class="legend-swatch" style="background:#fdf8f3;"></div>
-      <span>Weekend</span>
-    </div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#fff8e8;border-left:3px solid #f5a623;"></div><span>📌 Local note</span></div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#2c628f;"></div><span>🗓 Google Calendar</span></div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#e6f2ff;outline:2px solid #2c628f;outline-offset:-1px;"></div><span>Today</span></div>
+    <span class="legend-hint">💡 Click any event to view full notes</span>
   </div>
 </div>
+
+<!-- Detail modal -->
+<div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)closeDetail()">
+  <div class="detail-box" id="detailBox"></div>
+</div>
+
+<script>
+const REGISTRY = ${registryJson};
+
+function showDetail(id) {
+  const ev = REGISTRY[id];
+  if (!ev) return;
+  const box = document.getElementById('detailBox');
+
+  const timeRow = ev.timeLabel
+    ? '<div class="detail-row"><span class="detail-icon">🕐</span><div><div class="detail-label">Time</div>' + escH(ev.timeLabel) + '</div></div>'
+    : '';
+
+  const notesRow = ev.notes
+    ? '<div class="detail-row"><span class="detail-icon">📝</span><div style="flex:1;min-width:0;"><div class="detail-label">Notes / Description</div><div class="detail-notes">' + escH(ev.notes) + '</div></div></div>'
+    : '<div class="detail-row"><span class="detail-icon">📝</span><span style="color:#9ca3af;font-size:0.83rem;font-style:italic;">No additional notes.</span></div>';
+
+  const linkBtn = ev.htmlLink
+    ? '<a class="detail-open-btn" href="' + escH(ev.htmlLink) + '" target="_blank">🔗 Open in Google Calendar</a>'
+    : '';
+
+  box.innerHTML =
+    '<div class="detail-header" style="background:' + escH(ev.color) + '">'
+    + '<div class="detail-header-text">'
+    + '<div class="detail-title">' + escH(ev.title) + '</div>'
+    + '<div class="detail-date">📅 ' + escH(ev.dateLabel) + '</div>'
+    + '</div>'
+    + '<button class="detail-close" onclick="closeDetail()">✕</button>'
+    + '</div>'
+    + '<div class="detail-body">'
+    + timeRow
+    + notesRow
+    + linkBtn
+    + '</div>';
+
+  document.getElementById('detailOverlay').classList.add('open');
+}
+
+function closeDetail() {
+  document.getElementById('detailOverlay').classList.remove('open');
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+
+function escH(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+<\/script>
 </body>
 </html>`;
 
     const popup = window.open('', `month_${year}_${month}`,
-      'width=1280,height=860,resizable=yes,scrollbars=yes,menubar=no,toolbar=no');
+      'width=1280,height=880,resizable=yes,scrollbars=yes,menubar=no,toolbar=no');
     if (!popup) {
       alert('Popup was blocked. Please allow popups for this page and try again.');
       return;
@@ -2156,6 +2153,13 @@
 
     wireFileToolbar();
     gcalInit();
+
+    // shared tooltip element for mini-calendar cells
+    if (!document.getElementById('miniTooltip')) {
+      const tip = document.createElement('div');
+      tip.id = 'miniTooltip';
+      document.body.appendChild(tip);
+    }
   }
   
   document.addEventListener('DOMContentLoaded', init);
