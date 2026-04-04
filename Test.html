@@ -486,20 +486,21 @@
         }
         .wv-day-header.wv-hasevents .wv-dname { color: #667eea; }
 
-        /* Fixed time grid — no scroll, all 11 rows (8–18) always visible */
+        /* Scrollable time grid — shows 8 AM–6 PM by default, scroll for outside hours */
         .wv-time-scroll {
             flex: 1; min-height: 0;
-            overflow: hidden;
+            overflow-y: scroll;
+            overflow-x: hidden;
         }
-        /* Inner grid matches the exact same column widths */
+        /* Inner grid: fixed cell height so 8–18 fits viewport, but grid covers 6AM–10PM */
         .wv-time-inner {
             display: grid;
             grid-template-columns: var(--gutter) repeat(7, minmax(0, 1fr));
-            height: 100%;   /* fill scroll container exactly */
-            grid-template-rows: repeat(11, 1fr);  /* 8,9,10,11,12,13,14,15,16,17,18 */
+            /* cell height set via JS after mount so 11 core rows fill available height */
         }
 
         .wv-time-label {
+            height: var(--cell-h);
             border-right: 1px solid #e0e0e0;
             border-bottom: 1px solid #f0f0f0;
             background: #f7fafc;
@@ -507,51 +508,63 @@
             padding: 7px 8px 0 0;
             font-size: 13px; font-weight: 600; color: #94a3b8;
             position: sticky; left: 0;
+            box-sizing: border-box;
         }
         .wv-time-label .wv-lbl-range {
             font-size: 10px; color: #c0c9d9; margin-top: 4px; display: block; text-align: right;
         }
 
         .wv-hour-cell {
+            height: var(--cell-h);
             border-right: 1px solid #e8ecf0;
             border-bottom: 1px solid #f0f0f0;
             cursor: pointer;
             transition: background .15s;
-            position: relative;   /* anchor for absolute event blocks */
+            position: relative;
             min-width: 0;
-            overflow: visible;    /* allow multi-hour blocks to extend below */
+            overflow: visible;
+            box-sizing: border-box;
         }
         .wv-hour-cell:hover { background: #f8faff; }
         .wv-hour-cell.wv-today  { background: #fffbeb; }
         .wv-hour-cell.wv-today:hover { background: #fef3c7; }
         .wv-hour-cell.wv-selcol { background: #eef2ff !important; }
 
-        /* ── Event block: fills full height, equal width shares ── */
+        /* ── Event block ── */
         .wv-event {
-            flex: 1;
+            flex: none;
             min-width: 0;
             max-width: 100%;
-            height: 100%;
             display: flex;
             flex-direction: column;
-            padding: 6px 7px 4px;
+            padding: 3px 6px 3px;
             overflow: hidden;
-            cursor: default;
-            position: relative;
-            border-left: 1px solid rgba(255,255,255,0.4);
+            cursor: pointer;
+            position: absolute;
+            left: 1px; right: 1px;
+            border-radius: 4px;
             box-sizing: border-box;
+            z-index: 3;
         }
-        .wv-event:first-child { border-left: none; }
+        .wv-event-time {
+            font-size: 10px; opacity: .85; font-weight: 600;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            flex-shrink: 0;
+            line-height: 1.4;
+        }
         .wv-event-title {
-            font-size: 13px; font-weight: 700; line-height: 1.3;
+            font-size: 12px; font-weight: 700; line-height: 1.3;
             overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        /* When event is tall enough, allow title to wrap up to 3 lines */
+        .wv-event.wv-event-tall .wv-event-title {
+            white-space: normal;
             display: -webkit-box;
             -webkit-line-clamp: 3;
             -webkit-box-orient: vertical;
-        }
-        .wv-event-time {
-            font-size: 11px; opacity: .75; margin-top: 3px;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .wv-event-del {
             position: absolute; top: 5px; right: 5px;
@@ -2976,10 +2989,15 @@
         const inner = document.createElement('div');
         inner.className = 'wv-time-inner';
 
+        // Grid covers 6 AM – 10 PM (17 rows). Cell height is chosen so that
+        // the 11 "core" rows (8–18) exactly fill the scroll viewport.
+        // We compute this after layout via rAF.
+        const HOUR_START = 6, HOUR_END = 22;  // grid range
+
         // Simple flat grid — one label + 7 cells per hour row, always exactly 8 items.
         // Multi-hour events use an absolutely-positioned overlay block that visually
         // extends downward, but the cell itself stays in its correct grid column.
-        for (let h = 8; h <= 18; h++) {
+        for (let h = HOUR_START; h <= HOUR_END; h++) {
             // Time label
             const lbl = document.createElement('div');
             lbl.className = 'wv-time-label';
@@ -3040,8 +3058,9 @@
                         ? `${timeStr(h)} – ${timeStr(endHour)}`
                         : timeStr(h);
 
-                    const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = task.title; ev.appendChild(title);
+                    // Time first, then title — so title stays visible even in short blocks
                     const time  = document.createElement('div'); time.className  = 'wv-event-time';  time.textContent  = timeLabel;   ev.appendChild(time);
+                    const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = task.title; ev.appendChild(title);
                     if (task.notes) {
                         const notes = document.createElement('div'); notes.className = 'wv-event-time';
                         notes.style.fontStyle = 'italic'; notes.textContent = '📝 ' + task.notes; ev.appendChild(notes);
@@ -3090,11 +3109,11 @@
                     ev.style.top        = (topFrac * 100).toFixed(3) + '%';
                     ev.dataset.spanHours = durationH;
 
-                    const badge = document.createElement('div'); badge.className = 'wv-event-time'; badge.textContent = '🗓 Google'; ev.appendChild(badge);
-                    const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = gev.title; ev.appendChild(title);
                     const st = gev.startDt ? gev.startDt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
                     const et = gev.endDt   ? gev.endDt.toLocaleTimeString('en-US',   { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+                    // Time row first, then title — so title is always at top when block is short
                     if (st) { const t2 = document.createElement('div'); t2.className = 'wv-event-time'; t2.textContent = st + (et ? ' – ' + et : ''); ev.appendChild(t2); }
+                    const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = gev.title; ev.appendChild(title);
                     ev.addEventListener('click',      (function(g){ return e => { e.stopPropagation(); showGcalEventPopup(g, ev); }; })(gev));
                     ev.addEventListener('mouseenter', (function(g){ return () => _delayedShow(ev, () => showGcalTip(ev, g)); })(gev));
                     cell.appendChild(ev);
@@ -3116,17 +3135,30 @@
         scroll.appendChild(inner);
         panel.appendChild(scroll);
 
-        // ── Post-layout: measure one cell height and apply pixel heights to all event blocks ──
+        // ── Post-layout: set cell height so 8–18 fills visible area, then scroll to 8 AM ──
         requestAnimationFrame(() => {
-            // Find any hour cell to measure its rendered height
-            const sampleCell = inner.querySelector('.wv-hour-cell');
-            if (!sampleCell) return;
-            const cellH = sampleCell.getBoundingClientRect().height;
-            if (!cellH) return;
+            const scrollH = scroll.getBoundingClientRect().height;
+            if (!scrollH) return;
+
+            // 11 core hours (8 AM – 6 PM inclusive) should exactly fill the viewport.
+            // The grid covers HOUR_START(6) to HOUR_END(22) = 17 rows total.
+            const CORE_ROWS = 11;  // 8,9,10,11,12,13,14,15,16,17,18
+            const cellH = Math.floor(scrollH / CORE_ROWS);
+
+            // Apply --cell-h so CSS height: var(--cell-h) on labels/cells takes effect
+            panel.style.setProperty('--cell-h', cellH + 'px');
+
+            // Apply pixel heights to all event blocks
             inner.querySelectorAll('.wv-event[data-span-hours]').forEach(ev => {
                 const spanH = parseFloat(ev.dataset.spanHours) || 1;
-                ev.style.height = (cellH * spanH - 2) + 'px';
+                const px = Math.round(cellH * spanH) - 2;
+                ev.style.height = px + 'px';
+                // Allow title to wrap when block is tall enough
+                if (px >= 44) ev.classList.add('wv-event-tall');
             });
+
+            // Scroll so 8 AM (row index = 8-HOUR_START = 2) is at the top
+            scroll.scrollTop = (8 - HOUR_START) * cellH;
         });
 
         // Insert left panel before the right schedule panel
