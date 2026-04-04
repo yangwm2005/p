@@ -311,6 +311,16 @@
         }
         .time-slots-full::-webkit-scrollbar { width: 5px; }
         .time-slots-full::-webkit-scrollbar-thumb { background: rgba(102,126,234,0.4); border-radius: 4px; }
+        /* Week view: no scroll, slots fill the available height proportionally */
+        #weekTimeSlots {
+            gap: 2px;
+            overflow: hidden;
+            padding-bottom: 0;
+        }
+        #weekTimeSlots .time-slot-full {
+            min-height: 0;
+            overflow: hidden;
+        }
         .time-slot-full {
             display: flex; border: 1px solid #e0e0e0; border-radius: 10px;
             background: white; min-height: 72px; flex-shrink: 0;
@@ -320,6 +330,11 @@
         .time-slot-span-3 { min-height: 222px; }
         .time-slot-span-4 { min-height: 297px; }
         .time-slot-span-5 { min-height: 372px; }
+        /* Week view overrides — flex grow proportionally, no min-heights */
+        #weekTimeSlots .time-slot-span-2 { flex: 2; }
+        #weekTimeSlots .time-slot-span-3 { flex: 3; }
+        #weekTimeSlots .time-slot-span-4 { flex: 4; }
+        #weekTimeSlots .time-slot-span-5 { flex: 5; }
         .time-label-full { width: 90px; padding: 8px 10px; background: #f7fafc; font-weight: 700; border-right: 1px solid #e0e0e0; flex-shrink: 0; font-size: 14px; display: flex; align-items: center; justify-content: center; border-radius: 10px 0 0 10px; color: #374151; }
         .slot-content-full { flex: 1; padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; justify-content: center; }
         .task-display { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #eef2ff; padding: 5px 10px; border-radius: 8px; border-left: 3px solid #667eea; }
@@ -471,20 +486,20 @@
         }
         .wv-day-header.wv-hasevents .wv-dname { color: #667eea; }
 
-        /* Scrollable time grid — uses overflow-y:scroll so bar is ALWAYS present */
+        /* Fixed time grid — no scroll, all 11 rows (8–18) always visible */
         .wv-time-scroll {
             flex: 1; min-height: 0;
-            overflow-y: scroll;  /* always show scrollbar → no layout shift */
+            overflow: hidden;
         }
         /* Inner grid matches the exact same column widths */
         .wv-time-inner {
             display: grid;
             grid-template-columns: var(--gutter) repeat(7, minmax(0, 1fr));
-            min-height: 100%;
+            height: 100%;   /* fill scroll container exactly */
+            grid-template-rows: repeat(11, 1fr);  /* 8,9,10,11,12,13,14,15,16,17,18 */
         }
 
         .wv-time-label {
-            height: var(--cell-h);
             border-right: 1px solid #e0e0e0;
             border-bottom: 1px solid #f0f0f0;
             background: #f7fafc;
@@ -498,18 +513,13 @@
         }
 
         .wv-hour-cell {
-            height: var(--cell-h);
             border-right: 1px solid #e8ecf0;
             border-bottom: 1px solid #f0f0f0;
-            display: flex;
-            align-items: stretch;
             cursor: pointer;
             transition: background .15s;
-            overflow: hidden;    /* clip content to grid column width */
-            overflow-y: visible; /* allow multi-hour blocks to extend below */
-            position: relative;
-            min-width: 0;        /* prevent flex/grid item from overflowing column */
-            width: 100%;
+            position: relative;   /* anchor for absolute event blocks */
+            min-width: 0;
+            overflow: visible;    /* allow multi-hour blocks to extend below */
         }
         .wv-hour-cell:hover { background: #f8faff; }
         .wv-hour-cell.wv-today  { background: #fffbeb; }
@@ -1065,7 +1075,7 @@
         </div>
     </div>
     <div style="text-align:center;padding:10px 20px;font-size:12px;color:#94a3b8;border-top:1px solid #e0e0e0;background:#fafafa;letter-spacing:0.03em;">
-        Copyright © 2026 Dr. Wen-Ming Yang &nbsp;·&nbsp; Monthplan v19 + Yearplan v10 (Integrated)
+        Copyright © 2026 Dr. Wen-Ming Yang &nbsp;·&nbsp; Monthplan v20 = v19 + Yearplan v10 (Integrated)
     </div>
 </div>
 
@@ -2990,34 +3000,44 @@
                 const localTasks = events[`${dk}-${h}`] || [];
                 const gcalEvs    = gcalGetForDate(dk).filter(e => !e.allDay && e.hour === h);
 
+                // Helper: position an event block with pixel-exact top/height
+                // topFrac and heightFrac are 0..1 fractions of the cell height
+                function placeEvent(ev, topFrac, heightFrac) {
+                    ev.style.position = 'absolute';
+                    ev.style.top      = (topFrac * 100).toFixed(3) + '%';
+                    ev.style.left     = '1px';
+                    ev.style.right    = '1px';
+                    ev.style.zIndex   = '3';
+                    ev.style.flex     = 'none';
+                    // height spans across multiple grid rows using cqh trick: use 100% of cell per hour
+                    // We need to convert heightFrac (fraction of ONE hour) to actual px via CSS
+                    // Since each grid row = 1 fraction of the total grid, we abuse a data attr
+                    ev.dataset.spanFrac = heightFrac.toFixed(4);
+                }
+
                 // Render local tasks
                 localTasks.forEach(task => {
-                    const span = (task.endHour && task.endHour > h && task.endHour <= 18)
-                        ? task.endHour - h : 1;
+                    const startMin = 0; // tasks are stored at whole hours
+                    const endHour  = (task.endHour && task.endHour > h && task.endHour <= 19) ? task.endHour : h + 1;
+                    const durationH = endHour - h;
 
                     const ev = document.createElement('div');
                     ev.className = 'wv-event';
-
-                    // Multi-hour: make the block absolutely positioned and extend downward
-                    if (span > 1) {
-                        ev.style.position = 'absolute';
-                        ev.style.top      = '0';
-                        ev.style.left     = '0';
-                        ev.style.right    = '0';
-                        // height = span rows minus border gap
-                        ev.style.height   = `calc(${span} * var(--cell-h) - 2px)`;
-                        ev.style.zIndex   = '3';
-                        ev.style.flex     = 'none';
-                        ev.style.borderLeft = 'none';
-                        cell.style.position = 'relative';
-                        cell.style.overflow = 'visible';
-                    }
-
                     ev.style.background = '#eef2ff';
                     ev.style.color      = '#1e293b';
+                    ev.style.position   = 'absolute';
+                    ev.style.top        = '0';
+                    ev.style.left       = '1px';
+                    ev.style.right      = '1px';
+                    ev.style.zIndex     = '3';
+                    ev.style.flex       = 'none';
+                    ev.style.borderLeft = 'none';
+                    // Height: spans durationH rows. Each row has the same height (1fr).
+                    // We store this for the post-layout resize step.
+                    ev.dataset.spanHours = durationH;
 
-                    const timeLabel = span > 1
-                        ? `${timeStr(h)} – ${timeStr(task.endHour)}`
+                    const timeLabel = durationH > 1
+                        ? `${timeStr(h)} – ${timeStr(endHour)}`
                         : timeStr(h);
 
                     const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = task.title; ev.appendChild(title);
@@ -3051,6 +3071,25 @@
                     ev.style.color      = 'white';
                     ev.style.borderLeft = 'none';
                     ev.style.cursor     = 'pointer';
+                    ev.style.position   = 'absolute';
+                    ev.style.left       = '1px';
+                    ev.style.right      = '1px';
+                    ev.style.zIndex     = '3';
+                    ev.style.flex       = 'none';
+
+                    // Compute top offset and duration from exact start/end times
+                    let topFrac = 0, durationH = 1;
+                    if (gev.startDt) {
+                        const sm = gev.startDt.getMinutes();
+                        topFrac = sm / 60;
+                    }
+                    if (gev.startDt && gev.endDt) {
+                        const durMs = gev.endDt - gev.startDt;
+                        durationH = Math.max(0.25, durMs / 3600000); // at least 15 min block
+                    }
+                    ev.style.top        = (topFrac * 100).toFixed(3) + '%';
+                    ev.dataset.spanHours = durationH;
+
                     const badge = document.createElement('div'); badge.className = 'wv-event-time'; badge.textContent = '🗓 Google'; ev.appendChild(badge);
                     const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = gev.title; ev.appendChild(title);
                     const st = gev.startDt ? gev.startDt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
@@ -3076,6 +3115,19 @@
 
         scroll.appendChild(inner);
         panel.appendChild(scroll);
+
+        // ── Post-layout: measure one cell height and apply pixel heights to all event blocks ──
+        requestAnimationFrame(() => {
+            // Find any hour cell to measure its rendered height
+            const sampleCell = inner.querySelector('.wv-hour-cell');
+            if (!sampleCell) return;
+            const cellH = sampleCell.getBoundingClientRect().height;
+            if (!cellH) return;
+            inner.querySelectorAll('.wv-event[data-span-hours]').forEach(ev => {
+                const spanH = parseFloat(ev.dataset.spanHours) || 1;
+                ev.style.height = (cellH * spanH - 2) + 'px';
+            });
+        });
 
         // Insert left panel before the right schedule panel
         layout.insertBefore(panel, document.getElementById('weekSchedulePanel'));
@@ -3123,11 +3175,21 @@
             const tk = `${dk}-${hour}`;
             const hourTasks = events[tk] || [];
             const spanTask = hourTasks.find(t => t.endHour && t.endHour > hour && t.endHour <= 18);
-            const spanH = spanTask ? (spanTask.endHour - hour) : 1;
+            // Also consider GCal events starting at this hour
+            const gcalAtHour = gcalGetForDate(dk).filter(e => !e.allDay && e.hour === hour);
+            const gcalMaxSpan = gcalAtHour.reduce((max, g) => {
+                if (g.startDt && g.endDt) {
+                    const durH = (g.endDt - g.startDt) / 3600000;
+                    return Math.max(max, Math.ceil(durH));
+                }
+                return max;
+            }, 1);
+            const spanH = Math.max(spanTask ? (spanTask.endHour - hour) : 1, gcalMaxSpan);
             for(let s=1;s<spanH;s++) skipped.add(hour+s);
 
             const slot = document.createElement('div');
             slot.className='time-slot-full';
+            slot.style.flex = spanH.toString();  // flex grow proportional to hours spanned
             if(spanH===2) slot.classList.add('time-slot-span-2');
             else if(spanH===3) slot.classList.add('time-slot-span-3');
             else if(spanH===4) slot.classList.add('time-slot-span-4');
