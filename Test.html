@@ -799,6 +799,19 @@
             color: #1e4a6e; cursor: pointer;
         }
         .yp-month-card-header:hover { background: #eef4fb; }
+        .yp-month-card-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0.5rem 0.6rem 0.5rem 0.8rem; }
+        .yp-header-title {
+            flex: 1; cursor: pointer; font-weight: 700; font-size: 0.95rem; color: #1e4a6e;
+            transition: color 0.15s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .yp-header-title:hover { color: #3730a3; text-decoration: underline; text-underline-offset: 2px; }
+        .yp-popout-btn {
+            flex-shrink: 0; background: rgba(44,98,143,0.1); border: 1px solid rgba(44,98,143,0.25);
+            color: #2c628f; border-radius: 6px; width: 22px; height: 22px; font-size: 12px; font-weight: 700;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            transition: background 0.15s, transform 0.1s; line-height: 1; padding: 0;
+        }
+        .yp-popout-btn:hover { background: #2c628f; color: white; transform: scale(1.08); }
         .yp-weekdays-mini {
             display: grid; grid-template-columns: repeat(7, 1fr);
             text-align: center; font-size: 0.65rem; font-weight: 600;
@@ -3356,12 +3369,31 @@
             const hdr = document.createElement('div');
             hdr.className = 'yp-month-card-header';
             const monthLabel = new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-            hdr.textContent = monthLabel;
-            hdr.title = 'Click to jump to Month View for ' + monthLabel;
-            hdr.addEventListener('click', () => {
+
+            // Title span: click → save + switch to month view
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'yp-header-title';
+            titleSpan.textContent = monthLabel;
+            titleSpan.title = 'Click to go to Month View for ' + monthLabel;
+            titleSpan.addEventListener('click', (e) => {
+                e.stopPropagation();
+                yp_fileSave();
                 currentDisplayMonth = new Date(year, month, 1);
                 switchView('classic');
             });
+
+            // Popout button: click → open full month grid popup window
+            const popoutBtn = document.createElement('button');
+            popoutBtn.className = 'yp-popout-btn';
+            popoutBtn.textContent = '↗';
+            popoutBtn.title = 'Open full month grid in popup window';
+            popoutBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                yp_openMonthPopup(year, month);
+            });
+
+            hdr.appendChild(titleSpan);
+            hdr.appendChild(popoutBtn);
             card.appendChild(hdr);
 
             const wkRow = document.createElement('div');
@@ -3738,6 +3770,222 @@
             document.body.addEventListener('wheel', onWheel, { passive: false });
         });
     })();
+
+    // ════════════════════════════════════
+    //  YEAR PLAN — FULL MONTH POPUP WINDOW
+    //  (ported from yearplan-v10 openMonthPopup)
+    // ════════════════════════════════════
+    function yp_openMonthPopup(year, month) {
+        const monthLong = new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+        const totalDays = yp_daysInMonth(year, month);
+        const firstDay  = yp_firstDay(year, month);
+        const today     = new Date();
+        const isTodayMon = today.getFullYear() === year && today.getMonth() === month;
+
+        function escP(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+        // Build event registry (local notes + GCal)
+        const eventRegistry = {};
+        let evIdCounter = 0;
+        const dayData = [];
+
+        for (let d = 1; d <= totalDays; d++) {
+            const dk   = yp_dk(year, month, d);
+            const date = new Date(year, month, d);
+            const note = yp_getNote(dk);
+            const gcEvs = gcalGetForDate(dk);
+
+            let noteId = null;
+            if (note) {
+                noteId = 'ev' + (evIdCounter++);
+                eventRegistry[noteId] = {
+                    type: 'local', title: '📌 Year Note',
+                    dateLabel: date.toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric', year:'numeric' }),
+                    timeLabel: 'All day / milestone', notes: note, color: '#b45309', htmlLink: ''
+                };
+            }
+
+            // Also include monthplan hourly tasks
+            const taskItems = [];
+            for (let h = 8; h <= 18; h++) {
+                const arr = events[`${dk}-${h}`] || [];
+                arr.forEach(task => {
+                    const tid = 'ev' + (evIdCounter++);
+                    eventRegistry[tid] = {
+                        type: 'task', title: task.title,
+                        dateLabel: date.toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric', year:'numeric' }),
+                        timeLabel: timeStr(h) + (task.endHour ? ' – ' + timeStr(task.endHour) : ''),
+                        notes: task.notes || '', color: '#4f46e5', htmlLink: ''
+                    };
+                    taskItems.push({ id: tid, title: task.title, hour: h });
+                });
+            }
+
+            const gcEvIds = gcEvs.map(ge => {
+                const id = 'ev' + (evIdCounter++);
+                let tLabel = '';
+                if (!ge.allDay && ge.startDt) {
+                    tLabel = ge.startDt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+                    if (ge.endDt) tLabel += ' – ' + ge.endDt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+                } else { tLabel = 'All day'; }
+                eventRegistry[id] = {
+                    type: 'gcal', title: ge.title,
+                    dateLabel: date.toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric', year:'numeric' }),
+                    timeLabel: tLabel, notes: ge.description || '', color: ge.color || '#2c628f', htmlLink: ge.htmlLink || ''
+                };
+                return { id, ge };
+            });
+
+            dayData.push({
+                d, dk, note, noteId, taskItems, gcEvIds,
+                isToday: isTodayMon && d === today.getDate(),
+                isWeekend: date.getDay() === 0 || date.getDay() === 6
+            });
+        }
+
+        // Build cell HTML
+        function cellHTML(info) {
+            if (!info) return '<div class="day-cell empty"></div>';
+            const { d, note, noteId, taskItems, gcEvIds, isToday, isWeekend } = info;
+            const cls = ['day-cell', isToday?'today':'', isWeekend?'weekend':'', (note||taskItems.length||gcEvIds.length)?'has-content':''].filter(Boolean).join(' ');
+            const date = new Date(year, month, d);
+            const wdShort = date.toLocaleDateString(undefined, {weekday:'short'}).toUpperCase().substring(0,3);
+            const todayNumCls = isToday ? ' today-num' : '';
+
+            const noteBlock = note
+                ? `<div class="ev-local ev-clickable" onclick="showDetail('${noteId}')">📌 ${escP(note.length>80?note.substring(0,78)+'…':note)}</div>`
+                : '';
+            const taskBlocks = taskItems.map(t =>
+                `<div class="ev-task ev-clickable" onclick="showDetail('${t.id}')"><span class="ev-task-time">${timeStr_p(t.hour)}</span> ${escP(t.title)}</div>`
+            ).join('');
+            const gcBlocks = gcEvIds.map(({id, ge}) => {
+                const reg = eventRegistry[id];
+                return `<div class="ev-gcal ev-clickable" style="background:${escP(ge.color||'#2c628f')}" onclick="showDetail('${id}')"><span class="ev-gcal-title">${escP(ge.title)}</span><span class="ev-gcal-time">${escP(reg.timeLabel)}</span></div>`;
+            }).join('');
+
+            return `<div class="${cls}"><div class="day-header"><span class="day-num${todayNumCls}">${d}</span><span class="day-name">${wdShort}</span></div><div class="day-events">${noteBlock}${taskBlocks}${gcBlocks}${(!note&&!taskItems.length&&!gcEvIds.length)?'<span class="ev-empty">—</span>':''}</div></div>`;
+        }
+
+        let gridCells = '';
+        for (let i = 0; i < firstDay; i++) gridCells += '<div class="day-cell empty"></div>';
+        dayData.forEach(info => { gridCells += cellHTML(info); });
+
+        const registryJson = JSON.stringify(eventRegistry).replace(/<\/script>/gi,'<\\/script>');
+
+        // timeStr helper for popup (no access to parent scope)
+        function timeStr_p(h) { return `${h<=12?h:h-12}:00 ${h<12?'AM':'PM'}`; }
+
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escP(monthLong)} — Full View</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, 'Segoe UI', 'Inter', sans-serif; background: #eef2f8; padding: 24px; min-height: 100vh; }
+  .popup-wrap { max-width: 1400px; margin: 0 auto; background: white; border-radius: 1.5rem; box-shadow: 0 20px 50px rgba(0,0,0,0.18); overflow: hidden; }
+  .popup-header { background: linear-gradient(135deg, #1a3c5e, #0f2b42); color: white; padding: 1.2rem 2rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .popup-header h1 { font-size: 1.8rem; font-weight: 700; }
+  .popup-header p  { font-size: 0.82rem; opacity: 0.65; margin-top: 4px; }
+  .popup-print-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 8px 20px; border-radius: 30px; cursor: pointer; font-size: 13px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+  .popup-print-btn:hover { background: rgba(255,255,255,0.28); }
+  .weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); background: #f0f5fa; border-bottom: 2px solid #dce8f0; }
+  .weekday-row span { text-align: center; padding: 0.6rem 0; font-size: 0.78rem; font-weight: 700; color: #3a6b8c; text-transform: uppercase; letter-spacing: 0.07em; }
+  .weekday-row span.wkend { color: #b45309; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background: #d0dde8; }
+  .day-cell { background: white; min-height: 148px; display: flex; flex-direction: column; }
+  .day-cell.empty   { background: #f4f8fc; }
+  .day-cell.weekend { background: #fdf8f3; }
+  .day-cell.today   { background: #e6f2ff !important; outline: 2px solid #2c628f; outline-offset: -2px; }
+  .day-cell.has-content { background: #fffef9; }
+  .day-cell.weekend.has-content { background: #fffaf3; }
+  .day-header { display: flex; align-items: center; gap: 7px; padding: 8px 10px 5px; border-bottom: 1px solid #eff4f9; flex-shrink: 0; }
+  .day-num { font-size: 1.1rem; font-weight: 800; color: #1e4a6e; min-width: 28px; line-height: 1; }
+  .day-num.today-num { background: #2c628f; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 0.92rem; min-width: unset; }
+  .day-name { font-size: 0.66rem; color: #9ab0c8; font-weight: 700; letter-spacing: 0.06em; }
+  .day-events { padding: 5px 8px 8px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+  .ev-empty { font-size: 0.65rem; color: #d0dde8; padding: 2px 0; }
+  .ev-clickable { cursor: pointer; transition: filter 0.12s, transform 0.1s; }
+  .ev-clickable:hover { filter: brightness(0.9); transform: translateY(-1px); }
+  .ev-local { background: #fff8e8; border-left: 3px solid #f5a623; color: #7c4b00; font-size: 0.76rem; font-weight: 600; padding: 5px 9px; border-radius: 0 6px 6px 0; line-height: 1.45; word-break: break-word; }
+  .ev-task { background: #eef2ff; border-left: 3px solid #4f46e5; color: #1e1b4b; font-size: 0.74rem; font-weight: 600; padding: 4px 8px; border-radius: 0 6px 6px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ev-task-time { font-size: 0.65rem; color: #6366f1; font-weight: 700; margin-right: 4px; }
+  .ev-gcal { border-radius: 5px; padding: 5px 9px; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+  .ev-gcal-title { font-size: 0.74rem; font-weight: 600; color: white; word-break: break-word; line-height: 1.35; }
+  .ev-gcal-time  { font-size: 0.64rem; color: rgba(255,255,255,0.78); }
+  .detail-overlay { display: none; position: fixed; inset: 0; background: rgba(10,25,45,0.55); backdrop-filter: blur(3px); z-index: 9000; align-items: center; justify-content: center; }
+  .detail-overlay.open { display: flex; }
+  .detail-box { background: white; border-radius: 18px; width: min(520px, 92vw); max-height: 80vh; overflow-y: auto; box-shadow: 0 24px 60px rgba(0,0,0,0.35); display: flex; flex-direction: column; }
+  .detail-header { padding: 18px 22px 14px; border-radius: 18px 18px 0 0; display: flex; align-items: flex-start; gap: 12px; flex-shrink: 0; }
+  .detail-header-text { flex: 1; min-width: 0; }
+  .detail-title { font-size: 1.15rem; font-weight: 700; color: white; line-height: 1.3; word-break: break-word; }
+  .detail-date  { font-size: 0.78rem; color: rgba(255,255,255,0.75); margin-top: 5px; }
+  .detail-close { background: rgba(255,255,255,0.2); border: none; color: white; border-radius: 8px; width: 28px; height: 28px; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .detail-close:hover { background: rgba(255,255,255,0.38); }
+  .detail-body { padding: 18px 22px 22px; flex: 1; }
+  .detail-row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 14px; font-size: 0.88rem; color: #374151; }
+  .detail-row:last-child { margin-bottom: 0; }
+  .detail-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+  .detail-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #9ca3af; margin-bottom: 3px; }
+  .detail-notes { background: #f8faff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; font-size: 0.85rem; color: #1e293b; line-height: 1.65; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
+  .detail-open-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; background: #2c628f; color: white; border: none; border-radius: 8px; padding: 9px 18px; font-size: 0.84rem; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .detail-open-btn:hover { background: #1e4a6e; }
+  .popup-legend { background: #f7fafd; border-top: 1px solid #dce8f0; padding: 12px 24px; display: flex; gap: 24px; flex-wrap: wrap; align-items: center; font-size: 0.75rem; color: #4b6e8a; }
+  .legend-item { display: flex; align-items: center; gap: 7px; }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+  .legend-hint { margin-left: auto; font-size: 0.72rem; color: #9ab0c8; font-style: italic; }
+  @media print { body { background: white; padding: 0; } .popup-wrap { box-shadow: none; border-radius: 0; max-width: none; } .popup-print-btn, .detail-overlay { display: none !important; } .day-cell { min-height: 100px; } .cal-grid { gap: 0.5px; } }
+</style>
+</head>
+<body>
+<div class="popup-wrap">
+  <div class="popup-header">
+    <div><h1>📅 ${escP(monthLong)}</h1><p>Year notes · Scheduled tasks · Google Calendar events &nbsp;·&nbsp; Click any event for full details</p></div>
+    <button class="popup-print-btn" onclick="window.print()">🖨 Print / Save PDF</button>
+  </div>
+  <div class="weekday-row">
+    <span class="wkend">Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span class="wkend">Sat</span>
+  </div>
+  <div class="cal-grid">${gridCells}</div>
+  <div class="popup-legend">
+    <strong style="color:#1e4a6e;">Legend</strong>
+    <div class="legend-item"><div class="legend-swatch" style="background:#fff8e8;border-left:3px solid #f5a623;"></div><span>📌 Year note</span></div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#eef2ff;border-left:3px solid #4f46e5;"></div><span>🗂 Scheduled task</span></div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#2c628f;"></div><span>🗓 Google Calendar</span></div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#e6f2ff;outline:2px solid #2c628f;outline-offset:-1px;"></div><span>Today</span></div>
+    <span class="legend-hint">💡 Click any event to view full details</span>
+  </div>
+</div>
+<div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)closeDetail()">
+  <div class="detail-box" id="detailBox"></div>
+</div>
+<script>
+const REGISTRY = ${registryJson};
+function timeStr_p(h) { return (h<=12?h:h-12)+':00 '+(h<12?'AM':'PM'); }
+function showDetail(id) {
+  const ev = REGISTRY[id]; if (!ev) return;
+  const box = document.getElementById('detailBox');
+  const timeRow = ev.timeLabel ? '<div class="detail-row"><span class="detail-icon">🕐</span><div><div class="detail-label">Time</div>'+escH(ev.timeLabel)+'</div></div>' : '';
+  const notesRow = ev.notes ? '<div class="detail-row"><span class="detail-icon">📝</span><div style="flex:1;min-width:0;"><div class="detail-label">Notes / Description</div><div class="detail-notes">'+escH(ev.notes)+'</div></div></div>' : '<div class="detail-row"><span class="detail-icon">📝</span><span style="color:#9ca3af;font-size:0.83rem;font-style:italic;">No additional notes.</span></div>';
+  const linkBtn = ev.htmlLink ? '<a class="detail-open-btn" href="'+escH(ev.htmlLink)+'" target="_blank">🔗 Open in Google Calendar</a>' : '';
+  box.innerHTML = '<div class="detail-header" style="background:'+escH(ev.color)+'"><div class="detail-header-text"><div class="detail-title">'+escH(ev.title)+'</div><div class="detail-date">📅 '+escH(ev.dateLabel)+'</div></div><button class="detail-close" onclick="closeDetail()">✕</button></div><div class="detail-body">'+timeRow+notesRow+linkBtn+'</div>';
+  document.getElementById('detailOverlay').classList.add('open');
+}
+function closeDetail() { document.getElementById('detailOverlay').classList.remove('open'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+function escH(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+<\/script>
+</body>
+</html>`;
+
+        const popup = window.open('', `yp_month_${year}_${month}`, 'width=1280,height=880,resizable=yes,scrollbars=yes,menubar=no,toolbar=no');
+        if (!popup) { alert('Popup was blocked. Please allow popups for this page and try again.'); return; }
+        popup.document.open(); popup.document.write(html); popup.document.close(); popup.focus();
+    }
+    // ════════════════════════════════════
+    //  END YEAR PLAN POPUP
+    // ════════════════════════════════════
 
     // ── init yearplan ──
     function yp_init() {
