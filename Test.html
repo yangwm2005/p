@@ -412,8 +412,20 @@
             flex-direction: column;
             border-right: 2px solid #e0e0e0;
             overflow: hidden;
-            --gutter: 68px;          /* time-label column width */
-            --cell-h: 90px;          /* hour row height — tall enough to read */
+            --gutter: 68px;
+            --cell-h: 90px;
+            transition: width 0.25s ease;
+        }
+        /* Expanded: full width when schedule panel hidden */
+        .week-layout.schedule-hidden .week-cal-panel {
+            width: 100%;
+            border-right: none;
+        }
+        .week-schedule-panel {
+            transition: width 0.25s ease, opacity 0.2s ease;
+        }
+        .week-layout.schedule-hidden .week-schedule-panel {
+            display: none;
         }
 
         /* ── The key to alignment:
@@ -1070,6 +1082,7 @@
                 <button class="nav-btn" id="nextWeekBtn">Next Week →</button>
             </div>
             <div class="current-month" id="weekRangeLabel"></div>
+            <button class="nav-btn" id="toggleScheduleBtn" title="Toggle daily schedule panel" style="background:#f1f5f9;color:#4a5568;border:1px solid #d1d5db;font-size:13px;">⇄ Hide Schedule</button>
         </div>
         <div class="week-layout" id="weekLayout">
             <!-- Left: week calendar panel (built by JS) -->
@@ -2991,12 +3004,69 @@
 
         // Grid covers 6 AM – 10 PM (17 rows). Cell height is chosen so that
         // the 11 "core" rows (8–18) exactly fill the scroll viewport.
-        // We compute this after layout via rAF.
-        const HOUR_START = 6, HOUR_END = 22;  // grid range
+        const HOUR_START = 6, HOUR_END = 22;
 
-        // Simple flat grid — one label + 7 cells per hour row, always exactly 8 items.
-        // Multi-hour events use an absolutely-positioned overlay block that visually
-        // extends downward, but the cell itself stays in its correct grid column.
+        // ── Pre-compute overlap columns for each day ──
+        // Each event gets a column index and total column count so we can
+        // divide the cell width evenly among overlapping events.
+        //
+        // Algorithm (greedy lane assignment, Google Calendar style):
+        //   1. Collect all events for the day with their [startMin, endMin] in minutes-from-midnight.
+        //   2. Sort by start time.
+        //   3. For each event, find the first lane whose last event ends before this one starts.
+        //   4. Record {lane, totalLanes} — totalLanes is determined after all events are placed.
+
+        const dayEventLayouts = {};  // dk -> array of {evKey, startMin, endMin, lane}
+
+        days.forEach(d => {
+            const dk = fdk(d);
+            const allEvs = [];
+
+            // Local tasks for every hour of the day
+            for (let h = HOUR_START; h <= HOUR_END; h++) {
+                (events[`${dk}-${h}`] || []).forEach(task => {
+                    const startMin = h * 60;
+                    const endHour  = (task.endHour && task.endHour > h) ? task.endHour : h + 1;
+                    const endMin   = endHour * 60;
+                    allEvs.push({ type: 'local', key: `local-${task.id}-${h}`, task, hour: h, startMin, endMin });
+                });
+            }
+            // GCal timed events
+            gcalGetForDate(dk).filter(e => !e.allDay).forEach(gev => {
+                const startMin = gev.startDt
+                    ? gev.startDt.getHours() * 60 + gev.startDt.getMinutes()
+                    : gev.hour * 60;
+                const endMin = gev.endDt
+                    ? gev.endDt.getHours() * 60 + gev.endDt.getMinutes()
+                    : startMin + 60;
+                allEvs.push({ type: 'gcal', key: `gcal-${gev.id}`, gev, hour: gev.hour, startMin, endMin: Math.max(endMin, startMin + 15) });
+            });
+
+            // Sort by start time, then longer events first
+            allEvs.sort((a, b) => a.startMin - b.startMin || (b.endMin - b.startMin) - (a.endMin - a.startMin));
+
+            // Greedy lane assignment
+            const lanes = [];  // lanes[i] = endMin of last event in that lane
+            allEvs.forEach(ev => {
+                let lane = lanes.findIndex(end => end <= ev.startMin);
+                if (lane === -1) { lane = lanes.length; }
+                lanes[lane] = ev.endMin;
+                ev.lane = lane;
+            });
+
+            // Second pass: totalLanes = max overlapping at any point
+            // Simpler: for each event, count how many others overlap it
+            allEvs.forEach(ev => {
+                const overlaps = allEvs.filter(o =>
+                    o !== ev && o.startMin < ev.endMin && o.endMin > ev.startMin
+                );
+                ev.totalLanes = overlaps.length > 0 ? Math.max(ev.lane, ...overlaps.map(o => o.lane)) + 1 : 1;
+            });
+
+            dayEventLayouts[dk] = allEvs;
+        });
+
+        // Build the grid rows
         for (let h = HOUR_START; h <= HOUR_END; h++) {
             // Time label
             const lbl = document.createElement('div');
@@ -3004,7 +3074,7 @@
             lbl.textContent = timeStr(h);
             inner.appendChild(lbl);
 
-            // 7 day cells — always one per day per hour row
+            // 7 day cells
             days.forEach(d => {
                 const dk      = fdk(d);
                 const isToday = dk === todayK;
@@ -3015,107 +3085,69 @@
                     + (isToday ? ' wv-today'  : '')
                     + (isSel   ? ' wv-selcol' : '');
 
-                const localTasks = events[`${dk}-${h}`] || [];
-                const gcalEvs    = gcalGetForDate(dk).filter(e => !e.allDay && e.hour === h);
+                // Only render events whose anchor hour (startHour) is this row
+                const dayEvs = dayEventLayouts[dk] || [];
 
-                // Helper: position an event block with pixel-exact top/height
-                // topFrac and heightFrac are 0..1 fractions of the cell height
-                function placeEvent(ev, topFrac, heightFrac) {
-                    ev.style.position = 'absolute';
-                    ev.style.top      = (topFrac * 100).toFixed(3) + '%';
-                    ev.style.left     = '1px';
-                    ev.style.right    = '1px';
-                    ev.style.zIndex   = '3';
-                    ev.style.flex     = 'none';
-                    // height spans across multiple grid rows using cqh trick: use 100% of cell per hour
-                    // We need to convert heightFrac (fraction of ONE hour) to actual px via CSS
-                    // Since each grid row = 1 fraction of the total grid, we abuse a data attr
-                    ev.dataset.spanFrac = heightFrac.toFixed(4);
-                }
-
-                // Render local tasks
-                localTasks.forEach(task => {
-                    const startMin = 0; // tasks are stored at whole hours
-                    const endHour  = (task.endHour && task.endHour > h && task.endHour <= 19) ? task.endHour : h + 1;
-                    const durationH = endHour - h;
-
+                dayEvs.filter(e => e.hour === h).forEach(evInfo => {
                     const ev = document.createElement('div');
                     ev.className = 'wv-event';
-                    ev.style.background = '#eef2ff';
-                    ev.style.color      = '#1e293b';
-                    ev.style.position   = 'absolute';
-                    ev.style.top        = '0';
-                    ev.style.left       = '1px';
-                    ev.style.right      = '1px';
-                    ev.style.zIndex     = '3';
-                    ev.style.flex       = 'none';
-                    ev.style.borderLeft = 'none';
-                    // Height: spans durationH rows. Each row has the same height (1fr).
-                    // We store this for the post-layout resize step.
-                    ev.dataset.spanHours = durationH;
 
-                    const timeLabel = durationH > 1
-                        ? `${timeStr(h)} – ${timeStr(endHour)}`
-                        : timeStr(h);
+                    // Horizontal position based on lane
+                    const totalLanes = evInfo.totalLanes || 1;
+                    const lane       = evInfo.lane || 0;
+                    const pct        = 100 / totalLanes;
+                    ev.style.left  = (lane * pct).toFixed(2) + '%';
+                    ev.style.right = ((totalLanes - lane - 1) * pct).toFixed(2) + '%';
 
-                    // Time first, then title — so title stays visible even in short blocks
-                    const time  = document.createElement('div'); time.className  = 'wv-event-time';  time.textContent  = timeLabel;   ev.appendChild(time);
-                    const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = task.title; ev.appendChild(title);
-                    if (task.notes) {
-                        const notes = document.createElement('div'); notes.className = 'wv-event-time';
-                        notes.style.fontStyle = 'italic'; notes.textContent = '📝 ' + task.notes; ev.appendChild(notes);
+                    // Vertical: top from minutes within the hour
+                    const topFrac = (evInfo.startMin - h * 60) / 60;
+                    ev.style.top  = (topFrac * 100).toFixed(3) + '%';
+
+                    // Duration in hours (may be fractional)
+                    const durationH = (evInfo.endMin - evInfo.startMin) / 60;
+                    ev.dataset.spanHours = durationH.toFixed(4);
+
+                    if (evInfo.type === 'local') {
+                        const task = evInfo.task;
+                        ev.style.background = '#eef2ff';
+                        ev.style.color      = '#1e293b';
+                        const timeLabel = durationH > 1
+                            ? `${timeStr(evInfo.hour)} – ${timeStr(task.endHour || evInfo.hour + 1)}`
+                            : timeStr(evInfo.hour);
+                        const time  = document.createElement('div'); time.className = 'wv-event-time'; time.textContent = timeLabel; ev.appendChild(time);
+                        const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = task.title; ev.appendChild(title);
+                        if (task.notes) {
+                            const notes = document.createElement('div'); notes.className = 'wv-event-time';
+                            notes.style.fontStyle = 'italic'; notes.textContent = '📝 ' + task.notes; ev.appendChild(notes);
+                        }
+                        const del = document.createElement('button'); del.className = 'wv-event-del'; del.textContent = '✕';
+                        del.addEventListener('mousedown', e => e.preventDefault());
+                        del.addEventListener('click', e => { e.stopPropagation(); deleteTask(dk, evInfo.hour, task.id); });
+                        ev.appendChild(del);
+                        ev.style.cursor = 'pointer';
+                        ev.addEventListener('mouseenter', () => _delayedShow(ev, () => showTaskTip(ev, task, evInfo.hour)));
+                        (function(t, capturedH, capturedDate) {
+                            ev.addEventListener('click', e => {
+                                if (e.target.closest('.wv-event-del')) return;
+                                e.stopPropagation();
+                                showTaskPopup(t, capturedH, capturedDate, ev);
+                            });
+                        })(task, evInfo.hour, new Date(d.getFullYear(), d.getMonth(), d.getDate()));
+
+                    } else {
+                        const gev  = evInfo.gev;
+                        const base = gev.color || '#ea4335';
+                        ev.style.background = base;
+                        ev.style.color      = 'white';
+                        ev.style.cursor     = 'pointer';
+                        const st = gev.startDt ? gev.startDt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+                        const et = gev.endDt   ? gev.endDt.toLocaleTimeString('en-US',   { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+                        if (st) { const t2 = document.createElement('div'); t2.className = 'wv-event-time'; t2.textContent = st + (et ? ' – ' + et : ''); ev.appendChild(t2); }
+                        const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = gev.title; ev.appendChild(title);
+                        ev.addEventListener('click',      (function(g){ return e => { e.stopPropagation(); showGcalEventPopup(g, ev); }; })(gev));
+                        ev.addEventListener('mouseenter', (function(g){ return () => _delayedShow(ev, () => showGcalTip(ev, g)); })(gev));
                     }
-                    const del = document.createElement('button'); del.className = 'wv-event-del'; del.textContent = '✕';
-                    del.addEventListener('mousedown', e => e.preventDefault());
-                    del.addEventListener('click', e => { e.stopPropagation(); deleteTask(dk, h, task.id); });
-                    ev.appendChild(del);
-                    ev.style.cursor = 'pointer';
-                    ev.addEventListener('mouseenter', () => _delayedShow(ev, () => showTaskTip(ev, task, h)));
-                    (function(capturedTask, capturedH, capturedDate) {
-                        ev.addEventListener('click', e => {
-                            if (e.target === del || del.contains(e.target)) return;
-                            e.stopPropagation();
-                            showTaskPopup(capturedTask, capturedH, capturedDate, ev);
-                        });
-                    })(task, h, new Date(d.getFullYear(), d.getMonth(), d.getDate()));
-                    cell.appendChild(ev);
-                });
 
-                // Render Google Calendar events
-                gcalEvs.forEach(gev => {
-                    const ev = document.createElement('div');
-                    ev.className = 'wv-event';
-                    const base = gev.color || '#ea4335';
-                    ev.style.background = base;
-                    ev.style.color      = 'white';
-                    ev.style.borderLeft = 'none';
-                    ev.style.cursor     = 'pointer';
-                    ev.style.position   = 'absolute';
-                    ev.style.left       = '1px';
-                    ev.style.right      = '1px';
-                    ev.style.zIndex     = '3';
-                    ev.style.flex       = 'none';
-
-                    // Compute top offset and duration from exact start/end times
-                    let topFrac = 0, durationH = 1;
-                    if (gev.startDt) {
-                        const sm = gev.startDt.getMinutes();
-                        topFrac = sm / 60;
-                    }
-                    if (gev.startDt && gev.endDt) {
-                        const durMs = gev.endDt - gev.startDt;
-                        durationH = Math.max(0.25, durMs / 3600000); // at least 15 min block
-                    }
-                    ev.style.top        = (topFrac * 100).toFixed(3) + '%';
-                    ev.dataset.spanHours = durationH;
-
-                    const st = gev.startDt ? gev.startDt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
-                    const et = gev.endDt   ? gev.endDt.toLocaleTimeString('en-US',   { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
-                    // Time row first, then title — so title is always at top when block is short
-                    if (st) { const t2 = document.createElement('div'); t2.className = 'wv-event-time'; t2.textContent = st + (et ? ' – ' + et : ''); ev.appendChild(t2); }
-                    const title = document.createElement('div'); title.className = 'wv-event-title'; title.textContent = gev.title; ev.appendChild(title);
-                    ev.addEventListener('click',      (function(g){ return e => { e.stopPropagation(); showGcalEventPopup(g, ev); }; })(gev));
-                    ev.addEventListener('mouseenter', (function(g){ return () => _delayedShow(ev, () => showGcalTip(ev, g)); })(gev));
                     cell.appendChild(ev);
                 });
 
@@ -3315,6 +3347,21 @@
     document.getElementById('todayWeekBtn').onclick=()=>{
         weekStartDate=new Date(); weekStartDate.setDate(weekStartDate.getDate()-weekStartDate.getDay()); weekStartDate.setHours(0,0,0,0);
         renderWeekView();
+    };
+
+    // ── Toggle daily schedule panel ──
+    let scheduleVisible = true;
+    document.getElementById('toggleScheduleBtn').onclick = () => {
+        scheduleVisible = !scheduleVisible;
+        const layout = document.getElementById('weekLayout');
+        const btn    = document.getElementById('toggleScheduleBtn');
+        layout.classList.toggle('schedule-hidden', !scheduleVisible);
+        btn.textContent = scheduleVisible ? '⇄ Hide Schedule' : '⇄ Show Schedule';
+        btn.style.background = scheduleVisible ? '#f1f5f9' : '#667eea';
+        btn.style.color      = scheduleVisible ? '#4a5568'  : 'white';
+        btn.style.border     = scheduleVisible ? '1px solid #d1d5db' : 'none';
+        // Re-render after layout settles so cell height recalculates
+        setTimeout(() => renderWeekView(), 50);
     };
 
     function switchView(view) {
