@@ -309,7 +309,7 @@
         .btn-save:hover { background: #5a67d8; }
 
         /* Schedule panel */
-        .daily-schedule-section { flex: 1; padding: 12px 16px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+        .daily-schedule-section { flex: 1; padding: 0; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
         .schedule-header-classic { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 10px 16px; border-radius: 10px; margin-bottom: 8px; flex-shrink: 0; }
         .schedule-date-classic { font-size: 17px; font-weight: 700; }
 
@@ -716,12 +716,13 @@
             border: 1px solid #e0e0e0;
         }
         .wsp-new-popup h4 { font-size: 14px; font-weight: 700; color: #1e293b; margin-bottom: 10px; }
-        .wsp-new-popup input[type=text] {
+        .wsp-new-popup input[type=text], .wsp-new-popup textarea {
             width: 100%; border: 1px solid #d1d5db; border-radius: 8px;
             padding: 7px 10px; font-size: 13px; font-family: inherit;
-            margin-bottom: 8px;
+            margin-bottom: 8px; box-sizing: border-box;
         }
-        .wsp-new-popup input:focus { outline: none; border-color: #667eea; }
+        .wsp-new-popup textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
+        .wsp-new-popup input:focus, .wsp-new-popup textarea:focus { outline: none; border-color: #667eea; }
         .wsp-new-popup-row { display: flex; gap: 8px; justify-content: flex-end; }
         .wsp-new-popup-row button {
             border: none; border-radius: 7px; padding: 6px 14px;
@@ -1211,16 +1212,18 @@
                 </div>
                 <div class="calendar-grid" id="calendarGrid"></div>
             </div>
-            <div class="daily-schedule-section">
-                <div class="schedule-header-classic">
-                    <div class="schedule-date-classic" id="classicScheduleDate">Select a day to view schedule</div>
-                    <div style="font-size:14px;margin-top:4px;">⏰ 8:00 AM – 6:00 PM &nbsp;•&nbsp; Type and press Enter to save</div>
+            <div class="daily-schedule-section" id="classicScheduleSection">
+                <div class="wsp-header">
+                    <div class="wsp-date" id="classicScheduleDate">Select a day to view schedule</div>
+                    <div class="wsp-sub">Drag to create · Click event to edit · Scroll for full day</div>
                 </div>
-                <div class="schedule-allday-strip" id="scheduleAlldayStrip">
-                    <div class="sad-label">📌 All-day Events</div>
+                <div class="wsp-allday-strip" id="scheduleAlldayStrip">
+                    <div class="wsp-allday-label">📌 All-day</div>
                     <div id="scheduleAlldayList"></div>
                 </div>
-                <div class="time-slots-full" id="classicTimeSlots"></div>
+                <div class="wsp-scroll" id="classicWspScroll">
+                    <div class="wsp-inner" id="classicWspInner"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -2508,7 +2511,6 @@
     function showTaskPopup(task, hour, date, anchorEl) {
         const existing = document.getElementById('gcalEventPopup');
         if (existing) {
-            // If same anchor clicked again → just close (toggle off)
             if (existing._anchorEl === anchorEl) { existing.remove(); return; }
             existing.remove();
         }
@@ -2517,8 +2519,9 @@
         popup.className = 'gcal-event-popup';
         popup.id = 'gcalEventPopup';
         popup._anchorEl = anchorEl;
+        popup.style.width = '340px';
 
-        // ── Header (matches showGcalEventPopup style) ──
+        // ── Header ──
         const hdr = document.createElement('div');
         hdr.className = 'gcal-popup-header';
         hdr.style.background = '#667eea';
@@ -2532,46 +2535,110 @@
         closeBtn.textContent = '✕';
         closeBtn.addEventListener('click', () => popup.remove());
 
-        hdr.appendChild(titleEl);
-        hdr.appendChild(closeBtn);
+        hdr.appendChild(titleEl); hdr.appendChild(closeBtn);
         popup.appendChild(hdr);
 
-        // ── Body ──
+        // ── Body: editable form ──
         const body = document.createElement('div');
         body.className = 'gcal-popup-body';
+        body.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
 
-        // Date + time row (combined, like GCal popup's timeText row)
+        // Date + time info row
         const timeLabel = (task.endHour && task.endHour > hour)
             ? `${timeStr(hour)} – ${timeStr(task.endHour)}`
             : timeStr(hour);
         const dateStr = date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
-        const timeRow = document.createElement('div');
-        timeRow.className = 'gcal-popup-row';
-        timeRow.innerHTML = `<span class="gcal-popup-icon">🗓</span><span>${esc(dateStr)}, ${esc(timeLabel)}</span>`;
-        body.appendChild(timeRow);
+        const infoRow = document.createElement('div');
+        infoRow.className = 'gcal-popup-row';
+        infoRow.innerHTML = `<span class="gcal-popup-icon">🗓</span><span style="font-size:13px;color:#374151;">${esc(dateStr)}, ${esc(timeLabel)}</span>`;
+        body.appendChild(infoRow);
 
-        // Notes row — only shown when notes exist (matches GCal description row exactly)
-        if (task.notes) {
-            const row = document.createElement('div');
-            row.className = 'gcal-popup-row';
-            row.style.cssText = 'align-items:flex-start;background:#f8faff;border-radius:8px;padding:8px 10px;margin-top:4px;';
-            const icon = document.createElement('span'); icon.className = 'gcal-popup-icon'; icon.textContent = '📝'; row.appendChild(icon);
-            const txt = document.createElement('span');
-            txt.style.cssText = 'font-size:13px;color:#374151;line-height:1.5;white-space:pre-wrap;word-break:break-word;';
-            txt.textContent = task.notes;
-            row.appendChild(txt);
-            body.appendChild(row);
-        }
+        // Title input
+        const titleLbl = document.createElement('label');
+        titleLbl.style.cssText = 'font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;';
+        titleLbl.textContent = 'Title';
+        body.appendChild(titleLbl);
 
+        const titleInp = document.createElement('input');
+        titleInp.type = 'text';
+        titleInp.value = task.title;
+        titleInp.style.cssText = 'width:100%;border:1px solid #d1d5db;border-radius:8px;padding:7px 10px;font-size:14px;font-weight:600;font-family:inherit;box-sizing:border-box;';
+        titleInp.addEventListener('focus', () => titleInp.style.borderColor = '#667eea');
+        titleInp.addEventListener('blur',  () => titleInp.style.borderColor = '#d1d5db');
+        body.appendChild(titleInp);
+
+        // Notes textarea
+        const notesLbl = document.createElement('label');
+        notesLbl.style.cssText = 'font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;';
+        notesLbl.innerHTML = '📝 Notes';
+        body.appendChild(notesLbl);
+
+        const notesInp = document.createElement('textarea');
+        notesInp.value = task.notes || '';
+        notesInp.placeholder = 'Add notes, links, or details…';
+        notesInp.style.cssText = 'width:100%;border:1px solid #d1d5db;border-radius:8px;padding:7px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:80px;line-height:1.55;box-sizing:border-box;';
+        notesInp.addEventListener('focus', () => notesInp.style.borderColor = '#667eea');
+        notesInp.addEventListener('blur',  () => notesInp.style.borderColor = '#d1d5db');
+        body.appendChild(notesInp);
+
+        // Action buttons row
+        const actRow = document.createElement('div');
+        actRow.style.cssText = 'display:flex;gap:8px;margin-top:4px;';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = '💾 Save';
+        saveBtn.style.cssText = 'flex:1;background:#667eea;color:white;border:none;border-radius:8px;padding:8px 0;font-size:13px;font-weight:600;cursor:pointer;';
+        saveBtn.addEventListener('mouseenter', () => saveBtn.style.background = '#5a67d8');
+        saveBtn.addEventListener('mouseleave', () => saveBtn.style.background = '#667eea');
+
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '🗑️';
+        delBtn.title = 'Delete event';
+        delBtn.style.cssText = 'background:#fee2e2;color:#991b1b;border:none;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;';
+        delBtn.addEventListener('mouseenter', () => delBtn.style.background = '#fecaca');
+        delBtn.addEventListener('mouseleave', () => delBtn.style.background = '#fee2e2');
+
+        actRow.appendChild(saveBtn); actRow.appendChild(delBtn);
+        body.appendChild(actRow);
         popup.appendChild(body);
         document.body.appendChild(popup);
 
-        // ── Smart position near anchor (identical to showGcalEventPopup) ──
+        // Focus title input
+        setTimeout(() => { titleInp.select(); }, 30);
+
+        // Save handler
+        function doSave() {
+            const newTitle = titleInp.value.trim();
+            if (!newTitle) return;
+            const newNotes = notesInp.value.trim();
+            const dk = fdk(date);
+            const tk = `${dk}-${hour}`;
+            if (events[tk]) {
+                const idx = events[tk].findIndex(t => t.id === task.id);
+                if (idx !== -1) {
+                    events[tk][idx] = { ...events[tk][idx], title: newTitle, notes: newNotes };
+                    save(); refreshView();
+                }
+            }
+            // Update header live
+            titleEl.textContent = newTitle;
+            popup.remove();
+        }
+
+        saveBtn.addEventListener('click', doSave);
+        delBtn.addEventListener('click', () => {
+            deleteTask(fdk(date), hour, task.id);
+            popup.remove();
+        });
+        titleInp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSave(); } });
+        notesInp.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doSave(); });
+
+        // Smart position
         const rect = anchorEl.getBoundingClientRect();
         let left = rect.left;
         let top  = rect.bottom + 8;
-        if (left + 360 > window.innerWidth - 8) left = window.innerWidth - 368;
-        if (top  + 320 > window.innerHeight - 8) top = rect.top - 328;
+        if (left + 350 > window.innerWidth - 8)  left = window.innerWidth - 358;
+        if (top  + 380 > window.innerHeight - 8) top  = rect.top - 388;
         left = Math.max(8, left);
         top  = Math.max(8, top);
         popup.style.left = left + 'px';
@@ -3108,9 +3175,9 @@
                         const task = ev.data;
                         const td = document.createElement('div');
                         td.className = 'event-item';
-                        // Show time prefix + full title (no truncation — cell scrolls)
+                        // Title first, then time — easier to scan
                         const timePrefix = timeStr(task.hour);
-                        td.textContent = timePrefix + ' ' + task.title;
+                        td.textContent = task.title + ' · ' + timePrefix;
                         td.title = task.title + (task.notes ? '\n📝 ' + task.notes : '');
                         td.addEventListener('mouseenter', () => _delayedShow(td, () => showTaskTip(td, task, task.hour)));
                         td.addEventListener('click', e => { e.stopPropagation(); showTaskPopup(task, task.hour, snap, td); });
@@ -3123,7 +3190,8 @@
                         const st = gev.startDt
                             ? gev.startDt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true})
                             : '';
-                        td.textContent = (st ? st + ' ' : '🗓 ') + gev.title;
+                        // Title first, then time
+                        td.textContent = gev.title + (st ? ' · ' + st : '');
                         td.title = gev.title;
                         td.addEventListener('mouseenter', () => _delayedShow(td, () => showGcalTip(td, gev)));
                         td.addEventListener('click', e => { e.stopPropagation(); showGcalEventPopup(gev, td); });
@@ -3262,151 +3330,255 @@
 
     // ── Classic Schedule ──
     function renderClassicSchedule() {
-        const dk=fdk(classicSelectedDate);
-        document.getElementById('classicScheduleDate').innerHTML=
-            `📅 ${classicSelectedDate.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}`;
+        const dk  = fdk(classicSelectedDate);
+        const WSP_HOUR_START = 6, WSP_HOUR_END = 22, WSP_CORE_ROWS = 11;
 
-        // All-day strip — local + Google all-day
-        const strip=document.getElementById('scheduleAlldayStrip');
-        const list=document.getElementById('scheduleAlldayList');
-        list.innerHTML='';
-        const adEvs=getAllDayForDate(dk);
-        const gcalAd = allCalGetForDate(dk).filter(e=>e.allDay);
-        if(adEvs.length || gcalAd.length){
+        // Header
+        document.getElementById('classicScheduleDate').textContent =
+            classicSelectedDate.toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+
+        // All-day strip
+        const strip = document.getElementById('scheduleAlldayStrip');
+        const list  = document.getElementById('scheduleAlldayList');
+        list.innerHTML = '';
+        const adEvs  = getAllDayForDate(dk);
+        const calAd  = allCalGetForDate(dk).filter(e => e.allDay);
+        if (adEvs.length || calAd.length) {
             strip.classList.add('visible');
-            adEvs.forEach(ev=>{
-                const item=document.createElement('div'); item.className='sad-item'; item.style.background=ev.color||COLORS[0];
-                const fmt=d=>pdk(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
-                item.innerHTML=`<span>📌 ${esc(ev.title)}</span><span style="font-size:11px;opacity:0.85;margin-left:4px;">${fmt(ev.start)}${ev.start!==ev.end?' → '+fmt(ev.end):''}</span>`;
-                const del=document.createElement('button'); del.className='sad-del'; del.textContent='🗑️';
-                del.addEventListener('mousedown',e=>e.preventDefault());
-                del.addEventListener('click',e=>{e.stopPropagation();deleteAllDay(ev.id);});
+            adEvs.forEach(ev => {
+                const item = document.createElement('div'); item.className = 'sad-item';
+                item.style.background = ev.color || COLORS[0];
+                const fmt = d => pdk(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+                item.innerHTML = `<span>📌 ${esc(ev.title)}</span><span style="font-size:11px;opacity:.85;margin-left:4px;">${fmt(ev.start)}${ev.start!==ev.end?' → '+fmt(ev.end):''}</span>`;
+                const del = document.createElement('button'); del.className = 'sad-del'; del.textContent = '🗑️';
+                del.addEventListener('mousedown', e => e.preventDefault());
+                del.addEventListener('click', e => { e.stopPropagation(); deleteAllDay(ev.id); });
                 item.appendChild(del); list.appendChild(item);
             });
-            gcalAd.forEach(ev=>{
-                const item=document.createElement('div'); item.className='sad-item gcal-event-link';
-                item.style.background=ev.color||'#ea4335';
-                const fmt=d=>pdk(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
-                item.innerHTML=`<span>🗓 ${esc(ev.title)}</span><span style="font-size:11px;opacity:0.85;margin-left:4px;">${fmt(ev.start)}${ev.start!==ev.end?' → '+fmt(ev.end):''}</span><span style="margin-left:auto;font-size:10px;opacity:0.9;">🔗 Open</span>`;
-                item.addEventListener('click', (e)=>{ e.stopPropagation(); showGcalEventPopup(ev, item); });
+            calAd.forEach(ev => {
+                const item = document.createElement('div'); item.className = 'sad-item gcal-event-link';
+                item.style.background = ev.color || '#ea4335';
+                const fmt = d => pdk(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+                item.innerHTML = `<span>${ev.feedId?'☁️':'🗓'} ${esc(ev.title)}</span><span style="font-size:11px;opacity:.85;margin-left:4px;">${fmt(ev.start)}${ev.start!==ev.end?' → '+fmt(ev.end):''}</span><span style="margin-left:auto;font-size:10px;opacity:.9;">🔗</span>`;
+                item.addEventListener('click', e => { e.stopPropagation(); showGcalEventPopup(ev, item); });
                 list.appendChild(item);
             });
         } else { strip.classList.remove('visible'); }
 
-        // Hourly slots — with multi-hour span support
-        const container=document.getElementById('classicTimeSlots'); container.innerHTML='';
-        const skippedHours = new Set(); // hours already consumed by a spanning task
+        // ── Build time grid (same as week schedule panel) ──
+        const scroll = document.getElementById('classicWspScroll');
+        const inner  = document.getElementById('classicWspInner');
+        inner.innerHTML = '';
 
-        for(let hour=8;hour<=18;hour++){
-            if(skippedHours.has(hour)) continue; // swallowed by a spanning slot above
+        const scrollH = scroll.getBoundingClientRect().height || 500;
+        const cellH   = Math.max(44, Math.floor(scrollH / WSP_CORE_ROWS));
+        const section = document.getElementById('classicScheduleSection');
+        section.style.setProperty('--sp-cell-h', cellH + 'px');
 
-            const tk=`${dk}-${hour}`;
-            const hourTasks=events[tk]||[];
-
-            // Find if any task spans multiple hours
-            const spanningTask = hourTasks.find(t => t.endHour && t.endHour > hour && t.endHour <= 18);
-            const spanHours = spanningTask ? (spanningTask.endHour - hour) : 1;
-
-            // Mark consumed hours
-            for(let s=1; s<spanHours; s++) skippedHours.add(hour+s);
-
-            const slot=document.createElement('div');
-            slot.className='time-slot-full';
-            if(spanHours===2) slot.classList.add('time-slot-span-2');
-            else if(spanHours===3) slot.classList.add('time-slot-span-3');
-            else if(spanHours===4) slot.classList.add('time-slot-span-4');
-            else if(spanHours>=5) slot.classList.add('time-slot-span-5');
-
-            // Build label showing range if spanning
-            const lbl=document.createElement('div'); lbl.className='time-label-full';
-            if(spanHours>1) {
-                lbl.innerHTML=`<strong>${timeStr(hour)}</strong><div style="font-size:10px;color:#94a3b8;margin-top:2px;">to ${timeStr(hour+spanHours)}</div>`;
-            } else {
-                lbl.innerHTML=`<strong>${timeStr(hour)}</strong>`;
-            }
-            slot.appendChild(lbl);
-
-            const content=document.createElement('div'); content.className='slot-content-full';
-            hourTasks.forEach(task=>{
-                const td=document.createElement('div'); td.className='task-display';
-                const tv=document.createElement('div'); tv.style.flex='1';
-                const ti=document.createElement('div'); ti.className='task-title'; ti.textContent=task.title; tv.appendChild(ti);
-                if(task.notes){const n=document.createElement('div');n.className='task-notes-small';n.textContent=task.notes;tv.appendChild(n);}
-                // Show span badge if multi-hour
-                if(task.endHour && task.endHour>hour){
-                    const badge=document.createElement('span');
-                    badge.className='task-span-badge';
-                    badge.textContent=`${timeStr(hour)} – ${timeStr(task.endHour)}`;
-                    tv.appendChild(badge);
-                }
-                const del=document.createElement('button'); del.textContent='🗑️'; del.className='delete-task-btn';
-                del.addEventListener('mousedown',e=>e.preventDefault());
-                del.addEventListener('click',e=>{e.stopPropagation();deleteTask(fdk(classicSelectedDate),hour,task.id);});
-                td.appendChild(tv); td.appendChild(del); content.appendChild(td);
-                td.addEventListener('mouseenter',()=>_delayedShow(td,()=>showTaskTip(td,task,hour)));
-                td.style.cursor='pointer';
-                td.addEventListener('click', e => {
-                    if (e.target === del || del.contains(e.target)) return;
-                    e.stopPropagation();
-                    showTaskPopup(task, hour, classicSelectedDate, td);
-                });
-            });
-
-            // Input row with duration selector
-            const inputRow=document.createElement('div'); inputRow.className='task-input-row';
-            const inp=document.createElement('input'); inp.type='text';
-            inp.placeholder=hourTasks.length?'+ Add…':'';
-            inp.className='auto-save-input'; inp.style.flex='1';
-
-            const durSel=document.createElement('select'); durSel.className='task-dur-select';
-            durSel.title='Duration';
-            const durOpts=[['1h','1'],['2h','2'],['3h','3'],['4h','4'],['5h','5']];
-            durOpts.forEach(([label,val])=>{
-                const opt=document.createElement('option'); opt.value=val; opt.textContent=label;
-                if(val==='1') opt.selected=true;
-                durSel.appendChild(opt);
-            });
-
-            const sv=()=>{
-                const t=inp.value.trim();
-                if(t){
-                    const dur=parseInt(durSel.value)||1;
-                    const endH = (hour+dur<=18) ? hour+dur : null;
-                    saveTask(classicSelectedDate,hour,{title:t,notes:'',endHour:endH},()=>{inp.value='';durSel.value='1';});
-                }
-            };
-            inp.addEventListener('mousedown',e=>e.stopPropagation());
-            inp.onblur=()=>setTimeout(sv,200); inp.onkeypress=e=>{if(e.key==='Enter')sv();};
-            inputRow.appendChild(inp); inputRow.appendChild(durSel);
-            content.appendChild(inputRow);
-
-            // Google Calendar timed events for this hour
-            const gEvs = allCalGetForDate(dk).filter(e => !e.allDay && e.hour === hour);
-            gEvs.forEach(gev => {
-                const base = gev.color||'#ea4335';
-                const td=document.createElement('div'); td.className='gcal-task-display gcal-event-link';
-                td.style.borderLeftColor = base;
-                td.style.background = base;
-                td.style.color = 'white';
-                const tv=document.createElement('div'); tv.style.flex='1';
-                const ti=document.createElement('div'); ti.className='gcal-task-title'; ti.style.color='white';
-                ti.innerHTML=`🗓 ${esc(gev.title)}`;
-                tv.appendChild(ti);
-                const startT=gev.startDt?gev.startDt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}):'';
-                const endT  =gev.endDt  ?gev.endDt.toLocaleTimeString('en-US',  {hour:'2-digit',minute:'2-digit',hour12:true}):'';
-                if(startT){const m=document.createElement('div');m.className='gcal-task-meta';m.style.color='rgba(255,255,255,0.85)';m.textContent=`${startT}${endT?' – '+endT:''} · Google Calendar`;tv.appendChild(m);}
-                td.appendChild(tv);
-                const badge=document.createElement('span');
-                badge.style.cssText='font-size:10px;background:rgba(255,255,255,0.25);color:white;padding:2px 6px;border-radius:10px;white-space:nowrap;flex-shrink:0;';
-                badge.textContent='🔗 Open';
-                td.appendChild(badge);
-                td.addEventListener('click', (e) => { e.stopPropagation(); showGcalEventPopup(gev, td); });
-                td.addEventListener('mouseenter', () => _delayedShow(td, () => showGcalTip(td, gev)));
-                content.appendChild(td);
-            });
-
-            slot.appendChild(content); container.appendChild(slot);
+        // Build hour rows
+        for (let h = WSP_HOUR_START; h <= WSP_HOUR_END; h++) {
+            const lbl = document.createElement('div');
+            lbl.className = 'wsp-time-lbl';
+            lbl.textContent = h === 12 ? '12 PM' : h < 12 ? h + ' AM' : (h-12) + ' PM';
+            inner.appendChild(lbl);
+            const cell = document.createElement('div');
+            cell.className = 'wsp-hour-cell';
+            cell.dataset.hour = h;
+            inner.appendChild(cell);
         }
+
+        // Helpers
+        function yToHour(y) { return Math.round((WSP_HOUR_START + y / cellH) * 4) / 4; }
+        function hourToY(h) { return (h - WSP_HOUR_START) * cellH; }
+        function hourToTimeStr(h) {
+            const hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+            const suffix = hh < 12 ? 'AM' : 'PM';
+            const disp   = hh === 0 ? 12 : hh <= 12 ? hh : hh - 12;
+            return `${disp}:${String(mm).padStart(2,'0')} ${suffix}`;
+        }
+
+        // Collect timed events
+        const allTimed = [];
+        for (let h = WSP_HOUR_START; h <= WSP_HOUR_END; h++) {
+            (events[`${dk}-${h}`] || []).forEach(task => {
+                const startH = h;
+                const endH   = (task.endHour && task.endHour > h) ? task.endHour : h + 1;
+                allTimed.push({ type: 'local', task, startH, endH });
+            });
+        }
+        allCalGetForDate(dk).filter(e => !e.allDay).forEach(gev => {
+            const startH = gev.startDt ? gev.startDt.getHours() + gev.startDt.getMinutes()/60 : gev.hour;
+            const endH   = gev.endDt   ? gev.endDt.getHours()   + gev.endDt.getMinutes()/60   : startH + 1;
+            allTimed.push({ type: 'gcal', gev, startH, endH: Math.max(endH, startH + 0.25) });
+        });
+
+        // Overlap layout
+        allTimed.sort((a,b) => a.startH - b.startH);
+        const lanes = [];
+        allTimed.forEach(ev => {
+            let lane = lanes.findIndex(end => end <= ev.startH);
+            if (lane === -1) lane = lanes.length;
+            lanes[lane] = ev.endH;
+            ev.lane = lane;
+        });
+        allTimed.forEach(ev => {
+            const overlaps = allTimed.filter(o => o !== ev && o.startH < ev.endH && o.endH > ev.startH);
+            ev.totalLanes = overlaps.length > 0 ? Math.max(ev.lane, ...overlaps.map(o => o.lane)) + 1 : 1;
+        });
+
+        // Render event blocks
+        inner.style.position = 'relative';
+        allTimed.forEach(evInfo => {
+            const topPx    = hourToY(evInfo.startH);
+            const heightPx = Math.max(22, hourToY(evInfo.endH) - topPx - 2);
+            const pct      = 100 / evInfo.totalLanes;
+
+            const block = document.createElement('div');
+            block.className = 'wsp-event';
+            block.style.position = 'absolute';
+            block.style.top    = topPx + 'px';
+            block.style.height = heightPx + 'px';
+            block.style.left   = (evInfo.lane * pct).toFixed(1) + '%';
+            block.style.right  = ((evInfo.totalLanes - evInfo.lane - 1) * pct).toFixed(1) + '%';
+
+            if (evInfo.type === 'local') {
+                const { task, startH, endH } = evInfo;
+                const timeLabel = `${hourToTimeStr(startH)} – ${hourToTimeStr(endH)}`;
+                block.style.background = '#eef2ff';
+                block.style.color      = '#1e293b';
+                block.style.border     = '1px solid #c7d2fe';
+                block.innerHTML = `
+                    <div class="wsp-event-title">${esc(task.title)}</div>
+                    <div class="wsp-event-time">${timeLabel}</div>
+                    ${task.notes ? `<div class="wsp-event-time" style="font-style:italic;">📝 ${esc(task.notes)}</div>` : ''}
+                `;
+                const del = document.createElement('button'); del.className = 'wsp-event-del'; del.textContent = '✕';
+                del.addEventListener('mousedown', e => e.preventDefault());
+                del.addEventListener('click', e => { e.stopPropagation(); deleteTask(dk, Math.floor(startH), task.id); });
+                block.appendChild(del);
+                block.addEventListener('mouseenter', () => _delayedShow(block, () => showTaskTip(block, task, Math.floor(startH))));
+                block.addEventListener('click', e => {
+                    if (e.target.closest('.wsp-event-del')) return;
+                    e.stopPropagation();
+                    showTaskPopup(task, Math.floor(startH), classicSelectedDate, block);
+                });
+            } else {
+                const { gev, startH, endH } = evInfo;
+                const base = gev.color || '#ea4335';
+                const st = gev.startDt ? gev.startDt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true}) : '';
+                const et = gev.endDt   ? gev.endDt.toLocaleTimeString('en-US',  {hour:'2-digit',minute:'2-digit',hour12:true}) : '';
+                block.style.background = base;
+                block.style.color      = 'white';
+                block.innerHTML = `
+                    <div class="wsp-event-title">${esc(gev.title)}</div>
+                    ${st ? `<div class="wsp-event-time">${st}${et?' – '+et:''}</div>` : ''}
+                `;
+                block.addEventListener('click', e => { e.stopPropagation(); showGcalEventPopup(gev, block); });
+                block.addEventListener('mouseenter', () => _delayedShow(block, () => showGcalTip(block, gev)));
+            }
+            inner.appendChild(block);
+        });
+
+        // ── Drag-to-create ──
+        let dragState = null, ghost = null, newPopup = null;
+
+        function removeDragArtifacts() {
+            if (ghost)    { ghost.remove();    ghost = null; }
+            if (newPopup) { newPopup.remove();  newPopup = null; }
+            dragState = null;
+        }
+
+        inner.addEventListener('mousedown', e => {
+            if (e.button !== 0) return;
+            if (e.target.closest('.wsp-event, .wsp-event-del')) return;
+            e.preventDefault();
+            const rect  = inner.getBoundingClientRect();
+            const startH = Math.max(WSP_HOUR_START, Math.min(WSP_HOUR_END, yToHour(e.clientY - rect.top)));
+            dragState = { startH, endH: startH + 1, rect };
+            ghost = document.createElement('div');
+            ghost.className = 'wsp-drag-ghost';
+            ghost.style.left  = 'calc(var(--sp-gutter, 52px) + 2px)';
+            ghost.style.right = '2px';
+            inner.appendChild(ghost);
+            updateGhost();
+        });
+
+        function updateGhost() {
+            if (!ghost || !dragState) return;
+            const { startH, endH } = dragState;
+            const top = hourToY(Math.min(startH, endH));
+            const bot = hourToY(Math.max(startH, endH));
+            ghost.style.top    = top + 'px';
+            ghost.style.height = Math.max(cellH / 4, bot - top) + 'px';
+            ghost.textContent  = `${hourToTimeStr(Math.min(startH,endH))} – ${hourToTimeStr(Math.max(startH,endH))}`;
+        }
+
+        const onMove = e => {
+            if (!dragState) return;
+            dragState.endH = Math.max(WSP_HOUR_START + 0.25, Math.min(WSP_HOUR_END, yToHour(e.clientY - dragState.rect.top)));
+            updateGhost();
+        };
+        const onUp = e => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            if (!dragState) return;
+            let { startH, endH } = dragState;
+            if (startH > endH) [startH, endH] = [endH, startH];
+            if (endH - startH < 0.25) endH = startH + 1;
+            if (ghost) { ghost.remove(); ghost = null; }
+
+            newPopup = document.createElement('div');
+            newPopup.className = 'wsp-new-popup';
+            newPopup.innerHTML = `
+                <h4>New Event &nbsp;<small style="font-weight:400;font-size:11px;color:#64748b;">${hourToTimeStr(startH)} – ${hourToTimeStr(endH)}</small></h4>
+                <input type="text" id="cspNewTitle" placeholder="Event title…" autocomplete="off">
+                <textarea id="cspNewNotes" placeholder="📝 Notes (optional)…"></textarea>
+                <div class="wsp-new-popup-row">
+                    <button class="wsp-btn-cancel">Cancel</button>
+                    <button class="wsp-btn-save">Save</button>
+                </div>
+            `;
+            document.body.appendChild(newPopup);
+            let px = e.clientX + 10, py = e.clientY - 20;
+            if (px + 290 > window.innerWidth)  px = e.clientX - 300;
+            if (py + 260 > window.innerHeight) py = window.innerHeight - 265;
+            newPopup.style.left = Math.max(8, px) + 'px';
+            newPopup.style.top  = Math.max(8, py) + 'px';
+
+            const inp    = newPopup.querySelector('#cspNewTitle');
+            const notesI = newPopup.querySelector('#cspNewNotes');
+            const save   = newPopup.querySelector('.wsp-btn-save');
+            const cancel = newPopup.querySelector('.wsp-btn-cancel');
+            setTimeout(() => inp.focus(), 30);
+
+            function doSave() {
+                const title = inp.value.trim();
+                if (!title) { removeDragArtifacts(); return; }
+                const notes  = notesI.value.trim();
+                const hourKey = Math.floor(startH);
+                const endHour = Math.ceil(endH) <= WSP_HOUR_END ? Math.ceil(endH) : null;
+                saveTask(classicSelectedDate, hourKey, { title, notes, endHour }, () => {});
+                removeDragArtifacts();
+            }
+            save.addEventListener('click', doSave);
+            cancel.addEventListener('click', removeDragArtifacts);
+            inp.addEventListener('keydown', e => { if (e.key==='Enter') doSave(); if (e.key==='Escape') removeDragArtifacts(); });
+            notesI.addEventListener('keydown', e => { if (e.key==='Enter' && (e.ctrlKey||e.metaKey)) doSave(); if (e.key==='Escape') removeDragArtifacts(); });
+            setTimeout(() => {
+                document.addEventListener('mousedown', function outsideClick(ev) {
+                    if (newPopup && !newPopup.contains(ev.target)) {
+                        removeDragArtifacts();
+                        document.removeEventListener('mousedown', outsideClick);
+                    }
+                });
+            }, 50);
+            dragState = null;
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+
+        // Scroll to 8 AM
+        requestAnimationFrame(() => { scroll.scrollTop = (8 - WSP_HOUR_START) * cellH; });
     }
 
     // ════════════════════════════════════
@@ -4142,6 +4314,7 @@
             newPopup.innerHTML = `
                 <h4>New Event &nbsp;<small style="font-weight:400;font-size:11px;color:#64748b;">${hourToTimeStr(startH)} – ${hourToTimeStr(endH)}</small></h4>
                 <input type="text" id="wspNewTitle" placeholder="Event title…" autocomplete="off">
+                <textarea id="wspNewNotes" placeholder="📝 Notes (optional)…"></textarea>
                 <div class="wsp-new-popup-row">
                     <button class="wsp-btn-cancel">Cancel</button>
                     <button class="wsp-btn-save">Save</button>
@@ -4152,22 +4325,24 @@
             // Position near cursor, keep in viewport
             let px = e.clientX + 10, py = e.clientY - 20;
             if (px + 290 > window.innerWidth)  px = e.clientX - 300;
-            if (py + 180 > window.innerHeight) py = window.innerHeight - 185;
+            if (py + 260 > window.innerHeight) py = window.innerHeight - 265;
             newPopup.style.left = Math.max(8, px) + 'px';
             newPopup.style.top  = Math.max(8, py) + 'px';
 
-            const inp   = newPopup.querySelector('#wspNewTitle');
-            const save  = newPopup.querySelector('.wsp-btn-save');
-            const cancel= newPopup.querySelector('.wsp-btn-cancel');
+            const inp    = newPopup.querySelector('#wspNewTitle');
+            const notesI = newPopup.querySelector('#wspNewNotes');
+            const save   = newPopup.querySelector('.wsp-btn-save');
+            const cancel = newPopup.querySelector('.wsp-btn-cancel');
 
             setTimeout(() => inp.focus(), 30);
 
             function doSave() {
                 const title = inp.value.trim();
                 if (!title) { newPopup.remove(); newPopup = null; dragState = null; return; }
-                const hourKey  = Math.floor(startH);
-                const endHour  = Math.ceil(endH) <= WSP_HOUR_END ? Math.ceil(endH) : null;
-                saveTask(weekSelectedDate, hourKey, { title, notes: '', endHour }, () => {});
+                const notes   = notesI.value.trim();
+                const hourKey = Math.floor(startH);
+                const endHour = Math.ceil(endH) <= WSP_HOUR_END ? Math.ceil(endH) : null;
+                saveTask(weekSelectedDate, hourKey, { title, notes, endHour }, () => {});
                 newPopup.remove(); newPopup = null; dragState = null;
             }
 
@@ -4175,6 +4350,10 @@
             cancel.addEventListener('click', () => { removeDragArtifacts(); });
             inp.addEventListener('keydown', e => {
                 if (e.key === 'Enter') doSave();
+                if (e.key === 'Escape') removeDragArtifacts();
+            });
+            notesI.addEventListener('keydown', e => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doSave();
                 if (e.key === 'Escape') removeDragArtifacts();
             });
 
@@ -4218,8 +4397,8 @@
         btn.style.background = classicScheduleVisible ? '#f1f5f9' : '#667eea';
         btn.style.color      = classicScheduleVisible ? '#4a5568'  : 'white';
         btn.style.border     = classicScheduleVisible ? '1px solid #d1d5db' : 'none';
-        // Re-render after CSS transition (0.25s) so all-day bars recalculate at new cell width
-        setTimeout(() => renderClassicCalendar(), 260);
+        // Re-render after CSS transition so bars and schedule recalculate at new width
+        setTimeout(() => { renderClassicCalendar(); renderClassicSchedule(); }, 260);
     };
     document.getElementById('shiftBackBtn').onclick=()=>{multiMonthStartDate.setMonth(multiMonthStartDate.getMonth()-3);renderMultiMonthCalendar();};
     document.getElementById('shiftForwardBtn').onclick=()=>{multiMonthStartDate.setMonth(multiMonthStartDate.getMonth()+3);renderMultiMonthCalendar();};
