@@ -716,13 +716,12 @@
             border: 1px solid #e0e0e0;
         }
         .wsp-new-popup h4 { font-size: 14px; font-weight: 700; color: #1e293b; margin-bottom: 10px; }
-        .wsp-new-popup input[type=text], .wsp-new-popup textarea {
+        .wsp-new-popup input[type=text] {
             width: 100%; border: 1px solid #d1d5db; border-radius: 8px;
             padding: 7px 10px; font-size: 13px; font-family: inherit;
-            margin-bottom: 8px; box-sizing: border-box;
+            margin-bottom: 8px;
         }
-        .wsp-new-popup textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
-        .wsp-new-popup input:focus, .wsp-new-popup textarea:focus { outline: none; border-color: #667eea; }
+        .wsp-new-popup input:focus { outline: none; border-color: #667eea; }
         .wsp-new-popup-row { display: flex; gap: 8px; justify-content: flex-end; }
         .wsp-new-popup-row button {
             border: none; border-radius: 7px; padding: 6px 14px;
@@ -1311,7 +1310,7 @@
         </div>
     </div>
     <div style="text-align:center;padding:10px 20px;font-size:12px;color:#94a3b8;border-top:1px solid #e0e0e0;background:#fafafa;letter-spacing:0.03em;">
-        Copyright © 2026 Dr. Wen-Ming Yang &nbsp;·&nbsp; Monthplan v23 (Notes with google like styles)
+        Copyright © 2026 Dr. Wen-Ming Yang &nbsp;·&nbsp; Monthplan v23 (Integrated and note added)
     </div>
 </div>
 
@@ -1322,6 +1321,7 @@
         <div class="modal-field"><label>Event Title</label><input type="text" id="modalTitle" placeholder="e.g. Conference, Holiday, Trip…"></div>
         <div class="modal-field"><label>Start Date</label><input type="date" id="modalStart"></div>
         <div class="modal-field"><label>End Date</label><input type="date" id="modalEnd"></div>
+        <div class="modal-field"><label>Notes <span style="font-weight:400;color:#9ca3af;">(optional)</span></label><textarea id="modalNotes" rows="3" style="width:100%;border:1px solid #d1d5db;border-radius:8px;padding:8px 12px;font-size:14px;font-family:inherit;resize:vertical;" placeholder="Add notes…"></textarea></div>
         <div class="modal-field"><label>Color</label><div class="color-row" id="colorRow"></div></div>
         <div class="modal-actions">
             <button class="btn-cancel" id="modalCancel">Cancel</button>
@@ -2483,29 +2483,170 @@
             row.appendChild(sw);
         });
     }
-    function openModal(defaultDate) {
+    let _modalEditId = null; // null = create, number = edit existing event id
+    function openModal(defaultDate, editEv) {
+        _modalEditId = editEv ? editEv.id : null;
         initColorPicker();
-        document.getElementById('modalTitle').value='';
-        document.getElementById('modalStart').value=fdk(defaultDate);
-        document.getElementById('modalEnd').value=fdk(defaultDate);
+        document.getElementById('modalTitle').value = editEv ? editEv.title : '';
+        document.getElementById('modalStart').value = editEv ? editEv.start : fdk(defaultDate);
+        document.getElementById('modalEnd').value   = editEv ? editEv.end   : fdk(defaultDate);
+        document.getElementById('modalNotes').value = editEv ? (editEv.notes || '') : '';
+        document.querySelector('#alldayModal .modal-box h3').textContent = editEv ? '✏️ Edit All-Day Event' : '📌 Add All-Day Event';
+        document.getElementById('modalSave').textContent = editEv ? 'Update Event' : 'Save Event';
+        if (editEv) {
+            // pre-select saved colour
+            selectedColor = editEv.color || COLORS[0];
+            initColorPicker();
+        }
         document.getElementById('alldayModal').classList.remove('hidden');
         setTimeout(()=>document.getElementById('modalTitle').focus(),50);
     }
-    document.getElementById('modalCancel').onclick=()=>document.getElementById('alldayModal').classList.add('hidden');
-    document.getElementById('alldayModal').onclick=e=>{if(e.target.id==='alldayModal')document.getElementById('alldayModal').classList.add('hidden');};
+    document.getElementById('modalCancel').onclick=()=>{ _modalEditId=null; document.getElementById('alldayModal').classList.add('hidden'); };
+    document.getElementById('alldayModal').onclick=e=>{if(e.target.id==='alldayModal'){ _modalEditId=null; document.getElementById('alldayModal').classList.add('hidden'); }};
     document.getElementById('modalTitle').addEventListener('keypress',e=>{if(e.key==='Enter')document.getElementById('modalSave').click();});
     document.getElementById('modalSave').onclick=()=>{
         const title=document.getElementById('modalTitle').value.trim();
         const start=document.getElementById('modalStart').value;
         const end=document.getElementById('modalEnd').value;
+        const notes=document.getElementById('modalNotes').value.trim();
         if(!title){document.getElementById('modalTitle').focus();return;}
         if(!start||!end){alert('Please fill in dates.');return;}
         if(end<start){alert('End date must be on or after start date.');return;}
-        allDayEvents.push({id:Date.now(),title,start,end,color:selectedColor});
+        if (_modalEditId !== null) {
+            const idx = allDayEvents.findIndex(ev => ev.id === _modalEditId);
+            if (idx !== -1) allDayEvents[idx] = { ...allDayEvents[idx], title, start, end, color: selectedColor, notes };
+        } else {
+            allDayEvents.push({id:Date.now(),title,start,end,color:selectedColor,notes});
+        }
+        _modalEditId = null;
         save();
         document.getElementById('alldayModal').classList.add('hidden');
         renderClassicCalendar(); renderClassicSchedule();
+        // Also close any open allday popup
+        const ep = document.getElementById('alldayEventPopup'); if (ep) ep.remove();
     };
+
+    // ── GCal-style popup for local all-day event bars ──
+    function showAlldayPopup(ev, anchorEl) {
+        // Toggle off if same bar clicked again
+        const existing = document.getElementById('alldayEventPopup');
+        if (existing) {
+            if (existing._anchorEl === anchorEl) { existing.remove(); return; }
+            existing.remove();
+        }
+        // Also close any gcal popup
+        const gp = document.getElementById('gcalEventPopup'); if (gp) gp.remove();
+
+        const popup = document.createElement('div');
+        popup.className = 'gcal-event-popup';
+        popup.id = 'alldayEventPopup';
+        popup._anchorEl = anchorEl;
+
+        // ── Header ──
+        const hdr = document.createElement('div');
+        hdr.className = 'gcal-popup-header';
+        hdr.style.background = ev.color || COLORS[0];
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'gcal-popup-title';
+        titleEl.textContent = ev.title;
+        hdr.appendChild(titleEl);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'gcal-popup-close';
+        closeBtn.textContent = '✕';
+        closeBtn.addEventListener('click', () => popup.remove());
+        hdr.appendChild(closeBtn);
+        popup.appendChild(hdr);
+
+        // ── Body ──
+        const body = document.createElement('div');
+        body.className = 'gcal-popup-body';
+
+        // Date range row
+        const fmt = d => pdk(d).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+        const dateText = ev.start === ev.end ? fmt(ev.start) : `${fmt(ev.start)} → ${fmt(ev.end)}`;
+        const dateRow = document.createElement('div');
+        dateRow.className = 'gcal-popup-row';
+        dateRow.innerHTML = `<span class="gcal-popup-icon">📌</span><span>${esc(dateText)}</span>`;
+        body.appendChild(dateRow);
+
+        // Notes row — inline editable textarea
+        const notesRow = document.createElement('div');
+        notesRow.className = 'gcal-popup-row';
+        notesRow.style.cssText = 'align-items:flex-start;flex-direction:column;gap:4px;';
+
+        const notesLabel = document.createElement('div');
+        notesLabel.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;margin-bottom:2px;';
+        notesLabel.textContent = '📝 Notes';
+        notesRow.appendChild(notesLabel);
+
+        const notesTa = document.createElement('textarea');
+        notesTa.value = ev.notes || '';
+        notesTa.placeholder = 'Add notes…';
+        notesTa.rows = 3;
+        notesTa.style.cssText = 'width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px;font-size:13px;font-family:inherit;color:#374151;resize:vertical;line-height:1.5;background:#f8faff;';
+        notesTa.addEventListener('focus', () => { notesTa.style.borderColor = '#667eea'; notesTa.style.outline = 'none'; });
+        notesTa.addEventListener('blur',  () => {
+            notesTa.style.borderColor = '#e2e8f0';
+            const idx = allDayEvents.findIndex(e => e.id === ev.id);
+            if (idx !== -1) {
+                allDayEvents[idx].notes = notesTa.value.trim();
+                ev.notes = allDayEvents[idx].notes;
+                save();
+            }
+        });
+        // Prevent popup close-on-outside-click from firing when clicking inside textarea
+        notesTa.addEventListener('click', e => e.stopPropagation());
+        notesRow.appendChild(notesTa);
+        body.appendChild(notesRow);
+
+        // Action buttons row
+        const actRow = document.createElement('div');
+        actRow.style.cssText = 'display:flex;gap:8px;margin-top:12px;';
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'gcal-popup-open-btn';
+        editBtn.style.cssText = 'flex:1;background:#667eea;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;';
+        editBtn.innerHTML = '✏️ Edit';
+        editBtn.addEventListener('click', () => {
+            popup.remove();
+            openModal(pdk(ev.start), ev);
+        });
+        actRow.appendChild(editBtn);
+
+        const delBtn = document.createElement('button');
+        delBtn.style.cssText = 'flex:0 0 auto;background:#fee2e2;color:#991b1b;border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px;';
+        delBtn.innerHTML = '🗑';
+        delBtn.title = 'Delete event';
+        delBtn.addEventListener('click', () => { popup.remove(); deleteAllDay(ev.id); });
+        actRow.appendChild(delBtn);
+
+        body.appendChild(actRow);
+        popup.appendChild(body);
+        document.body.appendChild(popup);
+
+        // ── Smart position near anchor ──
+        const rect = anchorEl.getBoundingClientRect();
+        let left = rect.left;
+        let top  = rect.bottom + 8;
+        if (left + 360 > window.innerWidth - 8) left = window.innerWidth - 368;
+        if (top  + 360 > window.innerHeight - 8) top = rect.top - 368;
+        left = Math.max(8, left);
+        top  = Math.max(8, top);
+        popup.style.left = left + 'px';
+        popup.style.top  = top  + 'px';
+
+        // Close on outside click (delayed so this click doesn't immediately close it)
+        setTimeout(() => {
+            document.addEventListener('click', function handler(e) {
+                if (!popup.contains(e.target) && e.target !== anchorEl) {
+                    popup.remove();
+                    document.removeEventListener('click', handler);
+                }
+            });
+        }, 10);
+    }
 
     // Popup for local task detail (click on event pill in classic calendar)
     function showTaskPopup(task, hour, date, anchorEl) {
@@ -2514,131 +2655,79 @@
             if (existing._anchorEl === anchorEl) { existing.remove(); return; }
             existing.remove();
         }
+        // Also close allday popup
+        const ap = document.getElementById('alldayEventPopup'); if (ap) ap.remove();
 
         const popup = document.createElement('div');
         popup.className = 'gcal-event-popup';
         popup.id = 'gcalEventPopup';
         popup._anchorEl = anchorEl;
-        popup.style.width = '340px';
 
         // ── Header ──
         const hdr = document.createElement('div');
         hdr.className = 'gcal-popup-header';
         hdr.style.background = '#667eea';
-
         const titleEl = document.createElement('div');
         titleEl.className = 'gcal-popup-title';
         titleEl.textContent = task.title;
-
         const closeBtn = document.createElement('button');
         closeBtn.className = 'gcal-popup-close';
         closeBtn.textContent = '✕';
         closeBtn.addEventListener('click', () => popup.remove());
-
-        hdr.appendChild(titleEl); hdr.appendChild(closeBtn);
+        hdr.appendChild(titleEl);
+        hdr.appendChild(closeBtn);
         popup.appendChild(hdr);
 
-        // ── Body: editable form ──
+        // ── Body ──
         const body = document.createElement('div');
         body.className = 'gcal-popup-body';
-        body.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
 
-        // Date + time info row
+        // Date + time row
         const timeLabel = (task.endHour && task.endHour > hour)
             ? `${timeStr(hour)} – ${timeStr(task.endHour)}`
             : timeStr(hour);
         const dateStr = date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
-        const infoRow = document.createElement('div');
-        infoRow.className = 'gcal-popup-row';
-        infoRow.innerHTML = `<span class="gcal-popup-icon">🗓</span><span style="font-size:13px;color:#374151;">${esc(dateStr)}, ${esc(timeLabel)}</span>`;
-        body.appendChild(infoRow);
+        const timeRow = document.createElement('div');
+        timeRow.className = 'gcal-popup-row';
+        timeRow.innerHTML = `<span class="gcal-popup-icon">🗓</span><span>${esc(dateStr)}, ${esc(timeLabel)}</span>`;
+        body.appendChild(timeRow);
 
-        // Title input
-        const titleLbl = document.createElement('label');
-        titleLbl.style.cssText = 'font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;';
-        titleLbl.textContent = 'Title';
-        body.appendChild(titleLbl);
-
-        const titleInp = document.createElement('input');
-        titleInp.type = 'text';
-        titleInp.value = task.title;
-        titleInp.style.cssText = 'width:100%;border:1px solid #d1d5db;border-radius:8px;padding:7px 10px;font-size:14px;font-weight:600;font-family:inherit;box-sizing:border-box;';
-        titleInp.addEventListener('focus', () => titleInp.style.borderColor = '#667eea');
-        titleInp.addEventListener('blur',  () => titleInp.style.borderColor = '#d1d5db');
-        body.appendChild(titleInp);
-
-        // Notes textarea
-        const notesLbl = document.createElement('label');
-        notesLbl.style.cssText = 'font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;';
-        notesLbl.innerHTML = '📝 Notes';
-        body.appendChild(notesLbl);
-
-        const notesInp = document.createElement('textarea');
-        notesInp.value = task.notes || '';
-        notesInp.placeholder = 'Add notes, links, or details…';
-        notesInp.style.cssText = 'width:100%;border:1px solid #d1d5db;border-radius:8px;padding:7px 10px;font-size:13px;font-family:inherit;resize:vertical;min-height:80px;line-height:1.55;box-sizing:border-box;';
-        notesInp.addEventListener('focus', () => notesInp.style.borderColor = '#667eea');
-        notesInp.addEventListener('blur',  () => notesInp.style.borderColor = '#d1d5db');
-        body.appendChild(notesInp);
-
-        // Action buttons row
-        const actRow = document.createElement('div');
-        actRow.style.cssText = 'display:flex;gap:8px;margin-top:4px;';
-
-        const saveBtn = document.createElement('button');
-        saveBtn.textContent = '💾 Save';
-        saveBtn.style.cssText = 'flex:1;background:#667eea;color:white;border:none;border-radius:8px;padding:8px 0;font-size:13px;font-weight:600;cursor:pointer;';
-        saveBtn.addEventListener('mouseenter', () => saveBtn.style.background = '#5a67d8');
-        saveBtn.addEventListener('mouseleave', () => saveBtn.style.background = '#667eea');
-
-        const delBtn = document.createElement('button');
-        delBtn.textContent = '🗑️';
-        delBtn.title = 'Delete event';
-        delBtn.style.cssText = 'background:#fee2e2;color:#991b1b;border:none;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;';
-        delBtn.addEventListener('mouseenter', () => delBtn.style.background = '#fecaca');
-        delBtn.addEventListener('mouseleave', () => delBtn.style.background = '#fee2e2');
-
-        actRow.appendChild(saveBtn); actRow.appendChild(delBtn);
-        body.appendChild(actRow);
-        popup.appendChild(body);
-        document.body.appendChild(popup);
-
-        // Focus title input
-        setTimeout(() => { titleInp.select(); }, 30);
-
-        // Save handler
-        function doSave() {
-            const newTitle = titleInp.value.trim();
-            if (!newTitle) return;
-            const newNotes = notesInp.value.trim();
+        // Notes — inline editable textarea (always shown)
+        const notesRow = document.createElement('div');
+        notesRow.className = 'gcal-popup-row';
+        notesRow.style.cssText = 'align-items:flex-start;flex-direction:column;gap:4px;';
+        const notesLabel = document.createElement('div');
+        notesLabel.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9ca3af;margin-bottom:2px;';
+        notesLabel.textContent = '📝 Notes';
+        notesRow.appendChild(notesLabel);
+        const notesTa = document.createElement('textarea');
+        notesTa.value = task.notes || '';
+        notesTa.placeholder = 'Add notes…';
+        notesTa.rows = 3;
+        notesTa.style.cssText = 'width:100%;border:1px solid #e2e8f0;border-radius:8px;padding:7px 10px;font-size:13px;font-family:inherit;color:#374151;resize:vertical;line-height:1.5;background:#f8faff;';
+        notesTa.addEventListener('focus', () => { notesTa.style.borderColor = '#667eea'; notesTa.style.outline = 'none'; });
+        notesTa.addEventListener('blur', () => {
+            notesTa.style.borderColor = '#e2e8f0';
             const dk = fdk(date);
             const tk = `${dk}-${hour}`;
             if (events[tk]) {
                 const idx = events[tk].findIndex(t => t.id === task.id);
-                if (idx !== -1) {
-                    events[tk][idx] = { ...events[tk][idx], title: newTitle, notes: newNotes };
-                    save(); refreshView();
-                }
+                if (idx !== -1) { events[tk][idx].notes = notesTa.value.trim(); task.notes = events[tk][idx].notes; save(); refreshView(); }
             }
-            // Update header live
-            titleEl.textContent = newTitle;
-            popup.remove();
-        }
-
-        saveBtn.addEventListener('click', doSave);
-        delBtn.addEventListener('click', () => {
-            deleteTask(fdk(date), hour, task.id);
-            popup.remove();
         });
-        titleInp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSave(); } });
-        notesInp.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doSave(); });
+        notesTa.addEventListener('click', e => e.stopPropagation());
+        notesRow.appendChild(notesTa);
+        body.appendChild(notesRow);
 
-        // Smart position
+        popup.appendChild(body);
+        document.body.appendChild(popup);
+
+        // ── Position ──
         const rect = anchorEl.getBoundingClientRect();
         let left = rect.left;
         let top  = rect.bottom + 8;
-        if (left + 350 > window.innerWidth - 8)  left = window.innerWidth - 358;
-        if (top  + 380 > window.innerHeight - 8) top  = rect.top - 388;
+        if (left + 360 > window.innerWidth - 8) left = window.innerWidth - 368;
+        if (top  + 360 > window.innerHeight - 8) top = rect.top - 368;
         left = Math.max(8, left);
         top  = Math.max(8, top);
         popup.style.left = left + 'px';
@@ -3302,6 +3391,15 @@
                 del.addEventListener('click',e=>{e.stopPropagation();deleteAllDay(ev.id);});
                 bar.appendChild(del);
 
+                // Click → GCal-style popup (only for local all-day events, not gcal/ical)
+                const isLocal = !ev.calendarId && !ev.feedId;
+                if (isLocal) {
+                    bar.addEventListener('click', e => {
+                        e.stopPropagation();
+                        showAlldayPopup(ev, bar);
+                    });
+                }
+
                 // Tooltip on hover
                 bar.addEventListener('mouseenter',()=>{
                     const ex=document.getElementById('__tip'); if(ex) ex.remove();
@@ -3311,7 +3409,10 @@
                     hdr.innerHTML=`<div class="tt-date">📌 ${esc(ev.title)}</div>`;
                     tip.appendChild(hdr);
                     const body=document.createElement('div'); body.className='tt-body';
-                    body.innerHTML=`<div class="tt-row"><span class="tt-time">${fmt(ev.start)}</span><span class="tt-title"> → ${fmt(ev.end)}</span></div>`;
+                    let tipHtml=`<div class="tt-row"><span class="tt-time">${fmt(ev.start)}</span><span class="tt-title"> → ${fmt(ev.end)}</span></div>`;
+                    if (isLocal && ev.notes) tipHtml += `<div class="tt-notes">📝 ${esc(ev.notes)}</div>`;
+                    if (isLocal) tipHtml += `<div style="font-size:10px;color:#9ca3af;margin-top:4px;font-style:italic;">Click to view / edit</div>`;
+                    body.innerHTML = tipHtml;
                     tip.appendChild(body);
                     positionTip(tip, bar);
                     attachAnchorLeave(bar);
@@ -3346,10 +3447,11 @@
         if (adEvs.length || calAd.length) {
             strip.classList.add('visible');
             adEvs.forEach(ev => {
-                const item = document.createElement('div'); item.className = 'sad-item';
+                const item = document.createElement('div'); item.className = 'sad-item gcal-event-link';
                 item.style.background = ev.color || COLORS[0];
                 const fmt = d => pdk(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
                 item.innerHTML = `<span>📌 ${esc(ev.title)}</span><span style="font-size:11px;opacity:.85;margin-left:4px;">${fmt(ev.start)}${ev.start!==ev.end?' → '+fmt(ev.end):''}</span>`;
+                item.addEventListener('click', e => { e.stopPropagation(); showAlldayPopup(ev, item); });
                 const del = document.createElement('button'); del.className = 'sad-del'; del.textContent = '🗑️';
                 del.addEventListener('mousedown', e => e.preventDefault());
                 del.addEventListener('click', e => { e.stopPropagation(); deleteAllDay(ev.id); });
@@ -3532,7 +3634,6 @@
             newPopup.innerHTML = `
                 <h4>New Event &nbsp;<small style="font-weight:400;font-size:11px;color:#64748b;">${hourToTimeStr(startH)} – ${hourToTimeStr(endH)}</small></h4>
                 <input type="text" id="cspNewTitle" placeholder="Event title…" autocomplete="off">
-                <textarea id="cspNewNotes" placeholder="📝 Notes (optional)…"></textarea>
                 <div class="wsp-new-popup-row">
                     <button class="wsp-btn-cancel">Cancel</button>
                     <button class="wsp-btn-save">Save</button>
@@ -3541,12 +3642,11 @@
             document.body.appendChild(newPopup);
             let px = e.clientX + 10, py = e.clientY - 20;
             if (px + 290 > window.innerWidth)  px = e.clientX - 300;
-            if (py + 260 > window.innerHeight) py = window.innerHeight - 265;
+            if (py + 180 > window.innerHeight) py = window.innerHeight - 185;
             newPopup.style.left = Math.max(8, px) + 'px';
             newPopup.style.top  = Math.max(8, py) + 'px';
 
             const inp    = newPopup.querySelector('#cspNewTitle');
-            const notesI = newPopup.querySelector('#cspNewNotes');
             const save   = newPopup.querySelector('.wsp-btn-save');
             const cancel = newPopup.querySelector('.wsp-btn-cancel');
             setTimeout(() => inp.focus(), 30);
@@ -3554,16 +3654,14 @@
             function doSave() {
                 const title = inp.value.trim();
                 if (!title) { removeDragArtifacts(); return; }
-                const notes  = notesI.value.trim();
                 const hourKey = Math.floor(startH);
                 const endHour = Math.ceil(endH) <= WSP_HOUR_END ? Math.ceil(endH) : null;
-                saveTask(classicSelectedDate, hourKey, { title, notes, endHour }, () => {});
+                saveTask(classicSelectedDate, hourKey, { title, notes: '', endHour }, () => {});
                 removeDragArtifacts();
             }
             save.addEventListener('click', doSave);
             cancel.addEventListener('click', removeDragArtifacts);
             inp.addEventListener('keydown', e => { if (e.key==='Enter') doSave(); if (e.key==='Escape') removeDragArtifacts(); });
-            notesI.addEventListener('keydown', e => { if (e.key==='Enter' && (e.ctrlKey||e.metaKey)) doSave(); if (e.key==='Escape') removeDragArtifacts(); });
             setTimeout(() => {
                 document.addEventListener('mousedown', function outsideClick(ev) {
                     if (newPopup && !newPopup.contains(ev.target)) {
@@ -3812,11 +3910,16 @@
                 bar.style.background=ev.color||COLORS[0];
                 bar.style.left=(cs*cw+2)+'px'; bar.style.width=((ce-cs+1)*cw-4)+'px'; bar.style.top=(4+lane*22)+'px';
                 const te=document.createElement('span'); te.className='bar-title'; te.textContent=ev.title; bar.appendChild(te);
+                const isLocalWv = !ev.calendarId && !ev.feedId;
                 if (!ev.calendarId) {
                     const del=document.createElement('span'); del.className='bar-del'; del.textContent='✕';
                     del.addEventListener('mousedown',e=>e.preventDefault());
                     del.addEventListener('click',e=>{e.stopPropagation();deleteAllDay(ev.id);});
                     bar.appendChild(del);
+                }
+                // Click → popup for local events
+                if (isLocalWv) {
+                    bar.addEventListener('click', e => { e.stopPropagation(); showAlldayPopup(ev, bar); });
                 }
                 bar.addEventListener('mouseenter',()=>{
                     const ex=document.getElementById('__tip'); if(ex)ex.remove();
@@ -3826,7 +3929,10 @@
                     hdr2.innerHTML=`<div class="tt-date">📌 ${esc(ev.title)}</div>`;
                     tip.appendChild(hdr2);
                     const body2=document.createElement('div'); body2.className='tt-body';
-                    body2.innerHTML=`<div class="tt-row"><span class="tt-time">${fmt(ev.start)}</span><span class="tt-title"> → ${fmt(ev.end)}</span></div>`;
+                    let tipHtml2=`<div class="tt-row"><span class="tt-time">${fmt(ev.start)}</span><span class="tt-title"> → ${fmt(ev.end)}</span></div>`;
+                    if (isLocalWv && ev.notes) tipHtml2 += `<div class="tt-notes">📝 ${esc(ev.notes)}</div>`;
+                    if (isLocalWv) tipHtml2 += `<div style="font-size:10px;color:#9ca3af;margin-top:4px;font-style:italic;">Click to view / edit</div>`;
+                    body2.innerHTML = tipHtml2;
                     tip.appendChild(body2);
                     positionTip(tip, bar);
                     attachAnchorLeave(bar);
@@ -4088,10 +4194,11 @@
         if (adEvs.length || calAd.length) {
             strip.classList.add('visible');
             adEvs.forEach(ev => {
-                const item = document.createElement('div'); item.className='sad-item';
+                const item = document.createElement('div'); item.className='sad-item gcal-event-link';
                 item.style.background = ev.color || COLORS[0];
                 const fmt = d => pdk(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
                 item.innerHTML = `<span>📌 ${esc(ev.title)}</span><span style="font-size:11px;opacity:.85;margin-left:4px;">${fmt(ev.start)}${ev.start!==ev.end?' → '+fmt(ev.end):''}</span>`;
+                item.addEventListener('click', e => { e.stopPropagation(); showAlldayPopup(ev, item); });
                 const del = document.createElement('button'); del.className='sad-del'; del.textContent='🗑️';
                 del.addEventListener('mousedown', e => e.preventDefault());
                 del.addEventListener('click', e => { e.stopPropagation(); deleteAllDay(ev.id); });
@@ -4314,7 +4421,6 @@
             newPopup.innerHTML = `
                 <h4>New Event &nbsp;<small style="font-weight:400;font-size:11px;color:#64748b;">${hourToTimeStr(startH)} – ${hourToTimeStr(endH)}</small></h4>
                 <input type="text" id="wspNewTitle" placeholder="Event title…" autocomplete="off">
-                <textarea id="wspNewNotes" placeholder="📝 Notes (optional)…"></textarea>
                 <div class="wsp-new-popup-row">
                     <button class="wsp-btn-cancel">Cancel</button>
                     <button class="wsp-btn-save">Save</button>
@@ -4325,24 +4431,22 @@
             // Position near cursor, keep in viewport
             let px = e.clientX + 10, py = e.clientY - 20;
             if (px + 290 > window.innerWidth)  px = e.clientX - 300;
-            if (py + 260 > window.innerHeight) py = window.innerHeight - 265;
+            if (py + 180 > window.innerHeight) py = window.innerHeight - 185;
             newPopup.style.left = Math.max(8, px) + 'px';
             newPopup.style.top  = Math.max(8, py) + 'px';
 
-            const inp    = newPopup.querySelector('#wspNewTitle');
-            const notesI = newPopup.querySelector('#wspNewNotes');
-            const save   = newPopup.querySelector('.wsp-btn-save');
-            const cancel = newPopup.querySelector('.wsp-btn-cancel');
+            const inp   = newPopup.querySelector('#wspNewTitle');
+            const save  = newPopup.querySelector('.wsp-btn-save');
+            const cancel= newPopup.querySelector('.wsp-btn-cancel');
 
             setTimeout(() => inp.focus(), 30);
 
             function doSave() {
                 const title = inp.value.trim();
                 if (!title) { newPopup.remove(); newPopup = null; dragState = null; return; }
-                const notes   = notesI.value.trim();
-                const hourKey = Math.floor(startH);
-                const endHour = Math.ceil(endH) <= WSP_HOUR_END ? Math.ceil(endH) : null;
-                saveTask(weekSelectedDate, hourKey, { title, notes, endHour }, () => {});
+                const hourKey  = Math.floor(startH);
+                const endHour  = Math.ceil(endH) <= WSP_HOUR_END ? Math.ceil(endH) : null;
+                saveTask(weekSelectedDate, hourKey, { title, notes: '', endHour }, () => {});
                 newPopup.remove(); newPopup = null; dragState = null;
             }
 
@@ -4350,10 +4454,6 @@
             cancel.addEventListener('click', () => { removeDragArtifacts(); });
             inp.addEventListener('keydown', e => {
                 if (e.key === 'Enter') doSave();
-                if (e.key === 'Escape') removeDragArtifacts();
-            });
-            notesI.addEventListener('keydown', e => {
-                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doSave();
                 if (e.key === 'Escape') removeDragArtifacts();
             });
 
@@ -5058,11 +5158,12 @@
             });
         }
 
-        // Build cell HTML
+        // Build cell HTML — all-day events are rendered as spanning bars by JS after layout
         function cellHTML(info) {
             if (!info) return '<div class="day-cell empty"></div>';
             const { d, note, noteId, taskItems, gcEvIds, isToday, isWeekend } = info;
-            const cls = ['day-cell', isToday?'today':'', isWeekend?'weekend':'', (note||taskItems.length||gcEvIds.length)?'has-content':''].filter(Boolean).join(' ');
+            const hasLocal = allDayEvents.some(ev => { const dk2 = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; return ev.start <= dk2 && ev.end >= dk2; });
+            const cls = ['day-cell', isToday?'today':'', isWeekend?'weekend':'', (note||taskItems.length||gcEvIds.length||hasLocal)?'has-content':''].filter(Boolean).join(' ');
             const date = new Date(year, month, d);
             const wdShort = date.toLocaleDateString(undefined, {weekday:'short'}).toUpperCase().substring(0,3);
             const todayNumCls = isToday ? ' today-num' : '';
@@ -5078,12 +5179,45 @@
                 return `<div class="ev-gcal ev-clickable" style="background:${escP(ge.color||'#2c628f')}" onclick="showDetail('${id}')"><span class="ev-gcal-title">${escP(ge.title)}</span><span class="ev-gcal-time">${escP(reg.timeLabel)}</span></div>`;
             }).join('');
 
-            return `<div class="${cls}"><div class="day-header"><span class="day-num${todayNumCls}">${d}</span><span class="day-name">${wdShort}</span></div><div class="day-events">${noteBlock}${taskBlocks}${gcBlocks}${(!note&&!taskItems.length&&!gcEvIds.length)?'<span class="ev-empty">—</span>':''}</div></div>`;
+            return `<div class="${cls}" data-d="${d}"><div class="day-header"><span class="day-num${todayNumCls}">${d}</span><span class="day-name">${wdShort}</span></div><div class="day-events">${noteBlock}${taskBlocks}${gcBlocks}${(!note&&!taskItems.length&&!gcEvIds.length&&!hasLocal)?'<span class="ev-empty">—</span>':''}</div></div>`;
         }
 
-        let gridCells = '';
-        for (let i = 0; i < firstDay; i++) gridCells += '<div class="day-cell empty"></div>';
-        dayData.forEach(info => { gridCells += cellHTML(info); });
+        // Build week rows (position:relative) so spanning bars can be absolutely positioned
+        // Each row: up to 7 cells. firstDay blank cells pad the first row.
+        const allDayEventsForPopup = allDayEvents.filter(ev => {
+            const monthStart = `${year}-${String(month+1).padStart(2,'0')}-01`;
+            const monthEnd   = `${year}-${String(month+1).padStart(2,'0')}-${String(totalDays).padStart(2,'0')}`;
+            return ev.end >= monthStart && ev.start <= monthEnd;
+        });
+        // Serialize for inline script
+        const adEventsJson = JSON.stringify(allDayEventsForPopup.map(ev => ({
+            title: ev.title, start: ev.start, end: ev.end, color: ev.color || '#667eea', notes: ev.notes || ''
+        }))).replace(/<\/script>/gi, '<\\/script>');
+
+        // Build grid as week rows
+        let gridRows = '';
+        let cellBuf = '';
+        let totalCells = firstDay + totalDays;
+        let cellIdx = 0;
+
+        // empty leading cells
+        for (let i = 0; i < firstDay; i++) {
+            cellBuf += '<div class="day-cell empty" data-d=""></div>';
+            cellIdx++;
+            if (cellIdx % 7 === 0) { gridRows += `<div class="week-row" data-wi="${Math.floor((cellIdx-1)/7)}">${cellBuf}</div>`; cellBuf = ''; }
+        }
+        // day cells
+        dayData.forEach(info => {
+            cellBuf += cellHTML(info);
+            cellIdx++;
+            if (cellIdx % 7 === 0) { gridRows += `<div class="week-row" data-wi="${Math.floor((cellIdx-1)/7)}">${cellBuf}</div>`; cellBuf = ''; }
+        });
+        // flush remaining
+        if (cellBuf) {
+            const rem = 7 - (cellIdx % 7 || 7);
+            for (let i = 0; i < rem; i++) cellBuf += '<div class="day-cell empty" data-d=""></div>';
+            gridRows += `<div class="week-row" data-wi="${Math.floor(cellIdx/7)}">${cellBuf}</div>`;
+        }
 
         const registryJson = JSON.stringify(eventRegistry).replace(/<\/script>/gi,'<\\/script>');
 
@@ -5109,12 +5243,36 @@
   .weekday-row span { text-align: center; padding: 0.6rem 0; font-size: 0.78rem; font-weight: 700; color: #3a6b8c; text-transform: uppercase; letter-spacing: 0.07em; }
   .weekday-row span.wkend { color: #b45309; }
   .cal-grid {
-    display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 1px;
-    background: #d0dde8;
+    display: flex;
+    flex-direction: column;
     width: 100%;
   }
+  .week-row {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    position: relative;
+    border-bottom: 1px solid #d0dde8;
+  }
+  .week-row:last-child { border-bottom: none; }
+  .allday-bar-p {
+    position: absolute;
+    top: 4px;
+    height: 18px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: white;
+    padding: 0 6px;
+    display: flex;
+    align-items: center;
+    z-index: 4;
+    overflow: hidden;
+    white-space: nowrap;
+    cursor: default;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    pointer-events: all;
+  }
+  .allday-bar-p:hover { filter: brightness(0.88); }
   .day-cell {
     background: white;
     display: flex;
@@ -5122,13 +5280,18 @@
     min-width: 0;
     overflow: hidden;
     width: 100%;
+    padding-top: 28px;
+    position: relative;
+    border-right: 1px solid #d0dde8;
+    min-height: 110px;
   }
+  .day-cell:last-child { border-right: none; }
   .day-cell.empty   { background: #f4f8fc; }
   .day-cell.weekend { background: #fdf8f3; }
   .day-cell.today   { background: #e6f2ff !important; outline: 2px solid #2c628f; outline-offset: -2px; }
   .day-cell.has-content { background: #fffef9; }
   .day-cell.weekend.has-content { background: #fffaf3; }
-  .day-header { display: flex; align-items: center; gap: 7px; padding: 8px 10px 5px; border-bottom: 1px solid #eff4f9; flex-shrink: 0; min-width: 0; overflow: hidden; }
+  .day-header { position: absolute; top: 4px; left: 6px; display: flex; align-items: center; gap: 7px; padding: 0; border-bottom: none; flex-shrink: 0; min-width: 0; overflow: hidden; z-index: 5; pointer-events: none; }
   .day-num { font-size: 1.1rem; font-weight: 800; color: #1e4a6e; min-width: 28px; line-height: 1; }
   .day-num.today-num { background: #2c628f; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 0.92rem; min-width: unset; }
   .day-name { font-size: 0.66rem; color: #9ab0c8; font-weight: 700; letter-spacing: 0.06em; }
@@ -5175,7 +5338,7 @@
   <div class="weekday-row">
     <span class="wkend">Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span class="wkend">Sat</span>
   </div>
-  <div class="cal-grid">${gridCells}</div>
+  <div class="cal-grid">${gridRows}</div>
   <div class="popup-legend">
     <strong style="color:#1e4a6e;">Legend</strong>
     <div class="legend-item"><div class="legend-swatch" style="background:#fff8e8;border-left:3px solid #f5a623;"></div><span>📌 Year note</span></div>
@@ -5188,6 +5351,75 @@
 <div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)closeDetail()">
   <div class="detail-box" id="detailBox"></div>
 </div>
+<script>
+// Draw all-day spanning bars across week rows
+requestAnimationFrame(function() {
+  var AD_EVENTS = ${adEventsJson};
+  if (!AD_EVENTS.length) return;
+  function pdk(s) { var p=s.split('-').map(Number); return new Date(p[0],p[1]-1,p[2]); }
+  function fdk(d) { return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+
+  var rows = document.querySelectorAll('.week-row');
+  rows.forEach(function(row, wi) {
+    var cells = row.querySelectorAll('.day-cell:not(.empty)');
+    if (!cells.length) return;
+    var allCells = row.querySelectorAll('.day-cell');
+    if (!allCells.length) return;
+
+    // Find the dates of this row's non-empty cells
+    var firstCellD = null, lastCellD = null;
+    cells.forEach(function(c) {
+      var d = parseInt(c.dataset.d);
+      if (!isNaN(d)) {
+        if (firstCellD === null) firstCellD = d;
+        lastCellD = d;
+      }
+    });
+    if (firstCellD === null) return;
+
+    var wsDk = '${year}-' + String(${month}+1).padStart(2,'0') + '-' + String(firstCellD).padStart(2,'0');
+    var weDk = '${year}-' + String(${month}+1).padStart(2,'0') + '-' + String(lastCellD).padStart(2,'0');
+
+    var relevant = AD_EVENTS.filter(function(ev) { return ev.end >= wsDk && ev.start <= weDk; });
+    if (!relevant.length) return;
+
+    relevant.sort(function(a,b) { return (new Date(b.end)-new Date(b.start))-(new Date(a.end)-new Date(a.start)); });
+
+    var cw = allCells[0].getBoundingClientRect().width;
+    if (!cw) return;
+    var lanes = [];
+
+    relevant.forEach(function(ev) {
+      var segStart = ev.start < wsDk ? wsDk : ev.start;
+      var segEnd   = ev.end   > weDk ? weDk : ev.end;
+      var weekStartDate = pdk(wsDk);
+      var colS = Math.round((pdk(segStart) - weekStartDate) / 86400000);
+      var colE = Math.round((pdk(segEnd)   - weekStartDate) / 86400000);
+
+      var lane = 0;
+      while (lanes.some(function(s){ return s.lane===lane && s.colS<=colE && s.colE>=colS; })) lane++;
+      lanes.push({colS:colS, colE:colE, lane:lane});
+
+      var bar = document.createElement('div');
+      bar.className = 'allday-bar-p';
+      bar.style.background = ev.color || '#667eea';
+      bar.style.left  = (colS * cw + 2) + 'px';
+      bar.style.width = ((colE - colS + 1) * cw - 4) + 'px';
+      bar.style.top   = (26 + lane * 22) + 'px';
+      bar.title = ev.title + (ev.start !== ev.end ? ' (' + ev.start + ' → ' + ev.end + ')' : '');
+
+      var showTitle = (ev.start >= wsDk) || (colS === 0);
+      bar.textContent = showTitle ? ev.title : '';
+      row.appendChild(bar);
+    });
+
+    // Push day cells down so content starts below bars
+    var maxLane = lanes.reduce(function(m,s){ return Math.max(m,s.lane); }, 0);
+    var barsHeight = 26 + (maxLane + 1) * 22 + 4;
+    allCells.forEach(function(c){ c.style.paddingTop = Math.max(28, barsHeight) + 'px'; });
+  });
+});
+<\/script>
 <script>
 const REGISTRY = ${registryJson};
 function timeStr_p(h) { return (h<=12?h:h-12)+':00 '+(h<12?'AM':'PM'); }
