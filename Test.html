@@ -297,8 +297,8 @@
             <div id="gdriveStatus" class="status-msg" style="display:none"></div>
             <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
             <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn btn-primary btn-sm" id="gdriveSaveBtn" disabled>☁ Save All Tasks to Drive</button>
-                <button class="btn btn-ghost btn-sm" id="gdriveLoadBtn" disabled>⬇ Load Tasks from Drive</button>
+                <button class="btn btn-primary btn-sm" id="gdriveSaveBtn">☁ Save All Tasks to Drive</button>
+                <button class="btn btn-ghost btn-sm" id="gdriveLoadBtn">⬇ Load Tasks from Drive</button>
             </div>
             <p style="margin-top:10px;font-size:0.78rem;color:var(--text-light)">Tasks are saved as <strong>qtodo_tasks.json</strong> in your Google Drive root. Saving overwrites the previous file. Loading merges Drive data into local storage.</p>
         </div>
@@ -875,26 +875,35 @@
     
     // ── Google Drive Integration ───────────────────────────────────────────────
     const GDRIVE_FILE_NAME = 'qtodo_tasks.json';
-    const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
+    const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile';
     let gdriveAccessToken = null;
+    let gdriveTokenClient = null;
+    // Queued action to run after sign-in completes
+    let gdrivePostSignInAction = null;
 
     function getGdriveClientId(){ return document.getElementById('gdriveClientId').value.trim() || localStorage.getItem('gdriveClientId') || ''; }
 
-    function showGdriveStatus(msg, ok=true){
+    function showGdriveStatus(msg, ok=true, persist=false){
         const el = document.getElementById('gdriveStatus');
         el.textContent = msg; el.style.display = 'block';
         el.className = `status-msg ${ok ? 'dynalist-ok' : 'dynalist-err'}`;
-        clearTimeout(el._t); el._t = setTimeout(()=>{ el.style.display='none'; }, 5000);
+        clearTimeout(el._t);
+        if(!persist) el._t = setTimeout(()=>{ el.style.display='none'; }, 6000);
     }
 
-    function setGdriveSignedIn(profile){
+    function gdriveIsTokenValid(){
+        // Token is considered valid if set; GIS handles expiry internally
+        return !!gdriveAccessToken;
+    }
+
+    function setGdriveSignedIn(name, email){
         document.getElementById('gdriveSignInBtn').style.display = 'none';
         document.getElementById('gdriveSignOutBtn').style.display = '';
         document.getElementById('gdriveSaveBtn').disabled = false;
         document.getElementById('gdriveLoadBtn').disabled = false;
         const info = document.getElementById('gdriveUserInfo');
         info.style.display = 'block';
-        info.textContent = `✓ Signed in as ${profile.name} (${profile.email})`;
+        info.innerHTML = `✓ Signed in${name ? ' as <strong>'+name+'</strong>' : ''}${email ? ' ('+email+')' : ''}`;
     }
 
     function setGdriveSignedOut(){
@@ -906,117 +915,161 @@
         document.getElementById('gdriveUserInfo').style.display = 'none';
     }
 
-    function gdriveSignIn(){
+    function ensureTokenClient(){
+        if(gdriveTokenClient) return true;
         const clientId = getGdriveClientId();
-        if(!clientId){ showGdriveStatus('Please enter and save your Client ID first.', false); return; }
-        const client = google.accounts.oauth2.initTokenClient({
+        if(!clientId){ showGdriveStatus('⚠ Please enter and save your Google Client ID first.', false, true); return false; }
+        if(typeof google === 'undefined' || !google.accounts){
+            showGdriveStatus('⚠ Google API script not loaded. Make sure you are serving this file over http:// or https://, not file://.', false, true);
+            return false;
+        }
+        gdriveTokenClient = google.accounts.oauth2.initTokenClient({
             client_id: clientId,
             scope: GDRIVE_SCOPE,
             callback: async (resp) => {
-                if(resp.error){ showGdriveStatus('Sign-in failed: ' + resp.error, false); return; }
+                if(resp.error || !resp.access_token){
+                    showGdriveStatus('✗ Sign-in failed: ' + (resp.error||'no token returned'), false, true);
+                    gdrivePostSignInAction = null;
+                    return;
+                }
                 gdriveAccessToken = resp.access_token;
-                // Fetch profile
+                // Fetch user profile
                 try {
-                    const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                        headers: { Authorization: 'Bearer ' + gdriveAccessToken }
+                    const pr = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                        headers:{ Authorization:'Bearer '+gdriveAccessToken }
                     });
-                    const p = await r.json();
-                    setGdriveSignedIn({ name: p.name || p.email, email: p.email });
-                    showGdriveStatus('✓ Signed in successfully!', true);
-                } catch(e){ showGdriveStatus('Signed in but could not fetch profile.', true); setGdriveSignedIn({name:'Google User', email:''}); }
+                    const pj = await pr.json();
+                    setGdriveSignedIn(pj.name||'', pj.email||'');
+                } catch(_){ setGdriveSignedIn('',''); }
+                showGdriveStatus('✓ Signed in!', true);
+                // Run any queued action
+                if(gdrivePostSignInAction){
+                    const action = gdrivePostSignInAction;
+                    gdrivePostSignInAction = null;
+                    action();
+                }
             }
         });
-        client.requestAccessToken();
+        return true;
+    }
+
+    function gdriveRequestToken(thenDo){
+        if(!ensureTokenClient()) return;
+        gdrivePostSignInAction = thenDo || null;
+        gdriveTokenClient.requestAccessToken({ prompt: gdriveAccessToken ? '' : 'consent' });
+    }
+
+    // Run an action — if token missing/expired, sign in first then retry
+    function gdriveRun(action){
+        if(!gdriveIsTokenValid()){
+            showGdriveStatus('🔑 Signing in…', true);
+            gdriveRequestToken(action);
+        } else {
+            action();
+        }
     }
 
     async function gdriveFindFile(){
+        const q = encodeURIComponent(`name='${GDRIVE_FILE_NAME}' and trashed=false`);
         const r = await fetch(
-            `https://www.googleapis.com/drive/v3/files?q=name%3D'${GDRIVE_FILE_NAME}'+and+trashed%3Dfalse&fields=files(id,name)`,
-            { headers: { Authorization: 'Bearer ' + gdriveAccessToken } }
+            `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&spaces=drive`,
+            { headers:{ Authorization:'Bearer '+gdriveAccessToken } }
         );
+        if(!r.ok){ const e=await r.json(); throw new Error(e.error?.message||r.status); }
         const d = await r.json();
         return (d.files && d.files.length > 0) ? d.files[0] : null;
     }
 
     async function gdriveSaveAll(){
-        if(!gdriveAccessToken){ showGdriveStatus('Please sign in first.', false); return; }
-        showGdriveStatus('Saving…', true);
+        showGdriveStatus('☁ Saving to Google Drive…', true, true);
         try {
-            // Collect all task data
+            // Build JSON payload
             const all = {};
             for(let i=0; i<localStorage.length; i++){
                 const k = localStorage.key(i);
                 if(k.startsWith('tasks_')) all[k] = JSON.parse(localStorage.getItem(k));
             }
-            const blob = new Blob([JSON.stringify({ exportDate: Date.now(), tasksByDate: all })], { type: 'application/json' });
+            const body = JSON.stringify({ exportDate: Date.now(), tasksByDate: all });
 
-            // Check if file already exists
+            // Find existing file
             const existing = await gdriveFindFile();
-            let url, method;
-            if(existing){
-                url = `https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=media`;
-                method = 'PATCH';
+            let fileId;
+
+            if(!existing){
+                // Create file with metadata + content in one multipart request
+                const boundary = 'qtodo_boundary_' + Date.now();
+                const multipart =
+                    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n` +
+                    JSON.stringify({ name: GDRIVE_FILE_NAME, mimeType: 'application/json' }) +
+                    `\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n` +
+                    body + `\r\n--${boundary}--`;
+                const cr = await fetch(
+                    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+                    { method:'POST', headers:{ Authorization:'Bearer '+gdriveAccessToken, 'Content-Type':`multipart/related; boundary=${boundary}` }, body: multipart }
+                );
+                if(!cr.ok){ const e=await cr.json(); throw new Error(e.error?.message||cr.status); }
+                const cj = await cr.json();
+                fileId = cj.id;
             } else {
-                // Create with metadata first, then upload
-                const meta = await fetch('https://www.googleapis.com/drive/v3/files', {
-                    method: 'POST',
-                    headers: { Authorization: 'Bearer ' + gdriveAccessToken, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: GDRIVE_FILE_NAME, mimeType: 'application/json' })
-                });
-                const mj = await meta.json();
-                if(!mj.id){ showGdriveStatus('✗ Could not create file: ' + (mj.error?.message||'Unknown error'), false); return; }
-                url = `https://www.googleapis.com/upload/drive/v3/files/${mj.id}?uploadType=media`;
-                method = 'PATCH';
+                // Update existing file content
+                fileId = existing.id;
+                const ur = await fetch(
+                    `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
+                    { method:'PATCH', headers:{ Authorization:'Bearer '+gdriveAccessToken, 'Content-Type':'application/json' }, body }
+                );
+                if(!ur.ok){ const e=await ur.json(); throw new Error(e.error?.message||ur.status); }
             }
-            const upRes = await fetch(url, {
-                method, headers: { Authorization: 'Bearer ' + gdriveAccessToken, 'Content-Type': 'application/json' },
-                body: blob
-            });
-            if(upRes.ok){
-                const dateKeys = Object.keys(all);
-                showGdriveStatus(`✓ Saved ${dateKeys.length} date(s) to Google Drive as ${GDRIVE_FILE_NAME}`, true);
-            } else {
-                const err = await upRes.json();
-                showGdriveStatus('✗ Upload failed: ' + (err.error?.message||upRes.status), false);
+            const count = Object.keys(all).length;
+            showGdriveStatus(`✓ Saved ${count} date(s) to Google Drive → ${GDRIVE_FILE_NAME}`, true);
+        } catch(e){
+            // Token may have expired — clear it so next attempt re-authenticates
+            if(e.message && (e.message.includes('401')||e.message.toLowerCase().includes('invalid')||e.message.toLowerCase().includes('expired'))){
+                gdriveAccessToken = null;
             }
-        } catch(e){ showGdriveStatus('✗ Error: ' + e.message, false); }
+            showGdriveStatus('✗ Save failed: ' + e.message, false, true);
+        }
     }
 
     async function gdriveLoadAll(){
-        if(!gdriveAccessToken){ showGdriveStatus('Please sign in first.', false); return; }
-        showGdriveStatus('Loading…', true);
+        showGdriveStatus('⬇ Loading from Google Drive…', true, true);
         try {
             const existing = await gdriveFindFile();
-            if(!existing){ showGdriveStatus('No saved file found on Google Drive.', false); return; }
-            const r = await fetch(`https://www.googleapis.com/drive/v3/files/${existing.id}?alt=media`, {
-                headers: { Authorization: 'Bearer ' + gdriveAccessToken }
-            });
-            if(!r.ok){ showGdriveStatus('✗ Could not download file: ' + r.status, false); return; }
+            if(!existing){ showGdriveStatus('⚠ No file named "'+GDRIVE_FILE_NAME+'" found on your Drive.', false, true); return; }
+            const r = await fetch(
+                `https://www.googleapis.com/drive/v3/files/${existing.id}?alt=media`,
+                { headers:{ Authorization:'Bearer '+gdriveAccessToken } }
+            );
+            if(!r.ok){ const e=await r.json(); throw new Error(e.error?.message||r.status); }
             const data = await r.json();
-            if(data.tasksByDate){
-                let count = 0;
-                Object.keys(data.tasksByDate).forEach(k => {
-                    localStorage.setItem(k, JSON.stringify(data.tasksByDate[k]));
-                    count++;
-                });
-                tasks = loadTasks(formatDate(currentViewDate));
-                loadPreviousDayTasks(); loadTasksForView(); renderFutureTasks(); renderWeeklyCalendar();
-                showGdriveStatus(`✓ Loaded ${count} date(s) from Google Drive.`, true);
-            } else { showGdriveStatus('✗ File format not recognised.', false); }
-        } catch(e){ showGdriveStatus('✗ Error: ' + e.message, false); }
+            if(!data.tasksByDate){ showGdriveStatus('✗ File found but format is unrecognised.', false, true); return; }
+            let count = 0;
+            Object.keys(data.tasksByDate).forEach(k => {
+                localStorage.setItem(k, JSON.stringify(data.tasksByDate[k]));
+                count++;
+            });
+            tasks = loadTasks(formatDate(currentViewDate));
+            loadPreviousDayTasks(); loadTasksForView(); renderFutureTasks(); renderWeeklyCalendar();
+            showGdriveStatus(`✓ Loaded ${count} date(s) from Google Drive.`, true);
+        } catch(e){
+            if(e.message && (e.message.includes('401')||e.message.toLowerCase().includes('invalid')||e.message.toLowerCase().includes('expired'))){
+                gdriveAccessToken = null;
+            }
+            showGdriveStatus('✗ Load failed: ' + e.message, false, true);
+        }
     }
 
-    // Wire up Google Drive UI
+    // Wire up buttons
     document.getElementById('gdriveClientIdSaveBtn').onclick = ()=>{
         const id = document.getElementById('gdriveClientId').value.trim();
-        if(!id){ showGdriveStatus('Please enter a Client ID.', false); return; }
+        if(!id){ showGdriveStatus('Please enter a Client ID first.', false); return; }
         localStorage.setItem('gdriveClientId', id);
-        showGdriveStatus('Client ID saved.', true);
+        gdriveTokenClient = null; // reset so it re-initialises with new ID
+        showGdriveStatus('✓ Client ID saved.', true);
     };
-    document.getElementById('gdriveSignInBtn').onclick = ()=> gdriveSignIn();
-    document.getElementById('gdriveSignOutBtn').onclick = ()=>{ setGdriveSignedOut(); showGdriveStatus('Signed out.', true); };
-    document.getElementById('gdriveSaveBtn').onclick = ()=> gdriveSaveAll();
-    document.getElementById('gdriveLoadBtn').onclick = ()=> gdriveLoadAll();
+    document.getElementById('gdriveSignInBtn').onclick = ()=> gdriveRequestToken(null);
+    document.getElementById('gdriveSignOutBtn').onclick = ()=>{ setGdriveSignedOut(); gdriveTokenClient=null; showGdriveStatus('Signed out.', true); };
+    document.getElementById('gdriveSaveBtn').onclick = ()=> gdriveRun(gdriveSaveAll);
+    document.getElementById('gdriveLoadBtn').onclick = ()=> gdriveRun(gdriveLoadAll);
 
     // Restore saved client ID
     const savedClientId = localStorage.getItem('gdriveClientId');
