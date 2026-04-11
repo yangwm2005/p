@@ -314,7 +314,7 @@
             <p style="margin-top:10px;font-size:0.78rem;color:var(--text-light)">Tasks saved as <strong>qtodo_tasks.json</strong> in your Google Drive root. Works across all your devices.</p>
         </div>
     </div>
-    <div class="app-footer">Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. version 19 (clean layout)</div>
+    <div class="app-footer">Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. version 20 (synchronize on Google)</div>
 </div>
 <div class="print-view" id="printableView">
     <h2 style="margin-bottom:6px">Daily To-Do</h2>
@@ -892,6 +892,8 @@
     let gdrivePostSignInAction = null;
     let gdriveSyncTimer = null;
     let gdriveSyncing = false;
+    let gdriveLastSavedAt = 0;   // timestamp of last save FROM THIS device
+    let gdrivePollInterval = null;
 
     function isAutoSyncEnabled(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
 
@@ -938,6 +940,7 @@
 
     function setGdriveSignedOut(){
         gdriveAccessToken=null;
+        stopDrivePoll();
         document.getElementById('gdriveSignInBtn').style.display='';
         document.getElementById('gdriveSignOutBtn').style.display='none';
         document.getElementById('gdriveUserInfo').style.display='none';
@@ -965,6 +968,7 @@
                     setGdriveSignedIn(pj.name||'',pj.email||'');
                 } catch(_){ setGdriveSignedIn('',''); }
                 showGdriveStatus('✓ Signed in!',true);
+                if(isAutoSyncEnabled()) startDrivePoll();
                 if(gdrivePostSignInAction){ const a=gdrivePostSignInAction; gdrivePostSignInAction=null; a(); }
             }
         });
@@ -984,7 +988,7 @@
 
     async function gdriveFindFile(){
         const q=encodeURIComponent(`name='${GDRIVE_FILE_NAME}' and trashed=false`);
-        const r=await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&spaces=drive`,{headers:{Authorization:'Bearer '+gdriveAccessToken}});
+        const r=await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&spaces=drive`,{headers:{Authorization:'Bearer '+gdriveAccessToken}});
         if(!r.ok){ const e=await r.json(); throw new Error(e.error?.message||r.status); }
         const d=await r.json();
         return d.files?.length?d.files[0]:null;
@@ -1009,6 +1013,7 @@
                 if(!ur.ok){ const e=await ur.json(); throw new Error(e.error?.message||ur.status); }
             }
             setSyncIndicator('ok');
+            gdriveLastSavedAt = Date.now();
             if(!silent) showGdriveStatus(`✓ Saved ${Object.keys(all).length} date(s) to Drive`,true);
         } catch(e){
             if(e.message?.includes('401')||e.message?.toLowerCase().includes('invalid')) gdriveAccessToken=null;
@@ -1031,6 +1036,7 @@
             Object.keys(data.tasksByDate).forEach(k=>{ localStorage.setItem(k,JSON.stringify(data.tasksByDate[k])); count++; });
             tasks=loadTasks(formatDate(currentViewDate));
             loadPreviousDayTasks(); loadTasksForView(); renderFutureTasks(); renderWeeklyCalendar();
+            gdriveLastSavedAt = Date.now();
             setSyncIndicator('ok');
             if(!silent) showGdriveStatus(`✓ Loaded ${count} date(s) from Drive.`,true);
         } catch(e){
@@ -1046,6 +1052,31 @@
         clearTimeout(gdriveSyncTimer);
         setSyncIndicator('syncing');
         gdriveSyncTimer=setTimeout(()=> gdriveSaveAll(true), 2000);
+    }
+
+    // ── Background poll: reload if another device saved to Drive ─────────────
+    async function pollDriveForChanges(){
+        if(!isAutoSyncEnabled()||!gdriveAccessToken||gdriveSyncing) return;
+        try {
+            const file = await gdriveFindFile();
+            if(!file||!file.modifiedTime) return;
+            const driveModified = new Date(file.modifiedTime).getTime();
+            // If Drive file is newer than our last save/load by more than 5s, reload
+            if(driveModified > gdriveLastSavedAt + 5000){
+                setSyncIndicator('syncing');
+                await gdriveLoadAll(true);
+                showGdriveStatus('🔄 Updated from another device', true);
+            }
+        } catch(_){ /* silent — don't disturb the user for background poll errors */ }
+    }
+
+    function startDrivePoll(){
+        stopDrivePoll();
+        gdrivePollInterval = setInterval(pollDriveForChanges, 30000); // every 30s
+    }
+
+    function stopDrivePoll(){
+        if(gdrivePollInterval){ clearInterval(gdrivePollInterval); gdrivePollInterval=null; }
     }
 
     // Patch saveTasksToDate to trigger auto-sync on every write
@@ -1076,8 +1107,12 @@
         localStorage.setItem('gdriveAutoSync',on?'1':'0');
         updateAutoSyncToggleUI();
         if(on){
-            gdriveRun(()=> gdriveLoadAll(false).then(()=> showGdriveStatus('✓ Auto-sync on — changes will save automatically.',true)));
+            gdriveRun(()=> gdriveLoadAll(false).then(()=>{
+                showGdriveStatus('✓ Auto-sync on — changes will save automatically.',true);
+                startDrivePoll();
+            }));
         } else {
+            stopDrivePoll();
             setSyncIndicator('off');
             showGdriveStatus('Auto-sync disabled.',true);
         }
@@ -1093,7 +1128,7 @@
         const tryAutoStart=()=>{
             if(typeof google==='undefined'||!google.accounts){ setTimeout(tryAutoStart,500); return; }
             if(!ensureTokenClient()) return;
-            gdrivePostSignInAction=()=> gdriveLoadAll(true);
+            gdrivePostSignInAction=()=> gdriveLoadAll(true).then(()=> startDrivePoll());
             // prompt:'' = no popup; only works if user already granted consent
             gdriveTokenClient.requestAccessToken({prompt:''});
         };
