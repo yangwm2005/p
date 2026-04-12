@@ -6,7 +6,9 @@
     <title>Q·Todo — Daily Planner</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
     <style>
         :root {
             --bg: #eaeae6;
@@ -252,7 +254,7 @@
         <button class="tab-btn" onclick="openTab('weekly', this)">Weekly</button>
         <button class="tab-btn" onclick="openTab('future', this)">Future</button>
         <button class="tab-btn" onclick="openTab('dynalist', this)">Dynalist</button>
-        <button class="tab-btn" onclick="openTab('gdrive', this)">Google Drive</button>
+        <button class="tab-btn" onclick="openTab('gdrive', this)">Cloud Sync</button>
     </div>
 
     <div id="tab-daily" class="tab-content active">
@@ -279,42 +281,49 @@
 
     <div id="tab-gdrive" class="tab-content">
         <div class="card" style="padding:20px">
-            <div class="form-section">
-                <label class="form-label">Google OAuth Client ID</label>
-                <input type="text" class="form-input" id="gdriveClientId" placeholder="Paste your OAuth 2.0 Client ID here">
-                <p class="form-hint">
-                    Get it from <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a>:
-                    Create project → Enable Drive API → OAuth 2.0 Credentials (Web application) →
-                    Add the URL of this file to Authorized JavaScript origins.
-                </p>
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
-                <button class="btn btn-success btn-sm" id="gdriveClientIdSaveBtn">💾 Save Client ID</button>
-                <button class="btn btn-primary btn-sm" id="gdriveSignInBtn">🔑 Sign in with Google</button>
-                <button class="btn btn-ghost btn-sm" id="gdriveSignOutBtn" style="display:none">Sign Out</button>
-            </div>
-            <div id="gdriveUserInfo" style="display:none;margin-bottom:14px;padding:10px 14px;background:var(--success-soft);border:1px solid #bbf7d0;border-radius:var(--radius-sm);font-size:0.85rem;color:var(--success)"></div>
-            <div id="gdriveStatus" class="status-msg" style="display:none"></div>
-            <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
-            <!-- Auto-sync toggle -->
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px 14px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border)">
-                <label style="position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0">
-                    <input type="checkbox" id="gdriveAutoSync" style="opacity:0;width:0;height:0">
-                    <span id="gdriveAutoSyncSlider" style="position:absolute;cursor:pointer;inset:0;background:#ccc;border-radius:22px;transition:0.2s"></span>
-                </label>
-                <div>
-                    <div style="font-size:0.88rem;font-weight:600;color:var(--text)">Auto-sync with Google Drive</div>
-                    <div style="font-size:0.75rem;color:var(--text-muted)">Automatically saves changes and loads on startup. Requires sign-in.</div>
+            <!-- Not signed in -->
+            <div id="fbNotSignedIn">
+                <div style="text-align:center;padding:16px 0 24px">
+                    <div style="font-size:2rem;margin-bottom:8px">☁</div>
+                    <h3 style="font-size:1rem;font-weight:600;margin-bottom:6px">Cloud Sync</h3>
+                    <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:20px">Sign in with your Google account to sync tasks across all your devices. Each account has its own private data.</p>
+                    <button class="btn btn-primary" id="fbSignInBtn" style="gap:8px;padding:10px 20px;font-size:0.9rem">
+                        <svg width="18" height="18" viewBox="0 0 24 24" style="flex-shrink:0"><path fill="#fff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#fff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#fff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                        Sign in with Google
+                    </button>
                 </div>
+                <p style="font-size:0.75rem;color:var(--text-light);text-align:center;border-top:1px solid var(--border);padding-top:14px">Your tasks are stored privately under your own Google account. No one else can access your data.</p>
             </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn btn-primary btn-sm" id="gdriveSaveBtn">☁ Save Now</button>
-                <button class="btn btn-ghost btn-sm" id="gdriveLoadBtn">⬇ Load from Drive</button>
+            <!-- Signed in -->
+            <div id="fbSignedIn" style="display:none">
+                <div id="gdriveUserInfo" style="margin-bottom:14px;padding:10px 14px;background:var(--success-soft);border:1px solid #bbf7d0;border-radius:var(--radius-sm);font-size:0.85rem;color:var(--success)"></div>
+                <div id="gdriveStatus" class="status-msg" style="display:none"></div>
+                <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+                <!-- Auto-sync toggle -->
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px 14px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border)">
+                    <label style="position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0">
+                        <input type="checkbox" id="gdriveAutoSync" style="opacity:0;width:0;height:0">
+                        <span id="gdriveAutoSyncSlider" style="position:absolute;cursor:pointer;inset:0;background:#ccc;border-radius:22px;transition:0.2s"></span>
+                    </label>
+                    <div>
+                        <div style="font-size:0.88rem;font-weight:600;color:var(--text)">Auto-sync</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted)">Automatically saves every change and loads on startup.</div>
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <button class="btn btn-primary btn-sm" id="gdriveSaveBtn">☁ Save Now</button>
+                    <button class="btn btn-ghost btn-sm" id="gdriveLoadBtn">⬇ Load from Cloud</button>
+                    <button class="btn btn-ghost btn-sm" id="gdriveSignOutBtn" style="margin-left:auto;color:var(--danger)">Sign Out</button>
+                </div>
+                <p style="margin-top:10px;font-size:0.78rem;color:var(--text-light)">Tasks are saved privately to your Google account via Firebase. Works across all your devices.</p>
             </div>
-            <p style="margin-top:10px;font-size:0.78rem;color:var(--text-light)">Tasks saved as <strong>qtodo_tasks.json</strong> in your Google Drive root. Works across all your devices.</p>
+            <!-- Firebase config not set -->
+            <div id="fbNoConfig" style="display:none;margin-top:16px;padding:12px 14px;background:var(--warn-soft);border:1px solid #fed7aa;border-radius:var(--radius-sm);font-size:0.82rem;color:var(--warn)">
+                ⚠ Firebase is not configured. Open this HTML file, find <code>FIREBASE_CONFIG</code> near the top of the &lt;script&gt; and paste your Firebase project config there.
+            </div>
         </div>
     </div>
-    <div class="app-footer">Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. version 20 (synchronize on Google)</div>
+    <div class="app-footer">Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. version 22 (Firebase cloud sync)</div>
 </div>
 <div class="print-view" id="printableView">
     <h2 style="margin-bottom:6px">Daily To-Do</h2>
@@ -884,16 +893,59 @@
     appDiv.addEventListener('dragleave', ()=>document.getElementById('dropMsg')?.remove());
     appDiv.addEventListener('drop', (e)=>{ document.getElementById('dropMsg')?.remove(); let file=e.dataTransfer.files[0]; if(file && file.name.endsWith('.json')){ let reader=new FileReader(); reader.onload=ev=>{ try{ let data=JSON.parse(ev.target.result); if(data.tasksByDate){ Object.keys(data.tasksByDate).forEach(d=>localStorage.setItem(d, JSON.stringify(data.tasksByDate[d]))); alert('Tasks loaded via drag & drop'); } else if(data.tasks){ localStorage.setItem(`tasks_${todayStr}`, JSON.stringify(data.tasks)); } else throw 'Invalid'; loadTasksForView(); renderFutureTasks(); renderWeeklyCalendar(); }catch(err){ alert('Invalid JSON file'); } }; reader.readAsText(file); } else alert('Please drop a .json file'); });
     
-    // ── Google Drive Auto-Sync ─────────────────────────────────────────────────
-    const GDRIVE_FILE_NAME = 'qtodo_tasks.json';
-    const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile';
-    let gdriveAccessToken = null;
-    let gdriveTokenClient = null;
-    let gdrivePostSignInAction = null;
-    let gdriveSyncTimer = null;
-    let gdriveSyncing = false;
-    let gdriveLastSavedAt = 0;   // timestamp of last save FROM THIS device
-    let gdrivePollInterval = null;
+    // ── Firebase Cloud Sync ───────────────────────────────────────────────────
+    // ⚙ PASTE YOUR FIREBASE CONFIG BELOW (from Firebase Console → Project Settings)
+    const FIREBASE_CONFIG = {
+        apiKey: "",
+        authDomain: "",
+        projectId: "",
+        storageBucket: "",
+        messagingSenderId: "",
+        appId: ""
+    };
+
+    let fbApp = null, fbAuth = null, fbDb = null, fbUser = null;
+    let gdriveSyncTimer = null, gdriveSyncing = false, gdriveLastSavedAt = 0, gdrivePollInterval = null;
+
+    function isFirebaseConfigured(){
+        return FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId;
+    }
+
+    function initFirebase(){
+        if(fbApp) return true;
+        if(!isFirebaseConfigured()){
+            document.getElementById('fbNoConfig').style.display='block';
+            return false;
+        }
+        try {
+            fbApp = firebase.initializeApp(FIREBASE_CONFIG);
+            fbAuth = firebase.auth();
+            fbDb = firebase.firestore();
+            fbAuth.onAuthStateChanged(user => {
+                if(user){
+                    fbUser = user;
+                    document.getElementById('fbNotSignedIn').style.display='none';
+                    document.getElementById('fbSignedIn').style.display='block';
+                    const info = document.getElementById('gdriveUserInfo');
+                    info.innerHTML = `✓ Signed in as <strong>${user.displayName||''}</strong> (${user.email||''})`;
+                    setSyncIndicator(isAutoSyncEnabled()?'ok':'off');
+                    if(isAutoSyncEnabled()){
+                        fbLoadAll(true).then(()=>startDrivePoll());
+                    }
+                } else {
+                    fbUser = null;
+                    document.getElementById('fbNotSignedIn').style.display='block';
+                    document.getElementById('fbSignedIn').style.display='none';
+                    setSyncIndicator('off');
+                    stopDrivePoll();
+                }
+            });
+            return true;
+        } catch(e){
+            showGdriveStatus('✗ Firebase init error: '+e.message, false, true);
+            return false;
+        }
+    }
 
     function isAutoSyncEnabled(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
 
@@ -920,8 +972,6 @@
         if(!on) setSyncIndicator('off');
     }
 
-    function getGdriveClientId(){ return document.getElementById('gdriveClientId').value.trim()||localStorage.getItem('gdriveClientId')||''; }
-
     function showGdriveStatus(msg, ok=true, persist=false){
         const el=document.getElementById('gdriveStatus');
         el.textContent=msg; el.style.display='block';
@@ -930,156 +980,79 @@
         if(!persist) el._t=setTimeout(()=>{ el.style.display='none'; },6000);
     }
 
-    function setGdriveSignedIn(name, email){
-        document.getElementById('gdriveSignInBtn').style.display='none';
-        document.getElementById('gdriveSignOutBtn').style.display='';
-        const info=document.getElementById('gdriveUserInfo');
-        info.style.display='block';
-        info.innerHTML=`✓ Signed in${name?' as <strong>'+name+'</strong>':''}${email?' ('+email+')':''}`;
-    }
-
-    function setGdriveSignedOut(){
-        gdriveAccessToken=null;
-        stopDrivePoll();
-        document.getElementById('gdriveSignInBtn').style.display='';
-        document.getElementById('gdriveSignOutBtn').style.display='none';
-        document.getElementById('gdriveUserInfo').style.display='none';
-        setSyncIndicator('off');
-    }
-
-    function ensureTokenClient(){
-        if(gdriveTokenClient) return true;
-        const clientId=getGdriveClientId();
-        if(!clientId){ showGdriveStatus('⚠ Please enter and save your Google Client ID first.', false, true); return false; }
-        if(typeof google==='undefined'||!google.accounts){ showGdriveStatus('⚠ Google API not loaded — serve this file over http://, not file://', false, true); return false; }
-        gdriveTokenClient=google.accounts.oauth2.initTokenClient({
-            client_id: clientId, scope: GDRIVE_SCOPE,
-            callback: async (resp)=>{
-                if(resp.error||!resp.access_token){
-                    // If no_session / popup blocked during silent attempt, don't show error
-                    if(resp.error!=='interaction_required'&&resp.error!=='access_denied')
-                        showGdriveStatus('✗ Sign-in failed: '+(resp.error||'no token'), false, true);
-                    gdrivePostSignInAction=null; return;
-                }
-                gdriveAccessToken=resp.access_token;
-                try {
-                    const pr=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+gdriveAccessToken}});
-                    const pj=await pr.json();
-                    setGdriveSignedIn(pj.name||'',pj.email||'');
-                } catch(_){ setGdriveSignedIn('',''); }
-                showGdriveStatus('✓ Signed in!',true);
-                if(isAutoSyncEnabled()) startDrivePoll();
-                if(gdrivePostSignInAction){ const a=gdrivePostSignInAction; gdrivePostSignInAction=null; a(); }
-            }
-        });
-        return true;
-    }
-
-    function gdriveRequestToken(thenDo, silent=false){
-        if(!ensureTokenClient()) return;
-        gdrivePostSignInAction=thenDo||null;
-        gdriveTokenClient.requestAccessToken({ prompt: silent?'':( gdriveAccessToken?'':'consent') });
-    }
-
-    function gdriveRun(action){
-        if(!gdriveAccessToken) gdriveRequestToken(action);
-        else action();
-    }
-
-    async function gdriveFindFile(){
-        const q=encodeURIComponent(`name='${GDRIVE_FILE_NAME}' and trashed=false`);
-        const r=await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&spaces=drive`,{headers:{Authorization:'Bearer '+gdriveAccessToken}});
-        if(!r.ok){ const e=await r.json(); throw new Error(e.error?.message||r.status); }
-        const d=await r.json();
-        return d.files?.length?d.files[0]:null;
-    }
-
-    async function gdriveSaveAll(silent=false){
+    // ── Firebase read/write ───────────────────────────────────────────────────
+    async function fbSaveAll(silent=false){
+        if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false); return; }
         if(gdriveSyncing) return;
-        gdriveSyncing=true;
+        gdriveSyncing = true;
         setSyncIndicator('syncing');
         try {
-            const all={};
-            for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k.startsWith('tasks_')) all[k]=JSON.parse(localStorage.getItem(k)); }
-            const body=JSON.stringify({exportDate:Date.now(),tasksByDate:all});
-            const existing=await gdriveFindFile();
-            if(!existing){
-                const b='qtodobnd'+Date.now();
-                const mp=`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`+JSON.stringify({name:GDRIVE_FILE_NAME,mimeType:'application/json'})+`\r\n--${b}\r\nContent-Type: application/json\r\n\r\n`+body+`\r\n--${b}--`;
-                const cr=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',{method:'POST',headers:{Authorization:'Bearer '+gdriveAccessToken,'Content-Type':`multipart/related; boundary=${b}`},body:mp});
-                if(!cr.ok){ const e=await cr.json(); throw new Error(e.error?.message||cr.status); }
-            } else {
-                const ur=await fetch(`https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=media`,{method:'PATCH',headers:{Authorization:'Bearer '+gdriveAccessToken,'Content-Type':'application/json'},body});
-                if(!ur.ok){ const e=await ur.json(); throw new Error(e.error?.message||ur.status); }
+            const all = {};
+            for(let i=0;i<localStorage.length;i++){
+                const k=localStorage.key(i);
+                if(k.startsWith('tasks_')) all[k]=JSON.parse(localStorage.getItem(k));
             }
+            const docRef = fbDb.collection('users').doc(fbUser.uid);
+            // Firestore docs have a 1 MB limit; store each date as a sub-field
+            // Split into chunks if needed, but for typical use one doc is fine
+            await docRef.set({ tasksByDate: all, updatedAt: Date.now() }, { merge: false });
             setSyncIndicator('ok');
             gdriveLastSavedAt = Date.now();
-            if(!silent) showGdriveStatus(`✓ Saved ${Object.keys(all).length} date(s) to Drive`,true);
+            if(!silent) showGdriveStatus(`✓ Saved ${Object.keys(all).length} date(s) to cloud`, true);
         } catch(e){
-            if(e.message?.includes('401')||e.message?.toLowerCase().includes('invalid')) gdriveAccessToken=null;
             setSyncIndicator('error');
-            showGdriveStatus('✗ Sync failed: '+e.message,false,true);
-        } finally { gdriveSyncing=false; }
+            showGdriveStatus('✗ Save failed: '+e.message, false, true);
+        } finally { gdriveSyncing = false; }
     }
 
-    async function gdriveLoadAll(silent=false){
-        if(!silent) showGdriveStatus('⬇ Loading from Drive…',true,true);
+    async function fbLoadAll(silent=false){
+        if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false); return; }
+        if(!silent) showGdriveStatus('⬇ Loading from cloud…', true, true);
         setSyncIndicator('syncing');
         try {
-            const existing=await gdriveFindFile();
-            if(!existing){ setSyncIndicator('ok'); if(!silent) showGdriveStatus('⚠ No file found on Drive yet.',false,true); return; }
-            const r=await fetch(`https://www.googleapis.com/drive/v3/files/${existing.id}?alt=media`,{headers:{Authorization:'Bearer '+gdriveAccessToken}});
-            if(!r.ok){ const e=await r.json(); throw new Error(e.error?.message||r.status); }
-            const data=await r.json();
-            if(!data.tasksByDate){ setSyncIndicator('error'); showGdriveStatus('✗ Unrecognised file format.',false,true); return; }
-            let count=0;
-            Object.keys(data.tasksByDate).forEach(k=>{ localStorage.setItem(k,JSON.stringify(data.tasksByDate[k])); count++; });
-            tasks=loadTasks(formatDate(currentViewDate));
+            const docRef = fbDb.collection('users').doc(fbUser.uid);
+            const snap = await docRef.get();
+            if(!snap.exists){ setSyncIndicator('ok'); if(!silent) showGdriveStatus('⚠ No cloud data found yet.', false, true); return; }
+            const data = snap.data();
+            if(!data.tasksByDate){ setSyncIndicator('error'); showGdriveStatus('✗ Unrecognised data format.', false, true); return; }
+            let count = 0;
+            Object.keys(data.tasksByDate).forEach(k=>{ localStorage.setItem(k, JSON.stringify(data.tasksByDate[k])); count++; });
+            tasks = loadTasks(formatDate(currentViewDate));
             loadPreviousDayTasks(); loadTasksForView(); renderFutureTasks(); renderWeeklyCalendar();
             gdriveLastSavedAt = Date.now();
             setSyncIndicator('ok');
-            if(!silent) showGdriveStatus(`✓ Loaded ${count} date(s) from Drive.`,true);
+            if(!silent) showGdriveStatus(`✓ Loaded ${count} date(s) from cloud.`, true);
         } catch(e){
-            if(e.message?.includes('401')||e.message?.toLowerCase().includes('invalid')) gdriveAccessToken=null;
             setSyncIndicator('error');
-            if(!silent) showGdriveStatus('✗ Load failed: '+e.message,false,true);
+            if(!silent) showGdriveStatus('✗ Load failed: '+e.message, false, true);
         }
     }
 
-    // ── Auto-sync hook: called after every saveTasksToDate ────────────────────
     function scheduleAutoSync(){
-        if(!isAutoSyncEnabled()||!gdriveAccessToken) return;
+        if(!isAutoSyncEnabled()||!fbUser) return;
         clearTimeout(gdriveSyncTimer);
         setSyncIndicator('syncing');
-        gdriveSyncTimer=setTimeout(()=> gdriveSaveAll(true), 2000);
+        gdriveSyncTimer = setTimeout(()=> fbSaveAll(true), 2000);
     }
 
-    // ── Background poll: reload if another device saved to Drive ─────────────
     async function pollDriveForChanges(){
-        if(!isAutoSyncEnabled()||!gdriveAccessToken||gdriveSyncing) return;
+        if(!isAutoSyncEnabled()||!fbUser||gdriveSyncing||!fbDb) return;
         try {
-            const file = await gdriveFindFile();
-            if(!file||!file.modifiedTime) return;
-            const driveModified = new Date(file.modifiedTime).getTime();
-            // If Drive file is newer than our last save/load by more than 5s, reload
+            const snap = await fbDb.collection('users').doc(fbUser.uid).get();
+            if(!snap.exists) return;
+            const driveModified = snap.data().updatedAt || 0;
             if(driveModified > gdriveLastSavedAt + 5000){
                 setSyncIndicator('syncing');
-                await gdriveLoadAll(true);
+                await fbLoadAll(true);
                 showGdriveStatus('🔄 Updated from another device', true);
             }
-        } catch(_){ /* silent — don't disturb the user for background poll errors */ }
+        } catch(_){}
     }
 
-    function startDrivePoll(){
-        stopDrivePoll();
-        gdrivePollInterval = setInterval(pollDriveForChanges, 30000); // every 30s
-    }
+    function startDrivePoll(){ stopDrivePoll(); gdrivePollInterval = setInterval(pollDriveForChanges, 30000); }
+    function stopDrivePoll(){ if(gdrivePollInterval){ clearInterval(gdrivePollInterval); gdrivePollInterval=null; } }
 
-    function stopDrivePoll(){
-        if(gdrivePollInterval){ clearInterval(gdrivePollInterval); gdrivePollInterval=null; }
-    }
-
-    // Patch saveTasksToDate to trigger auto-sync on every write
+    // Patch saveTasksToDate to trigger auto-sync
     const _saveOrig = saveTasksToDate;
     saveTasksToDate = function(date, data){
         _saveOrig(date, data);
@@ -1087,54 +1060,45 @@
     };
 
     // ── Wire up UI ────────────────────────────────────────────────────────────
-    document.getElementById('gdriveClientIdSaveBtn').onclick=()=>{
-        const id=document.getElementById('gdriveClientId').value.trim();
-        if(!id){ showGdriveStatus('Please enter a Client ID first.',false); return; }
-        localStorage.setItem('gdriveClientId',id); gdriveTokenClient=null;
-        showGdriveStatus('✓ Client ID saved.',true);
-    };
-    document.getElementById('gdriveSignInBtn').onclick=()=> gdriveRequestToken(null);
-    document.getElementById('gdriveSignOutBtn').onclick=()=>{
-        setGdriveSignedOut(); gdriveTokenClient=null;
-        localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncToggleUI();
-        showGdriveStatus('Signed out.',true);
-    };
-    document.getElementById('gdriveSaveBtn').onclick=()=> gdriveRun(()=>gdriveSaveAll(false));
-    document.getElementById('gdriveLoadBtn').onclick=()=> gdriveRun(()=>gdriveLoadAll(false));
+    // Init Firebase immediately (shows config warning if not set)
+    initFirebase();
 
-    document.getElementById('gdriveAutoSync').onchange=function(){
-        const on=this.checked;
-        localStorage.setItem('gdriveAutoSync',on?'1':'0');
-        updateAutoSyncToggleUI();
-        if(on){
-            gdriveRun(()=> gdriveLoadAll(false).then(()=>{
-                showGdriveStatus('✓ Auto-sync on — changes will save automatically.',true);
-                startDrivePoll();
-            }));
-        } else {
-            stopDrivePoll();
-            setSyncIndicator('off');
-            showGdriveStatus('Auto-sync disabled.',true);
+    document.getElementById('fbSignInBtn').onclick = async ()=>{
+        if(!initFirebase()) return;
+        try {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            await fbAuth.signInWithPopup(provider);
+        } catch(e){
+            if(e.code !== 'auth/popup-closed-by-user')
+                showGdriveStatus('✗ Sign-in failed: '+e.message, false, true);
         }
     };
 
-    // Restore saved client ID and toggle
-    const savedClientId=localStorage.getItem('gdriveClientId');
-    if(savedClientId) document.getElementById('gdriveClientId').value=savedClientId;
+    document.getElementById('gdriveSignOutBtn').onclick = async ()=>{
+        if(fbAuth) await fbAuth.signOut();
+        localStorage.setItem('gdriveAutoSync','0');
+        updateAutoSyncToggleUI();
+        showGdriveStatus('Signed out.', true);
+    };
+
+    document.getElementById('gdriveSaveBtn').onclick = ()=> fbSaveAll(false);
+    document.getElementById('gdriveLoadBtn').onclick = ()=> fbLoadAll(false);
+
+    document.getElementById('gdriveAutoSync').onchange = function(){
+        const on = this.checked;
+        localStorage.setItem('gdriveAutoSync', on?'1':'0');
+        updateAutoSyncToggleUI();
+        if(on){
+            if(!fbUser){ showGdriveStatus('Please sign in first.', false); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncToggleUI(); return; }
+            fbLoadAll(false).then(()=>{ showGdriveStatus('✓ Auto-sync on.', true); startDrivePoll(); });
+        } else {
+            stopDrivePoll();
+            setSyncIndicator('off');
+            showGdriveStatus('Auto-sync disabled.', true);
+        }
+    };
+
     updateAutoSyncToggleUI();
-
-    // On startup: if auto-sync was enabled, silently try to re-authenticate and load from Drive
-    if(isAutoSyncEnabled()&&getGdriveClientId()){
-        const tryAutoStart=()=>{
-            if(typeof google==='undefined'||!google.accounts){ setTimeout(tryAutoStart,500); return; }
-            if(!ensureTokenClient()) return;
-            gdrivePostSignInAction=()=> gdriveLoadAll(true).then(()=> startDrivePoll());
-            // prompt:'' = no popup; only works if user already granted consent
-            gdriveTokenClient.requestAccessToken({prompt:''});
-        };
-        setTimeout(tryAutoStart, 800);
-    }
-
     const token=localStorage.getItem('dynalistToken'), doc=localStorage.getItem('dynalistDocId'); if(token) document.getElementById('dynalistToken').value=token; if(doc) document.getElementById('dynalistDocId').value=doc;
     loadPreviousDayTasks(); updateViewDisplay(); loadTasksForView(); renderWeeklyCalendar();
 })();
