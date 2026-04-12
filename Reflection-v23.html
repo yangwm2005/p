@@ -2780,7 +2780,7 @@ input:checked + .slider:before {
 
     <footer>
         <div class="footer-content">
-            <p>Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. v2.3 with Google Sign in for any account</p>
+            <p>Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. v2.3 with Google Drive Sync Sign in</p>
         </div>
     </footer>
 
@@ -5006,15 +5006,24 @@ if (timestripeBtn) {
             }
 
             // ── Firebase read/write ──────────────────────────────────────
+            // Store on the same top-level user doc as Q·Todo (subcollections require
+            // separate Firestore rules). Use merge:true so Q·Todo's tasksByDate field
+            // is never overwritten, and Reflection's field never collides.
+            function getUserDocRef(){
+                return fbDb.collection('users').doc(fbUser.uid);
+            }
+
             async function fbSaveAll(silent=false){
                 if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
                 if(gdriveSyncing) return;
                 gdriveSyncing = true;
                 setSyncIndicator('syncing');
                 try {
-                    // reflectionsData is the global variable from the main app
-                    const docRef = fbDb.collection('users').doc(fbUser.uid);
-                    await docRef.set({ reflectionJournalData: reflectionsData, updatedAt: Date.now() }, { merge: false });
+                    // merge:true preserves Q·Todo's tasksByDate and other fields
+                    await getUserDocRef().set(
+                        { reflectionJournalData: reflectionsData, reflectionUpdatedAt: Date.now() },
+                        { merge: true }
+                    );
                     setSyncIndicator('ok');
                     gdriveLastSavedAt = Date.now();
                     if(!silent) showGdriveStatus('✓ Saved journal to cloud', true);
@@ -5029,11 +5038,14 @@ if (timestripeBtn) {
                 if(!silent) showGdriveStatus('⬇ Loading from cloud…', false, false);
                 setSyncIndicator('syncing');
                 try {
-                    const docRef = fbDb.collection('users').doc(fbUser.uid);
-                    const snap = await docRef.get();
-                    if(!snap.exists){ setSyncIndicator('ok'); if(!silent) showGdriveStatus('⚠ No cloud data found yet.', false, true); return; }
+                    const snap = await getUserDocRef().get();
+                    if(!snap.exists || !snap.data().reflectionJournalData){
+                        // First time — nothing saved yet, that's fine
+                        setSyncIndicator('ok');
+                        if(!silent) showGdriveStatus('⚠ No journal data found in cloud yet.', false, true);
+                        return;
+                    }
                     const data = snap.data();
-                    if(!data.reflectionJournalData){ setSyncIndicator('error'); showGdriveStatus('✗ Unrecognised data format.', false, true); return; }
                     // Merge into local data and persist
                     reflectionsData = { ...reflectionsData, ...data.reflectionJournalData };
                     saveToLocalStorage();
@@ -5060,9 +5072,9 @@ if (timestripeBtn) {
             async function pollDriveForChanges(){
                 if(!isAutoSyncEnabled()||!fbUser||gdriveSyncing||!fbDb) return;
                 try {
-                    const snap = await fbDb.collection('users').doc(fbUser.uid).get();
+                    const snap = await getUserDocRef().get();
                     if(!snap.exists) return;
-                    const driveModified = snap.data().updatedAt || 0;
+                    const driveModified = snap.data().reflectionUpdatedAt || 0;
                     if(driveModified > gdriveLastSavedAt + 5000){
                         setSyncIndicator('syncing');
                         await fbLoadAll(true);
