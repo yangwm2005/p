@@ -102,6 +102,48 @@
     .gdrive-sync-indicator.ok    { display: inline-block; background: rgba(72,187,120,0.15); color: #38a169; }
     .gdrive-sync-indicator.error { display: inline-block; background: rgba(245,101,101,0.15); color: #e53e3e; }
     .gdrive-sync-indicator.off   { display: none; }
+    /* Cloud saves list */
+    .gdrive-save-row {
+        display: flex;
+        align-items: center;
+        padding: 8px 12px;
+        border-bottom: 1px solid #f0f0f0;
+        gap: 8px;
+        transition: background 0.15s;
+    }
+    .gdrive-save-row:last-child { border-bottom: none; }
+    .gdrive-save-row:hover { background: #f0f7ff; }
+    .gdrive-save-name {
+        flex: 1;
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: #2b6cb0;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .gdrive-save-name:hover { text-decoration: underline; }
+    .gdrive-save-meta {
+        font-size: 0.75rem;
+        color: #718096;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+    .gdrive-save-del {
+        background: none;
+        border: none;
+        color: #e53e3e;
+        font-size: 1rem;
+        cursor: pointer;
+        padding: 0 4px;
+        line-height: 1;
+        flex-shrink: 0;
+        border-radius: 4px;
+        min-width: unset;
+        flex: unset;
+    }
+    .gdrive-save-del:hover { background: rgba(229,62,62,0.1); }
     /* ── end Cloud Sync styles ── */
 
     * {
@@ -1819,12 +1861,11 @@ button#auto-save-btn.active:hover {
 
         <hr style="border:none;border-top:1px solid #dee2e6;margin:14px 0;">
 
-        <!-- Cloud file info box -->
-        <div id="gdrive-cloud-info" style="display:none;padding:10px 14px;background:#f0f7ff;border:1px solid #bee3f8;border-radius:8px;font-size:0.85rem;color:#2b6cb0;margin-bottom:12px;">
-            <div style="font-weight:700;margin-bottom:4px;">📁 Saved in Cloud:</div>
-            <div id="gdrive-cloud-title" style="margin-bottom:2px;"></div>
-            <div id="gdrive-cloud-items" style="color:#4a5568;"></div>
-            <div id="gdrive-cloud-time" style="color:#718096;font-size:0.78rem;margin-top:4px;"></div>
+        <!-- Save new snapshot row -->
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+            <input id="gdrive-save-name" type="text" placeholder="Save name (uses list title if blank)"
+                style="flex:1;padding:7px 10px;border:1px solid #adb5bd;border-radius:8px;font-size:0.85rem;min-width:0;">
+            <button class="gdrive-btn gdrive-btn-blue" id="gdrive-save-now-btn">☁ Save</button>
         </div>
 
         <!-- Auto-sync toggle -->
@@ -1835,17 +1876,20 @@ button#auto-save-btn.active:hover {
             </label>
             <div>
                 <div class="gdrive-autosync-label">Auto-sync</div>
-                <div class="gdrive-autosync-desc">Automatically saves after every list change and reloads on startup.</div>
+                <div class="gdrive-autosync-desc">Automatically updates the most-recently-loaded save after every change.</div>
             </div>
         </div>
 
-        <div class="gdrive-btn-row">
-            <button class="gdrive-btn gdrive-btn-blue" id="gdrive-save-now-btn">☁ Save Now</button>
-            <button class="gdrive-btn gdrive-btn-ghost" id="gdrive-check-btn">🔍 Check Cloud</button>
-            <button class="gdrive-btn gdrive-btn-ghost" id="gdrive-load-btn">⬇ Load from Cloud</button>
+        <!-- Cloud saves list -->
+        <div style="font-weight:700;font-size:0.85rem;color:#4a5568;margin-bottom:6px;">☁ Cloud Saves</div>
+        <div id="gdrive-saves-list" style="border:1px solid #dee2e6;border-radius:8px;overflow:hidden;margin-bottom:10px;min-height:40px;">
+            <div id="gdrive-saves-empty" style="padding:12px;text-align:center;font-size:0.83rem;color:#a0aec0;">No cloud saves yet</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+            <button class="gdrive-btn gdrive-btn-ghost" id="gdrive-refresh-btn">🔄 Refresh List</button>
             <button class="gdrive-btn gdrive-btn-ghost" id="gdrive-signout-btn" style="color:#e53e3e">Sign Out</button>
         </div>
-        <p style="font-size:0.78rem;color:#6c757d;margin-top:8px">Tasks saved privately to your Google account via Firebase. Click <strong>Check Cloud</strong> to see what's saved before loading.</p>
+        <p style="font-size:0.75rem;color:#6c757d;margin-top:8px;">Click a save name to load it · × to delete · saves are private to your account.</p>
     </div>
 
     <!-- Firebase not configured -->
@@ -5697,12 +5741,12 @@ function resetDynalistCredentials() {
 }
 
 // ════════════════════════════════════════════════════════════════
-// FIREBASE CLOUD SYNC — shared project with Reflection (qtodo-syn)
-// Stores tasks under the same user doc as Reflection (merge:true
-// so Reflection's reflectionJournalData field is never touched).
+// FIREBASE CLOUD SYNC — multi-save version
+// Each save is stored as a separate document in:
+//   users/{uid}/todoSaves/{saveId}
+// This keeps Reflection's top-level doc untouched.
 // ════════════════════════════════════════════════════════════════
 (function(){
-    // ⚙ Firebase config — same project as Reflection app
     const FIREBASE_CONFIG = {
         apiKey: "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
         authDomain: "qtodo-syn.firebaseapp.com",
@@ -5716,7 +5760,7 @@ function resetDynalistCredentials() {
     let gdriveSyncing = false;
     let gdriveSyncTimer = null;
     let gdrivePollInterval = null;
-    let gdriveLastSavedAt = 0;
+    let activeCloudSaveId = null; // the save currently loaded (for auto-sync)
 
     // ── Helpers ──────────────────────────────────────────────────
     function isAutoSyncEnabled(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
@@ -5756,7 +5800,7 @@ function resetDynalistCredentials() {
         if(!on) setSyncIndicator('off');
     }
 
-    // ── Collect current list from the DOM ────────────────────────
+    // ── Collect current list from DOM ────────────────────────────
     function collectTodoData(){
         const items = [];
         document.querySelectorAll('#todo-list .todo-item').forEach(li => {
@@ -5820,6 +5864,134 @@ function resetDynalistCredentials() {
         if(typeof setupDragAndDrop === 'function') setupDragAndDrop();
     }
 
+    // ── Firestore subcollection ref ──────────────────────────────
+    function savesColRef(){
+        return fbDb.collection('users').doc(fbUser.uid).collection('todoSaves');
+    }
+
+    // ── Save a new (or overwrite existing) snapshot ──────────────
+    async function fbSaveAll(silent=false){
+        if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
+        if(gdriveSyncing) return;
+        gdriveSyncing = true;
+        setSyncIndicator('syncing');
+        try {
+            const nameInput = document.getElementById('gdrive-save-name');
+            const listTitle = document.getElementById('title').value.trim();
+            const saveName  = (nameInput && nameInput.value.trim()) || listTitle || 'Untitled';
+            const saveId    = activeCloudSaveId || savesColRef().doc().id;
+            const data      = collectTodoData();
+            await savesColRef().doc(saveId).set({
+                name: saveName,
+                data: data,
+                updatedAt: Date.now()
+            });
+            activeCloudSaveId = saveId;
+            if(nameInput) nameInput.value = '';
+            setSyncIndicator('ok');
+            if(!silent) showGdriveStatus(`✓ Saved "${saveName}" to cloud`, true);
+            fbRenderSavesList();
+        } catch(e){
+            setSyncIndicator('error');
+            showGdriveStatus('✗ Save failed: ' + e.message, false, true);
+        } finally { gdriveSyncing = false; }
+    }
+
+    // ── Load a specific save by ID ───────────────────────────────
+    async function fbLoadSave(saveId, saveName){
+        if(!fbUser || !fbDb) return;
+        showGdriveStatus(`⬇ Loading "${saveName}"…`, false, false);
+        setSyncIndicator('syncing');
+        try {
+            const snap = await savesColRef().doc(saveId).get();
+            if(!snap.exists){ showGdriveStatus('⚠ Save not found.', false, true); return; }
+            applyTodoData(snap.data().data);
+            activeCloudSaveId = saveId;
+            setSyncIndicator('ok');
+            showGdriveStatus(`✓ Loaded "${saveName}"`, true);
+            fbRenderSavesList(); // re-render to highlight active
+        } catch(e){
+            setSyncIndicator('error');
+            showGdriveStatus('✗ Load failed: ' + e.message, false, true);
+        }
+    }
+
+    // ── Delete a save by ID ──────────────────────────────────────
+    async function fbDeleteSave(saveId, saveName){
+        if(!fbUser || !fbDb) return;
+        if(!confirm(`Delete cloud save "${saveName}"?`)) return;
+        try {
+            await savesColRef().doc(saveId).delete();
+            if(activeCloudSaveId === saveId) activeCloudSaveId = null;
+            showGdriveStatus(`🗑 Deleted "${saveName}"`, true);
+            fbRenderSavesList();
+        } catch(e){
+            showGdriveStatus('✗ Delete failed: ' + e.message, false, true);
+        }
+    }
+
+    // ── Fetch all saves and render the list ──────────────────────
+    async function fbRenderSavesList(){
+        const container = document.getElementById('gdrive-saves-list');
+        const empty     = document.getElementById('gdrive-saves-empty');
+        if(!container) return;
+        try {
+            const snap = await savesColRef().orderBy('updatedAt', 'desc').get();
+            if(snap.empty){
+                container.innerHTML = '';
+                container.appendChild(empty);
+                empty.style.display = 'block';
+                return;
+            }
+            container.innerHTML = '';
+            snap.forEach(doc => {
+                const d  = doc.data();
+                const id = doc.id;
+                const isActive = id === activeCloudSaveId;
+                const dt = d.updatedAt ? new Date(d.updatedAt) : null;
+                const timeStr = dt
+                    ? dt.toLocaleDateString([], {month:'short',day:'numeric'}) + ' ' +
+                      dt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})
+                    : '';
+                const total     = (d.data && d.data.items) ? d.data.items.length : 0;
+                const completed = (d.data && d.data.items) ? d.data.items.filter(i=>i.completed).length : 0;
+
+                const row = document.createElement('div');
+                row.className = 'gdrive-save-row';
+                if(isActive) row.style.background = '#ebf8ff';
+                row.innerHTML = `
+                    <span class="gdrive-save-name" title="Click to load">${isActive ? '▶ ' : ''}${d.name || 'Untitled'}</span>
+                    <span class="gdrive-save-meta">${total - completed} pending · ${timeStr}</span>
+                    <button class="gdrive-save-del" title="Delete this save">×</button>`;
+                row.querySelector('.gdrive-save-name').addEventListener('click', () => fbLoadSave(id, d.name));
+                row.querySelector('.gdrive-save-del').addEventListener('click', e => { e.stopPropagation(); fbDeleteSave(id, d.name); });
+                container.appendChild(row);
+            });
+        } catch(e){
+            showGdriveStatus('✗ Could not load saves list: ' + e.message, false, true);
+        }
+    }
+
+    // ── Auto-sync: update the active cloud save after list changes ─
+    function scheduleAutoSync(){
+        if(!isAutoSyncEnabled() || !fbUser || !activeCloudSaveId) return;
+        clearTimeout(gdriveSyncTimer);
+        setSyncIndicator('syncing');
+        gdriveSyncTimer = setTimeout(() => fbSaveAll(true), 2500);
+    }
+
+    // ── Background poll ──────────────────────────────────────────
+    async function pollDriveForChanges(){
+        if(!isAutoSyncEnabled() || !fbUser || !activeCloudSaveId || !fbDb) return;
+        try {
+            const snap = await savesColRef().doc(activeCloudSaveId).get();
+            if(!snap.exists) return;
+            // (future: compare timestamps to detect remote edits)
+        } catch(_){}
+    }
+    function startDrivePoll(){ gdrivePollInterval = setInterval(pollDriveForChanges, 30000); }
+    function stopDrivePoll(){ if(gdrivePollInterval){ clearInterval(gdrivePollInterval); gdrivePollInterval = null; } }
+
     // ── Firebase init ────────────────────────────────────────────
     function initFirebase(){
         if(fbApp) return true;
@@ -5841,18 +6013,14 @@ function resetDynalistCredentials() {
                     info.style.display = 'block';
                     updateAutoSyncUI();
                     setSyncIndicator(isAutoSyncEnabled() ? 'ok' : 'off');
-                    if(isAutoSyncEnabled()){
-                        fbLoadAll(true).then(() => startDrivePoll());
-                    } else {
-                        // Just show what's in cloud without loading it
-                        getUserDocRef().get().then(snap => {
-                            if(snap.exists) fbRefreshCloudInfo(snap.data());
-                        }).catch(()=>{});
-                    }
+                    fbRenderSavesList();
+                    if(isAutoSyncEnabled()) startDrivePoll();
                 } else {
                     fbUser = null;
                     document.getElementById('fbNotSignedIn').style.display = 'block';
                     document.getElementById('fbSignedIn').style.display = 'none';
+                    const container = document.getElementById('gdrive-saves-list');
+                    if(container) container.innerHTML = '';
                     setSyncIndicator('off');
                     stopDrivePoll();
                 }
@@ -5864,130 +6032,7 @@ function resetDynalistCredentials() {
         }
     }
 
-    // ── Firestore helpers ────────────────────────────────────────
-    function getUserDocRef(){
-        return fbDb.collection('users').doc(fbUser.uid);
-    }
-
-    async function fbSaveAll(silent=false){
-        if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
-        if(gdriveSyncing) return;
-        gdriveSyncing = true;
-        setSyncIndicator('syncing');
-        try {
-            // merge:true preserves Reflection's reflectionJournalData field
-            await getUserDocRef().set(
-                { tasksByDate: collectTodoData(), todoUpdatedAt: Date.now() },
-                { merge: true }
-            );
-            setSyncIndicator('ok');
-            gdriveLastSavedAt = Date.now();
-            if(!silent) showGdriveStatus('✓ Saved tasks to cloud', true);
-            fbRefreshCloudInfo();
-        } catch(e){
-            setSyncIndicator('error');
-            showGdriveStatus('✗ Save failed: ' + e.message, false, true);
-        } finally { gdriveSyncing = false; }
-    }
-
-    async function fbLoadAll(silent=false){
-        if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
-        if(!silent) showGdriveStatus('⬇ Loading from cloud…', false, false);
-        setSyncIndicator('syncing');
-        try {
-            const snap = await getUserDocRef().get();
-            if(!snap.exists || !snap.data().tasksByDate){
-                setSyncIndicator('ok');
-                if(!silent) showGdriveStatus('⚠ No task data found in cloud yet.', false, true);
-                return;
-            }
-            applyTodoData(snap.data().tasksByDate);
-            gdriveLastSavedAt = Date.now();
-            setSyncIndicator('ok');
-            if(!silent) showGdriveStatus('✓ Tasks loaded from cloud.', true);
-            fbRefreshCloudInfo(snap.data());
-        } catch(e){
-            setSyncIndicator('error');
-            if(!silent) showGdriveStatus('✗ Load failed: ' + e.message, false, true);
-        }
-    }
-
-    // ── Check what's saved in cloud and show info box ────────────
-    async function fbCheckCloud(){
-        if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
-        showGdriveStatus('🔍 Checking cloud…', false, false);
-        try {
-            const snap = await getUserDocRef().get();
-            if(!snap.exists || !snap.data().tasksByDate){
-                showGdriveStatus('⚠ Nothing saved in cloud yet.', false, true);
-                document.getElementById('gdrive-cloud-info').style.display = 'none';
-                return;
-            }
-            fbRefreshCloudInfo(snap.data());
-            showGdriveStatus('✓ Cloud info updated.', true);
-        } catch(e){
-            showGdriveStatus('✗ Check failed: ' + e.message, false, true);
-        }
-    }
-
-    function fbRefreshCloudInfo(data){
-        if(!data) return;
-        const d = data.tasksByDate;
-        if(!d) return;
-        const box     = document.getElementById('gdrive-cloud-info');
-        const titleEl = document.getElementById('gdrive-cloud-title');
-        const itemsEl = document.getElementById('gdrive-cloud-items');
-        const timeEl  = document.getElementById('gdrive-cloud-time');
-        if(!box) return;
-        const total     = (d.items||[]).length;
-        const completed = (d.items||[]).filter(i=>i.completed).length;
-        const pending   = total - completed;
-        titleEl.innerHTML = `<strong>📋 ${d.title || '(no title)'}</strong>`;
-        itemsEl.textContent = `${total} task${total!==1?'s':''} — ${pending} pending, ${completed} done`;
-        const ts = data.todoUpdatedAt || (d.timestamp ? new Date(d.timestamp).getTime() : null);
-        if(ts){
-            const dt = new Date(ts);
-            timeEl.textContent = `Last saved: ${dt.toLocaleDateString()} ${dt.toLocaleTimeString()}`;
-        } else {
-            timeEl.textContent = d.timestamp ? `Last saved: ${new Date(d.timestamp).toLocaleString()}` : '';
-        }
-        box.style.display = 'block';
-    }
-
-    // ── Auto-sync: schedule a save 2.5 s after the last DOM change ──
-    function scheduleAutoSync(){
-        if(!isAutoSyncEnabled() || !fbUser) return;
-        clearTimeout(gdriveSyncTimer);
-        setSyncIndicator('syncing');
-        gdriveSyncTimer = setTimeout(() => fbSaveAll(true), 2500);
-    }
-
-    // ── Background poll for changes from other devices ───────────
-    async function pollDriveForChanges(){
-        if(!isAutoSyncEnabled() || !fbUser || gdriveSyncing || !fbDb) return;
-        try {
-            const snap = await getUserDocRef().get();
-            if(!snap.exists) return;
-            const driveModified = snap.data().todoUpdatedAt || 0;
-            if(driveModified > gdriveLastSavedAt + 5000){
-                setSyncIndicator('syncing');
-                await fbLoadAll(true);
-                showGdriveStatus('🔄 Updated from another device', true);
-            }
-        } catch(_){}
-    }
-
-    function startDrivePoll(){
-        stopDrivePoll();
-        gdrivePollInterval = setInterval(pollDriveForChanges, 30000);
-    }
-    function stopDrivePoll(){
-        if(gdrivePollInterval){ clearInterval(gdrivePollInterval); gdrivePollInterval = null; }
-    }
-
-    // ── Expose scheduleAutoSync so existing list-mutation functions
-    //    can trigger it. Patch addItem, deleteItem, toggleItem, etc.
-    //    via a MutationObserver so we don't have to touch each function.
+    // ── MutationObserver for auto-sync ───────────────────────────
     function attachAutoSyncObserver(){
         const list = document.getElementById('todo-list');
         if(!list) return;
@@ -6020,6 +6065,7 @@ function resetDynalistCredentials() {
         // Sign Out
         document.getElementById('gdrive-signout-btn').onclick = async () => {
             if(fbAuth) await fbAuth.signOut();
+            activeCloudSaveId = null;
             localStorage.setItem('gdriveAutoSync', '0');
             updateAutoSyncUI();
             showGdriveStatus('Signed out.', true);
@@ -6028,11 +6074,8 @@ function resetDynalistCredentials() {
         // Save Now
         document.getElementById('gdrive-save-now-btn').addEventListener('click', () => fbSaveAll(false));
 
-        // Check Cloud
-        document.getElementById('gdrive-check-btn').addEventListener('click', () => fbCheckCloud());
-
-        // Load from Cloud
-        document.getElementById('gdrive-load-btn').addEventListener('click', () => fbLoadAll(false));
+        // Refresh list
+        document.getElementById('gdrive-refresh-btn').addEventListener('click', () => fbRenderSavesList());
 
         // Auto-sync toggle
         document.getElementById('gdrive-autosync').addEventListener('change', function(){
@@ -6047,10 +6090,15 @@ function resetDynalistCredentials() {
                     updateAutoSyncUI();
                     return;
                 }
-                fbLoadAll(false).then(() => {
-                    showGdriveStatus('✓ Auto-sync on — changes will save automatically.', true);
-                    startDrivePoll();
-                });
+                if(!activeCloudSaveId){
+                    showGdriveStatus('⚠ Load or save a list first to enable auto-sync.', false, true);
+                    this.checked = false;
+                    localStorage.setItem('gdriveAutoSync', '0');
+                    updateAutoSyncUI();
+                    return;
+                }
+                showGdriveStatus('✓ Auto-sync on — changes will save automatically.', true);
+                startDrivePoll();
             } else {
                 stopDrivePoll();
                 setSyncIndicator('off');
