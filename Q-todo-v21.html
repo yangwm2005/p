@@ -668,7 +668,49 @@
         
         const li = document.createElement('li'); li.className = 'task-item'; li.setAttribute('data-task-id', task.id); li.setAttribute('data-task-date', taskDate); if(isPrev) li.setAttribute('data-previous-day','true');
         const row = document.createElement('div'); row.className = 'task-row';
-        const dh = document.createElement('span'); dh.className='drag-handle'; dh.innerHTML='⠿'; dh.setAttribute('draggable','true'); row.appendChild(dh);
+        const dh = document.createElement('span'); dh.className='drag-handle'; dh.innerHTML='⠿'; row.appendChild(dh);
+        // Drag-to-reorder: make li draggable only while handle is pressed
+        dh.addEventListener('mousedown', ()=>{ li.setAttribute('draggable','true'); });
+        dh.addEventListener('mouseup',   ()=>{ li.setAttribute('draggable','false'); });
+        li.addEventListener('dragstart', (e)=>{
+            if(!isPrev){ // only reorder same-day tasks
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', task.id);
+                setTimeout(()=>li.classList.add('dragging'), 0);
+            } else { e.preventDefault(); }
+        });
+        li.addEventListener('dragend', ()=>{
+            li.classList.remove('dragging');
+            li.setAttribute('draggable','false');
+            document.querySelectorAll('.task-item.drag-over').forEach(el=>el.classList.remove('drag-over'));
+        });
+        li.addEventListener('dragover', (e)=>{
+            if(!e.dataTransfer.types.includes('Files')){
+                e.preventDefault(); e.stopPropagation();
+                document.querySelectorAll('.task-item.drag-over').forEach(el=>el.classList.remove('drag-over'));
+                // Only highlight if not dragging over itself
+                const dragId = document.querySelector('.task-item.dragging')?.dataset.taskId;
+                if(dragId && dragId !== task.id) li.classList.add('drag-over');
+            }
+        });
+        li.addEventListener('dragleave', ()=>li.classList.remove('drag-over'));
+        li.addEventListener('drop', (e)=>{
+            if(e.dataTransfer.types.includes('Files')) return; // let file-drop bubble up
+            e.preventDefault(); e.stopPropagation();
+            li.classList.remove('drag-over');
+            const draggedId = e.dataTransfer.getData('text/plain');
+            if(!draggedId || draggedId === task.id) return;
+            const viewDate = formatDate(currentViewDate);
+            let arr = loadTasks(viewDate);
+            const fromIdx = arr.findIndex(t=>String(t.id)===draggedId);
+            const toIdx   = arr.findIndex(t=>String(t.id)===String(task.id));
+            if(fromIdx === -1 || toIdx === -1) return;
+            const [moved] = arr.splice(fromIdx, 1);
+            arr.splice(toIdx, 0, moved);
+            saveTasksToDate(viewDate, arr);
+            tasks = arr;
+            renderTasks();
+        });
         const cb = document.createElement('input'); cb.type='checkbox'; cb.className='task-check'; cb.checked=task.completed; cb.addEventListener('change',()=>toggleTask(task.id,taskDate,isPrev)); row.appendChild(cb);
         const lbl = document.createElement('span'); lbl.className=`task-label ${task.completed?'done':''}`; lbl.textContent = task.text; lbl.title='Double-click edit'; lbl.addEventListener('dblclick',function(){ let inp=document.createElement('input'); inp.type='text'; inp.value=task.text; inp.className='task-label editing'; row.replaceChild(inp,lbl); inp.focus(); let saved=false; let save=()=>{ if(saved) return; saved=true; let v=inp.value.trim(); if(v) editTask(task.id,v,taskDate,isPrev); if(inp.parentNode) row.replaceChild(lbl,inp); }; inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); /* capture siblings before save() potentially re-renders */ let taskList=li.parentNode; let nextLi=li.nextElementSibling; save(); /* spawn blank next-task placeholder as a list item */ if(!taskList) return; let phLi=document.createElement('li'); phLi.className='task-item'; phLi.style.cssText='border-bottom:1px solid var(--border);'; let phInp=document.createElement('input'); phInp.type='text'; phInp.placeholder='New task… (Esc to cancel)'; phInp.className='task-input'; phInp.style.cssText='width:100%;padding:8px 14px;border:none;border-radius:0;background:var(--accent-soft);font-size:0.9rem;outline:none;'; let done=false; let finish=()=>{ if(done) return; done=true; if(phLi.parentNode) phLi.remove(); }; phInp.addEventListener('keydown',pe=>{ if(pe.key==='Enter'){ pe.preventDefault(); let pv=phInp.value.trim(); finish(); if(pv){ let dateVal=document.getElementById('taskDate').value; let targetDate=formatDate(new Date(dateVal)); let nt={id:Date.now(),text:pv,completed:false,date:targetDate,subtasks:[],subtasksVisible:true,timeSpentSeconds:0}; let ts=loadTasks(targetDate); ts.push(nt); saveTasksToDate(targetDate,ts); if(targetDate===todayStr) tasks=ts; pendingEditId=nt.id; pendingEditType='task'; if(targetDate===formatDate(currentViewDate)) loadTasksForView(); renderFutureTasks(); renderWeeklyCalendar(); } } else if(pe.key==='Escape'){ finish(); } }); phInp.addEventListener('blur',()=>setTimeout(finish,150)); phLi.appendChild(phInp); if(nextLi && nextLi.parentNode===taskList) taskList.insertBefore(phLi,nextLi); else taskList.appendChild(phLi); phInp.focus(); } }); inp.addEventListener('blur',save); }); row.appendChild(lbl);
         const badge = document.createElement('span'); if(taskDate===todayStr&&!isPrev){badge.className='date-badge badge-today'; badge.textContent='Today';} else if(isPrev){badge.className='date-badge badge-yesterday'; badge.textContent='Yesterday';} else{badge.className='date-badge badge-future'; badge.textContent=new Date(+taskDate.slice(0,4),+taskDate.slice(4,6)-1,+taskDate.slice(6,8)).toLocaleDateString('en-US',{month:'short',day:'numeric'});} row.appendChild(badge);
@@ -1088,10 +1130,35 @@
     document.getElementById('nextWeekBtn').onclick = ()=>{ calendarWeekOffset++; renderWeeklyCalendar(); };
     
     const appDiv = document.getElementById('appContainer');
-    ['dragenter','dragover','dragleave','drop'].forEach(ev=>appDiv.addEventListener(ev, e=>{ e.preventDefault(); e.stopPropagation(); }));
-    appDiv.addEventListener('dragenter', ()=>{ let m=document.createElement('div'); m.id='dropMsg'; m.className='drop-overlay-msg'; m.innerText='📂 Drop .json file to load tasks'; if(!document.getElementById('dropMsg')) appDiv.appendChild(m); });
-    appDiv.addEventListener('dragleave', ()=>document.getElementById('dropMsg')?.remove());
-    appDiv.addEventListener('drop', (e)=>{ document.getElementById('dropMsg')?.remove(); let file=e.dataTransfer.files[0]; if(file && file.name.endsWith('.json')){ let reader=new FileReader(); reader.onload=ev=>{ try{ let data=JSON.parse(ev.target.result); if(data.tasksByDate){ Object.keys(data.tasksByDate).forEach(d=>localStorage.setItem(d, JSON.stringify(data.tasksByDate[d]))); alert('Tasks loaded via drag & drop'); } else if(data.tasks){ localStorage.setItem(`tasks_${todayStr}`, JSON.stringify(data.tasks)); } else throw 'Invalid'; loadTasksForView(); renderFutureTasks(); renderWeeklyCalendar(); }catch(err){ alert('Invalid JSON file'); } }; reader.readAsText(file); } else alert('Please drop a .json file'); });
+
+    // Helper: is this drag carrying external files (not an internal task reorder)?
+    function isFileDrag(e){ return e.dataTransfer && e.dataTransfer.types && (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('application/x-moz-file')); }
+
+    appDiv.addEventListener('dragenter', (e)=>{
+        if(!isFileDrag(e)) return;   // task reorder — ignore
+        e.preventDefault(); e.stopPropagation();
+        let m=document.createElement('div'); m.id='dropMsg'; m.className='drop-overlay-msg'; m.innerText='📂 Drop .json file to load tasks';
+        if(!document.getElementById('dropMsg')) appDiv.appendChild(m);
+    });
+    appDiv.addEventListener('dragover', (e)=>{
+        if(!isFileDrag(e)) return;   // task reorder — let it bubble normally
+        e.preventDefault(); e.stopPropagation();
+    });
+    appDiv.addEventListener('dragleave', (e)=>{
+        if(!isFileDrag(e)) return;
+        document.getElementById('dropMsg')?.remove();
+    });
+    appDiv.addEventListener('drop', (e)=>{
+        if(!isFileDrag(e)) return;   // task reorder drop — don't intercept
+        e.preventDefault(); e.stopPropagation();
+        document.getElementById('dropMsg')?.remove();
+        let file=e.dataTransfer.files[0];
+        if(file && file.name.endsWith('.json')){
+            let reader=new FileReader();
+            reader.onload=ev=>{ try{ let data=JSON.parse(ev.target.result); if(data.tasksByDate){ Object.keys(data.tasksByDate).forEach(d=>localStorage.setItem(d, JSON.stringify(data.tasksByDate[d]))); alert('Tasks loaded via drag & drop'); } else if(data.tasks){ localStorage.setItem(`tasks_${todayStr}`, JSON.stringify(data.tasks)); } else throw 'Invalid'; loadTasksForView(); renderFutureTasks(); renderWeeklyCalendar(); }catch(err){ alert('Invalid JSON file'); } };
+            reader.readAsText(file);
+        } else { alert('Please drop a .json file'); }
+    });
     
     // ── Firebase Cloud Sync ───────────────────────────────────────────────────
     // ⚙ PASTE YOUR FIREBASE CONFIG BELOW (from Firebase Console → Project Settings)
