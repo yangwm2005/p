@@ -5933,12 +5933,15 @@ function resetDynalistCredentials() {
         try {
             const snap = await savesColRef().doc(saveId).get();
             if(!snap.exists){ showGdriveStatus('⚠ Save not found.', false, true); return; }
+            pauseAutoSync();                    // stop observer reacting to DOM changes
+            activeCloudSaveId = saveId;         // set BEFORE applying so auto-sync targets right file
             applyTodoData(snap.data().data);
-            activeCloudSaveId = saveId;
+            resumeAutoSync();                   // re-enable observer after DOM is settled
             setSyncIndicator('ok');
             showGdriveStatus(`✓ Loaded "${saveName}"`, true);
-            fbRenderSavesList(); // re-render to highlight active
+            fbRenderSavesList();
         } catch(e){
+            resumeAutoSync();
             setSyncIndicator('error');
             showGdriveStatus('✗ Load failed: ' + e.message, false, true);
         }
@@ -6080,12 +6083,21 @@ function resetDynalistCredentials() {
     }
 
     // ── MutationObserver for auto-sync ───────────────────────────
+    let _autoSyncObserver = null;
+    let _autoSyncPaused = false;
+
     function attachAutoSyncObserver(){
         const list = document.getElementById('todo-list');
         if(!list) return;
-        const obs = new MutationObserver(() => scheduleAutoSync());
-        obs.observe(list, { childList: true, subtree: true, characterData: true, attributes: true });
+        _autoSyncObserver = new MutationObserver(() => {
+            if(_autoSyncPaused) return;
+            scheduleAutoSync();
+        });
+        _autoSyncObserver.observe(list, { childList: true, subtree: true, characterData: true, attributes: true });
     }
+
+    function pauseAutoSync()  { _autoSyncPaused = true;  clearTimeout(gdriveSyncTimer); }
+    function resumeAutoSync() { _autoSyncPaused = false; }
 
     // ── Wire up UI ────────────────────────────────────────────────
     initFirebase();
