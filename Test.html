@@ -5869,7 +5869,7 @@ function resetDynalistCredentials() {
         return fbDb.collection('users').doc(fbUser.uid).collection('todoSaves');
     }
 
-    // ── Save a new (or overwrite existing) snapshot ──────────────
+    // ── Save snapshot — always new doc unless name matches existing ─
     async function fbSaveAll(silent=false){
         if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
         if(gdriveSyncing) return;
@@ -5879,8 +5879,18 @@ function resetDynalistCredentials() {
             const nameInput = document.getElementById('gdrive-save-name');
             const listTitle = document.getElementById('title').value.trim();
             const saveName  = (nameInput && nameInput.value.trim()) || listTitle || 'Untitled';
-            const saveId    = activeCloudSaveId || savesColRef().doc().id;
             const data      = collectTodoData();
+
+            // Check if a save with this exact name already exists → overwrite it
+            // Otherwise always create a brand-new document
+            let saveId = null;
+            const existing = await savesColRef().where('name','==',saveName).limit(1).get();
+            if(!existing.empty){
+                saveId = existing.docs[0].id;
+            } else {
+                saveId = savesColRef().doc().id;
+            }
+
             await savesColRef().doc(saveId).set({
                 name: saveName,
                 data: data,
@@ -5972,12 +5982,31 @@ function resetDynalistCredentials() {
         }
     }
 
-    // ── Auto-sync: update the active cloud save after list changes ─
+    // ── Auto-sync: always updates the currently-active save by ID ─
+    async function fbAutoSave(){
+        if(!fbUser || !fbDb || !activeCloudSaveId) return;
+        if(gdriveSyncing) return;
+        gdriveSyncing = true;
+        setSyncIndicator('syncing');
+        try {
+            const data = collectTodoData();
+            await savesColRef().doc(activeCloudSaveId).set({
+                name: (await savesColRef().doc(activeCloudSaveId).get()).data()?.name || data.title || 'Untitled',
+                data: data,
+                updatedAt: Date.now()
+            });
+            setSyncIndicator('ok');
+        } catch(e){
+            setSyncIndicator('error');
+        } finally { gdriveSyncing = false; }
+    }
+
+    // ── Schedule auto-save 2.5 s after last DOM change ────────────
     function scheduleAutoSync(){
         if(!isAutoSyncEnabled() || !fbUser || !activeCloudSaveId) return;
         clearTimeout(gdriveSyncTimer);
         setSyncIndicator('syncing');
-        gdriveSyncTimer = setTimeout(() => fbSaveAll(true), 2500);
+        gdriveSyncTimer = setTimeout(() => fbAutoSave(), 2500);
     }
 
     // ── Background poll ──────────────────────────────────────────
