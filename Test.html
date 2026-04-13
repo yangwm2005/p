@@ -1819,6 +1819,14 @@ button#auto-save-btn.active:hover {
 
         <hr style="border:none;border-top:1px solid #dee2e6;margin:14px 0;">
 
+        <!-- Cloud file info box -->
+        <div id="gdrive-cloud-info" style="display:none;padding:10px 14px;background:#f0f7ff;border:1px solid #bee3f8;border-radius:8px;font-size:0.85rem;color:#2b6cb0;margin-bottom:12px;">
+            <div style="font-weight:700;margin-bottom:4px;">📁 Saved in Cloud:</div>
+            <div id="gdrive-cloud-title" style="margin-bottom:2px;"></div>
+            <div id="gdrive-cloud-items" style="color:#4a5568;"></div>
+            <div id="gdrive-cloud-time" style="color:#718096;font-size:0.78rem;margin-top:4px;"></div>
+        </div>
+
         <!-- Auto-sync toggle -->
         <div class="gdrive-autosync-row">
             <label style="position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0">
@@ -1833,10 +1841,11 @@ button#auto-save-btn.active:hover {
 
         <div class="gdrive-btn-row">
             <button class="gdrive-btn gdrive-btn-blue" id="gdrive-save-now-btn">☁ Save Now</button>
+            <button class="gdrive-btn gdrive-btn-ghost" id="gdrive-check-btn">🔍 Check Cloud</button>
             <button class="gdrive-btn gdrive-btn-ghost" id="gdrive-load-btn">⬇ Load from Cloud</button>
             <button class="gdrive-btn gdrive-btn-ghost" id="gdrive-signout-btn" style="color:#e53e3e">Sign Out</button>
         </div>
-        <p style="font-size:0.78rem;color:#6c757d;margin-top:8px">Tasks saved privately to your Google account via Firebase.</p>
+        <p style="font-size:0.78rem;color:#6c757d;margin-top:8px">Tasks saved privately to your Google account via Firebase. Click <strong>Check Cloud</strong> to see what's saved before loading.</p>
     </div>
 
     <!-- Firebase not configured -->
@@ -5834,6 +5843,11 @@ function resetDynalistCredentials() {
                     setSyncIndicator(isAutoSyncEnabled() ? 'ok' : 'off');
                     if(isAutoSyncEnabled()){
                         fbLoadAll(true).then(() => startDrivePoll());
+                    } else {
+                        // Just show what's in cloud without loading it
+                        getUserDocRef().get().then(snap => {
+                            if(snap.exists) fbRefreshCloudInfo(snap.data());
+                        }).catch(()=>{});
                     }
                 } else {
                     fbUser = null;
@@ -5869,6 +5883,7 @@ function resetDynalistCredentials() {
             setSyncIndicator('ok');
             gdriveLastSavedAt = Date.now();
             if(!silent) showGdriveStatus('✓ Saved tasks to cloud', true);
+            fbRefreshCloudInfo();
         } catch(e){
             setSyncIndicator('error');
             showGdriveStatus('✗ Save failed: ' + e.message, false, true);
@@ -5890,10 +5905,53 @@ function resetDynalistCredentials() {
             gdriveLastSavedAt = Date.now();
             setSyncIndicator('ok');
             if(!silent) showGdriveStatus('✓ Tasks loaded from cloud.', true);
+            fbRefreshCloudInfo(snap.data());
         } catch(e){
             setSyncIndicator('error');
             if(!silent) showGdriveStatus('✗ Load failed: ' + e.message, false, true);
         }
+    }
+
+    // ── Check what's saved in cloud and show info box ────────────
+    async function fbCheckCloud(){
+        if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
+        showGdriveStatus('🔍 Checking cloud…', false, false);
+        try {
+            const snap = await getUserDocRef().get();
+            if(!snap.exists || !snap.data().tasksByDate){
+                showGdriveStatus('⚠ Nothing saved in cloud yet.', false, true);
+                document.getElementById('gdrive-cloud-info').style.display = 'none';
+                return;
+            }
+            fbRefreshCloudInfo(snap.data());
+            showGdriveStatus('✓ Cloud info updated.', true);
+        } catch(e){
+            showGdriveStatus('✗ Check failed: ' + e.message, false, true);
+        }
+    }
+
+    function fbRefreshCloudInfo(data){
+        if(!data) return;
+        const d = data.tasksByDate;
+        if(!d) return;
+        const box     = document.getElementById('gdrive-cloud-info');
+        const titleEl = document.getElementById('gdrive-cloud-title');
+        const itemsEl = document.getElementById('gdrive-cloud-items');
+        const timeEl  = document.getElementById('gdrive-cloud-time');
+        if(!box) return;
+        const total     = (d.items||[]).length;
+        const completed = (d.items||[]).filter(i=>i.completed).length;
+        const pending   = total - completed;
+        titleEl.innerHTML = `<strong>📋 ${d.title || '(no title)'}</strong>`;
+        itemsEl.textContent = `${total} task${total!==1?'s':''} — ${pending} pending, ${completed} done`;
+        const ts = data.todoUpdatedAt || (d.timestamp ? new Date(d.timestamp).getTime() : null);
+        if(ts){
+            const dt = new Date(ts);
+            timeEl.textContent = `Last saved: ${dt.toLocaleDateString()} ${dt.toLocaleTimeString()}`;
+        } else {
+            timeEl.textContent = d.timestamp ? `Last saved: ${new Date(d.timestamp).toLocaleString()}` : '';
+        }
+        box.style.display = 'block';
     }
 
     // ── Auto-sync: schedule a save 2.5 s after the last DOM change ──
@@ -5969,6 +6027,9 @@ function resetDynalistCredentials() {
 
         // Save Now
         document.getElementById('gdrive-save-now-btn').addEventListener('click', () => fbSaveAll(false));
+
+        // Check Cloud
+        document.getElementById('gdrive-check-btn').addEventListener('click', () => fbCheckCloud());
 
         // Load from Cloud
         document.getElementById('gdrive-load-btn').addEventListener('click', () => fbLoadAll(false));
