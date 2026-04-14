@@ -5795,7 +5795,13 @@ function resetDynalistCredentials() {
     // ── Fetch from Firestore and refresh local cache ─────────────
     async function syncCache(){
         const snap = await docRef().get();
-        _cache = (snap.exists && snap.data().todoSavesV2) ? snap.data().todoSavesV2 : {};
+        if(snap.exists && snap.data().todoSavesV2){
+            // JSON round-trip converts Firestore DocumentData → guaranteed plain JS object
+            // This ensures Object.entries() iterates correctly with matching id/value pairs
+            _cache = JSON.parse(JSON.stringify(snap.data().todoSavesV2));
+        } else {
+            _cache = {};
+        }
     }
 
     // ── Collect current DOM state ────────────────────────────────
@@ -5875,12 +5881,20 @@ function resetDynalistCredentials() {
         const empty=document.getElementById('gdrive-saves-empty');
         if(!container) return;
         container.innerHTML='';
-        const entries=Object.entries(_cache).sort((a,b)=>(b[1].updatedAt||0)-(a[1].updatedAt||0));
+        const entries=Object.entries(_cache)
+            .sort((a,b)=>{
+                const diff=(b[1].updatedAt||0)-(a[1].updatedAt||0);
+                if(diff!==0) return diff;
+                return (a[1].name||'').localeCompare(b[1].name||''); // stable tie-break
+            });
         if(entries.length===0){
             if(empty){ empty.style.display='block'; container.appendChild(empty); }
             return;
         }
         entries.forEach(([id,s])=>{
+            // Defensive: skip any entry where id or name is missing
+            if(!id || !s) return;
+
             const isActive=id===_activeId;
             const dt=s.updatedAt?new Date(s.updatedAt):null;
             const ts=dt?dt.toLocaleDateString([],{month:'short',day:'numeric'})+' '+dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
@@ -5902,9 +5916,13 @@ function resetDynalistCredentials() {
             const del=document.createElement('button');
             del.className='gdrive-save-del'; del.title='Delete'; del.textContent='×';
 
-            const _id=id, _nm=s.name||'Untitled';
-            nm.onclick =      ()=>  fbLoad(_id,_nm);
-            del.onclick=(e)=>{ e.stopPropagation(); fbDel(_id,_nm); };
+            // Use data attributes to store id on the element itself —
+            // avoids any closure capture ambiguity
+            row.dataset.saveId   = id;
+            row.dataset.saveName = s.name||'Untitled';
+
+            nm.onclick  = ()=>{ fbLoad(row.dataset.saveId, row.dataset.saveName); };
+            del.onclick = (e)=>{ e.stopPropagation(); fbDel(row.dataset.saveId, row.dataset.saveName); };
 
             row.appendChild(nm); row.appendChild(meta); row.appendChild(del);
             container.appendChild(row);
