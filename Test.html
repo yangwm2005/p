@@ -5787,8 +5787,10 @@ function resetDynalistCredentials() {
                 indent:    parseInt(li.dataset.indent||'0')
             });
         });
+        // Always store title — use empty string if blank, never undefined
+        const titleEl = document.getElementById('title');
         return {
-            title:     document.getElementById('title').value.trim(),
+            title:     titleEl ? titleEl.value : '',
             items:     items,
             timestamp: new Date().toISOString()
         };
@@ -5797,10 +5799,10 @@ function resetDynalistCredentials() {
     // ── Render list from plain JS object (NOT from Firestore) ────
     function renderData(data){
         // data is already a plain JS object — parsed from JSON string
-        const title = data.title||'';
+        const title = data.title !== undefined ? data.title : '';
         const items = data.items||[];
 
-        // Update title
+        // Always update title — even if empty
         document.getElementById('title').value = title;
 
         // Rebuild list
@@ -5924,7 +5926,16 @@ function resetDynalistCredentials() {
             // Parse JSON string → plain JS object (no Firestore types)
             const data = JSON.parse(entry.itemsJson);
 
+            // Guarantee title is set: prefer stored title, fall back to save name
+            if(!data.title || data.title.trim()===''){
+                data.title = entry.name || saveName;
+            }
+
             activeCloudSaveId = saveId;
+
+            // Set title immediately and directly — before renderData touches the DOM
+            document.getElementById('title').value = data.title;
+
             renderData(data);
 
             // Re-enable sync after a short delay
