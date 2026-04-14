@@ -5742,11 +5742,13 @@ function resetDynalistCredentials() {
 
 // ════════════════════════════════════════════════════════════════
 // FIREBASE CLOUD SYNC
-// Saves stored as JSON strings in users/{uid}.todoSavesV2
-// JSON strings avoid all Firestore nested-object deserialization issues.
+// - Saves stored as JSON strings in users/{uid}.todoSavesV2
+// - Local cache (_cache) means fbLoad never does a Firestore read —
+//   it always loads from the in-memory cache, so there is zero
+//   async gap during which auto-save could overwrite the DOM.
 // ════════════════════════════════════════════════════════════════
 (function(){
-    const FIREBASE_CONFIG = {
+    const FB = {
         apiKey:            "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
         authDomain:        "qtodo-syn.firebaseapp.com",
         projectId:         "qtodo-syn",
@@ -5756,84 +5758,91 @@ function resetDynalistCredentials() {
     };
 
     let fbApp=null, fbAuth=null, fbDb=null, fbUser=null;
-    let gdriveSyncing=false, gdriveSyncTimer=null;
-    let activeCloudSaveId=null;
-    let _pauseSync=false;
+    let _cache    = {};   // local mirror of todoSavesV2 — always up to date
+    let _activeId = null; // currently-loaded save ID
+    let _saving   = false;
+    let _syncTimer= null;
+    let _pauseSync= false;
 
-    // ── Unique ID ────────────────────────────────────────────────
-    function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
-
-    // ── User doc ref ─────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────
+    function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
     function docRef(){ return fbDb.collection('users').doc(fbUser.uid); }
+    function isAutoSync(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
 
-    // ── Read saves map from Firestore ────────────────────────────
-    // Returns { saveId: {name, itemsJson, title, updatedAt}, ... }
-    async function readSaves(){
-        const snap = await docRef().get();
-        if(!snap.exists) return {};
-        return snap.data().todoSavesV2 || {};
+    function setInd(s){
+        const el=document.getElementById('gdrive-sync-indicator'); if(!el) return;
+        el.className='gdrive-sync-indicator '+s;
+        el.textContent=s==='syncing'?'↻ syncing':s==='ok'?'✓ synced':s==='error'?'✗ error':'';
+    }
+    function gMsg(msg,ok,err){
+        const el=document.getElementById('gdrive-status'); if(!el) return;
+        el.textContent=msg; el.className='gdrive-status '+(err?'err':ok?'ok':'info');
+        el.style.display='block';
+        if(ok) setTimeout(()=>{ el.style.display='none'; },4000);
+    }
+    function updateSyncUI(){
+        const t=document.getElementById('gdrive-autosync'),
+              s=document.getElementById('gdrive-autosync-slider');
+        if(!t||!s) return;
+        const on=isAutoSync(); t.checked=on; s.style.background=on?'#48bb78':'#ccc';
+        if(!s._k){ const k=document.createElement('span');
+            k.style.cssText='position:absolute;top:3px;width:16px;height:16px;background:white;border-radius:50%;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)';
+            s.appendChild(k); s._k=k; }
+        s._k.style.left=on?'21px':'3px';
+        if(!on) setInd('off');
     }
 
-    // ── Collect current list from DOM ────────────────────────────
-    function collectData(){
+    // ── Fetch from Firestore and refresh local cache ─────────────
+    async function syncCache(){
+        const snap = await docRef().get();
+        _cache = (snap.exists && snap.data().todoSavesV2) ? snap.data().todoSavesV2 : {};
+    }
+
+    // ── Collect current DOM state ────────────────────────────────
+    function collect(){
         const items=[];
         document.querySelectorAll('#todo-list .todo-item').forEach(li=>{
-            const textEl = li.querySelector('.item-text');
+            const t=li.querySelector('.item-text');
             items.push({
-                text:      textEl ? textEl.textContent : '',
+                text:      t?t.textContent:'',
                 completed: li.classList.contains('completed'),
                 isSection: li.classList.contains('section-break'),
                 note:      li.dataset.note||'',
                 indent:    parseInt(li.dataset.indent||'0')
             });
         });
-        // Always store title — use empty string if blank, never undefined
-        const titleEl = document.getElementById('title');
-        return {
-            title:     titleEl ? titleEl.value : '',
-            items:     items,
-            timestamp: new Date().toISOString()
-        };
+        const titleEl=document.getElementById('title');
+        return { title:titleEl?titleEl.value:'', items, timestamp:new Date().toISOString() };
     }
 
-    // ── Render list from plain JS object (NOT from Firestore) ────
-    function renderData(data){
-        // data is already a plain JS object — parsed from JSON string
-        const title = data.title !== undefined ? data.title : '';
-        const items = data.items||[];
-
-        // Always update title — even if empty
-        document.getElementById('title').value = title;
+    // ── Render data into DOM (fully synchronous) ──────────────────
+    function paint(data){
+        // Set title
+        const titleEl=document.getElementById('title');
+        if(titleEl) titleEl.value = data.title||'';
 
         // Rebuild list
-        const todoList = document.getElementById('todo-list');
-        todoList.innerHTML = '';
-
+        const list=document.getElementById('todo-list');
+        if(!list) return;
+        list.innerHTML='';
+        const items=data.items||[];
         if(items.length===0){
-            todoList.innerHTML='<div class="empty-state">No tasks yet</div>';
+            list.innerHTML='<div class="empty-state">No tasks yet</div>';
         } else {
             items.forEach(item=>{
-                const indent = Math.min(Math.max(parseInt(item.indent)||0,0),5);
-                const note   = item.note||'';
-                const li     = document.createElement('li');
-
+                const indent=Math.min(Math.max(parseInt(item.indent)||0,0),5);
+                const note=item.note||'';
+                const li=document.createElement('li');
                 if(item.isSection){
-                    li.className   = 'todo-item section-break';
-                    li.draggable   = true;
-                    li.dataset.indent = indent;
-                    li.style.marginLeft = indent*1.5+'rem';
-                    li.innerHTML = `
-                        <span class="drag-handle">☰</span>
-                        <span class="item-text">${item.text}</span>
-                        <textarea class="item-edit" rows="1">${item.text}</textarea>
-                        <button class="delete-btn">×</button>`;
+                    li.className='todo-item section-break';
+                    li.draggable=true; li.dataset.indent=indent;
+                    li.style.marginLeft=indent*1.5+'rem';
+                    li.innerHTML=`<span class="drag-handle">☰</span><span class="item-text">${item.text}</span><textarea class="item-edit" rows="1">${item.text}</textarea><button class="delete-btn">×</button>`;
                 } else {
-                    li.className   = 'todo-item'+(item.completed?' completed':'');
-                    li.draggable   = true;
-                    li.dataset.indent = indent;
-                    li.dataset.note   = note;
-                    li.style.marginLeft = indent*1.5+'rem';
-                    li.innerHTML = `
+                    li.className='todo-item'+(item.completed?' completed':'');
+                    li.draggable=true; li.dataset.indent=indent; li.dataset.note=note;
+                    li.style.marginLeft=indent*1.5+'rem';
+                    li.innerHTML=`
                         <span class="drag-handle">☰</span>
                         <input type="checkbox" class="item-checkbox" ${item.completed?'checked':''}>
                         <span class="note-indicator" style="${note.trim()?'opacity:1':'opacity:0'}" data-note="${note}"></span>
@@ -5845,222 +5854,177 @@ function resetDynalistCredentials() {
                         <button class="outdent-btn" onclick="outdentItem(this)">⇤</button>
                         <button class="delete-btn">×</button>`;
                     if(note.trim()){
-                        const nb=li.querySelector('.note-btn'), np=li.querySelector('.note-preview');
+                        const nb=li.querySelector('.note-btn'),np=li.querySelector('.note-preview');
                         if(nb){
                             nb.addEventListener('mouseenter',()=>{np.textContent=note;np.style.display='block';});
                             nb.addEventListener('mouseleave',()=>{np.style.display='none';});
                         }
                     }
                 }
-                todoList.appendChild(li);
+                list.appendChild(li);
             });
         }
-
         if(typeof ensureToggleButtons==='function') ensureToggleButtons();
         if(typeof setupDragAndDrop==='function')    setupDragAndDrop();
+        window.scrollTo({top:0,behavior:'smooth'});
+    }
 
-        // Scroll to top so user can see the loaded content
-        window.scrollTo({top:0, behavior:'smooth'});
+    // ── Render sidebar list from _cache (synchronous sort+build) ─
+    function paintList(){
+        const container=document.getElementById('gdrive-saves-list');
+        const empty=document.getElementById('gdrive-saves-empty');
+        if(!container) return;
+        container.innerHTML='';
+        const entries=Object.entries(_cache).sort((a,b)=>(b[1].updatedAt||0)-(a[1].updatedAt||0));
+        if(entries.length===0){
+            if(empty){ empty.style.display='block'; container.appendChild(empty); }
+            return;
+        }
+        entries.forEach(([id,s])=>{
+            const isActive=id===_activeId;
+            const dt=s.updatedAt?new Date(s.updatedAt):null;
+            const ts=dt?dt.toLocaleDateString([],{month:'short',day:'numeric'})+' '+dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+            let total=0,done=0;
+            try{ const d=JSON.parse(s.itemsJson||'{}'); total=(d.items||[]).length; done=(d.items||[]).filter(i=>i.completed).length; }catch(_){}
+
+            const row=document.createElement('div');
+            row.className='gdrive-save-row';
+            if(isActive) row.style.background='#ebf8ff';
+
+            const nm=document.createElement('span');
+            nm.className='gdrive-save-name'; nm.title='Click to load';
+            nm.textContent=(isActive?'▶ ':'')+( s.name||'Untitled');
+
+            const meta=document.createElement('span');
+            meta.className='gdrive-save-meta';
+            meta.textContent=`${total-done} pending · ${ts}`;
+
+            const del=document.createElement('button');
+            del.className='gdrive-save-del'; del.title='Delete'; del.textContent='×';
+
+            const _id=id, _nm=s.name||'Untitled';
+            nm.onclick =      ()=>  fbLoad(_id,_nm);
+            del.onclick=(e)=>{ e.stopPropagation(); fbDel(_id,_nm); };
+
+            row.appendChild(nm); row.appendChild(meta); row.appendChild(del);
+            container.appendChild(row);
+        });
     }
 
     // ── Save current list ────────────────────────────────────────
     async function fbSave(silent=false){
-        if(!fbUser||!fbDb){ showStatus('Not signed in.','warning'); return; }
-        if(gdriveSyncing) return;
-        gdriveSyncing=true; setSyncInd('syncing');
+        if(!fbUser||!fbDb){ gMsg('Not signed in.','','err'); return; }
+        if(_saving) return;
+        _saving=true; setInd('syncing');
         try{
-            const nameInput = document.getElementById('gdrive-save-name');
-            const rawName   = (nameInput&&nameInput.value.trim())||document.getElementById('title').value.trim()||'Untitled';
-            const saves     = await readSaves();
+            const ni=document.getElementById('gdrive-save-name');
+            const rawName=(ni&&ni.value.trim())||document.getElementById('title').value||'Untitled';
 
-            // If name already exists → overwrite; otherwise new ID
-            let saveId = null;
-            for(const [id,s] of Object.entries(saves)){
+            // Reuse ID if name already exists, else new
+            let saveId=null;
+            for(const [id,s] of Object.entries(_cache)){
                 if(s.name===rawName){ saveId=id; break; }
             }
             if(!saveId) saveId=uid();
 
-            const data     = collectData();
-            const entry    = { name:rawName, itemsJson:JSON.stringify(data), updatedAt:Date.now() };
+            const entry={ name:rawName, itemsJson:JSON.stringify(collect()), updatedAt:Date.now() };
+
+            // Update cache immediately BEFORE the Firestore write
+            _cache[saveId]=entry;
+            _activeId=saveId;
+            paintList();
+
+            // Write to Firestore
             await docRef().set({ todoSavesV2:{ [saveId]:entry } },{ merge:true });
-
-            activeCloudSaveId = saveId;
-            if(nameInput) nameInput.value='';
-            setSyncInd('ok');
-            if(!silent) showGStatus(`✓ Saved "${rawName}"`,true);
-            renderList();
+            if(ni) ni.value='';
+            setInd('ok');
+            if(!silent) gMsg(`✓ Saved "${rawName}"`,true);
         }catch(e){
-            setSyncInd('error');
-            showGStatus('✗ Save failed: '+e.message,false,true);
-        }finally{ gdriveSyncing=false; }
+            setInd('error'); gMsg('✗ Save failed: '+e.message,false,true);
+        }finally{ _saving=false; }
     }
 
-    // ── Auto-save (updates active save silently) ─────────────────
+    // ── Auto-save (silent, updates active save) ──────────────────
     async function fbAutoSave(){
-        if(!fbUser||!fbDb||!activeCloudSaveId) return;
-        if(gdriveSyncing) return;
-        gdriveSyncing=true; setSyncInd('syncing');
+        if(!fbUser||!fbDb||!_activeId) return;
+        if(_saving) return;
+        _saving=true; setInd('syncing');
         try{
-            const saves   = await readSaves();
-            const name    = (saves[activeCloudSaveId]&&saves[activeCloudSaveId].name)||document.getElementById('title').value.trim()||'Untitled';
-            const entry   = { name, itemsJson:JSON.stringify(collectData()), updatedAt:Date.now() };
-            await docRef().set({ todoSavesV2:{ [activeCloudSaveId]:entry } },{ merge:true });
-            setSyncInd('ok');
-        }catch(e){ setSyncInd('error'); }
-        finally{ gdriveSyncing=false; }
+            const name=(_cache[_activeId]&&_cache[_activeId].name)||document.getElementById('title').value||'Untitled';
+            const entry={ name, itemsJson:JSON.stringify(collect()), updatedAt:Date.now() };
+            _cache[_activeId]=entry;
+            await docRef().set({ todoSavesV2:{ [_activeId]:entry } },{ merge:true });
+            setInd('ok');
+        }catch(e){ setInd('error'); }
+        finally{ _saving=false; }
     }
 
-    // ── Load a save ──────────────────────────────────────────────
-    async function fbLoad(saveId, saveName){
-        if(!fbUser||!fbDb) return;
-        showGStatus(`⬇ Loading "${saveName}"…`,false,false);
-        setSyncInd('syncing');
+    // ── Load — reads from _cache, ZERO async, instant ────────────
+    function fbLoad(saveId, saveName){
+        if(!_cache[saveId]){ gMsg('⚠ Not found in cache. Try Refresh.',false,true); return; }
         try{
+            // Fully pause auto-sync
             _pauseSync=true;
-            clearTimeout(gdriveSyncTimer);
+            clearTimeout(_syncTimer);
 
-            const saves = await readSaves();
-            const entry = saves[saveId];
-            if(!entry){ showGStatus('⚠ Not found.',false,true); _pauseSync=false; return; }
+            const entry=_cache[saveId];
+            const data=JSON.parse(entry.itemsJson);
 
-            // Parse JSON string → plain JS object (no Firestore types)
-            const data = JSON.parse(entry.itemsJson);
+            // Ensure title fallback
+            if(!data.title||!data.title.trim()) data.title=entry.name||saveName;
 
-            // Guarantee title is set: prefer stored title, fall back to save name
-            if(!data.title || data.title.trim()===''){
-                data.title = entry.name || saveName;
-            }
+            _activeId=saveId;
 
-            activeCloudSaveId = saveId;
+            // paint() is fully synchronous — no async gaps
+            paint(data);
 
-            // Set title immediately and directly — before renderData touches the DOM
-            document.getElementById('title').value = data.title;
+            // Re-enable auto-sync after DOM settles
+            setTimeout(()=>{ _pauseSync=false; },500);
 
-            renderData(data);
+            setInd('ok');
+            gMsg(`✓ Loaded "${saveName}"`,true);
 
-            // Re-enable sync after a short delay
-            setTimeout(()=>{ _pauseSync=false; },300);
-
-            setSyncInd('ok');
-            showGStatus(`✓ Loaded "${saveName}"`,true);
-            renderList();
+            // Rebuild sidebar to show active highlight
+            paintList();
         }catch(e){
             _pauseSync=false;
-            setSyncInd('error');
-            showGStatus('✗ Load failed: '+e.message,false,true);
+            gMsg('✗ Load failed: '+e.message,false,true);
         }
     }
 
-    // ── Delete a save ────────────────────────────────────────────
+    // ── Delete ───────────────────────────────────────────────────
     async function fbDel(saveId, saveName){
         if(!fbUser||!fbDb) return;
         if(!confirm(`Delete "${saveName}"?`)) return;
         try{
-            // FieldValue.delete() is the only reliable way to remove a key
-            // from a nested Firestore map — merge+omit does NOT delete keys
-            await docRef().update({
-                [`todoSavesV2.${saveId}`]: firebase.firestore.FieldValue.delete()
-            });
-            if(activeCloudSaveId===saveId) activeCloudSaveId=null;
-            showGStatus(`🗑 Deleted "${saveName}"`,true);
-            renderList();
-        }catch(e){ showGStatus('✗ Delete failed: '+e.message,false,true); }
+            delete _cache[saveId];
+            if(_activeId===saveId) _activeId=null;
+            paintList();
+            await docRef().update({ [`todoSavesV2.${saveId}`]:firebase.firestore.FieldValue.delete() });
+            gMsg(`🗑 Deleted "${saveName}"`,true);
+        }catch(e){ gMsg('✗ Delete failed: '+e.message,false,true); }
     }
 
-    // ── Render saves list in the panel ───────────────────────────
-    async function renderList(){
-        const container = document.getElementById('gdrive-saves-list');
-        const empty     = document.getElementById('gdrive-saves-empty');
-        if(!container||!fbUser) return;
+    // ── Refresh: pull from Firestore → update cache → repaint ────
+    async function fbRefresh(){
+        if(!fbUser||!fbDb) return;
+        gMsg('🔄 Refreshing…',false,false);
         try{
-            const saves   = await readSaves();
-            const entries = Object.entries(saves).sort((a,b)=>(b[1].updatedAt||0)-(a[1].updatedAt||0));
-            container.innerHTML='';
-            if(entries.length===0){
-                if(empty){ empty.style.display='block'; container.appendChild(empty); }
-                return;
-            }
-            entries.forEach(([id,s])=>{
-                const isActive = id===activeCloudSaveId;
-                const dt = s.updatedAt ? new Date(s.updatedAt) : null;
-                const ts = dt ? dt.toLocaleDateString([],{month:'short',day:'numeric'})+' '+dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '';
-
-                // Count items from JSON
-                let total=0, done=0;
-                try{
-                    const d=JSON.parse(s.itemsJson||'{}');
-                    total=(d.items||[]).length;
-                    done=(d.items||[]).filter(i=>i.completed).length;
-                }catch(_){}
-
-                const row      = document.createElement('div');
-                row.className  = 'gdrive-save-row';
-                if(isActive) row.style.background='#ebf8ff';
-
-                const nm  = document.createElement('span');
-                nm.className = 'gdrive-save-name';
-                nm.title     = 'Click to load';
-                nm.textContent = (isActive?'▶ ':'')+( s.name||'Untitled');
-
-                const meta = document.createElement('span');
-                meta.className   = 'gdrive-save-meta';
-                meta.textContent = `${total-done} pending · ${ts}`;
-
-                const del  = document.createElement('button');
-                del.className   = 'gdrive-save-del';
-                del.title       = 'Delete';
-                del.textContent = '×';
-
-                // Closures capture correct id/name for each row
-                const _id=id, _nm=s.name||'Untitled';
-                nm.onclick  = ()=> fbLoad(_id, _nm);
-                del.onclick = (e)=>{ e.stopPropagation(); fbDel(_id,_nm); };
-
-                row.appendChild(nm);
-                row.appendChild(meta);
-                row.appendChild(del);
-                container.appendChild(row);
-            });
-        }catch(e){
-            showGStatus('✗ List error: '+e.message,false,true);
-        }
-    }
-
-    // ── UI helpers ───────────────────────────────────────────────
-    function setSyncInd(state){
-        const el=document.getElementById('gdrive-sync-indicator');
-        if(!el) return;
-        el.className='gdrive-sync-indicator '+state;
-        el.textContent = state==='syncing'?'↻ syncing': state==='ok'?'✓ synced': state==='error'?'✗ error':'';
-    }
-    function showGStatus(msg,isOk,isErr){
-        const el=document.getElementById('gdrive-status');
-        if(!el) return;
-        el.textContent=msg;
-        el.className='gdrive-status '+(isErr?'err':isOk?'ok':'info');
-        el.style.display='block';
-        if(isOk) setTimeout(()=>{ el.style.display='none'; },4000);
-    }
-    function isAutoSync(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
-    function updateAutoSyncUI(){
-        const t=document.getElementById('gdrive-autosync'), s=document.getElementById('gdrive-autosync-slider');
-        if(!t||!s) return;
-        const on=isAutoSync(); t.checked=on; s.style.background=on?'#48bb78':'#ccc';
-        if(!s._k){ const k=document.createElement('span'); k.style.cssText='position:absolute;top:3px;width:16px;height:16px;background:white;border-radius:50%;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)'; s.appendChild(k); s._k=k; }
-        s._k.style.left=on?'21px':'3px';
-        if(!on) setSyncInd('off');
+            await syncCache();
+            paintList();
+            gMsg('✓ Refreshed',true);
+        }catch(e){ gMsg('✗ Refresh failed: '+e.message,false,true); }
     }
 
     // ── Auto-sync via MutationObserver ───────────────────────────
     function schedSync(){
-        if(!isAutoSync()||!fbUser||!activeCloudSaveId||_pauseSync) return;
-        clearTimeout(gdriveSyncTimer);
-        setSyncInd('syncing');
-        gdriveSyncTimer=setTimeout(()=>fbAutoSave(),3000);
+        if(!isAutoSync()||!fbUser||!_activeId||_pauseSync) return;
+        clearTimeout(_syncTimer);
+        setInd('syncing');
+        _syncTimer=setTimeout(()=>fbAutoSave(),3000);
     }
     function attachObserver(){
-        const list=document.getElementById('todo-list');
-        if(!list) return;
+        const list=document.getElementById('todo-list'); if(!list) return;
         new MutationObserver(()=>{ if(!_pauseSync) schedSync(); })
             .observe(list,{childList:true,subtree:true,characterData:true,attributes:true});
     }
@@ -6069,10 +6033,10 @@ function resetDynalistCredentials() {
     function initFb(){
         if(fbApp) return true;
         try{
-            fbApp  = firebase.initializeApp(FIREBASE_CONFIG);
-            fbAuth = firebase.auth();
-            fbDb   = firebase.firestore();
-            fbAuth.onAuthStateChanged(user=>{
+            fbApp=firebase.initializeApp(FB);
+            fbAuth=firebase.auth();
+            fbDb=firebase.firestore();
+            fbAuth.onAuthStateChanged(async user=>{
                 if(user){
                     fbUser=user;
                     document.getElementById('fbNotSignedIn').style.display='none';
@@ -6080,21 +6044,20 @@ function resetDynalistCredentials() {
                     const info=document.getElementById('gdrive-user-info');
                     info.innerHTML=`✓ <strong>${user.displayName||user.email}</strong>`;
                     info.style.display='block';
-                    updateAutoSyncUI();
-                    setSyncInd(isAutoSync()?'ok':'off');
-                    renderList();
+                    updateSyncUI();
+                    setInd(isAutoSync()?'ok':'off');
+                    await syncCache();   // load cache on sign-in
+                    paintList();         // show list immediately from cache
                 }else{
-                    fbUser=null;
+                    fbUser=null; _cache={}; _activeId=null;
                     document.getElementById('fbNotSignedIn').style.display='block';
                     document.getElementById('fbSignedIn').style.display='none';
                     const c=document.getElementById('gdrive-saves-list');
-                    if(c) c.innerHTML='';
-                    activeCloudSaveId=null;
-                    setSyncInd('off');
+                    if(c) c.innerHTML=''; setInd('off');
                 }
             });
             return true;
-        }catch(e){ showGStatus('✗ Firebase error: '+e.message,false,true); return false; }
+        }catch(e){ gMsg('✗ Firebase error: '+e.message,false,true); return false; }
     }
 
     // ── Wire UI ──────────────────────────────────────────────────
@@ -6107,31 +6070,27 @@ function resetDynalistCredentials() {
         document.getElementById('fbSignInBtn').onclick=async()=>{
             if(!initFb()) return;
             try{ await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
-            catch(e){ if(e.code!=='auth/popup-closed-by-user') showGStatus('✗ '+e.message,false,true); }
+            catch(e){ if(e.code!=='auth/popup-closed-by-user') gMsg('✗ '+e.message,false,true); }
         };
         document.getElementById('gdrive-signout-btn').onclick=async()=>{
             if(fbAuth) await fbAuth.signOut();
-            activeCloudSaveId=null;
+            _activeId=null; _cache={};
             localStorage.setItem('gdriveAutoSync','0');
-            updateAutoSyncUI();
-            showGStatus('Signed out.',true);
+            updateSyncUI(); gMsg('Signed out.',true);
         };
         document.getElementById('gdrive-save-now-btn').addEventListener('click',()=>fbSave(false));
-        document.getElementById('gdrive-refresh-btn').addEventListener('click',()=>renderList());
+        document.getElementById('gdrive-refresh-btn').addEventListener('click',()=>fbRefresh());
         document.getElementById('gdrive-autosync').addEventListener('change',function(){
             const on=this.checked;
             localStorage.setItem('gdriveAutoSync',on?'1':'0');
-            updateAutoSyncUI();
+            updateSyncUI();
             if(on){
-                if(!fbUser){ showGStatus('Sign in first.',false,true); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncUI(); return; }
-                if(!activeCloudSaveId){ showGStatus('Load or save a list first.',false,true); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncUI(); return; }
-                showGStatus('✓ Auto-sync on.',true);
-            }else{
-                setSyncInd('off');
-                showGStatus('Auto-sync off.',true);
-            }
+                if(!fbUser){ gMsg('Sign in first.',false,true); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateSyncUI(); return; }
+                if(!_activeId){ gMsg('Load or save a list first.',false,true); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateSyncUI(); return; }
+                gMsg('✓ Auto-sync on.',true);
+            }else{ setInd('off'); gMsg('Auto-sync off.',true); }
         });
-        updateAutoSyncUI();
+        updateSyncUI();
         attachObserver();
     });
 })();
