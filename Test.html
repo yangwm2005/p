@@ -5966,19 +5966,63 @@ function resetDynalistCredentials() {
     }
 
     // ── Auto-save (silent, updates active save) ──────────────────
+    // If the current title differs from the active save's name,
+    // the user has started a new list — prompt instead of overwriting.
     async function fbAutoSave(){
         if(!fbUser||!fbDb||!_activeId) return;
-        if(_saving||_pauseSync) return;  // skip if load is in progress
-        const savedId=_activeId;         // capture now — don't let it change mid-flight
+        if(_saving||_pauseSync) return;
+        const savedId = _activeId;  // capture before any await
+
+        // ── Title mismatch check ──────────────────────────────────
+        const currentTitle  = (document.getElementById('title').value||'').trim();
+        const activeSaveName= (_cache[savedId]&&_cache[savedId].name)||'';
+
+        if(currentTitle && activeSaveName && currentTitle !== activeSaveName){
+            // Title has changed — ask the user what to do
+            clearTimeout(_syncTimer);
+            _syncTimer = null;
+
+            const choice = confirm(
+                `Your title "${currentTitle}" is different from the loaded file "${activeSaveName}".\n\n` +
+                `OK  → Save as a NEW file named "${currentTitle}"\n` +
+                `Cancel → Update the existing file "${activeSaveName}" (keeps old name)`
+            );
+
+            if(choice){
+                // Save as brand-new file under the new title
+                const newId    = uid();
+                const entry    = { name:currentTitle, itemsJson:JSON.stringify(collect()), updatedAt:Date.now() };
+                _cache[newId]  = entry;
+                _activeId      = newId;
+                paintList();
+                try{
+                    await docRef().set({ todoSavesV2:{ [newId]:entry } },{ merge:true });
+                    setInd('ok');
+                    gMsg(`✓ Saved as new file "${currentTitle}"`,true);
+                }catch(e){ setInd('error'); gMsg('✗ Save failed: '+e.message,false,true); }
+            } else {
+                // Overwrite the existing file, keeping its original name
+                const entry   = { name:activeSaveName, itemsJson:JSON.stringify(collect()), updatedAt:Date.now() };
+                _cache[savedId]= entry;
+                _activeId      = savedId;
+                paintList();
+                try{
+                    await docRef().set({ todoSavesV2:{ [savedId]:entry } },{ merge:true });
+                    setInd('ok');
+                    gMsg(`✓ Updated "${activeSaveName}"`,true);
+                }catch(e){ setInd('error'); gMsg('✗ Save failed: '+e.message,false,true); }
+            }
+            return;
+        }
+
+        // ── Normal auto-save (titles match) ───────────────────────
         _saving=true; setInd('syncing');
         try{
-            // Re-check: if user loaded a different file while we awaited, abort
             if(_pauseSync||savedId!==_activeId){ setInd('ok'); return; }
-            const name=(_cache[savedId]&&_cache[savedId].name)||document.getElementById('title').value||'Untitled';
-            const entry={ name, itemsJson:JSON.stringify(collect()), updatedAt:Date.now() };
+            const name = activeSaveName || currentTitle || 'Untitled';
+            const entry= { name, itemsJson:JSON.stringify(collect()), updatedAt:Date.now() };
             _cache[savedId]=entry;
             await docRef().set({ todoSavesV2:{ [savedId]:entry } },{ merge:true });
-            // Final check: only update indicator if we're still on the same file
             if(savedId===_activeId) setInd('ok');
         }catch(e){ setInd('error'); }
         finally{ _saving=false; }
