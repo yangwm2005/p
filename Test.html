@@ -5741,93 +5741,50 @@ function resetDynalistCredentials() {
 }
 
 // ════════════════════════════════════════════════════════════════
-// FIREBASE CLOUD SYNC — multi-save, top-level-doc storage
-// All saves stored as a map in users/{uid}.todoSaves
-// Uses merge:true — Reflection's reflectionJournalData never touched.
-// No subcollections, no composite indexes, works with default rules.
+// FIREBASE CLOUD SYNC
+// Saves stored as JSON strings in users/{uid}.todoSavesV2
+// JSON strings avoid all Firestore nested-object deserialization issues.
 // ════════════════════════════════════════════════════════════════
 (function(){
     const FIREBASE_CONFIG = {
-        apiKey: "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
-        authDomain: "qtodo-syn.firebaseapp.com",
-        projectId: "qtodo-syn",
-        storageBucket: "qtodo-syn.firebasestorage.app",
+        apiKey:            "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
+        authDomain:        "qtodo-syn.firebaseapp.com",
+        projectId:         "qtodo-syn",
+        storageBucket:     "qtodo-syn.firebasestorage.app",
         messagingSenderId: "663058774385",
-        appId: "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
+        appId:             "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
     };
 
-    let fbApp = null, fbAuth = null, fbDb = null, fbUser = null;
-    let gdriveSyncing   = false;
-    let gdriveSyncTimer = null;
-    let activeCloudSaveId = null;
-    let _autoSyncPaused   = false;
-    let _autoSyncObserver = null;
+    let fbApp=null, fbAuth=null, fbDb=null, fbUser=null;
+    let gdriveSyncing=false, gdriveSyncTimer=null;
+    let activeCloudSaveId=null;
+    let _pauseSync=false;
 
-    // ── Simple unique ID generator (no subcollection needed) ─────
-    function newSaveId(){
-        return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    }
+    // ── Unique ID ────────────────────────────────────────────────
+    function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
-    // ── Top-level user doc ref ───────────────────────────────────
-    function userDocRef(){
-        return fbDb.collection('users').doc(fbUser.uid);
-    }
+    // ── User doc ref ─────────────────────────────────────────────
+    function docRef(){ return fbDb.collection('users').doc(fbUser.uid); }
 
-    // ── Read ALL saves from cloud → plain JS object ──────────────
-    async function fetchAllSaves(){
-        const snap = await userDocRef().get();
+    // ── Read saves map from Firestore ────────────────────────────
+    // Returns { saveId: {name, itemsJson, title, updatedAt}, ... }
+    async function readSaves(){
+        const snap = await docRef().get();
         if(!snap.exists) return {};
-        return snap.data().todoSaves || {};
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────
-    function isAutoSyncEnabled(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
-
-    function setSyncIndicator(state){
-        const el = document.getElementById('gdrive-sync-indicator');
-        if(!el) return;
-        el.className = 'gdrive-sync-indicator ' + state;
-        if(state==='syncing') el.textContent = '↻ syncing';
-        else if(state==='ok')  el.textContent = '✓ synced';
-        else if(state==='error') el.textContent = '✗ error';
-        else el.textContent = '';
-    }
-
-    function showGdriveStatus(msg, isOk, isErr){
-        const el = document.getElementById('gdrive-status');
-        if(!el) return;
-        el.textContent = msg;
-        el.className = 'gdrive-status ' + (isErr ? 'err' : isOk ? 'ok' : 'info');
-        el.style.display = 'block';
-        if(isOk) setTimeout(()=>{ el.style.display='none'; }, 4000);
-    }
-
-    function updateAutoSyncUI(){
-        const toggle = document.getElementById('gdrive-autosync');
-        const slider = document.getElementById('gdrive-autosync-slider');
-        if(!toggle||!slider) return;
-        const on = isAutoSyncEnabled();
-        toggle.checked = on;
-        slider.style.background = on ? '#48bb78' : '#ccc';
-        if(!slider._knob){
-            const k = document.createElement('span');
-            k.style.cssText = 'position:absolute;top:3px;width:16px;height:16px;background:white;border-radius:50%;transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3)';
-            slider.appendChild(k); slider._knob = k;
-        }
-        slider._knob.style.left = on ? '21px' : '3px';
-        if(!on) setSyncIndicator('off');
+        return snap.data().todoSavesV2 || {};
     }
 
     // ── Collect current list from DOM ────────────────────────────
-    function collectTodoData(){
-        const items = [];
-        document.querySelectorAll('#todo-list .todo-item').forEach(li => {
+    function collectData(){
+        const items=[];
+        document.querySelectorAll('#todo-list .todo-item').forEach(li=>{
+            const textEl = li.querySelector('.item-text');
             items.push({
-                text:      li.querySelector('.item-text') ? li.querySelector('.item-text').textContent : '',
+                text:      textEl ? textEl.textContent : '',
                 completed: li.classList.contains('completed'),
                 isSection: li.classList.contains('section-break'),
-                note:      li.dataset.note || '',
-                indent:    parseInt(li.dataset.indent || '0')
+                note:      li.dataset.note||'',
+                indent:    parseInt(li.dataset.indent||'0')
             });
         });
         return {
@@ -5837,357 +5794,334 @@ function resetDynalistCredentials() {
         };
     }
 
-    // ── Restore list from saved data ─────────────────────────────
-    function applyTodoData(todoData){
-        if(!todoData || !Array.isArray(todoData.items)) return;
-        if(todoData.title !== undefined)
-            document.getElementById('title').value = todoData.title;
+    // ── Render list from plain JS object (NOT from Firestore) ────
+    function renderData(data){
+        // data is already a plain JS object — parsed from JSON string
+        const title = data.title||'';
+        const items = data.items||[];
+
+        // Update title
+        document.getElementById('title').value = title;
+
+        // Rebuild list
         const todoList = document.getElementById('todo-list');
-        if(!todoList) return;
         todoList.innerHTML = '';
-        if(todoData.items.length === 0){
-            todoList.innerHTML = '<div class="empty-state">No tasks yet</div>';
+
+        if(items.length===0){
+            todoList.innerHTML='<div class="empty-state">No tasks yet</div>';
         } else {
-            todoData.items.forEach(item => {
-                const indentLevel = Math.min(Math.max(item.indent || 0, 0), 5);
+            items.forEach(item=>{
+                const indent = Math.min(Math.max(parseInt(item.indent)||0,0),5);
+                const note   = item.note||'';
+                const li     = document.createElement('li');
+
                 if(item.isSection){
-                    const li = document.createElement('li');
-                    li.className = 'todo-item section-break';
-                    li.draggable = true;
-                    li.dataset.indent = indentLevel;
-                    li.style.marginLeft = `${indentLevel * 1.5}rem`;
+                    li.className   = 'todo-item section-break';
+                    li.draggable   = true;
+                    li.dataset.indent = indent;
+                    li.style.marginLeft = indent*1.5+'rem';
                     li.innerHTML = `
                         <span class="drag-handle">☰</span>
                         <span class="item-text">${item.text}</span>
                         <textarea class="item-edit" rows="1">${item.text}</textarea>
-                        <button class="delete-btn">×</button>
-                    `;
-                    todoList.appendChild(li);
+                        <button class="delete-btn">×</button>`;
                 } else {
-                    const li = document.createElement('li');
-                    li.className = 'todo-item';
-                    li.draggable = true;
-                    if(item.completed) li.classList.add('completed');
-                    li.dataset.indent = indentLevel;
-                    li.style.marginLeft = `${indentLevel * 1.5}rem`;
-                    const note = item.note || '';
+                    li.className   = 'todo-item'+(item.completed?' completed':'');
+                    li.draggable   = true;
+                    li.dataset.indent = indent;
+                    li.dataset.note   = note;
+                    li.style.marginLeft = indent*1.5+'rem';
                     li.innerHTML = `
                         <span class="drag-handle">☰</span>
-                        <input type="checkbox" class="item-checkbox" ${item.completed ? 'checked' : ''}>
-                        <span class="note-indicator" style="${note.trim() ? 'opacity:1' : 'opacity:0'}" data-note="${note}"></span>
+                        <input type="checkbox" class="item-checkbox" ${item.completed?'checked':''}>
+                        <span class="note-indicator" style="${note.trim()?'opacity:1':'opacity:0'}" data-note="${note}"></span>
                         <span class="item-text">${item.text}</span>
                         <textarea class="item-edit" rows="1">${item.text}</textarea>
-                        <button class="note-btn ${note.trim() ? 'has-note' : ''}" onclick="showNoteModal(this)">📝</button>
+                        <button class="note-btn ${note.trim()?'has-note':''}" onclick="showNoteModal(this)">📝</button>
                         <span class="note-preview" style="display:none;">${note}</span>
                         <button class="indent-btn" onclick="indentItem(this)">⇥</button>
                         <button class="outdent-btn" onclick="outdentItem(this)">⇤</button>
-                        <button class="delete-btn">×</button>
-                    `;
+                        <button class="delete-btn">×</button>`;
                     if(note.trim()){
-                        li.dataset.note = note;
-                        const noteBtn     = li.querySelector('.note-btn');
-                        const notePreview = li.querySelector('.note-preview');
-                        if(noteBtn){
-                            noteBtn.addEventListener('mouseenter', () => { notePreview.textContent = note; notePreview.style.display = 'block'; });
-                            noteBtn.addEventListener('mouseleave', () => { notePreview.style.display = 'none'; });
+                        const nb=li.querySelector('.note-btn'), np=li.querySelector('.note-preview');
+                        if(nb){
+                            nb.addEventListener('mouseenter',()=>{np.textContent=note;np.style.display='block';});
+                            nb.addEventListener('mouseleave',()=>{np.style.display='none';});
                         }
                     }
-                    todoList.appendChild(li);
                 }
+                todoList.appendChild(li);
             });
         }
-        if(typeof ensureToggleButtons === 'function') ensureToggleButtons();
-        if(typeof setupDragAndDrop   === 'function') setupDragAndDrop();
+
+        if(typeof ensureToggleButtons==='function') ensureToggleButtons();
+        if(typeof setupDragAndDrop==='function')    setupDragAndDrop();
+
+        // Scroll to top so user can see the loaded content
+        window.scrollTo({top:0, behavior:'smooth'});
     }
 
-    // ── Save current list as a named snapshot ────────────────────
-    async function fbSaveAll(silent=false){
-        if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
+    // ── Save current list ────────────────────────────────────────
+    async function fbSave(silent=false){
+        if(!fbUser||!fbDb){ showStatus('Not signed in.','warning'); return; }
         if(gdriveSyncing) return;
-        gdriveSyncing = true;
-        setSyncIndicator('syncing');
-        try {
+        gdriveSyncing=true; setSyncInd('syncing');
+        try{
             const nameInput = document.getElementById('gdrive-save-name');
-            const listTitle = document.getElementById('title').value.trim();
-            const saveName  = (nameInput && nameInput.value.trim()) || listTitle || 'Untitled';
+            const rawName   = (nameInput&&nameInput.value.trim())||document.getElementById('title').value.trim()||'Untitled';
+            const saves     = await readSaves();
 
-            // Load existing saves so we can check for name collision
-            const allSaves = await fetchAllSaves();
-
-            // If a save with this name exists reuse its ID (overwrite), else new ID
+            // If name already exists → overwrite; otherwise new ID
             let saveId = null;
-            for(const [id, s] of Object.entries(allSaves)){
-                if(s.name === saveName){ saveId = id; break; }
+            for(const [id,s] of Object.entries(saves)){
+                if(s.name===rawName){ saveId=id; break; }
             }
-            if(!saveId) saveId = newSaveId();
+            if(!saveId) saveId=uid();
 
-            const saveEntry = { name: saveName, data: collectTodoData(), updatedAt: Date.now() };
-            // Write only this one save entry — merge:true keeps all other fields
-            await userDocRef().set(
-                { todoSaves: { [saveId]: saveEntry } },
-                { merge: true }
-            );
+            const data     = collectData();
+            const entry    = { name:rawName, itemsJson:JSON.stringify(data), updatedAt:Date.now() };
+            await docRef().set({ todoSavesV2:{ [saveId]:entry } },{ merge:true });
 
             activeCloudSaveId = saveId;
-            if(nameInput) nameInput.value = '';
-            setSyncIndicator('ok');
-            if(!silent) showGdriveStatus(`✓ Saved "${saveName}"`, true);
-            await fbRenderSavesList();
-        } catch(e){
-            setSyncIndicator('error');
-            showGdriveStatus('✗ Save failed: ' + e.message, false, true);
-        } finally { gdriveSyncing = false; }
+            if(nameInput) nameInput.value='';
+            setSyncInd('ok');
+            if(!silent) showGStatus(`✓ Saved "${rawName}"`,true);
+            renderList();
+        }catch(e){
+            setSyncInd('error');
+            showGStatus('✗ Save failed: '+e.message,false,true);
+        }finally{ gdriveSyncing=false; }
     }
 
-    // ── Auto-save: update just the active save in place ──────────
+    // ── Auto-save (updates active save silently) ─────────────────
     async function fbAutoSave(){
-        if(!fbUser || !fbDb || !activeCloudSaveId) return;
+        if(!fbUser||!fbDb||!activeCloudSaveId) return;
         if(gdriveSyncing) return;
-        gdriveSyncing = true;
-        setSyncIndicator('syncing');
-        try {
-            const allSaves = await fetchAllSaves();
-            const existing = allSaves[activeCloudSaveId];
-            const saveEntry = {
-                name:      existing ? existing.name : (document.getElementById('title').value.trim() || 'Untitled'),
-                data:      collectTodoData(),
-                updatedAt: Date.now()
-            };
-            await userDocRef().set(
-                { todoSaves: { [activeCloudSaveId]: saveEntry } },
-                { merge: true }
-            );
-            setSyncIndicator('ok');
-        } catch(e){
-            setSyncIndicator('error');
-        } finally { gdriveSyncing = false; }
+        gdriveSyncing=true; setSyncInd('syncing');
+        try{
+            const saves   = await readSaves();
+            const name    = (saves[activeCloudSaveId]&&saves[activeCloudSaveId].name)||document.getElementById('title').value.trim()||'Untitled';
+            const entry   = { name, itemsJson:JSON.stringify(collectData()), updatedAt:Date.now() };
+            await docRef().set({ todoSavesV2:{ [activeCloudSaveId]:entry } },{ merge:true });
+            setSyncInd('ok');
+        }catch(e){ setSyncInd('error'); }
+        finally{ gdriveSyncing=false; }
     }
 
-    // ── Load a specific save by ID ───────────────────────────────
-    async function fbLoadSave(saveId, saveName){
-        if(!fbUser || !fbDb) return;
-        showGdriveStatus(`⬇ Loading "${saveName}"…`, false, false);
-        setSyncIndicator('syncing');
-        try {
-            // Read from the top-level doc — no subcollection, no index needed
-            const allSaves = await fetchAllSaves();
-            const entry = allSaves[saveId];
-            if(!entry || !entry.data){
-                showGdriveStatus('⚠ Save not found.', false, true);
-                return;
-            }
-            pauseAutoSync();
+    // ── Load a save ──────────────────────────────────────────────
+    async function fbLoad(saveId, saveName){
+        if(!fbUser||!fbDb) return;
+        showGStatus(`⬇ Loading "${saveName}"…`,false,false);
+        setSyncInd('syncing');
+        try{
+            _pauseSync=true;
+            clearTimeout(gdriveSyncTimer);
+
+            const saves = await readSaves();
+            const entry = saves[saveId];
+            if(!entry){ showGStatus('⚠ Not found.',false,true); _pauseSync=false; return; }
+
+            // Parse JSON string → plain JS object (no Firestore types)
+            const data = JSON.parse(entry.itemsJson);
+
             activeCloudSaveId = saveId;
-            applyTodoData(entry.data);
-            resumeAutoSync();
-            setSyncIndicator('ok');
-            showGdriveStatus(`✓ Loaded "${saveName}"`, true);
-            await fbRenderSavesList();
-        } catch(e){
-            resumeAutoSync();
-            setSyncIndicator('error');
-            showGdriveStatus('✗ Load failed: ' + e.message, false, true);
+            renderData(data);
+
+            // Re-enable sync after a short delay
+            setTimeout(()=>{ _pauseSync=false; },300);
+
+            setSyncInd('ok');
+            showGStatus(`✓ Loaded "${saveName}"`,true);
+            renderList();
+        }catch(e){
+            _pauseSync=false;
+            setSyncInd('error');
+            showGStatus('✗ Load failed: '+e.message,false,true);
         }
     }
 
-    // ── Delete a save by ID ──────────────────────────────────────
-    async function fbDeleteSave(saveId, saveName){
-        if(!fbUser || !fbDb) return;
-        if(!confirm(`Delete cloud save "${saveName}"?`)) return;
-        try {
-            // Read all saves, remove the entry, write back
-            const allSaves = await fetchAllSaves();
-            delete allSaves[saveId];
-            await userDocRef().set({ todoSaves: allSaves }, { merge: true });
-            if(activeCloudSaveId === saveId) activeCloudSaveId = null;
-            showGdriveStatus(`🗑 Deleted "${saveName}"`, true);
-            await fbRenderSavesList();
-        } catch(e){
-            showGdriveStatus('✗ Delete failed: ' + e.message, false, true);
-        }
+    // ── Delete a save ────────────────────────────────────────────
+    async function fbDel(saveId, saveName){
+        if(!fbUser||!fbDb) return;
+        if(!confirm(`Delete "${saveName}"?`)) return;
+        try{
+            // FieldValue.delete() is the only reliable way to remove a key
+            // from a nested Firestore map — merge+omit does NOT delete keys
+            await docRef().update({
+                [`todoSavesV2.${saveId}`]: firebase.firestore.FieldValue.delete()
+            });
+            if(activeCloudSaveId===saveId) activeCloudSaveId=null;
+            showGStatus(`🗑 Deleted "${saveName}"`,true);
+            renderList();
+        }catch(e){ showGStatus('✗ Delete failed: '+e.message,false,true); }
     }
 
-    // ── Render the saves list from the top-level doc ─────────────
-    async function fbRenderSavesList(){
+    // ── Render saves list in the panel ───────────────────────────
+    async function renderList(){
         const container = document.getElementById('gdrive-saves-list');
         const empty     = document.getElementById('gdrive-saves-empty');
-        if(!container) return;
-        try {
-            const allSaves = await fetchAllSaves();
-            const entries  = Object.entries(allSaves);
-            if(entries.length === 0){
-                container.innerHTML = '';
-                if(empty){ empty.style.display = 'block'; container.appendChild(empty); }
+        if(!container||!fbUser) return;
+        try{
+            const saves   = await readSaves();
+            const entries = Object.entries(saves).sort((a,b)=>(b[1].updatedAt||0)-(a[1].updatedAt||0));
+            container.innerHTML='';
+            if(entries.length===0){
+                if(empty){ empty.style.display='block'; container.appendChild(empty); }
                 return;
             }
-            // Sort newest first
-            entries.sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0));
-            container.innerHTML = '';
-            entries.forEach(([id, s]) => {
-                const isActive  = id === activeCloudSaveId;
-                const dt        = s.updatedAt ? new Date(s.updatedAt) : null;
-                const timeStr   = dt
-                    ? dt.toLocaleDateString([], {month:'short', day:'numeric'}) + ' ' +
-                      dt.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})
-                    : '';
-                const total     = (s.data && s.data.items) ? s.data.items.length : 0;
-                const completed = (s.data && s.data.items) ? s.data.items.filter(i=>i.completed).length : 0;
+            entries.forEach(([id,s])=>{
+                const isActive = id===activeCloudSaveId;
+                const dt = s.updatedAt ? new Date(s.updatedAt) : null;
+                const ts = dt ? dt.toLocaleDateString([],{month:'short',day:'numeric'})+' '+dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '';
 
-                const row = document.createElement('div');
-                row.className = 'gdrive-save-row';
-                if(isActive) row.style.background = '#ebf8ff';
+                // Count items from JSON
+                let total=0, done=0;
+                try{
+                    const d=JSON.parse(s.itemsJson||'{}');
+                    total=(d.items||[]).length;
+                    done=(d.items||[]).filter(i=>i.completed).length;
+                }catch(_){}
 
-                const nameSpan = document.createElement('span');
-                nameSpan.className = 'gdrive-save-name';
-                nameSpan.title = 'Click to load';
-                nameSpan.textContent = (isActive ? '▶ ' : '') + (s.name || 'Untitled');
+                const row      = document.createElement('div');
+                row.className  = 'gdrive-save-row';
+                if(isActive) row.style.background='#ebf8ff';
 
-                const metaSpan = document.createElement('span');
-                metaSpan.className = 'gdrive-save-meta';
-                metaSpan.textContent = `${total - completed} pending · ${timeStr}`;
+                const nm  = document.createElement('span');
+                nm.className = 'gdrive-save-name';
+                nm.title     = 'Click to load';
+                nm.textContent = (isActive?'▶ ':'')+( s.name||'Untitled');
 
-                const delBtn = document.createElement('button');
-                delBtn.className = 'gdrive-save-del';
-                delBtn.title = 'Delete this save';
-                delBtn.textContent = '×';
+                const meta = document.createElement('span');
+                meta.className   = 'gdrive-save-meta';
+                meta.textContent = `${total-done} pending · ${ts}`;
 
-                // Capture id and name in closure — no innerHTML event risk
-                const capturedId   = id;
-                const capturedName = s.name || 'Untitled';
-                nameSpan.addEventListener('click', () => fbLoadSave(capturedId, capturedName));
-                delBtn.addEventListener('click',   (e) => { e.stopPropagation(); fbDeleteSave(capturedId, capturedName); });
+                const del  = document.createElement('button');
+                del.className   = 'gdrive-save-del';
+                del.title       = 'Delete';
+                del.textContent = '×';
 
-                row.appendChild(nameSpan);
-                row.appendChild(metaSpan);
-                row.appendChild(delBtn);
+                // Closures capture correct id/name for each row
+                const _id=id, _nm=s.name||'Untitled';
+                nm.onclick  = ()=> fbLoad(_id, _nm);
+                del.onclick = (e)=>{ e.stopPropagation(); fbDel(_id,_nm); };
+
+                row.appendChild(nm);
+                row.appendChild(meta);
+                row.appendChild(del);
                 container.appendChild(row);
             });
-        } catch(e){
-            showGdriveStatus('✗ Could not load saves list: ' + e.message, false, true);
+        }catch(e){
+            showGStatus('✗ List error: '+e.message,false,true);
         }
     }
 
-    // ── Observer pause/resume ────────────────────────────────────
-    function pauseAutoSync(){
-        _autoSyncPaused = true;
-        clearTimeout(gdriveSyncTimer);
+    // ── UI helpers ───────────────────────────────────────────────
+    function setSyncInd(state){
+        const el=document.getElementById('gdrive-sync-indicator');
+        if(!el) return;
+        el.className='gdrive-sync-indicator '+state;
+        el.textContent = state==='syncing'?'↻ syncing': state==='ok'?'✓ synced': state==='error'?'✗ error':'';
     }
-    function resumeAutoSync(){
-        // Small delay before re-enabling so queued observer callbacks settle
-        setTimeout(() => { _autoSyncPaused = false; }, 100);
+    function showGStatus(msg,isOk,isErr){
+        const el=document.getElementById('gdrive-status');
+        if(!el) return;
+        el.textContent=msg;
+        el.className='gdrive-status '+(isErr?'err':isOk?'ok':'info');
+        el.style.display='block';
+        if(isOk) setTimeout(()=>{ el.style.display='none'; },4000);
+    }
+    function isAutoSync(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
+    function updateAutoSyncUI(){
+        const t=document.getElementById('gdrive-autosync'), s=document.getElementById('gdrive-autosync-slider');
+        if(!t||!s) return;
+        const on=isAutoSync(); t.checked=on; s.style.background=on?'#48bb78':'#ccc';
+        if(!s._k){ const k=document.createElement('span'); k.style.cssText='position:absolute;top:3px;width:16px;height:16px;background:white;border-radius:50%;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)'; s.appendChild(k); s._k=k; }
+        s._k.style.left=on?'21px':'3px';
+        if(!on) setSyncInd('off');
     }
 
-    // ── Schedule auto-save 2.5s after last user change ───────────
-    function scheduleAutoSync(){
-        if(!isAutoSyncEnabled() || !fbUser || !activeCloudSaveId || _autoSyncPaused) return;
+    // ── Auto-sync via MutationObserver ───────────────────────────
+    function schedSync(){
+        if(!isAutoSync()||!fbUser||!activeCloudSaveId||_pauseSync) return;
         clearTimeout(gdriveSyncTimer);
-        setSyncIndicator('syncing');
-        gdriveSyncTimer = setTimeout(() => fbAutoSave(), 2500);
+        setSyncInd('syncing');
+        gdriveSyncTimer=setTimeout(()=>fbAutoSave(),3000);
     }
-
-    // ── MutationObserver ─────────────────────────────────────────
-    function attachAutoSyncObserver(){
-        const list = document.getElementById('todo-list');
+    function attachObserver(){
+        const list=document.getElementById('todo-list');
         if(!list) return;
-        _autoSyncObserver = new MutationObserver(() => {
-            if(_autoSyncPaused) return;
-            scheduleAutoSync();
-        });
-        _autoSyncObserver.observe(list, { childList: true, subtree: true, characterData: true, attributes: true });
+        new MutationObserver(()=>{ if(!_pauseSync) schedSync(); })
+            .observe(list,{childList:true,subtree:true,characterData:true,attributes:true});
     }
 
     // ── Firebase init ────────────────────────────────────────────
-    function initFirebase(){
+    function initFb(){
         if(fbApp) return true;
-        if(!FIREBASE_CONFIG.apiKey || !FIREBASE_CONFIG.projectId){
-            document.getElementById('fbNoConfig').style.display = 'block';
-            return false;
-        }
-        try {
+        try{
             fbApp  = firebase.initializeApp(FIREBASE_CONFIG);
             fbAuth = firebase.auth();
             fbDb   = firebase.firestore();
-            fbAuth.onAuthStateChanged(user => {
+            fbAuth.onAuthStateChanged(user=>{
                 if(user){
-                    fbUser = user;
-                    document.getElementById('fbNotSignedIn').style.display = 'none';
-                    document.getElementById('fbSignedIn').style.display    = 'block';
-                    const info = document.getElementById('gdrive-user-info');
-                    info.innerHTML   = `✓ Signed in as <strong>${user.displayName||''}</strong> (${user.email||''})`;
-                    info.style.display = 'block';
+                    fbUser=user;
+                    document.getElementById('fbNotSignedIn').style.display='none';
+                    document.getElementById('fbSignedIn').style.display='block';
+                    const info=document.getElementById('gdrive-user-info');
+                    info.innerHTML=`✓ <strong>${user.displayName||user.email}</strong>`;
+                    info.style.display='block';
                     updateAutoSyncUI();
-                    setSyncIndicator(isAutoSyncEnabled() ? 'ok' : 'off');
-                    fbRenderSavesList();
-                } else {
-                    fbUser = null;
-                    document.getElementById('fbNotSignedIn').style.display = 'block';
-                    document.getElementById('fbSignedIn').style.display    = 'none';
-                    const container = document.getElementById('gdrive-saves-list');
-                    if(container) container.innerHTML = '';
-                    activeCloudSaveId = null;
-                    setSyncIndicator('off');
+                    setSyncInd(isAutoSync()?'ok':'off');
+                    renderList();
+                }else{
+                    fbUser=null;
+                    document.getElementById('fbNotSignedIn').style.display='block';
+                    document.getElementById('fbSignedIn').style.display='none';
+                    const c=document.getElementById('gdrive-saves-list');
+                    if(c) c.innerHTML='';
+                    activeCloudSaveId=null;
+                    setSyncInd('off');
                 }
             });
             return true;
-        } catch(e){
-            showGdriveStatus('✗ Firebase init error: ' + e.message, false, true);
-            return false;
-        }
+        }catch(e){ showGStatus('✗ Firebase error: '+e.message,false,true); return false; }
     }
 
-    // ── Wire up UI ────────────────────────────────────────────────
-    initFirebase();
-
-    document.addEventListener('DOMContentLoaded', function(){
-        document.getElementById('gdrive-panel-btn').addEventListener('click', function(){
-            const panel = document.getElementById('gdrive-panel');
-            panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    // ── Wire UI ──────────────────────────────────────────────────
+    initFb();
+    document.addEventListener('DOMContentLoaded',()=>{
+        document.getElementById('gdrive-panel-btn').addEventListener('click',()=>{
+            const p=document.getElementById('gdrive-panel');
+            p.style.display=p.style.display==='none'?'block':'none';
         });
-
-        document.getElementById('fbSignInBtn').onclick = async () => {
-            if(!initFirebase()) return;
-            try {
-                const provider = new firebase.auth.GoogleAuthProvider();
-                await fbAuth.signInWithPopup(provider);
-            } catch(e){
-                if(e.code !== 'auth/popup-closed-by-user')
-                    showGdriveStatus('✗ Sign-in failed: ' + e.message, false, true);
-            }
+        document.getElementById('fbSignInBtn').onclick=async()=>{
+            if(!initFb()) return;
+            try{ await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
+            catch(e){ if(e.code!=='auth/popup-closed-by-user') showGStatus('✗ '+e.message,false,true); }
         };
-
-        document.getElementById('gdrive-signout-btn').onclick = async () => {
+        document.getElementById('gdrive-signout-btn').onclick=async()=>{
             if(fbAuth) await fbAuth.signOut();
-            activeCloudSaveId = null;
-            localStorage.setItem('gdriveAutoSync', '0');
+            activeCloudSaveId=null;
+            localStorage.setItem('gdriveAutoSync','0');
             updateAutoSyncUI();
-            showGdriveStatus('Signed out.', true);
+            showGStatus('Signed out.',true);
         };
-
-        document.getElementById('gdrive-save-now-btn').addEventListener('click', () => fbSaveAll(false));
-        document.getElementById('gdrive-refresh-btn').addEventListener('click',   () => fbRenderSavesList());
-
-        document.getElementById('gdrive-autosync').addEventListener('change', function(){
-            const on = this.checked;
-            localStorage.setItem('gdriveAutoSync', on ? '1' : '0');
+        document.getElementById('gdrive-save-now-btn').addEventListener('click',()=>fbSave(false));
+        document.getElementById('gdrive-refresh-btn').addEventListener('click',()=>renderList());
+        document.getElementById('gdrive-autosync').addEventListener('change',function(){
+            const on=this.checked;
+            localStorage.setItem('gdriveAutoSync',on?'1':'0');
             updateAutoSyncUI();
             if(on){
-                if(!fbUser){
-                    showGdriveStatus('Please sign in first.', false, true);
-                    this.checked = false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncUI(); return;
-                }
-                if(!activeCloudSaveId){
-                    showGdriveStatus('⚠ Load or save a list first to enable auto-sync.', false, true);
-                    this.checked = false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncUI(); return;
-                }
-                showGdriveStatus('✓ Auto-sync on.', true);
-            } else {
-                setSyncIndicator('off');
-                showGdriveStatus('Auto-sync disabled.', true);
+                if(!fbUser){ showGStatus('Sign in first.',false,true); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncUI(); return; }
+                if(!activeCloudSaveId){ showGStatus('Load or save a list first.',false,true); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncUI(); return; }
+                showGStatus('✓ Auto-sync on.',true);
+            }else{
+                setSyncInd('off');
+                showGStatus('Auto-sync off.',true);
             }
         });
-
         updateAutoSyncUI();
-        attachAutoSyncObserver();
+        attachObserver();
     });
 })();
 // ════════════════════════════════════════════════════════════════
