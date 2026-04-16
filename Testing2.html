@@ -180,7 +180,7 @@
         input:checked + .cloud-toggle-slider:before { transform: translateX(20px); }
         .cloud-divider { height: 1px; background: var(--border); margin: 8px 0; }
 
-        /* Toolbar Styles - Like Q-todo-v21 */
+        /* Toolbar Styles */
         .toolbar {
             display: flex;
             flex-wrap: wrap;
@@ -321,6 +321,7 @@
         .focus-launch-btn { background: var(--success); color: white; padding: 8px 20px; border-radius: 30px; border: none; cursor: pointer; font-weight: 600; }
         .project-selector { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 12px; }
         .project-selector select { padding: 6px 30px 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: inherit; background: var(--surface); cursor: pointer; }
+        .project-actions { display: flex; gap: 6px; }
         .tab-bar { display: flex; gap: 2px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 3px; margin-bottom: 20px; flex-wrap: wrap; }
         .tab-btn { padding: 8px 16px; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); font-family: inherit; font-size: 0.85rem; font-weight: 500; cursor: pointer; }
         .tab-btn:hover { background: rgba(0,0,0,0.06); }
@@ -371,8 +372,11 @@
             <div class="project-selector">
                 <label>📁 Project</label>
                 <select id="projectSelect"></select>
-                <button class="btn btn-ghost btn-sm" id="newProjectBtn">+ New</button>
-                <button class="btn btn-ghost btn-sm" id="editProjectBtn">✎ Edit</button>
+                <div class="project-actions">
+                    <button class="btn btn-ghost btn-sm" id="newProjectBtn">+ New</button>
+                    <button class="btn btn-ghost btn-sm" id="editProjectBtn">✎ Edit</button>
+                    <button class="btn btn-danger btn-sm" id="deleteProjectBtn">🗑 Delete</button>
+                </div>
             </div>
             <div class="cloud-toggle-wrapper">
                 <div id="cloudToggleBtn" class="cloud-toggle-btn">
@@ -514,7 +518,10 @@
             <div class="form-group"><label>Description</label><textarea id="projectDescription" rows="3"></textarea></div>
             <div class="form-group"><label>Color</label><input type="color" id="projectColor" value="#1a3fb0"></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-ghost close-project">Cancel</button><button class="btn btn-primary" id="saveProjectBtn">Save</button></div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost close-project">Cancel</button>
+            <button class="btn btn-primary" id="saveProjectBtn">Save</button>
+        </div>
     </div>
 </div>
 
@@ -633,7 +640,7 @@ function updateSyncStatus() {
     }
 }
 
-// ============= LOCAL FILE SAVE/LOAD (Like Q-todo-v21) =============
+// ============= LOCAL FILE SAVE/LOAD =============
 function saveToFile() {
     const allData = {
         projects: projects,
@@ -853,6 +860,36 @@ function saveData() {
     scheduleAutoSync();
 }
 
+// ============= DELETE PROJECT FUNCTION =============
+function deleteCurrentProject() {
+    if (!currentProjectId) return;
+    const projectName = projects[currentProjectId]?.name || 'this project';
+    
+    if (confirm(`⚠️ Are you sure you want to delete project "${projectName}"?\n\nThis will also delete ALL tasks in this project. This action cannot be undone!`)) {
+        // Delete all tasks in this project
+        tasks = tasks.filter(t => t.projectId !== currentProjectId);
+        
+        // Delete the project
+        delete projects[currentProjectId];
+        
+        // Select another project if available
+        const remainingProjects = Object.keys(projects);
+        if (remainingProjects.length > 0) {
+            currentProjectId = remainingProjects[0];
+        } else {
+            // Create a default project if no projects left
+            const defaultId = 'proj_' + Date.now();
+            projects[defaultId] = { id: defaultId, name: 'My Project', description: '', createdAt: Date.now(), color: '#1a3fb0' };
+            currentProjectId = defaultId;
+        }
+        
+        saveData();
+        renderProjectSelect();
+        renderCurrentView();
+        alert(`Project "${projectName}" deleted successfully.`);
+    }
+}
+
 // ============= DATA FUNCTIONS =============
 function getProjectTasks() { return tasks.filter(t => t.projectId === currentProjectId); }
 
@@ -996,11 +1033,52 @@ function saveTask() {
 function deleteCurrentTask() { const id = document.getElementById('taskEditId').value; if (confirm('Delete this task?')) { tasks = tasks.filter(t => t.id !== id); saveData(); closeTaskModal(); renderCurrentView(); if (document.getElementById('focusModeOverlay')) renderFocusMode(); } }
 
 // ============= PROJECT CRUD =============
-function showProjectModal() { document.getElementById('projectModalTitle').textContent = 'New Project'; document.getElementById('projectEditId').value = ''; document.getElementById('projectName').value = ''; document.getElementById('projectDescription').value = ''; document.getElementById('projectColor').value = '#1a3fb0'; document.getElementById('projectModal').style.display = 'flex'; }
+function showProjectModal(editMode = false) {
+    const modal = document.getElementById('projectModal');
+    if (editMode && currentProjectId && projects[currentProjectId]) {
+        const project = projects[currentProjectId];
+        document.getElementById('projectModalTitle').textContent = 'Edit Project';
+        document.getElementById('projectEditId').value = project.id;
+        document.getElementById('projectName').value = project.name;
+        document.getElementById('projectDescription').value = project.description || '';
+        document.getElementById('projectColor').value = project.color || '#1a3fb0';
+    } else {
+        document.getElementById('projectModalTitle').textContent = 'New Project';
+        document.getElementById('projectEditId').value = '';
+        document.getElementById('projectName').value = '';
+        document.getElementById('projectDescription').value = '';
+        document.getElementById('projectColor').value = '#1a3fb0';
+    }
+    modal.style.display = 'flex';
+}
+
 function closeProjectModal() { document.getElementById('projectModal').style.display = 'none'; }
-function saveProject() { const id = document.getElementById('projectEditId').value || 'proj_' + Date.now(); projects[id] = { id, name: document.getElementById('projectName').value, description: document.getElementById('projectDescription').value, color: document.getElementById('projectColor').value, createdAt: projects[id]?.createdAt || Date.now() }; if (!document.getElementById('projectEditId').value) currentProjectId = id; saveData(); closeProjectModal(); renderProjectSelect(); renderCurrentView(); }
-function editCurrentProject() { const project = projects[currentProjectId]; if (project) { document.getElementById('projectModalTitle').textContent = 'Edit Project'; document.getElementById('projectEditId').value = project.id; document.getElementById('projectName').value = project.name; document.getElementById('projectDescription').value = project.description || ''; document.getElementById('projectColor').value = project.color || '#1a3fb0'; document.getElementById('projectModal').style.display = 'flex'; } }
-function deleteAllData() { if (confirm('⚠️ DANGER: This will delete ALL projects and tasks. This cannot be undone. Continue?')) { localStorage.removeItem('qproject_data'); if (fbUser && fbDb) { fbDb.collection('users').doc(fbUser.uid).delete().catch(console.error); } location.reload(); } }
+
+function saveProject() {
+    const id = document.getElementById('projectEditId').value || 'proj_' + Date.now();
+    projects[id] = { 
+        id: id, 
+        name: document.getElementById('projectName').value, 
+        description: document.getElementById('projectDescription').value, 
+        color: document.getElementById('projectColor').value, 
+        createdAt: projects[id]?.createdAt || Date.now() 
+    };
+    if (!document.getElementById('projectEditId').value) currentProjectId = id;
+    saveData(); 
+    closeProjectModal(); 
+    renderProjectSelect(); 
+    renderCurrentView();
+}
+
+function deleteAllData() { 
+    if (confirm('⚠️ DANGER: This will delete ALL projects and tasks. This cannot be undone. Continue?')) { 
+        localStorage.removeItem('qproject_data'); 
+        if (fbUser && fbDb) { 
+            fbDb.collection('users').doc(fbUser.uid).delete().catch(console.error); 
+        } 
+        location.reload(); 
+    } 
+}
 
 // ============= FOCUS MODE FUNCTIONS =============
 function formatNoteWithBullets(noteText) {
@@ -1389,21 +1467,26 @@ function init() {
         });
     }
     
-    // Event listeners
-    const projectSelect = document.getElementById('projectSelect');
-    if (projectSelect) projectSelect.addEventListener('change', (e) => changeProject(e.target.value));
-    
+    // Project buttons
     const newProjectBtn = document.getElementById('newProjectBtn');
-    if (newProjectBtn) newProjectBtn.addEventListener('click', showProjectModal);
+    if (newProjectBtn) newProjectBtn.addEventListener('click', () => showProjectModal(false));
     
     const editProjectBtn = document.getElementById('editProjectBtn');
-    if (editProjectBtn) editProjectBtn.addEventListener('click', editCurrentProject);
+    if (editProjectBtn) editProjectBtn.addEventListener('click', () => showProjectModal(true));
     
+    const deleteProjectBtn = document.getElementById('deleteProjectBtn');
+    if (deleteProjectBtn) deleteProjectBtn.addEventListener('click', deleteCurrentProject);
+    
+    // Task buttons
     const newTaskBtn = document.getElementById('newTaskBtn');
     if (newTaskBtn) newTaskBtn.addEventListener('click', () => showTaskModal());
     
     const newTaskBtnList = document.getElementById('newTaskBtnList');
     if (newTaskBtnList) newTaskBtnList.addEventListener('click', () => showTaskModal());
+    
+    // Other buttons
+    const projectSelect = document.getElementById('projectSelect');
+    if (projectSelect) projectSelect.addEventListener('change', (e) => changeProject(e.target.value));
     
     const launchFocusBtn = document.getElementById('launchFocusBtn');
     if (launchFocusBtn) launchFocusBtn.addEventListener('click', enterFocusMode);
@@ -1426,10 +1509,22 @@ function init() {
     const collapseAllBtn = document.getElementById('collapseAllBtn');
     if (collapseAllBtn) collapseAllBtn.addEventListener('click', collapseAllGroups);
     
+    // Modal close buttons
     document.querySelectorAll('.close-modal').forEach(el => el.addEventListener('click', closeTaskModal));
     document.querySelectorAll('.close-project').forEach(el => el.addEventListener('click', closeProjectModal));
-    document.querySelectorAll('.overlay').forEach(overlay => { overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.style.display = 'none'; }); });
-    document.querySelectorAll('.tab-btn').forEach(btn => { btn.addEventListener('click', () => { const tabName = btn.getAttribute('data-tab'); if (tabName) openTab(tabName); }); });
+    document.querySelectorAll('.overlay').forEach(overlay => { 
+        overlay.addEventListener('click', (e) => { 
+            if (e.target === overlay) overlay.style.display = 'none'; 
+        }); 
+    });
+    
+    // Tab buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => { 
+        btn.addEventListener('click', () => { 
+            const tabName = btn.getAttribute('data-tab'); 
+            if (tabName) openTab(tabName); 
+        }); 
+    });
     
     renderProjectSelect();
     renderCurrentView();
