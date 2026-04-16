@@ -83,7 +83,7 @@
         .sync-error { background: var(--danger); }
         .sync-off { background: var(--text-light); }
         
-        /* Cloud Dropdown Menu - Fixed Position */
+        /* Cloud Dropdown Menu */
         .cloud-dropdown {
             position: absolute;
             top: calc(100% + 8px);
@@ -376,7 +376,7 @@
                                 <div class="cloud-dropdown-email" id="dropdownEmail"></div>
                             </div>
                         </div>
-                        <div class="cloud-dropdown-item">
+                        <div class="cloud-dropdown-item" id="autoSyncItem">
                             <span class="cloud-dropdown-icon">🔄</span>
                             <span class="cloud-dropdown-text">Auto-sync</span>
                             <div class="cloud-toggle-switch">
@@ -516,6 +516,7 @@ let summaryGroupState = new Map();
 let fbApp = null, fbAuth = null, fbDb = null, fbUser = null;
 let autoSyncEnabled = false;
 let syncTimer = null;
+let autoSyncInterval = null;
 let isSyncing = false;
 let lastSyncTime = 0;
 
@@ -523,6 +524,7 @@ let lastSyncTime = 0;
 function initFirebase() {
     if (!FIREBASE_CONFIG.apiKey || !FIREBASE_CONFIG.projectId) {
         console.warn('Firebase not configured');
+        document.getElementById('cloudNotSignedIn').innerHTML = '<div class="cloud-dropdown-header">⚠ Firebase Config Missing</div><div style="padding:12px;font-size:0.75rem;color:var(--danger)">Please configure Firebase</div>';
         return false;
     }
     try {
@@ -607,7 +609,10 @@ function updateSyncStatus() {
 
 // ============= CLOUD SYNC FUNCTIONS =============
 async function saveToCloud() {
-    if (!fbUser || !fbDb) { return false; }
+    if (!fbUser || !fbDb) { 
+        console.log('Cannot save: not signed in');
+        return false; 
+    }
     if (isSyncing) return false;
     
     isSyncing = true;
@@ -620,6 +625,7 @@ async function saveToCloud() {
             currentProjectId: currentProjectId,
             noteCollapsedState: Object.fromEntries(noteCollapsedState),
             subtaskExpandedState: Object.fromEntries(subtaskExpandedState),
+            summaryGroupState: Object.fromEntries(summaryGroupState),
             updatedAt: Date.now(),
             version: '2.0'
         };
@@ -628,6 +634,7 @@ async function saveToCloud() {
         await docRef.set(allData, { merge: true });
         
         lastSyncTime = Date.now();
+        console.log('Save successful at', new Date(lastSyncTime).toLocaleTimeString());
         isSyncing = false;
         updateSyncStatus();
         return true;
@@ -640,11 +647,14 @@ async function saveToCloud() {
 }
 
 async function loadFromCloud(silent = false) {
-    if (!fbUser || !fbDb) { return false; }
+    if (!fbUser || !fbDb) { 
+        console.log('Cannot load: not signed in');
+        return false; 
+    }
     if (isSyncing) return false;
     
     isSyncing = true;
-    updateSyncStatus();
+    if (!silent) updateSyncStatus();
     
     try {
         const docRef = fbDb.collection('user_data').doc(fbUser.uid);
@@ -657,6 +667,7 @@ async function loadFromCloud(silent = false) {
             if (data.currentProjectId) currentProjectId = data.currentProjectId;
             if (data.noteCollapsedState) noteCollapsedState = new Map(Object.entries(data.noteCollapsedState));
             if (data.subtaskExpandedState) subtaskExpandedState = new Map(Object.entries(data.subtaskExpandedState));
+            if (data.summaryGroupState) summaryGroupState = new Map(Object.entries(data.summaryGroupState));
             
             if (!currentProjectId && Object.keys(projects).length > 0) {
                 currentProjectId = Object.keys(projects)[0];
@@ -667,17 +678,20 @@ async function loadFromCloud(silent = false) {
             renderCurrentView();
             
             lastSyncTime = Date.now();
+            console.log('Load successful from cloud');
             isSyncing = false;
-            updateSyncStatus();
+            if (!silent) updateSyncStatus();
             return true;
         } else {
+            // First time user - save current data to cloud
+            console.log('First time user, saving current data to cloud');
             await saveToCloud();
             return true;
         }
     } catch(e) {
         console.error('Load error:', e);
         isSyncing = false;
-        updateSyncStatus();
+        if (!silent) updateSyncStatus();
         return false;
     }
 }
@@ -686,7 +700,8 @@ function saveToLocalStorage() {
     localStorage.setItem('qproject_data', JSON.stringify({
         projects, tasks, currentProjectId,
         noteCollapsedState: Object.fromEntries(noteCollapsedState),
-        subtaskExpandedState: Object.fromEntries(subtaskExpandedState)
+        subtaskExpandedState: Object.fromEntries(subtaskExpandedState),
+        summaryGroupState: Object.fromEntries(summaryGroupState)
     }));
 }
 
@@ -700,7 +715,8 @@ function loadFromLocalStorage() {
             tasks = data.tasks || [];
             if (data.noteCollapsedState) noteCollapsedState = new Map(Object.entries(data.noteCollapsedState));
             if (data.subtaskExpandedState) subtaskExpandedState = new Map(Object.entries(data.subtaskExpandedState));
-        } catch(e) {}
+            if (data.summaryGroupState) summaryGroupState = new Map(Object.entries(data.summaryGroupState));
+        } catch(e) { console.error('Load from localStorage error:', e); }
     }
     
     if (Object.keys(projects).length === 0) {
@@ -718,25 +734,33 @@ function loadFromLocalStorage() {
 function saveData() {
     saveToLocalStorage();
     if (autoSyncEnabled && fbUser) {
+        // Debounce save to cloud
         if (syncTimer) clearTimeout(syncTimer);
         syncTimer = setTimeout(() => saveToCloud(), 2000);
     }
 }
 
 function startAutoSync() {
-    if (syncTimer) clearInterval(syncTimer);
-    syncTimer = setInterval(() => {
+    if (autoSyncInterval) clearInterval(autoSyncInterval);
+    autoSyncInterval = setInterval(() => {
         if (autoSyncEnabled && fbUser && !isSyncing) {
+            console.log('Auto-sync triggered');
             saveToCloud();
         }
     }, 30000);
+    console.log('Auto-sync started');
 }
 
 function stopAutoSync() {
+    if (autoSyncInterval) {
+        clearInterval(autoSyncInterval);
+        autoSyncInterval = null;
+    }
     if (syncTimer) {
-        clearInterval(syncTimer);
+        clearTimeout(syncTimer);
         syncTimer = null;
     }
+    console.log('Auto-sync stopped');
 }
 
 // ============= DATA FUNCTIONS =============
@@ -820,9 +844,9 @@ function renderSummaryTask(task) {
     return `<div class="summary-task-item"><div class="summary-task-header"><div class="summary-task-status ${statusDotClass}"></div><div class="summary-task-title ${statusClass}">${escapeHtml(task.title)}</div><div class="summary-task-priority ${priorityClass}">${priorityText}</div><div class="summary-task-points">${task.points} pts</div>${task.dueDate ? `<div style="font-size:0.7rem; color:var(--text-muted);">📅 ${task.dueDate}</div>` : ''}</div>${task.description ? `<div style="margin-left:32px; margin-bottom:8px; color:var(--text-muted); font-size:0.8rem;">${escapeHtml(task.description)}</div>` : ''}${subtasksHtml}${notesHtml}</div>`;
 }
 
-function toggleSummaryGroup(groupKey) { const current = summaryGroupState.get(groupKey) || false; summaryGroupState.set(groupKey, !current); renderSummary(); }
-function expandAllGroups() { ['todo', 'in-progress', 'review', 'done'].forEach(g => summaryGroupState.set(g, false)); renderSummary(); }
-function collapseAllGroups() { ['todo', 'in-progress', 'review', 'done'].forEach(g => summaryGroupState.set(g, true)); renderSummary(); }
+function toggleSummaryGroup(groupKey) { const current = summaryGroupState.get(groupKey) || false; summaryGroupState.set(groupKey, !current); renderSummary(); saveData(); }
+function expandAllGroups() { ['todo', 'in-progress', 'review', 'done'].forEach(g => summaryGroupState.set(g, false)); renderSummary(); saveData(); }
+function collapseAllGroups() { ['todo', 'in-progress', 'review', 'done'].forEach(g => summaryGroupState.set(g, true)); renderSummary(); saveData(); }
 
 function toggleTaskStatus(taskId, isDone) { const task = tasks.find(t => t.id === taskId); if (task) { task.status = isDone ? 'done' : 'todo'; saveData(); renderKanban(); renderListView(); renderSummary(); renderReports(); if (document.getElementById('focusModeOverlay')) renderFocusMode(); } }
 function deleteTaskConfirm(taskId) { if (confirm('Delete this task?')) { tasks = tasks.filter(t => t.id !== taskId); saveData(); renderKanban(); renderListView(); renderSummary(); renderReports(); if (document.getElementById('focusModeOverlay')) renderFocusMode(); } }
@@ -1212,7 +1236,13 @@ function setupCloudUI() {
     const saveNowMenuItem = document.getElementById('saveNowMenuItem');
     if (saveNowMenuItem) {
         saveNowMenuItem.addEventListener('click', async () => {
-            if (fbUser) { await saveToCloud(); updateSyncStatus(); }
+            if (fbUser) { 
+                await saveToCloud(); 
+                updateSyncStatus();
+                alert('Data saved to cloud successfully!');
+            } else {
+                alert('Please sign in first');
+            }
             if (dropdown) dropdown.style.display = 'none';
         });
     }
@@ -1220,7 +1250,13 @@ function setupCloudUI() {
     const loadNowMenuItem = document.getElementById('loadNowMenuItem');
     if (loadNowMenuItem) {
         loadNowMenuItem.addEventListener('click', async () => {
-            if (fbUser) { await loadFromCloud(false); updateSyncStatus(); }
+            if (fbUser) { 
+                await loadFromCloud(false); 
+                updateSyncStatus();
+                alert('Data loaded from cloud successfully!');
+            } else {
+                alert('Please sign in first');
+            }
             if (dropdown) dropdown.style.display = 'none';
         });
     }
@@ -1229,9 +1265,17 @@ function setupCloudUI() {
     if (autoSyncToggle) {
         autoSyncToggle.addEventListener('change', (e) => {
             autoSyncEnabled = e.target.checked;
-            if (fbUser) localStorage.setItem('qproject_autosync_' + fbUser.uid, autoSyncEnabled);
-            if (autoSyncEnabled && fbUser) { startAutoSync(); loadFromCloud(true); } else { stopAutoSync(); }
+            if (fbUser) {
+                localStorage.setItem('qproject_autosync_' + fbUser.uid, autoSyncEnabled);
+                if (autoSyncEnabled) {
+                    startAutoSync();
+                    loadFromCloud(true);
+                } else {
+                    stopAutoSync();
+                }
+            }
             updateSyncStatus();
+            console.log('Auto-sync toggled to:', autoSyncEnabled);
         });
     }
 }
