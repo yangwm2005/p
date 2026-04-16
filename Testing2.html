@@ -512,19 +512,18 @@ let noteCollapsedState = new Map();
 let subtaskExpandedState = new Map();
 let summaryGroupState = new Map();
 
-// Firebase variables
+// Firebase variables - Following Q-todo-v21 pattern
 let fbApp = null, fbAuth = null, fbDb = null, fbUser = null;
 let autoSyncEnabled = false;
-let syncTimer = null;
-let autoSyncInterval = null;
-let isSyncing = false;
-let lastSyncTime = 0;
+let gdriveSyncTimer = null;
+let gdriveSyncing = false;
+let gdriveLastSavedAt = 0;
+let gdrivePollInterval = null;
 
 // ============= FIREBASE INITIALIZATION =============
 function initFirebase() {
     if (!FIREBASE_CONFIG.apiKey || !FIREBASE_CONFIG.projectId) {
         console.warn('Firebase not configured');
-        document.getElementById('cloudNotSignedIn').innerHTML = '<div class="cloud-dropdown-header">⚠ Firebase Config Missing</div><div style="padding:12px;font-size:0.75rem;color:var(--danger)">Please configure Firebase</div>';
         return false;
     }
     try {
@@ -537,20 +536,19 @@ function initFirebase() {
                 fbUser = user;
                 updateCloudUI(true);
                 
-                const savedAutoSync = localStorage.getItem('qproject_autosync_' + user.uid);
+                const savedAutoSync = localStorage.getItem('gdriveAutoSync_' + user.uid);
                 autoSyncEnabled = savedAutoSync === 'true';
                 const autoSyncToggle = document.getElementById('autoSyncToggle');
                 if (autoSyncToggle) autoSyncToggle.checked = autoSyncEnabled;
                 updateSyncStatus();
                 
                 if (autoSyncEnabled) {
-                    loadFromCloud(true);
-                    startAutoSync();
+                    fbLoadAll(true).then(() => startDrivePoll());
                 }
             } else {
                 fbUser = null;
                 updateCloudUI(false);
-                stopAutoSync();
+                stopDrivePoll();
             }
         });
         return true;
@@ -595,30 +593,31 @@ function updateSyncStatus() {
         return;
     }
     
-    if (isSyncing) {
+    if (gdriveSyncing) {
         if (cloudSyncDot) cloudSyncDot.className = 'cloud-sync-indicator sync-syncing';
         if (statusMsg) statusMsg.textContent = 'Syncing...';
     } else if (autoSyncEnabled) {
         if (cloudSyncDot) cloudSyncDot.className = 'cloud-sync-indicator sync-ok';
-        if (statusMsg) statusMsg.textContent = lastSyncTime ? `Last sync: ${new Date(lastSyncTime).toLocaleTimeString()}` : 'Ready to sync';
+        if (statusMsg) statusMsg.textContent = gdriveLastSavedAt ? `Last sync: ${new Date(gdriveLastSavedAt).toLocaleTimeString()}` : 'Ready to sync';
     } else {
         if (cloudSyncDot) cloudSyncDot.className = 'cloud-sync-indicator sync-off';
         if (statusMsg) statusMsg.textContent = 'Auto-sync disabled';
     }
 }
 
-// ============= CLOUD SYNC FUNCTIONS =============
-async function saveToCloud() {
+// ============= FIREBASE READ/WRITE - Following Q-todo-v21 pattern =============
+async function fbSaveAll(silent = false) {
     if (!fbUser || !fbDb) { 
         console.log('Cannot save: not signed in');
         return false; 
     }
-    if (isSyncing) return false;
+    if (gdriveSyncing) return false;
     
-    isSyncing = true;
+    gdriveSyncing = true;
     updateSyncStatus();
     
     try {
+        // Save all data to Firestore - following Q-todo-v21 structure
         const allData = {
             projects: projects,
             tasks: tasks,
@@ -626,73 +625,115 @@ async function saveToCloud() {
             noteCollapsedState: Object.fromEntries(noteCollapsedState),
             subtaskExpandedState: Object.fromEntries(subtaskExpandedState),
             summaryGroupState: Object.fromEntries(summaryGroupState),
-            updatedAt: Date.now(),
-            version: '2.0'
+            updatedAt: Date.now()
         };
         
-        const docRef = fbDb.collection('user_data').doc(fbUser.uid);
-        await docRef.set(allData, { merge: true });
+        const docRef = fbDb.collection('users').doc(fbUser.uid);
+        await docRef.set({ data: allData, updatedAt: Date.now() }, { merge: true });
         
-        lastSyncTime = Date.now();
-        console.log('Save successful at', new Date(lastSyncTime).toLocaleTimeString());
-        isSyncing = false;
+        gdriveLastSavedAt = Date.now();
+        console.log('Save successful to cloud at', new Date(gdriveLastSavedAt).toLocaleTimeString());
+        gdriveSyncing = false;
         updateSyncStatus();
         return true;
     } catch(e) {
         console.error('Save error:', e);
-        isSyncing = false;
+        gdriveSyncing = false;
         updateSyncStatus();
         return false;
     }
 }
 
-async function loadFromCloud(silent = false) {
+async function fbLoadAll(silent = false) {
     if (!fbUser || !fbDb) { 
         console.log('Cannot load: not signed in');
         return false; 
     }
-    if (isSyncing) return false;
+    if (gdriveSyncing) return false;
     
-    isSyncing = true;
+    gdriveSyncing = true;
     if (!silent) updateSyncStatus();
     
     try {
-        const docRef = fbDb.collection('user_data').doc(fbUser.uid);
-        const doc = await docRef.get();
+        const docRef = fbDb.collection('users').doc(fbUser.uid);
+        const snap = await docRef.get();
         
-        if (doc.exists) {
-            const data = doc.data();
-            if (data.projects) projects = data.projects;
-            if (data.tasks) tasks = data.tasks;
-            if (data.currentProjectId) currentProjectId = data.currentProjectId;
-            if (data.noteCollapsedState) noteCollapsedState = new Map(Object.entries(data.noteCollapsedState));
-            if (data.subtaskExpandedState) subtaskExpandedState = new Map(Object.entries(data.subtaskExpandedState));
-            if (data.summaryGroupState) summaryGroupState = new Map(Object.entries(data.summaryGroupState));
+        if (snap.exists) {
+            const data = snap.data();
+            const savedData = data.data;
             
-            if (!currentProjectId && Object.keys(projects).length > 0) {
-                currentProjectId = Object.keys(projects)[0];
+            if (savedData) {
+                if (savedData.projects) projects = savedData.projects;
+                if (savedData.tasks) tasks = savedData.tasks;
+                if (savedData.currentProjectId) currentProjectId = savedData.currentProjectId;
+                if (savedData.noteCollapsedState) noteCollapsedState = new Map(Object.entries(savedData.noteCollapsedState));
+                if (savedData.subtaskExpandedState) subtaskExpandedState = new Map(Object.entries(savedData.subtaskExpandedState));
+                if (savedData.summaryGroupState) summaryGroupState = new Map(Object.entries(savedData.summaryGroupState));
+                
+                if (!currentProjectId && Object.keys(projects).length > 0) {
+                    currentProjectId = Object.keys(projects)[0];
+                }
+                
+                saveToLocalStorage();
+                renderProjectSelect();
+                renderCurrentView();
+                
+                gdriveLastSavedAt = data.updatedAt || Date.now();
+                console.log('Load successful from cloud');
+                gdriveSyncing = false;
+                if (!silent) updateSyncStatus();
+                return true;
             }
-            
-            saveToLocalStorage();
-            renderProjectSelect();
-            renderCurrentView();
-            
-            lastSyncTime = Date.now();
-            console.log('Load successful from cloud');
-            isSyncing = false;
-            if (!silent) updateSyncStatus();
-            return true;
         } else {
             // First time user - save current data to cloud
             console.log('First time user, saving current data to cloud');
-            await saveToCloud();
+            await fbSaveAll(true);
             return true;
         }
     } catch(e) {
         console.error('Load error:', e);
-        isSyncing = false;
+        gdriveSyncing = false;
         if (!silent) updateSyncStatus();
         return false;
+    }
+}
+
+function scheduleAutoSync() {
+    if (!autoSyncEnabled || !fbUser) return;
+    if (gdriveSyncTimer) clearTimeout(gdriveSyncTimer);
+    gdriveSyncTimer = setTimeout(() => fbSaveAll(true), 2000);
+}
+
+function startDrivePoll() {
+    stopDrivePoll();
+    gdrivePollInterval = setInterval(pollDriveForChanges, 30000);
+}
+
+function stopDrivePoll() {
+    if (gdrivePollInterval) {
+        clearInterval(gdrivePollInterval);
+        gdrivePollInterval = null;
+    }
+    if (gdriveSyncTimer) {
+        clearTimeout(gdriveSyncTimer);
+        gdriveSyncTimer = null;
+    }
+}
+
+async function pollDriveForChanges() {
+    if (!autoSyncEnabled || !fbUser || gdriveSyncing || !fbDb) return;
+    
+    try {
+        const snap = await fbDb.collection('users').doc(fbUser.uid).get();
+        if (!snap.exists) return;
+        
+        const driveModified = snap.data().updatedAt || 0;
+        if (driveModified > gdriveLastSavedAt + 5000) {
+            console.log('Remote changes detected, loading...');
+            await fbLoadAll(true);
+        }
+    } catch(e) {
+        console.error('Poll error:', e);
     }
 }
 
@@ -733,34 +774,7 @@ function loadFromLocalStorage() {
 
 function saveData() {
     saveToLocalStorage();
-    if (autoSyncEnabled && fbUser) {
-        // Debounce save to cloud
-        if (syncTimer) clearTimeout(syncTimer);
-        syncTimer = setTimeout(() => saveToCloud(), 2000);
-    }
-}
-
-function startAutoSync() {
-    if (autoSyncInterval) clearInterval(autoSyncInterval);
-    autoSyncInterval = setInterval(() => {
-        if (autoSyncEnabled && fbUser && !isSyncing) {
-            console.log('Auto-sync triggered');
-            saveToCloud();
-        }
-    }, 30000);
-    console.log('Auto-sync started');
-}
-
-function stopAutoSync() {
-    if (autoSyncInterval) {
-        clearInterval(autoSyncInterval);
-        autoSyncInterval = null;
-    }
-    if (syncTimer) {
-        clearTimeout(syncTimer);
-        syncTimer = null;
-    }
-    console.log('Auto-sync stopped');
+    scheduleAutoSync();
 }
 
 // ============= DATA FUNCTIONS =============
@@ -910,7 +924,7 @@ function showProjectModal() { document.getElementById('projectModalTitle').textC
 function closeProjectModal() { document.getElementById('projectModal').style.display = 'none'; }
 function saveProject() { const id = document.getElementById('projectEditId').value || 'proj_' + Date.now(); projects[id] = { id, name: document.getElementById('projectName').value, description: document.getElementById('projectDescription').value, color: document.getElementById('projectColor').value, createdAt: projects[id]?.createdAt || Date.now() }; if (!document.getElementById('projectEditId').value) currentProjectId = id; saveData(); closeProjectModal(); renderProjectSelect(); renderCurrentView(); }
 function editCurrentProject() { const project = projects[currentProjectId]; if (project) { document.getElementById('projectModalTitle').textContent = 'Edit Project'; document.getElementById('projectEditId').value = project.id; document.getElementById('projectName').value = project.name; document.getElementById('projectDescription').value = project.description || ''; document.getElementById('projectColor').value = project.color || '#1a3fb0'; document.getElementById('projectModal').style.display = 'flex'; } }
-function deleteAllData() { if (confirm('⚠️ DANGER: This will delete ALL projects and tasks. This cannot be undone. Continue?')) { localStorage.removeItem('qproject_data'); if (fbUser && fbDb) { fbDb.collection('user_data').doc(fbUser.uid).delete().catch(console.error); } location.reload(); } }
+function deleteAllData() { if (confirm('⚠️ DANGER: This will delete ALL projects and tasks. This cannot be undone. Continue?')) { localStorage.removeItem('qproject_data'); if (fbUser && fbDb) { fbDb.collection('users').doc(fbUser.uid).delete().catch(console.error); } location.reload(); } }
 
 // ============= FOCUS MODE FUNCTIONS =============
 function formatNoteWithBullets(noteText) {
@@ -1237,7 +1251,7 @@ function setupCloudUI() {
     if (saveNowMenuItem) {
         saveNowMenuItem.addEventListener('click', async () => {
             if (fbUser) { 
-                await saveToCloud(); 
+                await fbSaveAll(false); 
                 updateSyncStatus();
                 alert('Data saved to cloud successfully!');
             } else {
@@ -1251,7 +1265,7 @@ function setupCloudUI() {
     if (loadNowMenuItem) {
         loadNowMenuItem.addEventListener('click', async () => {
             if (fbUser) { 
-                await loadFromCloud(false); 
+                await fbLoadAll(false); 
                 updateSyncStatus();
                 alert('Data loaded from cloud successfully!');
             } else {
@@ -1266,12 +1280,11 @@ function setupCloudUI() {
         autoSyncToggle.addEventListener('change', (e) => {
             autoSyncEnabled = e.target.checked;
             if (fbUser) {
-                localStorage.setItem('qproject_autosync_' + fbUser.uid, autoSyncEnabled);
+                localStorage.setItem('gdriveAutoSync_' + fbUser.uid, autoSyncEnabled);
                 if (autoSyncEnabled) {
-                    startAutoSync();
-                    loadFromCloud(true);
+                    fbLoadAll(true).then(() => startDrivePoll());
                 } else {
-                    stopAutoSync();
+                    stopDrivePoll();
                 }
             }
             updateSyncStatus();
