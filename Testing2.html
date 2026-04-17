@@ -304,7 +304,19 @@
         .task-note-text { flex: 1; white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
         .task-note-text ul { margin: 4px 0 4px 20px; }
         .note-input-wrap { margin: 0 14px 8px 52px; display: flex; gap: 6px; flex-direction: column; }
-        .note-textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--purple); border-radius: var(--radius-sm); font-family: 'DM Mono', monospace; resize: vertical; min-height: 100px; background: var(--surface); }
+        .note-textarea { 
+            width: 100%; 
+            padding: 10px 12px; 
+            border: 1px solid var(--purple); 
+            border-radius: var(--radius-sm); 
+            font-family: 'DM Mono', monospace; 
+            resize: vertical; 
+            min-height: 120px; 
+            background: var(--surface);
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+        .note-textarea:focus { outline: none; border-color: var(--accent); }
         .btn-xs { padding: 3px 8px; font-size: 0.75rem; }
         .focus-task-details { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; padding: 0 14px; border-top: 1px solid transparent; }
         .focus-task-details.expanded { max-height: 500px; padding: 12px 14px; border-top-color: var(--border); }
@@ -554,6 +566,43 @@ let gdriveSyncTimer = null;
 let gdriveSyncing = false;
 let gdriveLastSavedAt = 0;
 let gdrivePollInterval = null;
+
+// ============= HELPER FUNCTIONS =============
+function formatNoteWithBullets(noteText) {
+    if (!noteText) return '';
+    const lines = noteText.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length === 0) return noteText;
+    let html = '<ul style="margin:0; padding-left:20px;">';
+    lines.forEach(line => { 
+        let cleanLine = line.trim();
+        // Remove leading bullet symbols if present
+        if (cleanLine.startsWith('•') || cleanLine.startsWith('-') || cleanLine.startsWith('*')) {
+            cleanLine = cleanLine.substring(1).trim();
+        }
+        html += `<li style="margin-bottom:2px;">${escapeHtml(cleanLine)}</li>`;
+    });
+    html += '</ul>';
+    return html;
+}
+
+function formatNoteForEditing(noteText) {
+    if (!noteText) return '';
+    const lines = noteText.split(/\r?\n/);
+    return lines.map(line => line.trim() ? `• ${line.trim()}` : '').filter(l => l).join('\n');
+}
+
+function parseNoteFromEditor(editorText) {
+    if (!editorText) return '';
+    const lines = editorText.split(/\r?\n/);
+    return lines.map(line => {
+        let trimmed = line.trim();
+        // Remove bullet symbol (•) if present at the beginning
+        if (trimmed.startsWith('•')) {
+            trimmed = trimmed.substring(1).trim();
+        }
+        return trimmed;
+    }).filter(l => l).join('\n');
+}
 
 // ============= FIREBASE INITIALIZATION =============
 function initFirebase() {
@@ -866,18 +915,13 @@ function deleteCurrentProject() {
     const projectName = projects[currentProjectId]?.name || 'this project';
     
     if (confirm(`⚠️ Are you sure you want to delete project "${projectName}"?\n\nThis will also delete ALL tasks in this project. This action cannot be undone!`)) {
-        // Delete all tasks in this project
         tasks = tasks.filter(t => t.projectId !== currentProjectId);
-        
-        // Delete the project
         delete projects[currentProjectId];
         
-        // Select another project if available
         const remainingProjects = Object.keys(projects);
         if (remainingProjects.length > 0) {
             currentProjectId = remainingProjects[0];
         } else {
-            // Create a default project if no projects left
             const defaultId = 'proj_' + Date.now();
             projects[defaultId] = { id: defaultId, name: 'My Project', description: '', createdAt: Date.now(), color: '#1a3fb0' };
             currentProjectId = defaultId;
@@ -1081,18 +1125,6 @@ function deleteAllData() {
 }
 
 // ============= FOCUS MODE FUNCTIONS =============
-function formatNoteWithBullets(noteText) {
-    if (!noteText) return '';
-    const lines = noteText.split(/\r?\n/).filter(l => l.trim());
-    if (lines.length === 0) return noteText;
-    let html = '<ul style="margin:0; padding-left:20px;">';
-    lines.forEach(line => { html += `<li style="margin-bottom:2px;">${escapeHtml(line.trim())}</li>`; });
-    html += '</ul>';
-    return html;
-}
-
-function formatNoteForEditing(noteText) { if (!noteText) return ''; return noteText.split(/\r?\n/).map(line => line.trim() ? `• ${line.trim()}` : '').filter(l => l).join('\n'); }
-function parseNoteFromEditor(editorText) { if (!editorText) return ''; return editorText.split(/\r?\n/).map(line => line.trim().replace(/^•\s*/, '').trim()).filter(l => l).join('\n'); }
 function formatTimeMMSS(seconds) { return `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`; }
 
 function startTimer(taskId) {
@@ -1208,8 +1240,10 @@ function showNoteEditor(taskId, existingNote) {
     wrap.setAttribute('data-task-id', taskId);
     const ta = document.createElement('textarea'); 
     ta.className = 'note-textarea'; 
-    ta.rows = 4; 
+    ta.rows = 5; 
+    ta.placeholder = 'Enter each line as a bullet point:\n• First point\n• Second point\n• Third point';
     ta.value = existingNote ? formatNoteForEditing(existingNote) : '';
+    
     const btnGroup = document.createElement('div'); 
     btnGroup.style.display = 'flex'; 
     btnGroup.style.gap = '6px';
