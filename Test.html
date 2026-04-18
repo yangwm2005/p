@@ -1100,6 +1100,69 @@ select.status-badge option {
 input:checked + .cloud-toggle-slider { background: var(--accent); }
 input:checked + .cloud-toggle-slider:before { transform: translateX(20px); }
 
+/* ── Think Log (Self-Chat integration) ───────────────────── */
+.think-btn { position: relative; }
+.think-btn.has-log { color: #7c3aed !important; }
+.think-badge {
+  position: absolute;
+  top: -4px; right: -4px;
+  width: 8px; height: 8px;
+  background: #7c3aed;
+  border-radius: 50%;
+  border: 1.5px solid var(--surface);
+}
+.think-log-wrapper {
+  margin: 0 14px 10px 52px;
+}
+.think-log-collapse-btn {
+  background: transparent;
+  border: none;
+  color: #7c3aed;
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+}
+.think-log-collapse-btn:hover { background: #f0eaff; }
+.think-log-panel {
+  background: #faf8ff;
+  border: 1px solid #ddd6fe;
+  border-left: 3px solid #7c3aed;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 8px 12px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 0.8rem;
+}
+.think-log-panel.hidden { display: none; }
+.think-log-entry {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 0;
+  border-bottom: 1px solid #ede9fe;
+  line-height: 1.4;
+}
+.think-log-entry:last-child { border-bottom: none; }
+.think-log-entry.is-subchat { margin-left: 16px; border-left: 2px solid #a78bfa; padding-left: 6px; }
+.think-log-entry.is-yellow  { background: #fefce8; border-radius: 3px; padding: 3px 5px; }
+.think-log-entry.is-orange  { background: #fff7ed; border-radius: 3px; padding: 3px 5px; }
+.think-log-ts {
+  font-size: 0.65rem;
+  color: var(--text-light);
+  white-space: nowrap;
+  margin-top: 1px;
+  min-width: 52px;
+  font-family: 'DM Mono', monospace;
+}
+.think-log-text { flex: 1; color: #3b1f7a; word-break: break-word; }
+.think-log-actions { display: flex; gap: 4px; margin-top: 6px; }
+
   </style>
 </head>
 <body>
@@ -1911,6 +1974,19 @@ function colorSwatchPicker(selectedIdx, onChange) {
     noteBtn.addEventListener('click', () => openNoteEditor(task, li));
     actions.appendChild(noteBtn);
 
+    // 💬 Think — opens Self-Chat popout for this task
+    const thinkBtn = document.createElement('button');
+    thinkBtn.className = `act-btn think-btn ${(task.thinkLog && task.thinkLog.length) ? 'has-log' : ''}`;
+    thinkBtn.title = 'Think Log — jot thoughts about this task';
+    thinkBtn.innerHTML = '💬';
+    if (task.thinkLog && task.thinkLog.length) {
+      const badge = document.createElement('span');
+      badge.className = 'think-badge';
+      thinkBtn.appendChild(badge);
+    }
+    thinkBtn.addEventListener('click', () => openThinkLog(task));
+    actions.appendChild(thinkBtn);
+
     // ▾/▸ Subtask visibility toggle (only if subtasks exist)
     if (task.subtasks && task.subtasks.length > 0) {
       const stog = document.createElement('button');
@@ -2047,6 +2123,52 @@ function colorSwatchPicker(selectedIdx, onChange) {
       li.appendChild(wrapper);
     }
 
+    // ── Think Log display (collapsible) ───────────────────────────────────
+    if (task.thinkLog && task.thinkLog.length > 0) {
+      const tlWrapper = document.createElement('div');
+      tlWrapper.className = 'think-log-wrapper';
+      const isCollapsed = (window._thinkLogCollapsed && window._thinkLogCollapsed.has(task.id));
+      const colBtn = document.createElement('button');
+      colBtn.className = 'think-log-collapse-btn';
+      colBtn.innerHTML = isCollapsed ? '▶ 💬 Think Log (' + task.thinkLog.length + ')' : '▼ 💬 Think Log (' + task.thinkLog.length + ')';
+      colBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (!window._thinkLogCollapsed) window._thinkLogCollapsed = new Set();
+        if (window._thinkLogCollapsed.has(task.id)) window._thinkLogCollapsed.delete(task.id);
+        else window._thinkLogCollapsed.add(task.id);
+        render();
+      });
+      tlWrapper.appendChild(colBtn);
+      const panel = document.createElement('div');
+      panel.className = `think-log-panel ${isCollapsed ? 'hidden' : ''}`;
+      task.thinkLog.forEach(entry => {
+        const row = document.createElement('div');
+        row.className = `think-log-entry${entry.isSubchat ? ' is-subchat' : ''}${entry.isYellow ? ' is-yellow' : ''}${entry.isOrange ? ' is-orange' : ''}`;
+        row.innerHTML = `<span class="think-log-ts">${entry.timestamp || ''}</span><span class="think-log-text">${escHtml(entry.text || '')}</span>`;
+        panel.appendChild(row);
+      });
+      const tlActions = document.createElement('div');
+      tlActions.className = 'think-log-actions';
+      const openAgainBtn = document.createElement('button');
+      openAgainBtn.className = 'btn btn-ghost btn-xs';
+      openAgainBtn.innerHTML = '💬 Open Think Log';
+      openAgainBtn.addEventListener('click', () => openThinkLog(task));
+      const clearLogBtn = document.createElement('button');
+      clearLogBtn.className = 'btn btn-ghost btn-xs';
+      clearLogBtn.style.color = 'var(--danger)';
+      clearLogBtn.innerHTML = '✕ Clear';
+      clearLogBtn.addEventListener('click', () =>
+        confirmDialog('Clear the Think Log for this task?', () => {
+          DB.updateTask(task.id, { thinkLog: [] }); render();
+        })
+      );
+      tlActions.appendChild(openAgainBtn);
+      tlActions.appendChild(clearLogBtn);
+      panel.appendChild(tlActions);
+      tlWrapper.appendChild(panel);
+      li.appendChild(tlWrapper);
+    }
+
     return li;
   }
 
@@ -2086,7 +2208,308 @@ function colorSwatchPicker(selectedIdx, onChange) {
     li.appendChild(wrap); ta.focus();
   }
 
-  // ── Subtask inline-add row ────────────────────────────────────────────────
+  // ── Think Log (Self-Chat popout) ─────────────────────────────────────────
+  // Registry of open think windows so we can focus instead of re-opening
+  const _thinkWindows = new Map();
+
+  function openThinkLog(task) {
+    // If already open, just focus it
+    const existing = _thinkWindows.get(task.id);
+    if (existing && !existing.closed) { existing.focus(); return; }
+
+    // Bake current log directly into popout HTML; save via window.opener.postMessage
+    const popHtml = buildThinkPopoutHTML(task);
+    const blob    = new Blob([popHtml], { type: 'text/html' });
+    const url     = URL.createObjectURL(blob);
+    const win     = window.open(url, 'think_' + task.id,
+      'width=700,height=640,resizable=yes,scrollbars=yes,top=80,left=200,toolbar=no,menubar=no');
+
+    if (!win) { alert('Popup blocked. Please allow popups for this page.'); URL.revokeObjectURL(url); return; }
+    _thinkWindows.set(task.id, win);
+
+    // Receive saved log back via postMessage (works across blob: origins)
+    const onMsg = e => {
+      if (!e.data || e.data.type !== 'THINK_SAVE' || e.data.taskId !== task.id) return;
+      DB.updateTask(task.id, { thinkLog: e.data.log });
+      render();
+      toast('Think Log saved \u2713', 'success');
+    };
+    window.addEventListener('message', onMsg);
+
+    const checkClosed = setInterval(() => {
+      if (win.closed) {
+        clearInterval(checkClosed);
+        window.removeEventListener('message', onMsg);
+        _thinkWindows.delete(task.id);
+        URL.revokeObjectURL(url);
+      }
+    }, 1000);
+  }
+
+  function buildThinkPopoutHTML(task) {
+    const initLog   = JSON.stringify(task.thinkLog || []).replace(/<\/script>/gi, '<\\/script>');
+    const taskId    = JSON.stringify(task.id);
+    const taskTitle = (task.title || 'Task').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>\u{1F4AC} Think Log \u2014 ${taskTitle}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#f5f3ff;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.tl-header{background:#7c3aed;color:white;padding:10px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;box-shadow:0 2px 8px rgba(124,58,237,0.3)}
+.tl-title{flex:1;font-size:1rem;font-weight:700;letter-spacing:-0.01em}
+.tl-task-chip{background:#6d28d9;color:#ddd6fe;padding:3px 10px;font-size:0.72rem;border-radius:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;border:1px solid #5b21b6}
+.tl-save-btn{background:white;color:#7c3aed;border:none;border-radius:6px;padding:7px 16px;font-weight:700;cursor:pointer;font-size:0.85rem;flex-shrink:0;transition:all 0.2s}
+.tl-save-btn:hover{background:#ede9fe;transform:translateY(-1px)}
+.tl-save-btn.saved{background:#d1fae5 !important;color:#065f46 !important}
+.tl-save-btn.dirty{background:#fef3c7 !important;color:#92400e !important}
+.search-wrap{background:white;border-bottom:1px solid #ddd6fe;padding:7px 12px;flex-shrink:0}
+.search-wrap input{width:100%;padding:5px 10px 5px 28px;border:1px solid #c4b5fd;border-radius:20px;font-size:0.85rem;outline:none;background:white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23a78bfa' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E") no-repeat 8px center}
+.search-wrap input:focus{border-color:#7c3aed}
+.chat-box{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:3px;background:#faf8ff;scroll-behavior:smooth}
+.empty-hint{text-align:center;padding:40px 20px;color:#a78bfa;font-size:0.85rem;flex-shrink:0}
+.empty-hint div{font-size:2.2rem;margin-bottom:8px}
+.msg{background:#ede9fe;border-radius:7px;padding:7px 10px;display:flex;align-items:flex-start;gap:7px;font-size:0.88rem;color:#3b1f7a;position:relative;line-height:1.45;transition:background 0.12s}
+.msg:hover{background:#e4d9ff}
+.msg.selected{background:#c4b5fd !important;outline:2px solid #7c3aed}
+.msg.is-subchat{margin-left:24px;border-left:3px solid #7c3aed;background:#f5f3ff}
+.msg.is-yellow{background:#fef9c3 !important;color:#713f12}
+.msg.is-orange{background:#ffedd5 !important;color:#7c2d12}
+.subtitle-msg{background:#7c3aed;color:white;border-radius:5px;padding:5px 14px;font-size:0.78rem;font-weight:700;text-align:center;letter-spacing:0.04em;cursor:default;margin:4px 0;flex-shrink:0}
+.msg-text{flex:1;word-break:break-word;white-space:pre-wrap}
+.msg-ts{font-size:0.63rem;color:#9d7fd6;white-space:nowrap;font-family:monospace;flex-shrink:0;margin-top:2px}
+.msg-gear{background:none;border:none;color:#c4b5fd;cursor:pointer;font-size:11px;padding:1px 3px;border-radius:3px;flex-shrink:0;line-height:1;margin-top:1px;font-family:inherit}
+.msg-gear:hover{color:#7c3aed;background:#ddd6fe}
+.msg-menu{display:none;position:absolute;right:4px;top:calc(100% + 2px);background:white;border:1.5px solid #ddd6fe;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,0.12);z-index:200;min-width:160px;padding:4px 0}
+.msg-menu button{display:block;width:100%;padding:7px 14px;text-align:left;background:none;border:none;color:#333;cursor:pointer;font-size:0.8rem;font-family:inherit}
+.msg-menu button:hover{background:#f5f3ff;color:#7c3aed}
+.msg-menu button.danger:hover{background:#fee2e2;color:#dc2626}
+.menu-sep{height:1px;background:#ede9fe;margin:3px 0}
+.input-area{background:white;border-top:2px solid #ddd6fe;padding:10px 12px;display:flex;gap:8px;align-items:flex-end;flex-shrink:0}
+textarea#textInput{flex:1;padding:8px 10px;border:1.5px solid #c4b5fd;border-radius:7px;resize:none;font-size:0.88rem;min-height:40px;max-height:120px;font-family:inherit;outline:none;line-height:1.45;overflow-y:hidden;transition:border-color 0.15s}
+textarea#textInput:focus{border-color:#7c3aed;background:#fdfcff}
+.send-btn{background:#7c3aed;color:white;border:none;border-radius:7px;padding:9px 16px;cursor:pointer;font-size:0.88rem;font-weight:600;flex-shrink:0;transition:background 0.15s;font-family:inherit}
+.send-btn:hover{background:#6d28d9}
+.controls{background:white;border-top:1px solid #f0ebff;padding:6px 12px;display:flex;gap:6px;align-items:center;flex-shrink:0;flex-wrap:wrap}
+.ctrl-btn{padding:4px 11px;border:1px solid #c4b5fd;background:white;color:#7c3aed;border-radius:20px;cursor:pointer;font-size:0.75rem;font-weight:500;white-space:nowrap;font-family:inherit;transition:all 0.12s}
+.ctrl-btn:hover{background:#f5f3ff;border-color:#7c3aed}
+.ctrl-btn.red{border-color:#fca5a5;color:#dc2626;margin-left:auto}
+.ctrl-btn.red:hover{background:#fee2e2}
+.sub-picker{display:none;position:fixed;background:white;border:1.5px solid #ddd6fe;border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,0.13);z-index:300;min-width:200px;padding:6px 0}
+.sub-btn-opt{padding:7px 14px;cursor:pointer;font-size:0.82rem;color:#4c1d95;font-family:inherit;border:none;background:none;width:100%;text-align:left;display:block}
+.sub-btn-opt:hover{background:#f5f3ff}
+.sub-custom{padding:6px 10px;border-top:1px solid #ede9fe;margin-top:4px}
+.sub-custom input{width:100%;padding:5px 8px;border:1px solid #c4b5fd;border-radius:5px;font-size:0.8rem;outline:none;font-family:inherit}
+.status-bar{background:#ede9fe;padding:4px 14px;font-size:0.68rem;color:#7c5ab8;flex-shrink:0;text-align:right;transition:all 0.3s}
+.status-bar.ok{color:#065f46;background:#d1fae5}
+</style>
+</head>
+<body>
+<div class="tl-header">
+  <span style="font-size:1.3rem;flex-shrink:0">\u{1F4AC}</span>
+  <div class="tl-title">Think Log</div>
+  <span class="tl-task-chip" title="${taskTitle}">${taskTitle}</span>
+  <button class="tl-save-btn" id="saveBtn" onclick="saveToTask()">\u{1F4BE} Save to Task</button>
+</div>
+<div class="search-wrap"><input id="searchInput" type="text" placeholder="Search thoughts\u2026" oninput="filterMsgs()"></div>
+<div class="chat-box" id="chatBox"></div>
+<div class="input-area">
+  <textarea id="textInput" placeholder="What are you thinking about this task? (Enter to send, Shift+Enter = new line)" rows="1" oninput="autoExpand(this)"></textarea>
+  <button class="send-btn" onclick="sendMsg()">Send</button>
+</div>
+<div class="controls">
+  <button class="ctrl-btn" onclick="toggleSubPicker()" id="subBtn">\u2795 Section</button>
+  <button class="ctrl-btn" onclick="copySelected()">\u{1F4CB} Copy sel.</button>
+  <button class="ctrl-btn" onclick="exportLog()">\u{1F4C4} Export .txt</button>
+  <button class="ctrl-btn red" onclick="clearAll()">\u{1F5D1} Clear all</button>
+</div>
+<div class="status-bar" id="statusBar">Ready \u2014 click \u201cSave to Task\u201d to persist your thoughts</div>
+<div class="sub-picker" id="subPicker">
+  <button class="sub-btn-opt" onclick="insertSub('\u2500\u2500 Decision \u2500\u2500')">\u2696 Decision</button>
+  <button class="sub-btn-opt" onclick="insertSub('\u2500\u2500 Problem \u2500\u2500')">\u{1F534} Problem</button>
+  <button class="sub-btn-opt" onclick="insertSub('\u2500\u2500 Idea \u{1F4A1} \u2500\u2500')">\u{1F4A1} Idea</button>
+  <button class="sub-btn-opt" onclick="insertSub('\u2500\u2500 Action Item \u2500\u2500')">\u2705 Action Item</button>
+  <button class="sub-btn-opt" onclick="insertSub('\u2500\u2500 Risk \u26A0 \u2500\u2500')">\u26A0 Risk</button>
+  <button class="sub-btn-opt" onclick="insertSub('\u2500\u2500 Question \u2500\u2500')">\u2753 Question</button>
+  <button class="sub-btn-opt" onclick="insertSub('\u2500\u2500 Reference \u2500\u2500')">\u{1F4CE} Reference</button>
+  <button class="sub-btn-opt" onclick="insertSub('\u2500\u2500 Notes \u2500\u2500')">\u{1F4DD} Notes</button>
+  <div class="sub-custom">
+    <input id="customSubInput" type="text" placeholder="Custom section label\u2026"
+      onkeydown="if(event.key==='Enter'&&this.value.trim()){insertSub('\u2500\u2500 '+this.value.trim()+' \u2500\u2500');this.value='';}">
+  </div>
+</div>
+<script>
+  const TASK_ID    = ${taskId};
+  const TASK_TITLE = ${JSON.stringify(task.title || '')};
+  let msgs         = ${initLog};
+  let selectedIdxs = new Set();
+  let dirty        = false;
+
+  function ts() {
+    const d=new Date(),h=d.getHours(),m=d.getMinutes(),ap=h>=12?'PM':'AM';
+    return (h%12||12)+':'+(('0'+m).slice(-2))+' '+ap;
+  }
+  function autoExpand(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
+  function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function setStatus(msg, ok) {
+    const bar=document.getElementById('statusBar');
+    bar.textContent=msg; bar.className='status-bar'+(ok?' ok':'');
+    if(ok) setTimeout(()=>{ bar.className='status-bar'; bar.textContent='Ready'; },3000);
+  }
+
+  function renderAll() {
+    const box=document.getElementById('chatBox');
+    box.innerHTML='';
+    if(msgs.length===0){
+      box.innerHTML='<div class="empty-hint"><div>\u{1F4AD}</div>Start jotting your thoughts\u2026<br><small style="color:#c4b5fd">Enter to send \u00B7 Shift+Enter for new line \u00B7 Ctrl-click to select</small></div>';
+      return;
+    }
+    msgs.forEach((m,i)=>box.appendChild(buildEl(m,i)));
+    box.scrollTop=box.scrollHeight;
+  }
+
+  function buildEl(m, idx) {
+    const div=document.createElement('div');
+    if(m.isSubtitle){ div.className='subtitle-msg'; div.textContent=m.text; return div; }
+    let cls='msg';
+    if(m.isSubchat) cls+=' is-subchat';
+    if(m.isYellow)  cls+=' is-yellow';
+    if(m.isOrange)  cls+=' is-orange';
+    if(selectedIdxs.has(idx)) cls+=' selected';
+    div.className=cls;
+
+    const span=document.createElement('span'); span.className='msg-text'; span.textContent=m.text;
+    const tspan=document.createElement('span'); tspan.className='msg-ts'; tspan.textContent=m.timestamp||'';
+    div.appendChild(span); div.appendChild(tspan);
+
+    const gear=document.createElement('button'); gear.className='msg-gear'; gear.textContent='\u2699\uFE0F';
+    const menu=document.createElement('div'); menu.className='msg-menu';
+    const mk=(label,fn,danger)=>{ const b=document.createElement('button'); b.textContent=label; if(danger) b.className='danger'; b.onclick=e=>{ e.stopPropagation(); fn(); menu.style.display='none'; }; menu.appendChild(b); };
+    mk(m.isYellow?'\u2713 Yellow (remove)':'\u{1F7E1} Highlight yellow', ()=>{ msgs[idx].isYellow=!msgs[idx].isYellow; msgs[idx].isOrange=false; markDirty(); renderAll(); });
+    mk(m.isOrange?'\u2713 Orange (remove)':'\u{1F7E0} Highlight orange', ()=>{ msgs[idx].isOrange=!msgs[idx].isOrange; msgs[idx].isYellow=false; markDirty(); renderAll(); });
+    mk(m.isSubchat?'\u21A9 Promote to main':'\u21B3 Make sub-thought', ()=>{ msgs[idx].isSubchat=!msgs[idx].isSubchat; markDirty(); renderAll(); });
+    const sep=document.createElement('div'); sep.className='menu-sep'; menu.appendChild(sep);
+    mk('\u2715 Delete', ()=>{ msgs.splice(idx,1); markDirty(); renderAll(); }, true);
+    gear.onclick=e=>{ e.stopPropagation(); const v=menu.style.display==='block'; document.querySelectorAll('.msg-menu').forEach(m=>m.style.display='none'); if(!v) menu.style.display='block'; };
+    gear.appendChild(menu); div.appendChild(gear);
+
+    div.addEventListener('click', e=>{
+      if(!(e.ctrlKey||e.metaKey)) return; e.preventDefault();
+      if(selectedIdxs.has(idx)){ selectedIdxs.delete(idx); div.classList.remove('selected'); }
+      else { selectedIdxs.add(idx); div.classList.add('selected'); }
+    });
+    return div;
+  }
+
+  function markDirty() {
+    dirty=true;
+    const btn=document.getElementById('saveBtn');
+    btn.textContent='\u{1F4BE} Save to Task \u2605';
+    btn.className='tl-save-btn dirty';
+  }
+
+  function sendMsg(text, time) {
+    const inp=document.getElementById('textInput');
+    const t=text!==undefined?text:inp.value.trim();
+    if(!t) return;
+    msgs.push({ text:t, timestamp:time||ts(), isSubchat:false, isYellow:false, isOrange:false });
+    if(text===undefined){ inp.value=''; inp.style.height='auto'; }
+    markDirty(); renderAll();
+    setStatus('Unsaved \u2014 click \u201cSave to Task\u201d when ready');
+  }
+
+  function insertSub(label) {
+    if(!label.trim()) return;
+    msgs.push({ text:label, timestamp:ts(), isSubtitle:true });
+    document.getElementById('subPicker').style.display='none';
+    markDirty(); renderAll();
+  }
+
+  function toggleSubPicker() {
+    const p=document.getElementById('subPicker'), btn=document.getElementById('subBtn');
+    if(p.style.display==='block'){ p.style.display='none'; return; }
+    const r=btn.getBoundingClientRect();
+    p.style.left=r.left+'px'; p.style.top=(r.bottom+4)+'px'; p.style.transform='none';
+    p.style.display='block';
+    setTimeout(()=>document.getElementById('customSubInput')?.focus(),60);
+  }
+
+  function copySelected() {
+    if(selectedIdxs.size===0){ setStatus('Ctrl-click messages to select them first'); return; }
+    const lines=[...selectedIdxs].sort((a,b)=>a-b)
+      .map(i=>{ const m=msgs[i]; return (m.isSubchat?'  \u2022 ':'\u2022 ')+(m.text||''); });
+    navigator.clipboard.writeText(lines.join('\n')).then(()=>{
+      selectedIdxs.clear(); renderAll();
+      setStatus('Copied '+lines.length+' message(s)',true);
+    }).catch(()=>setStatus('Copy failed'));
+  }
+
+  function exportLog() {
+    if(msgs.length===0){ setStatus('Nothing to export yet'); return; }
+    const lines=['\u{1F4AC} Think Log \u2014 '+TASK_TITLE, new Date().toLocaleString(),''];
+    msgs.forEach(m=>{
+      if(m.isSubtitle){ lines.push('',m.text,''); return; }
+      const pre=m.isSubchat?'    \u2022 ':'\u2022 ';
+      const hi=m.isYellow?'[\u2B50] ':m.isOrange?'[\u{1F525}] ':'';
+      lines.push(pre+hi+(m.text||'')+'  ('+(m.timestamp||'')+')');
+    });
+    const blob=new Blob([lines.join('\n')],{type:'text/plain'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='think_log_'+TASK_TITLE.replace(/[^a-z0-9]/gi,'_').slice(0,40)+'.txt';
+    a.click(); URL.revokeObjectURL(a.href);
+    setStatus('Exported as .txt',true);
+  }
+
+  function clearAll() {
+    if(msgs.length===0) return;
+    if(confirm('Clear all '+msgs.length+' entries? (Close without saving to undo)'))
+      { msgs=[]; selectedIdxs.clear(); markDirty(); renderAll(); }
+  }
+
+  function filterMsgs() {
+    const q=document.getElementById('searchInput').value.toLowerCase();
+    document.querySelectorAll('.chat-box .msg,.chat-box .subtitle-msg').forEach(el=>{
+      el.style.display=!q||el.textContent.toLowerCase().includes(q)?'':'none';
+    });
+  }
+
+  function saveToTask() {
+    if(!window.opener||window.opener.closed){
+      setStatus('\u26A0 Parent window closed \u2014 export your notes with the \u201cExport .txt\u201d button'); return;
+    }
+    window.opener.postMessage({ type:'THINK_SAVE', taskId:TASK_ID, log:msgs },'*');
+    dirty=false;
+    const btn=document.getElementById('saveBtn');
+    btn.textContent='\u2713 Saved!'; btn.className='tl-save-btn saved';
+    setStatus('\u2713 Saved to task!',true);
+    setTimeout(()=>{ btn.textContent='\u{1F4BE} Save to Task'; btn.className='tl-save-btn'; },2500);
+  }
+
+  document.addEventListener('DOMContentLoaded',()=>{
+    renderAll();
+    const inp=document.getElementById('textInput'); inp.focus();
+    inp.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMsg(); } });
+    document.addEventListener('click',e=>{
+      if(!e.target.closest('.msg-menu')&&!e.target.classList.contains('msg-gear'))
+        document.querySelectorAll('.msg-menu').forEach(m=>m.style.display='none');
+      const p=document.getElementById('subPicker');
+      if(p.style.display==='block'&&!p.contains(e.target)&&e.target.id!=='subBtn') p.style.display='none';
+      if(!(e.ctrlKey||e.metaKey)&&!e.target.closest('.msg')) { selectedIdxs.clear(); renderAll(); }
+    });
+  });
+
+  window.addEventListener('beforeunload',e=>{ if(dirty&&msgs.length>0){ e.preventDefault(); e.returnValue=''; } });
+<\/script>
+</body>
+</html>`;
+  }
+
+
+
   function openSubtaskAddRow(task, li) {
     if (li.querySelector('.subtask-input-row')) return;
     const stRow = document.createElement('div'); stRow.className = 'subtask-input-row';
@@ -2157,15 +2580,17 @@ function colorSwatchPicker(selectedIdx, onChange) {
       ? `<span class="task-project-tag" style="background:${projColor(proj.color)};font-size:0.65rem;padding:1px 5px">${escHtml(proj.name)}</span>` : '';
     const sub  = (task.subtasks||[]); const subStr = sub.length > 0 ? `<span style="font-size:0.68rem;color:var(--text-light)">☑ ${sub.filter(s=>s.completed).length}/${sub.length}</span>` : '';
     const note = task.note ? `<span style="font-size:0.68rem;color:var(--purple)">📝</span>` : '';
+    const think = (task.thinkLog && task.thinkLog.length) ? `<span style="font-size:0.68rem;color:#7c3aed" title="${task.thinkLog.length} think log entries">💬${task.thinkLog.length}</span>` : '';
     return `<div class="kanban-card" draggable="true" data-id="${task.id}"
       ondragstart="APP.kanbanDragStart(event,'${task.id}')" ondragend="APP.kanbanDragEnd(event)"
       ondblclick="APP.showEditTaskDialog('${task.id}')">
       <div class="kanban-card-title ${task.status==='done'?'done':''}">${escHtml(task.title)}</div>
-      <div class="kanban-card-footer">${projTag}${priorityBadge(task.priority)}${subStr}${note}
+      <div class="kanban-card-footer">${projTag}${priorityBadge(task.priority)}${subStr}${note}${think}
         ${task.dueDate?`<span class="kanban-card-date">${formatDate(task.dueDate)}</span>`:''}
       </div>
       <div style="display:flex;gap:4px;margin-top:8px;opacity:0;transition:opacity 0.1s" class="kcard-actions">
         <button class="btn btn-ghost btn-xs" onclick="APP.showEditTaskDialog('${task.id}')">Edit</button>
+        <button class="btn btn-xs" style="background:#ede9fe;color:#7c3aed;border:1px solid #ddd6fe" onclick="APP.openThinkLogById('${task.id}')">💬</button>
         <button class="btn btn-xs btn-danger" onclick="APP._kDel('${task.id}')">✕</button>
       </div>
     </div>`;
@@ -2334,6 +2759,8 @@ function colorSwatchPicker(selectedIdx, onChange) {
     setFilter, setSearch, setView,
     exportData, importDataPrompt,
     kanbanDragStart, kanbanDragEnd, kanbanDragOver, kanbanDragEnter, kanbanDragLeave, kanbanDrop,
+    openThinkLog,
+    openThinkLogById: id => { const t = DB.getTask(id); if (t) openThinkLog(t); },
     _kDel: id => confirmDialog('Delete this task?', () => { DB.deleteTask(id); render(); }),
   };
 })();
