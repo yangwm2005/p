@@ -201,6 +201,23 @@
             color: white;
             border: none;
         }
+        /* ── Timestamp rows inside dropdown ── */
+        .dropdown-timestamps {
+            padding: 7px 16px 9px;
+            background: #f9fafb;
+            border-bottom: 1px solid var(--gray-light);
+        }
+        .dropdown-ts-row {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 0.73rem;
+            color: #64748b;
+            line-height: 1.8;
+        }
+        .dropdown-ts-row .ts-icon { font-size: 0.7rem; width: 14px; text-align: center; flex-shrink: 0; }
+        .dropdown-ts-row .ts-label { color: #94a3b8; }
+        .dropdown-ts-row .ts-value { font-weight: 600; color: #334155; }
     </style>
     <style>
         :root {
@@ -2511,6 +2528,19 @@ input:checked + .slider:before {
                         </button>
                         <div class="dropdown-content" id="gdrive-dropdown-content">
                             <div class="dropdown-status" id="dropdown-sync-status">Status: checking...</div>
+                            <!-- Timestamps -->
+                            <div class="dropdown-timestamps">
+                                <div class="dropdown-ts-row">
+                                    <span class="ts-icon">💾</span>
+                                    <span class="ts-label">Local save:</span>
+                                    <span class="ts-value" id="dd-ts-local">—</span>
+                                </div>
+                                <div class="dropdown-ts-row">
+                                    <span class="ts-icon">☁️</span>
+                                    <span class="ts-label">Cloud sync:</span>
+                                    <span class="ts-value" id="dd-ts-cloud">—</span>
+                                </div>
+                            </div>
                             <button id="dropdown-signin">🔐 Sign in with Google</button>
                             <button id="dropdown-save">💾 Save Now</button>
                             <button id="dropdown-load">⬇ Load from Cloud</button>
@@ -4050,6 +4080,8 @@ if (timestripeBtn) {
                 jsonAutosaveIndicator.innerHTML = '✓ Saved';
                 jsonAutosaveIndicator.className = 'autosave-json-indicator saved';
                 showStatus(`Auto-saved to ${lastSavedFileName}`, 'success');
+                localStorage.setItem('rf_lastLocalSave', new Date().toISOString());
+                if(typeof updateDropdownTimestamps === 'function') updateDropdownTimestamps();
                 setTimeout(() => {
                     jsonAutosaveIndicator.innerHTML = '';
                     jsonAutosaveIndicator.className = 'autosave-json-indicator';
@@ -5001,6 +5033,8 @@ if (timestripeBtn) {
                     );
                     setSyncIndicator('ok');
                     gdriveLastSavedAt = Date.now();
+                    localStorage.setItem('rf_lastCloudSync', new Date().toISOString());
+                    updateDropdownTimestamps();
                     if(!silent) showGdriveStatus('✓ Saved journal to cloud', true);
                 } catch(e){
                     setSyncIndicator('error');
@@ -5025,6 +5059,8 @@ if (timestripeBtn) {
                     updateCalendar();
                     updateReflectionDisplay();
                     gdriveLastSavedAt = Date.now();
+                    localStorage.setItem('rf_lastCloudSync', new Date().toISOString());
+                    updateDropdownTimestamps();
                     setSyncIndicator('ok');
                     if(!silent) showGdriveStatus('✓ Journal loaded from cloud.', true);
                 } catch(e){
@@ -5062,9 +5098,26 @@ if (timestripeBtn) {
                 if(gdrivePollInterval){ clearInterval(gdrivePollInterval); gdrivePollInterval=null; }
             }
 
+            // ── Timestamp helpers ─────────────────────────────────────
+            function rfmtTime(iso){
+                if(!iso) return '—';
+                const d = new Date(iso);
+                const isToday = d.toDateString() === new Date().toDateString();
+                const t = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+                return isToday ? t : d.toLocaleDateString([], {month:'short', day:'numeric'}) + '  ' + t;
+            }
+            function updateDropdownTimestamps(){
+                const elL = document.getElementById('dd-ts-local');
+                const elC = document.getElementById('dd-ts-cloud');
+                if(elL) elL.textContent = rfmtTime(localStorage.getItem('rf_lastLocalSave'));
+                if(elC) elC.textContent = rfmtTime(localStorage.getItem('rf_lastCloudSync'));
+            }
+
             const _origSave = saveToLocalStorage;
             window.saveToLocalStorage = function(){
                 _origSave();
+                localStorage.setItem('rf_lastLocalSave', new Date().toISOString());
+                updateDropdownTimestamps();
                 scheduleAutoSync();
             };
 
@@ -5077,6 +5130,7 @@ if (timestripeBtn) {
                     e.stopPropagation();
                     const isVisible = dropdownContent.style.display === 'block';
                     dropdownContent.style.display = isVisible ? 'none' : 'block';
+                    if(!isVisible) updateDropdownTimestamps();
                 });
                 document.addEventListener('click', (e) => {
                     if(!toggle.contains(e.target) && !dropdownContent.contains(e.target)){
@@ -5160,6 +5214,7 @@ if (timestripeBtn) {
                     });
                 }
                 updateAutoSyncUI();
+                updateDropdownTimestamps();
             });
         })();
         // ════════════════════════════════════════════════════════════════

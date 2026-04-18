@@ -442,6 +442,26 @@
         }
 
         @media (max-width: 640px) { .add-task-row { flex-wrap: wrap; } .date-nav-label { min-width: unset; } .cal-grid { gap: 3px; overflow-x: auto; } }
+    /* ── Cloud Sync timestamps ── */
+    .ts-block {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        padding: 10px 14px;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        margin-bottom: 14px;
+    }
+    .ts-item {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 0.78rem;
+        color: var(--text-muted);
+    }
+    .ts-item .ts-icon { font-size: 0.85rem; }
+    .ts-item .ts-val  { font-weight: 600; color: var(--text); }
     </style>
 </head>
 <body>
@@ -498,6 +518,19 @@
             <div id="fbSignedIn" style="display:none">
                 <div id="gdriveUserInfo" style="margin-bottom:14px;padding:10px 14px;background:var(--success-soft);border:1px solid #bbf7d0;border-radius:var(--radius-sm);font-size:0.85rem;color:var(--success)"></div>
                 <div id="gdriveStatus" class="status-msg" style="display:none"></div>
+                <!-- Timestamps -->
+                <div class="ts-block" id="gdrive-ts-block">
+                    <div class="ts-item">
+                        <span class="ts-icon">💾</span>
+                        <span>Local save:</span>
+                        <span class="ts-val" id="ts-local">—</span>
+                    </div>
+                    <div class="ts-item">
+                        <span class="ts-icon">☁️</span>
+                        <span>Cloud sync:</span>
+                        <span class="ts-val" id="ts-cloud">—</span>
+                    </div>
+                </div>
                 <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
                 <!-- Auto-sync toggle -->
                 <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px 14px;background:var(--surface2);border-radius:var(--radius-sm);border:1px solid var(--border)">
@@ -1266,6 +1299,8 @@
             await docRef.set({ tasksByDate: all, updatedAt: Date.now() }, { merge: false });
             setSyncIndicator('ok');
             gdriveLastSavedAt = Date.now();
+            localStorage.setItem('qt_lastCloudSync', new Date().toISOString());
+            qtUpdateTimestamps();
             if(!silent) showGdriveStatus(`✓ Saved ${Object.keys(all).length} date(s) to cloud`, true);
         } catch(e){
             setSyncIndicator('error');
@@ -1286,6 +1321,8 @@
             let count = 0;
             Object.keys(data.tasksByDate).forEach(k=>{ localStorage.setItem(k, JSON.stringify(data.tasksByDate[k])); count++; });
             gdriveLastSavedAt = Date.now();
+            localStorage.setItem('qt_lastCloudSync', new Date().toISOString());
+            qtUpdateTimestamps();
             // Only re-render if user is not actively typing in a note/input field
             if(!isUserEditingTaskList()){
                 tasks = loadTasks(formatDate(currentViewDate));
@@ -1338,10 +1375,27 @@
     function startDrivePoll(){ stopDrivePoll(); gdrivePollInterval = setInterval(pollDriveForChanges, 30000); }
     function stopDrivePoll(){ if(gdrivePollInterval){ clearInterval(gdrivePollInterval); gdrivePollInterval=null; } }
 
-    // Patch saveTasksToDate to trigger auto-sync
+    // ── Timestamp helpers ─────────────────────────────────────────────────────
+    function qtFmtTime(iso){
+        if(!iso) return '—';
+        const d = new Date(iso);
+        const isToday = d.toDateString() === new Date().toDateString();
+        const t = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+        return isToday ? t : d.toLocaleDateString([], {month:'short', day:'numeric'}) + '  ' + t;
+    }
+    function qtUpdateTimestamps(){
+        const elL = document.getElementById('ts-local');
+        const elC = document.getElementById('ts-cloud');
+        if(elL) elL.textContent = qtFmtTime(localStorage.getItem('qt_lastLocalSave'));
+        if(elC) elC.textContent = qtFmtTime(localStorage.getItem('qt_lastCloudSync'));
+    }
+
+    // Patch saveTasksToDate to trigger auto-sync + stamp local timestamp
     const _saveOrig = saveTasksToDate;
     saveTasksToDate = function(date, data){
         _saveOrig(date, data);
+        localStorage.setItem('qt_lastLocalSave', new Date().toISOString());
+        qtUpdateTimestamps();
         scheduleAutoSync();
     };
 
@@ -1385,6 +1439,7 @@
     };
 
     updateAutoSyncToggleUI();
+    qtUpdateTimestamps();
     const token=localStorage.getItem('dynalistToken'), doc=localStorage.getItem('dynalistDocId'); if(token) document.getElementById('dynalistToken').value=token; if(doc) document.getElementById('dynalistDocId').value=doc;
     loadPreviousDayTasks(); updateViewDisplay(); loadTasksForView(); renderWeeklyCalendar();
 
