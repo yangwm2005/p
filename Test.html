@@ -1068,13 +1068,14 @@ select.status-badge option {
 
 .cloud-dropdown {
   position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
+  bottom: calc(100% + 8px);
+  top: auto;
+  left: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-md);
-  min-width: 280px;
+  min-width: 290px;
   z-index: 10000;
   overflow: hidden;
   animation: dropdownFade 0.15s ease;
@@ -1509,7 +1510,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
             <span class="cloud-status-text" id="cloudStatusText">Sign in</span>
             <span class="cloud-sync-indicator sync-off" id="cloudSyncDot"></span>
           </div>
-          <div id="cloudDropdown" class="cloud-dropdown" style="display:none; bottom: calc(100% + 8px); top:auto;">
+          <div id="cloudDropdown" class="cloud-dropdown" style="display:none">
             <div id="cloudNotSignedIn">
               <div class="cloud-dropdown-header">Cloud Sync</div>
               <div class="cloud-dropdown-item" id="signInMenuItem"><span class="cloud-dropdown-icon">🔐</span>Sign in with Google</div>
@@ -2466,7 +2467,7 @@ async function fbSaveAll(silent = false) {
   gdriveSyncing = true; updateSyncStatus();
   try {
     const snap = getLocalSnapshot();
-    await fbDb.collection('qpm_users').doc(fbUser.uid).set({ data: snap, updatedAt: Date.now() }, { merge: true });
+    await fbDb.collection('users').doc(fbUser.uid).set({ qpm_data: snap, qpm_updatedAt: Date.now() }, { merge: true });
     gdriveLastSavedAt = Date.now();
     gdriveSyncing = false; updateSyncStatus();
     if (!silent) { alert('Data saved to cloud successfully!'); }
@@ -2483,12 +2484,12 @@ async function fbLoadAll(silent = false) {
   if (gdriveSyncing) return false;
   gdriveSyncing = true; if (!silent) updateSyncStatus();
   try {
-    const docSnap = await fbDb.collection('qpm_users').doc(fbUser.uid).get();
+    const docSnap = await fbDb.collection('users').doc(fbUser.uid).get();
     if (docSnap.exists) {
-      const saved = docSnap.data().data;
+      const saved = docSnap.data().qpm_data;
       if (saved) {
         applySnapshot(saved);
-        gdriveLastSavedAt = docSnap.data().updatedAt || Date.now();
+        gdriveLastSavedAt = docSnap.data().qpm_updatedAt || Date.now();
         gdriveSyncing = false; updateSyncStatus();
         if (!silent) alert('Data loaded from cloud successfully!');
         return true;
@@ -2508,9 +2509,9 @@ function startDrivePoll() {
   gdrivePollInterval = setInterval(async () => {
     if (!autoSyncEnabled || !fbUser || gdriveSyncing || !fbDb) return;
     try {
-      const docSnap = await fbDb.collection('qpm_users').doc(fbUser.uid).get();
+      const docSnap = await fbDb.collection('users').doc(fbUser.uid).get();
       if (!docSnap.exists) return;
-      const remote = docSnap.data().updatedAt || 0;
+      const remote = docSnap.data().qpm_updatedAt || 0;
       if (remote > gdriveLastSavedAt + 5000) await fbLoadAll(true);
     } catch(e) { console.error('Poll error:', e); }
   }, 30000);
