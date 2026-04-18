@@ -3,9 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-  <title>Q·PM — Project Manager</title>
+  <title>Q·PM — Project Manager v11</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&display=swap');
 
@@ -1038,6 +1041,65 @@ select.status-badge option {
   font-size: 0.82rem;
 }
 
+/* ── Cloud Sync UI ────────────────────────────────────── */
+.cloud-toggle-wrapper { position: relative; }
+.cloud-toggle-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 40px;
+  padding: 5px 13px 5px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: inherit;
+  transition: all 0.2s;
+}
+.cloud-toggle-btn:hover { background: var(--surface2); border-color: var(--accent); }
+.cloud-icon { font-size: 1rem; }
+.cloud-status-text { font-size: 0.78rem; font-weight: 500; }
+.cloud-sync-indicator {
+  width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+}
+.sync-ok      { background: var(--success); box-shadow: 0 0 4px var(--success); }
+.sync-syncing { background: var(--accent); animation: pulse 1s infinite; }
+.sync-error   { background: var(--danger); }
+.sync-off     { background: var(--text-light); }
+
+.cloud-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  top: auto;
+  left: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  min-width: 290px;
+  z-index: 10000;
+  overflow: hidden;
+  animation: dropdownFade 0.15s ease;
+}
+@keyframes dropdownFade {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.cloud-dropdown-header { padding: 12px 16px; background: var(--surface2); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.85rem; }
+.cloud-dropdown-user   { padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+.cloud-dropdown-avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--accent); color: white; display: flex; align-items: center; justify-content: center; font-size: 1rem; font-weight: 600; }
+.cloud-dropdown-name   { font-weight: 600; font-size: 0.88rem; }
+.cloud-dropdown-email  { font-size: 0.68rem; color: var(--text-muted); }
+.cloud-dropdown-item   { padding: 10px 16px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: background 0.15s; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+.cloud-dropdown-item:hover { background: var(--surface2); }
+.cloud-dropdown-item:last-child { border-bottom: none; }
+.cloud-dropdown-icon { width: 26px; font-size: 1rem; }
+.cloud-toggle-switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+.cloud-toggle-switch input { opacity: 0; width: 0; height: 0; }
+.cloud-toggle-slider { position: absolute; cursor: pointer; inset: 0; background: #ccc; transition: 0.2s; border-radius: 20px; }
+.cloud-toggle-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 2px; bottom: 2px; background: white; transition: 0.2s; border-radius: 50%; }
+input:checked + .cloud-toggle-slider { background: var(--accent); }
+input:checked + .cloud-toggle-slider:before { transform: translateX(20px); }
+
   </style>
 </head>
 <body>
@@ -1067,8 +1129,9 @@ const DB = (() => {
 
   function loadProjects()  { return JSON.parse(localStorage.getItem(PROJ_KEY))  || []; }
   function loadTasks()     { return JSON.parse(localStorage.getItem(TASKS_KEY)) || []; }
-  function saveProjects(p) { localStorage.setItem(PROJ_KEY,  JSON.stringify(p)); }
-  function saveTasks(t)    { localStorage.setItem(TASKS_KEY, JSON.stringify(t)); }
+  function saveProjects(p) { localStorage.setItem(PROJ_KEY,  JSON.stringify(p)); _onDBWrite(); }
+  function saveTasks(t)    { localStorage.setItem(TASKS_KEY, JSON.stringify(t)); _onDBWrite(); }
+  function _onDBWrite()    { if (typeof scheduleAutoSync === 'function') scheduleAutoSync(); }
 
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -1422,7 +1485,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
       </button>`;
     }).join('');
     document.getElementById('sidebar').innerHTML = `
-      <div class="sidebar-brand"><div class="brand-logo">Q<span>·</span>PM</div><div class="brand-sub"> (Copyright @ 2026 Dr. Wen-Ming Yang v11)</div></div>
+      <div class="sidebar-brand"><div class="brand-logo">Q<span>·</span>PM</div><div class="brand-sub"> (Copyright @ 2026 Dr. Wen-Ming Yang v11 + Cloud Sync)</div></div>
       <div class="sidebar-section">
         <div class="sidebar-section-label">Workspace</div>
         <button class="nav-item ${currentPage==='dashboard'?'active':''}" onclick="APP.navigate('dashboard')"><span class="nav-icon">◼</span> Dashboard</button>
@@ -1441,6 +1504,35 @@ function colorSwatchPicker(selectedIdx, onChange) {
         <button class="sidebar-add-btn" onclick="APP.showNewProjectDialog()"><span style="font-size:1rem">＋</span> New Project</button>
       </div>
       <div class="sidebar-footer">
+        <div class="cloud-toggle-wrapper" style="margin-bottom:8px">
+          <div id="cloudToggleBtn" class="cloud-toggle-btn">
+            <span class="cloud-icon">☁</span>
+            <span class="cloud-status-text" id="cloudStatusText">Sign in</span>
+            <span class="cloud-sync-indicator sync-off" id="cloudSyncDot"></span>
+          </div>
+          <div id="cloudDropdown" class="cloud-dropdown" style="display:none">
+            <div id="cloudNotSignedIn">
+              <div class="cloud-dropdown-header">Cloud Sync</div>
+              <div class="cloud-dropdown-item" id="signInMenuItem"><span class="cloud-dropdown-icon">🔐</span>Sign in with Google</div>
+              <div style="padding:10px 16px;font-size:0.7rem;color:var(--text-muted);border-top:1px solid var(--border)">Sync your projects across all devices</div>
+            </div>
+            <div id="cloudSignedIn" style="display:none">
+              <div class="cloud-dropdown-user">
+                <div class="cloud-dropdown-avatar" id="dropdownAvatar">👤</div>
+                <div><div class="cloud-dropdown-name" id="dropdownName"></div><div class="cloud-dropdown-email" id="dropdownEmail"></div></div>
+              </div>
+              <div class="cloud-dropdown-item" id="autoSyncItem" onclick="var cb=document.getElementById('autoSyncToggle'); cb.checked=!cb.checked; cb.dispatchEvent(new Event('change')); event.stopPropagation();">
+                <span class="cloud-dropdown-icon">🔄</span><span style="flex:1">Auto-sync</span>
+                <div class="cloud-toggle-switch" onclick="event.stopPropagation()"><input type="checkbox" id="autoSyncToggle"><span class="cloud-toggle-slider"></span></div>
+              </div>
+              <div class="cloud-dropdown-item" id="saveNowMenuItem"><span class="cloud-dropdown-icon">☁</span>Save to Cloud</div>
+              <div class="cloud-dropdown-item" id="loadNowMenuItem"><span class="cloud-dropdown-icon">⬇</span>Load from Cloud</div>
+              <div style="border-top:1px solid var(--border)"></div>
+              <div class="cloud-dropdown-item" id="signOutMenuItem"><span class="cloud-dropdown-icon">🚪</span>Sign Out</div>
+              <div style="padding:10px 16px;font-size:0.65rem;color:var(--text-muted);border-top:1px solid var(--border);line-height:1.8" id="syncStatusMessage">💾 Local save: Never<br>☁ Not signed in</div>
+            </div>
+          </div>
+        </div>
         <button class="nav-item" onclick="APP.exportData()" style="font-size:0.78rem"><span class="nav-icon">⬇</span> Export Data</button>
         <button class="nav-item" onclick="APP.importDataPrompt()" style="font-size:0.78rem"><span class="nav-icon">⬆</span> Import Data</button>
       </div>`;
@@ -2245,6 +2337,249 @@ function colorSwatchPicker(selectedIdx, onChange) {
     _kDel: id => confirmDialog('Delete this task?', () => { DB.deleteTask(id); render(); }),
   };
 })();
+
+// ══════════════════════════════════════════════════════════════
+//  GOOGLE FIREBASE CLOUD SYNC  (ported from Q·Project v12)
+// ══════════════════════════════════════════════════════════════
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
+  authDomain:        "qtodo-syn.firebaseapp.com",
+  projectId:         "qtodo-syn",
+  storageBucket:     "qtodo-syn.firebasestorage.app",
+  messagingSenderId: "663058774385",
+  appId:             "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
+};
+
+let fbApp = null, fbAuth = null, fbDb = null, fbUser = null;
+let autoSyncEnabled  = false;
+let gdriveSyncTimer  = null;
+let gdriveSyncing    = false;
+let gdriveLastSavedAt = 0;
+let gdrivePollInterval = null;
+let lastLocalSavedAt   = 0;
+
+// Called by DB layer after every write
+function scheduleAutoSync() {
+  lastLocalSavedAt = Date.now();
+  updateSyncStatus();
+  if (!autoSyncEnabled || !fbUser) return;
+  if (gdriveSyncTimer) clearTimeout(gdriveSyncTimer);
+  gdriveSyncTimer = setTimeout(() => fbSaveAll(true), 2000);
+}
+
+function formatStamp(ts) {
+  if (!ts) return 'Never';
+  const d = new Date(ts);
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function updateSyncStatus() {
+  const statusMsg   = document.getElementById('syncStatusMessage');
+  const cloudSyncDot = document.getElementById('cloudSyncDot');
+  const savedLine   = `💾 Local save: ${formatStamp(lastLocalSavedAt)}`;
+  if (!statusMsg) return;
+  if (!fbUser) {
+    if (cloudSyncDot) cloudSyncDot.className = 'cloud-sync-indicator sync-off';
+    statusMsg.innerHTML = savedLine + '<br>☁ Not signed in';
+    return;
+  }
+  if (gdriveSyncing) {
+    cloudSyncDot.className = 'cloud-sync-indicator sync-syncing';
+    statusMsg.innerHTML = savedLine + '<br>☁ Syncing…';
+  } else if (autoSyncEnabled) {
+    cloudSyncDot.className = 'cloud-sync-indicator sync-ok';
+    statusMsg.innerHTML = savedLine + `<br>☁ Cloud sync: ${formatStamp(gdriveLastSavedAt)}`;
+  } else {
+    cloudSyncDot.className = 'cloud-sync-indicator sync-off';
+    statusMsg.innerHTML = savedLine + '<br>☁ Auto-sync off';
+  }
+}
+
+function updateCloudUI(signedIn) {
+  const notSignedIn   = document.getElementById('cloudNotSignedIn');
+  const signedInDiv   = document.getElementById('cloudSignedIn');
+  const statusText    = document.getElementById('cloudStatusText');
+  const syncDot       = document.getElementById('cloudSyncDot');
+  if (!notSignedIn) return;
+  if (signedIn && fbUser) {
+    notSignedIn.style.display = 'none';
+    signedInDiv.style.display = 'block';
+    statusText.textContent = fbUser.displayName?.split(' ')[0] || fbUser.email?.split('@')[0] || 'User';
+    syncDot.className = 'cloud-sync-indicator sync-ok';
+    document.getElementById('dropdownName').textContent  = fbUser.displayName || fbUser.email?.split('@')[0];
+    document.getElementById('dropdownEmail').textContent = fbUser.email;
+    document.getElementById('dropdownAvatar').textContent = (fbUser.displayName || fbUser.email)[0].toUpperCase();
+  } else {
+    notSignedIn.style.display = 'block';
+    signedInDiv.style.display = 'none';
+    statusText.textContent = 'Sign in';
+    syncDot.className = 'cloud-sync-indicator sync-off';
+  }
+  updateSyncStatus();
+}
+
+function initFirebase() {
+  if (!FIREBASE_CONFIG.apiKey) return false;
+  try {
+    fbApp  = firebase.initializeApp(FIREBASE_CONFIG);
+    fbAuth = firebase.auth();
+    fbDb   = firebase.firestore();
+    fbAuth.onAuthStateChanged(user => {
+      if (user) {
+        fbUser = user;
+        updateCloudUI(true);
+        const saved = localStorage.getItem('qpm_autoSync_' + user.uid);
+        autoSyncEnabled = saved === 'true';
+        const toggle = document.getElementById('autoSyncToggle');
+        if (toggle) toggle.checked = autoSyncEnabled;
+        updateSyncStatus();
+        if (autoSyncEnabled) fbLoadAll(true).then(() => startDrivePoll());
+      } else {
+        fbUser = null;
+        updateCloudUI(false);
+        stopDrivePoll();
+      }
+    });
+    return true;
+  } catch(e) { console.error('Firebase init error:', e); return false; }
+}
+
+// Export all localStorage data for this app into one object
+function getLocalSnapshot() {
+  return {
+    projects: JSON.parse(localStorage.getItem('qpm_projects') || '[]'),
+    tasks:    JSON.parse(localStorage.getItem('qpm_tasks')    || '[]'),
+    updatedAt: Date.now(),
+  };
+}
+
+// Restore a cloud snapshot back into localStorage and re-render
+function applySnapshot(snap) {
+  if (snap.projects) localStorage.setItem('qpm_projects', JSON.stringify(snap.projects));
+  if (snap.tasks)    localStorage.setItem('qpm_tasks',    JSON.stringify(snap.tasks));
+  if (typeof APP !== 'undefined') APP.navigate('dashboard');
+}
+
+async function fbSaveAll(silent = false) {
+  if (!fbUser || !fbDb) { if (!silent) alert('Please sign in first'); return false; }
+  if (gdriveSyncing) return false;
+  gdriveSyncing = true; updateSyncStatus();
+  try {
+    const snap = getLocalSnapshot();
+    await fbDb.collection('users').doc(fbUser.uid).set({ qpm_data: snap, qpm_updatedAt: Date.now() }, { merge: true });
+    gdriveLastSavedAt = Date.now();
+    gdriveSyncing = false; updateSyncStatus();
+    if (!silent) { alert('Data saved to cloud successfully!'); }
+    return true;
+  } catch(e) {
+    console.error(e); gdriveSyncing = false; updateSyncStatus();
+    if (!silent) alert('Save failed: ' + e.message);
+    return false;
+  }
+}
+
+async function fbLoadAll(silent = false) {
+  if (!fbUser || !fbDb) { if (!silent) alert('Please sign in first'); return false; }
+  if (gdriveSyncing) return false;
+  gdriveSyncing = true; if (!silent) updateSyncStatus();
+  try {
+    const docSnap = await fbDb.collection('users').doc(fbUser.uid).get();
+    if (docSnap.exists) {
+      const saved = docSnap.data().qpm_data;
+      if (saved) {
+        applySnapshot(saved);
+        gdriveLastSavedAt = docSnap.data().qpm_updatedAt || Date.now();
+        gdriveSyncing = false; updateSyncStatus();
+        if (!silent) alert('Data loaded from cloud successfully!');
+        return true;
+      }
+    } else {
+      if (!silent) alert('No cloud data found.');
+    }
+  } catch(e) {
+    console.error(e);
+    if (!silent) alert('Load failed: ' + e.message);
+  } finally { gdriveSyncing = false; updateSyncStatus(); }
+  return false;
+}
+
+function startDrivePoll() {
+  stopDrivePoll();
+  gdrivePollInterval = setInterval(async () => {
+    if (!autoSyncEnabled || !fbUser || gdriveSyncing || !fbDb) return;
+    try {
+      const docSnap = await fbDb.collection('users').doc(fbUser.uid).get();
+      if (!docSnap.exists) return;
+      const remote = docSnap.data().qpm_updatedAt || 0;
+      if (remote > gdriveLastSavedAt + 5000) await fbLoadAll(true);
+    } catch(e) { console.error('Poll error:', e); }
+  }, 30000);
+}
+
+function stopDrivePoll() {
+  if (gdrivePollInterval) { clearInterval(gdrivePollInterval); gdrivePollInterval = null; }
+  if (gdriveSyncTimer)    { clearTimeout(gdriveSyncTimer);     gdriveSyncTimer    = null; }
+}
+
+function setupCloudUI() {
+  const toggleBtn  = document.getElementById('cloudToggleBtn');
+  const dropdown   = document.getElementById('cloudDropdown');
+  if (!toggleBtn) return;
+
+  toggleBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+  });
+  document.addEventListener('click', e => {
+    if (!toggleBtn.contains(e.target) && !dropdown.contains(e.target))
+      dropdown.style.display = 'none';
+  });
+
+  document.getElementById('signInMenuItem')?.addEventListener('click', async () => {
+    if (!fbAuth) { alert('Firebase not ready'); return; }
+    try {
+      await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+      dropdown.style.display = 'none';
+    } catch(e) { alert('Sign-in failed: ' + e.message); }
+  });
+
+  document.getElementById('signOutMenuItem')?.addEventListener('click', async () => {
+    if (fbAuth) await fbAuth.signOut();
+    autoSyncEnabled = false; updateCloudUI(false);
+    dropdown.style.display = 'none';
+  });
+
+  document.getElementById('saveNowMenuItem')?.addEventListener('click', async () => {
+    if (fbUser) { await fbSaveAll(false); } else alert('Please sign in first');
+    dropdown.style.display = 'none';
+  });
+
+  document.getElementById('loadNowMenuItem')?.addEventListener('click', async () => {
+    if (fbUser) { await fbLoadAll(false); } else alert('Please sign in first');
+    dropdown.style.display = 'none';
+  });
+
+  const autoSyncToggle = document.getElementById('autoSyncToggle');
+  if (autoSyncToggle) {
+    autoSyncToggle.addEventListener('change', e => {
+      autoSyncEnabled = e.target.checked;
+      if (fbUser) {
+        localStorage.setItem('qpm_autoSync_' + fbUser.uid, autoSyncEnabled);
+        if (autoSyncEnabled) { fbLoadAll(true).then(() => startDrivePoll()); }
+        else stopDrivePoll();
+      }
+      updateSyncStatus();
+    });
+  }
+}
+
+// Boot the sync system after DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  initFirebase();
+  setupCloudUI();
+});
+
 
 </script>
 </body>
