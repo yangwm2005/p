@@ -127,6 +127,8 @@
         .act-btn:hover { background: var(--surface2); color: var(--text); }
         .act-btn.note-active { color: var(--purple); }
         .act-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
+        .act-btn.panels-open { background: var(--accent-soft); color: var(--accent); }
+        .act-btn.panels-open:hover { background: var(--accent-soft); color: var(--accent-hover); }
 
         .timer-wrap { display: flex; align-items: center; gap: 4px; }
         .timer-display { font-family: 'DM Mono', monospace; font-size: 0.75rem; padding: 2px 7px; border-radius: 20px; background: var(--surface2); color: var(--text-muted); min-width: 50px; text-align: center; }
@@ -1199,102 +1201,104 @@
             btnGroup.appendChild(saveB); btnGroup.appendChild(canB);
             wrap.appendChild(ta); wrap.appendChild(btnGroup); li.appendChild(wrap); ta.focus(); 
         }); actions.appendChild(noteBtn);
-        
-        if(task.subtasks?.length){ 
-            let tog=document.createElement('button'); tog.className='act-btn'; tog.innerHTML=task.subtasksVisible?'▾':'▸'; 
-            tog.addEventListener('click', (e)=>{ e.stopPropagation(); toggleSubtasksVisibility(task.id, taskDate, isPrev); }); 
-            actions.appendChild(tog); 
+
+        // ⊞ Unified panels toggle — shows/hides subtasks, note, think log inline
+        const hasSubtasks = task.subtasks?.length > 0;
+        const hasNote = !!task.note;
+        const hasThinkLog = task.thinkLog?.length > 0;
+        const hasPanels = hasSubtasks || hasNote || hasThinkLog;
+        if (hasPanels) {
+            if (!window._panelClosed) window._panelClosed = new Set();
+            const panelOpen = !window._panelClosed.has(task.id);
+            const panelToggle = document.createElement('button');
+            panelToggle.className = 'act-btn' + (panelOpen ? ' panels-open' : '');
+            let indicators = '';
+            if (hasSubtasks) indicators += '☑';
+            if (hasNote)     indicators += '📝';
+            if (hasThinkLog) indicators += '🧠';
+            panelToggle.innerHTML = indicators;
+            panelToggle.style.fontSize = '0.72rem';
+            panelToggle.style.width = 'auto';
+            panelToggle.style.padding = '0 6px';
+            panelToggle.title = (panelOpen ? 'Hide' : 'Show') + ' panels';
+            panelToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (!window._panelClosed) window._panelClosed = new Set();
+                if (window._panelClosed.has(task.id)) window._panelClosed.delete(task.id);
+                else window._panelClosed.add(task.id);
+                const nowOpen = !window._panelClosed.has(task.id);
+                li.querySelectorAll('.subtask-list, .task-note-wrapper, .think-log-wrapper').forEach(p => {
+                    p.style.display = nowOpen ? '' : 'none';
+                });
+                panelToggle.className = 'act-btn' + (nowOpen ? ' panels-open' : '');
+                panelToggle.title = (nowOpen ? 'Hide' : 'Show') + ' panels';
+            });
+            actions.appendChild(panelToggle);
         }
-        
-        let addSt=document.createElement('button'); addSt.className='act-btn'; addSt.innerHTML='⊕'; addSt.addEventListener('click',()=>{ let stRow=document.createElement('div'); stRow.className='subtask-input-row'; let inp=document.createElement('input'); inp.type='text'; inp.className='task-input'; inp.placeholder='Subtask...'; let add=document.createElement('button'); add.className='btn btn-primary btn-sm'; add.textContent='Add'; let doAdd=()=>{ let v=inp.value.trim(); if(v) addSubtask(task.id,v,taskDate); stRow.remove(); }; add.onclick=doAdd; inp.addEventListener('keypress',e=>{if(e.key==='Enter') doAdd();}); stRow.appendChild(inp); stRow.appendChild(add); li.appendChild(stRow); inp.focus(); }); actions.appendChild(addSt);
+
+        let addSt=document.createElement('button'); addSt.className='act-btn'; addSt.innerHTML='⊕'; addSt.title='Add subtask'; addSt.addEventListener('click',()=>{ let stRow=document.createElement('div'); stRow.className='subtask-input-row'; let inp=document.createElement('input'); inp.type='text'; inp.className='task-input'; inp.placeholder='Subtask...'; let add=document.createElement('button'); add.className='btn btn-primary btn-sm'; add.textContent='Add'; let doAdd=()=>{ let v=inp.value.trim(); if(v) addSubtask(task.id,v,taskDate); stRow.remove(); }; add.onclick=doAdd; inp.addEventListener('keypress',e=>{if(e.key==='Enter') doAdd();}); stRow.appendChild(inp); stRow.appendChild(add); li.appendChild(stRow); inp.focus(); }); actions.appendChild(addSt);
         let dateCh=document.createElement('button'); dateCh.className='act-btn'; dateCh.innerHTML='📅'; dateCh.addEventListener('click',()=>{ let di=li.querySelector('.inline-date-input'); if(!di){ di=document.createElement('input'); di.type='date'; di.className='inline-date-input'; di.value=taskDate.length===8?`${taskDate.slice(0,4)}-${taskDate.slice(4,6)}-${taskDate.slice(6,8)}`:formatInput(new Date()); di.addEventListener('change',ce=>{ if(di.value) changeTaskDate(task.id,taskDate,di.value,isPrev); di.remove(); }); di.addEventListener('blur',()=>setTimeout(()=>di.remove(),200)); actions.appendChild(di); di.focus(); di.click(); } }); actions.appendChild(dateCh);
         let del=document.createElement('button'); del.className='act-btn danger'; del.innerHTML='🗑'; del.addEventListener('click',()=>deleteTask(task.id,taskDate,isPrev)); actions.appendChild(del);
 
-        // 💬 Think Log button
+        // 🧠 Think Log overlay launcher
         const thinkBtn = document.createElement('button');
-        thinkBtn.className = `act-btn think-btn ${(task.thinkLog && task.thinkLog.length) ? 'has-log' : ''}`;
-        thinkBtn.title = 'Think Log — jot thoughts about this task';
-        thinkBtn.innerHTML = '💬';
-        if (task.thinkLog && task.thinkLog.length) {
-          const badge = document.createElement('span');
-          badge.className = 'think-badge';
-          thinkBtn.appendChild(badge);
-        }
+        thinkBtn.className = 'act-btn think-btn' + (hasThinkLog ? ' has-log' : '');
+        thinkBtn.title = 'Open Think Log';
+        thinkBtn.innerHTML = '🧠';
+        if (hasThinkLog) { const badge = document.createElement('span'); badge.className = 'think-badge'; thinkBtn.appendChild(badge); }
         thinkBtn.addEventListener('click', () => openThinkLog(task, taskDate, isPrev));
         actions.appendChild(thinkBtn);
 
         row.appendChild(actions); li.appendChild(row);
-        
+
+        // Determine if panels area is open
+        if (!window._panelClosed) window._panelClosed = new Set();
+        const panelsVisible = !window._panelClosed.has(task.id);
+
         if(task.subtasks?.length){
-            let stList=document.createElement('ul'); stList.className=`subtask-list ${task.subtasksVisible?'':'hidden'}`;
-            task.subtasks.forEach(st=>{ let stLi=document.createElement('li'); stLi.className='subtask-item'; let dh2=document.createElement('span'); dh2.className='drag-handle'; dh2.innerHTML='⠿'; let cb2=document.createElement('input'); cb2.type='checkbox'; cb2.checked=st.completed; cb2.addEventListener('change',()=>toggleSubtask(task.id,st.id,taskDate,isPrev)); let lbl2=document.createElement('span'); lbl2.className=`subtask-label ${st.completed?'done':''}`; lbl2.textContent=st.text; lbl2.setAttribute('data-subtask-id', st.id); lbl2.addEventListener('dblclick',function(){ let inp=document.createElement('input'); inp.value=st.text; inp.className='subtask-label editing'; stLi.replaceChild(inp,lbl2); inp.focus(); let saved=false; let save=()=>{ if(saved) return; saved=true; let v=inp.value.trim(); if(v) editSubtask(task.id,st.id,v,taskDate,isPrev); if(inp.parentNode) stLi.replaceChild(lbl2,inp); }; inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); /* After save(), renderTasks() may have rebuilt the DOM. Find the live task item and its subtask list. */ let liveLi = document.querySelector(`.task-item[data-task-id="${task.id}"]`); if(!liveLi) return; let liveStList = liveLi.querySelector('.subtask-list'); if(!liveStList) return; let phLi=document.createElement('li'); phLi.className='subtask-item'; let phInp=document.createElement('input'); phInp.type='text'; phInp.placeholder='New subtask… (Esc to cancel)'; phInp.className='subtask-label editing'; phInp.style.flex='1'; let done=false; let finish=()=>{ if(done) return; done=true; if(phLi.parentNode) phLi.remove(); }; phInp.addEventListener('keydown',pe=>{ if(pe.key==='Enter'){ pe.preventDefault(); let pv=phInp.value.trim(); finish(); if(pv) addSubtask(task.id,pv,taskDate,isPrev); } else if(pe.key==='Escape'){ finish(); } }); phInp.addEventListener('blur',()=>setTimeout(finish,150)); phLi.appendChild(phInp); liveStList.appendChild(phLi); phInp.focus(); } }); inp.addEventListener('blur',save); }); let del2=document.createElement('button'); del2.className='act-btn danger'; del2.style.width='22px'; del2.innerHTML='✕'; del2.addEventListener('click',()=>deleteSubtask(task.id,st.id,taskDate,isPrev)); stLi.appendChild(dh2); stLi.appendChild(cb2); stLi.appendChild(lbl2); stLi.appendChild(del2); stList.appendChild(stLi); }); li.appendChild(stList);
+            let stList=document.createElement('ul'); stList.className='subtask-list'; stList.style.display=panelsVisible?'':'none';
+            task.subtasks.forEach(st=>{ let stLi=document.createElement('li'); stLi.className='subtask-item'; let dh2=document.createElement('span'); dh2.className='drag-handle'; dh2.innerHTML='⠿'; let cb2=document.createElement('input'); cb2.type='checkbox'; cb2.checked=st.completed; cb2.addEventListener('change',()=>toggleSubtask(task.id,st.id,taskDate,isPrev)); let lbl2=document.createElement('span'); lbl2.className=`subtask-label ${st.completed?'done':''}`; lbl2.textContent=st.text; lbl2.setAttribute('data-subtask-id', st.id); lbl2.addEventListener('dblclick',function(){ let inp=document.createElement('input'); inp.value=st.text; inp.className='subtask-label editing'; stLi.replaceChild(inp,lbl2); inp.focus(); let saved=false; let save=()=>{ if(saved) return; saved=true; let v=inp.value.trim(); if(v) editSubtask(task.id,st.id,v,taskDate,isPrev); if(inp.parentNode) stLi.replaceChild(lbl2,inp); }; inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); let liveLi = document.querySelector(`.task-item[data-task-id="${task.id}"]`); if(!liveLi) return; let liveStList = liveLi.querySelector('.subtask-list'); if(!liveStList) return; let phLi=document.createElement('li'); phLi.className='subtask-item'; let phInp=document.createElement('input'); phInp.type='text'; phInp.placeholder='New subtask\u2026 (Esc to cancel)'; phInp.className='subtask-label editing'; phInp.style.flex='1'; let done=false; let finish=()=>{ if(done) return; done=true; if(phLi.parentNode) phLi.remove(); }; phInp.addEventListener('keydown',pe=>{ if(pe.key==='Enter'){ pe.preventDefault(); let pv=phInp.value.trim(); finish(); if(pv) addSubtask(task.id,pv,taskDate,isPrev); } else if(pe.key==='Escape'){ finish(); } }); phInp.addEventListener('blur',()=>setTimeout(finish,150)); phLi.appendChild(phInp); liveStList.appendChild(phLi); phInp.focus(); } }); inp.addEventListener('blur',save); }); let del2=document.createElement('button'); del2.className='act-btn danger'; del2.style.width='22px'; del2.innerHTML='\u2715'; del2.addEventListener('click',()=>deleteSubtask(task.id,st.id,taskDate,isPrev)); stLi.appendChild(dh2); stLi.appendChild(cb2); stLi.appendChild(lbl2); stLi.appendChild(del2); stList.appendChild(stLi); }); li.appendChild(stList);
         }
-        
-        // Note with collapse/expand button
-        if(task.note){ 
-            const isCollapsed = noteCollapsedState.get(task.id) || false;
-            const wrapper = document.createElement('div'); wrapper.className = 'task-note-wrapper';
-            const collapseBtn = document.createElement('button');
-            collapseBtn.className = 'note-collapse-btn';
-            collapseBtn.innerHTML = isCollapsed ? '▶ Show note' : '▼ Hide note';
-            collapseBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleNoteCollapse(task.id); });
-            wrapper.appendChild(collapseBtn);
-            
-            const noteDiv = document.createElement('div'); 
-            noteDiv.className = `task-note ${isCollapsed ? 'hidden' : ''}`;
+
+        // Note panel
+        if(task.note){
+            const wrapper = document.createElement('div'); wrapper.className = 'task-note-wrapper'; wrapper.style.display = panelsVisible ? '' : 'none';
+            const noteDiv = document.createElement('div');
+            noteDiv.className = 'task-note';
             let bulletFormatted = formatNoteWithBullets(task.note);
-            noteDiv.innerHTML = `<div class="task-note-text">📌 ${bulletFormatted}</div><div class="note-actions"><button class="btn btn-ghost btn-xs">Edit</button><button class="btn btn-ghost btn-xs" style="color:var(--danger)">✕</button></div>`;
-            noteDiv.querySelector('.note-actions button:first-child').addEventListener('click',()=>{ noteDiv.remove(); let wrap=document.createElement('div'); wrap.className='note-input-wrap'; let ta=document.createElement('textarea'); ta.className='note-textarea'; ta.rows=4; ta.value = formatNoteForEditing(task.note); let btnGroup=document.createElement('div'); btnGroup.style.display='flex'; btnGroup.style.gap='6px'; let saveB=document.createElement('button'); saveB.className='btn btn-primary btn-sm'; saveB.textContent='Save Note'; let canB=document.createElement('button'); canB.className='btn btn-ghost btn-sm'; canB.textContent='Cancel'; saveB.onclick=()=>{ let cleaned = parseNoteFromEditor(ta.value); if(cleaned) addNoteToTask(task.id, cleaned, taskDate, isPrev); else deleteNoteFromTask(task.id, taskDate, isPrev); wrap.remove(); }; canB.onclick=()=>wrap.remove(); btnGroup.appendChild(saveB); btnGroup.appendChild(canB); wrap.appendChild(ta); wrap.appendChild(btnGroup); li.appendChild(wrap); ta.focus(); }); 
-            noteDiv.querySelector('.note-actions button:last-child').addEventListener('click',()=>{ if(confirm('Delete note?')){ deleteNoteFromTask(task.id,taskDate,isPrev); wrapper.remove(); } }); 
+            noteDiv.innerHTML = `<div class="task-note-text">\u{1F4CC} ${bulletFormatted}</div><div class="note-actions"><button class="btn btn-ghost btn-xs">Edit</button><button class="btn btn-ghost btn-xs" style="color:var(--danger)">\u2715</button></div>`;
+            noteDiv.querySelector('.note-actions button:first-child').addEventListener('click',()=>{ noteDiv.remove(); let wrap=document.createElement('div'); wrap.className='note-input-wrap'; let ta=document.createElement('textarea'); ta.className='note-textarea'; ta.rows=4; ta.value = formatNoteForEditing(task.note); let btnGroup=document.createElement('div'); btnGroup.style.display='flex'; btnGroup.style.gap='6px'; let saveB=document.createElement('button'); saveB.className='btn btn-primary btn-sm'; saveB.textContent='Save Note'; let canB=document.createElement('button'); canB.className='btn btn-ghost btn-sm'; canB.textContent='Cancel'; saveB.onclick=()=>{ let cleaned = parseNoteFromEditor(ta.value); if(cleaned) addNoteToTask(task.id, cleaned, taskDate, isPrev); else deleteNoteFromTask(task.id, taskDate, isPrev); wrap.remove(); }; canB.onclick=()=>wrap.remove(); btnGroup.appendChild(saveB); btnGroup.appendChild(canB); wrap.appendChild(ta); wrap.appendChild(btnGroup); li.appendChild(wrap); ta.focus(); });
+            noteDiv.querySelector('.note-actions button:last-child').addEventListener('click',()=>{ if(confirm('Delete note?')){ deleteNoteFromTask(task.id,taskDate,isPrev); wrapper.remove(); } });
             wrapper.appendChild(noteDiv);
             li.appendChild(wrapper);
         }
 
-        // ── Think Log inline display (collapsible) ───────────────────────
+        // Think Log inline panel
         if (task.thinkLog && task.thinkLog.length > 0) {
           const tlWrapper = document.createElement('div');
           tlWrapper.className = 'think-log-wrapper';
-          const isCollapsed = (window._thinkLogCollapsed && window._thinkLogCollapsed.has(task.id));
-          const colBtn = document.createElement('button');
-          colBtn.className = 'think-log-collapse-btn';
-          colBtn.innerHTML = (isCollapsed ? '▶' : '▼') + ' 💬 Think Log (' + task.thinkLog.length + ')';
-          colBtn.addEventListener('click', () => {
-            if (!window._thinkLogCollapsed) window._thinkLogCollapsed = new Set();
-            if (window._thinkLogCollapsed.has(task.id)) window._thinkLogCollapsed.delete(task.id);
-            else window._thinkLogCollapsed.add(task.id);
-            renderTasks();
-          });
+          tlWrapper.style.display = panelsVisible ? '' : 'none';
           const panel = document.createElement('div');
-          panel.className = `think-log-panel ${isCollapsed ? 'hidden' : ''}`;
+          panel.className = 'think-log-panel';
           task.thinkLog.forEach(entry => {
-            const row = document.createElement('div');
-            row.className = `think-log-entry${entry.isSubchat ? ' is-subchat' : ''}${entry.isYellow ? ' is-yellow' : ''}${entry.isOrange ? ' is-orange' : ''}`;
-            row.innerHTML = `<span class="think-log-ts">${entry.timestamp || ''}</span><span class="think-log-text">${(entry.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>`;
-            panel.appendChild(row);
+            const erow = document.createElement('div');
+            erow.className = 'think-log-entry' + (entry.isSubchat?' is-subchat':'') + (entry.isYellow?' is-yellow':'') + (entry.isOrange?' is-orange':'');
+            erow.innerHTML = `<span class="think-log-ts">${entry.timestamp||''}</span><span class="think-log-text">${(entry.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>`;
+            panel.appendChild(erow);
           });
-          const tlActions = document.createElement('div');
-          tlActions.className = 'think-log-actions';
-          const openAgainBtn = document.createElement('button');
-          openAgainBtn.className = 'btn btn-ghost btn-xs';
-          openAgainBtn.innerHTML = '💬 Open Think Log';
+          const tlActions = document.createElement('div'); tlActions.className = 'think-log-actions';
+          const openAgainBtn = document.createElement('button'); openAgainBtn.className = 'btn btn-ghost btn-xs'; openAgainBtn.innerHTML = '\u{1F9E0} Open Think Log';
           openAgainBtn.addEventListener('click', () => openThinkLog(task, taskDate, isPrev));
-          const clearLogBtn = document.createElement('button');
-          clearLogBtn.className = 'btn btn-ghost btn-xs';
-          clearLogBtn.style.color = 'var(--danger)';
-          clearLogBtn.innerHTML = '✕ Clear';
+          const clearLogBtn = document.createElement('button'); clearLogBtn.className = 'btn btn-ghost btn-xs'; clearLogBtn.style.color = 'var(--danger)'; clearLogBtn.innerHTML = '\u2715 Clear';
           clearLogBtn.addEventListener('click', () => {
             if (confirm('Clear the Think Log for this task?')) {
               const d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : taskDate;
-              const ts = loadTasks(d);
-              const t2 = findTaskById(task.id, ts);
+              const ts = loadTasks(d); const t2 = findTaskById(task.id, ts);
               if (t2) { t2.thinkLog = []; saveTasksToDate(d, ts); if(d===todayStr) tasks=ts; renderTasks(); }
             }
           });
-          tlActions.appendChild(openAgainBtn);
-          tlActions.appendChild(clearLogBtn);
-          tlWrapper.appendChild(colBtn);
-          tlWrapper.appendChild(panel);
-          tlWrapper.appendChild(tlActions);
+          tlActions.appendChild(openAgainBtn); tlActions.appendChild(clearLogBtn);
+          tlWrapper.appendChild(panel); tlWrapper.appendChild(tlActions);
           li.appendChild(tlWrapper);
         }
 
