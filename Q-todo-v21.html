@@ -129,6 +129,23 @@
         .act-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
         .act-btn.panels-open { background: var(--accent-soft); color: var(--accent); }
         .act-btn.panels-open:hover { background: var(--accent-soft); color: var(--accent-hover); }
+        /* ── Settings popover ───────────────────────────────── */
+        .settings-btn { background: transparent; border: none; cursor: pointer; font-size: 1rem; padding: 4px 7px; border-radius: var(--radius-sm); color: var(--text-muted); transition: all 0.12s; margin-left: auto; }
+        .settings-btn:hover { background: var(--surface2); color: var(--text); }
+        .settings-popover { display: none; position: absolute; top: 100%; right: 0; margin-top: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md); padding: 16px 18px; min-width: 240px; z-index: 500; }
+        .settings-popover.open { display: block; }
+        .settings-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); margin-bottom: 12px; }
+        .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.85rem; color: var(--text); margin-bottom: 8px; }
+        .settings-row:last-child { margin-bottom: 0; }
+        .settings-row label { flex: 1; cursor: pointer; line-height: 1.35; }
+        .settings-row small { display: block; font-size: 0.72rem; color: var(--text-light); margin-top: 1px; }
+        /* Toggle switch */
+        .tog-switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+        .tog-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+        .tog-track { position: absolute; inset: 0; background: var(--border); border-radius: 20px; cursor: pointer; transition: background 0.18s; }
+        .tog-switch input:checked + .tog-track { background: var(--accent); }
+        .tog-track::after { content: ''; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; background: white; border-radius: 50%; transition: transform 0.18s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+        .tog-switch input:checked + .tog-track::after { transform: translateX(16px); }
 
         .timer-wrap { display: flex; align-items: center; gap: 4px; }
         .timer-display { font-family: 'DM Mono', monospace; font-size: 0.75rem; padding: 2px 7px; border-radius: 20px; background: var(--surface2); color: var(--text-muted); min-width: 50px; text-align: center; }
@@ -615,8 +632,26 @@
 </div>
 
 <div class="app" id="appContainer">
-    <header class="app-header">
-        <div class="app-brand"><div class="app-logo">Q<span>·</span>Todo</div><div class="app-date" id="currentDate"></div><div id="syncIndicator" style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:20px;font-weight:500;margin-left:8px"></div></div>
+    <header class="app-header" style="position:relative">
+        <div class="app-brand" style="display:flex;align-items:center">
+            <div class="app-logo">Q<span>·</span>Todo</div>
+            <div class="app-date" id="currentDate"></div>
+            <div id="syncIndicator" style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:20px;font-weight:500;margin-left:8px"></div>
+            <button class="settings-btn" id="settingsBtn" title="Settings">⚙️</button>
+        </div>
+        <div class="settings-popover" id="settingsPopover">
+            <div class="settings-title">App Settings</div>
+            <div class="settings-row">
+                <label for="togDefaultOn">
+                    Panels expanded by default
+                    <small>Show subtasks, notes & think log open when the app loads</small>
+                </label>
+                <label class="tog-switch">
+                    <input type="checkbox" id="togDefaultOn">
+                    <span class="tog-track"></span>
+                </label>
+            </div>
+        </div>
     </header>
     <div class="tab-bar">
         <button class="tab-btn active" onclick="openTab('daily', this)">Daily</button>
@@ -1209,7 +1244,8 @@
         const hasPanels = hasSubtasks || hasNote || hasThinkLog;
         if (hasPanels) {
             if (!window._panelClosed) window._panelClosed = new Set();
-            const panelOpen = !window._panelClosed.has(task.id);
+            const defaultOpen = localStorage.getItem('qt_panelsDefaultOpen') !== '0';
+            const panelOpen = defaultOpen ? !window._panelClosed.has(task.id) : window._panelClosed.has(task.id);
             const panelToggle = document.createElement('button');
             panelToggle.className = 'act-btn' + (panelOpen ? ' panels-open' : '');
             let indicators = '';
@@ -1253,7 +1289,8 @@
 
         // Determine if panels area is open
         if (!window._panelClosed) window._panelClosed = new Set();
-        const panelsVisible = !window._panelClosed.has(task.id);
+        const defaultOpen = localStorage.getItem('qt_panelsDefaultOpen') !== '0';
+        const panelsVisible = defaultOpen ? !window._panelClosed.has(task.id) : window._panelClosed.has(task.id);
 
         if(task.subtasks?.length){
             let stList=document.createElement('ul'); stList.className='subtask-list'; stList.style.display=panelsVisible?'':'none';
@@ -2067,6 +2104,33 @@
         const cell=e.target.closest('.mp-day');
         if(cell) hideDayTooltip();
     });
+
+    // ── Settings popover ─────────────────────────────────────────────────────
+    (function() {
+        const btn = document.getElementById('settingsBtn');
+        const pop = document.getElementById('settingsPopover');
+        const tog = document.getElementById('togDefaultOn');
+
+        // Load saved setting (default: on)
+        const saved = localStorage.getItem('qt_panelsDefaultOpen');
+        tog.checked = saved !== '0';
+
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            pop.classList.toggle('open');
+        });
+
+        tog.addEventListener('change', () => {
+            localStorage.setItem('qt_panelsDefaultOpen', tog.checked ? '1' : '0');
+            // Reset closed-set so new default applies immediately
+            window._panelClosed = new Set();
+            renderTasks();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!pop.contains(e.target) && e.target !== btn) pop.classList.remove('open');
+        });
+    })();
 
     document.addEventListener('click', (e)=>{
         const wrap = document.getElementById('monthPickerWrap');
