@@ -564,7 +564,9 @@
     .tl-subt-editrow{display:flex;align-items:center;gap:6px;width:100%}
     .tl-subt-inp{flex:1;padding:3px 8px;border:none;border-radius:4px;font-size:.78rem;font-weight:700;font-family:inherit;background:rgba(255,255,255,.9);color:#4c1d95;outline:none;min-width:0}
     .tl-subt-inp:focus{background:#fff}
-    .tl-mtext{flex:1;word-break:break-word;white-space:pre-wrap}
+    .tl-mtext{flex:1;word-break:break-word;white-space:pre-wrap;cursor:text;}
+    .tl-mtext:hover{text-decoration:underline dotted #9d7fd6;}
+    .tl-medit{flex:1;padding:3px 6px;border:1.5px solid #7c3aed;border-radius:5px;font-size:.88rem;font-family:inherit;background:#fdfcff;color:#3b1f7a;outline:none;resize:none;line-height:1.45;min-height:32px;}
     .tl-mts{font-size:.63rem;color:#9d7fd6;white-space:nowrap;font-family:monospace;flex-shrink:0;margin-top:2px}
     .tl-mgear{background:none;border:none;color:#c4b5fd;cursor:pointer;font-size:11px;padding:1px 3px;border-radius:3px;flex-shrink:0;line-height:1;margin-top:1px}
     .tl-mgear:hover{color:#7c3aed;background:#ddd6fe}
@@ -916,8 +918,35 @@
       d.className=c;
 
       var tx=document.createElement('span'); tx.className='tl-mtext'; tx.textContent=m.text;
+      tx.title='Double-click to edit';
       var ts=document.createElement('span'); ts.className='tl-mts';   ts.textContent=m.timestamp||'';
       d.appendChild(handle); d.appendChild(tx); d.appendChild(ts);
+
+      // Inline edit — replaces text span with an auto-sizing textarea
+      function startMsgEdit() {
+        if(d.querySelector('.tl-medit')) return; // already editing
+        var ta=document.createElement('textarea');
+        ta.className='tl-medit';
+        ta.value=_tlMsgs[idx].text;
+        ta.rows=1;
+        function resize(){ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,200)+'px'; }
+        ta.addEventListener('input', resize);
+        tx.replaceWith(ta);
+        ts.style.display='none';
+        resize(); ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+        function commit() {
+          var v=ta.value.trim();
+          if(v && v!==_tlMsgs[idx].text){ _tlMsgs[idx].text=v; _tlDirtyMark(); }
+          _tlRender();
+        }
+        ta.addEventListener('blur', function(){ setTimeout(commit,80); });
+        ta.addEventListener('keydown', function(e){
+          if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); commit(); }
+          if(e.key==='Escape'){ e.preventDefault(); _tlRender(); }
+        });
+      }
+      tx.addEventListener('dblclick', function(e){ e.stopPropagation(); startMsgEdit(); });
 
       var gear=document.createElement('button'); gear.className='tl-mgear'; gear.textContent='⚙️';
       var menu=document.createElement('div');   menu.className='tl-mmenu';
@@ -927,6 +956,8 @@
         b.onclick=function(e){ e.stopPropagation(); fn(); menu.style.display='none'; };
         menu.appendChild(b);
       }
+      mk('✏ Edit message', function(){ startMsgEdit(); });
+      var sep0=document.createElement('div'); sep0.className='tl-msep'; menu.appendChild(sep0);
       mk(m.isYellow?'✓ Yellow (off)':'🟡 Highlight yellow', function(){ _tlMsgs[idx].isYellow=!_tlMsgs[idx].isYellow; _tlMsgs[idx].isOrange=false; _tlDirtyMark(); _tlRender(); });
       mk(m.isOrange?'✓ Orange (off)':'🟠 Highlight orange', function(){ _tlMsgs[idx].isOrange=!_tlMsgs[idx].isOrange; _tlMsgs[idx].isYellow=false; _tlDirtyMark(); _tlRender(); });
       mk(m.isSubchat?'↩ Promote to main':'↳ Make sub-thought', function(){ _tlMsgs[idx].isSubchat=!_tlMsgs[idx].isSubchat; _tlDirtyMark(); _tlRender(); });
