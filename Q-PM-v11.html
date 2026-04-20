@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-  <title>Q·PM — Project Manager v11</title>
+  <title>Q·PM — Project Manager v12</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -1111,6 +1111,28 @@ input:checked + .cloud-toggle-slider:before { transform: translateX(20px); }
   border-radius: 50%;
   border: 1.5px solid var(--surface);
 }
+/* ── Unified detail-panel toggle button ── */
+.detail-toggle-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 10px; border: 1px solid var(--border); border-radius: 20px;
+  background: var(--surface2); color: var(--text-muted);
+  font-size: 0.72rem; font-weight: 600; cursor: pointer;
+  transition: all 0.15s; white-space: nowrap; font-family: inherit;
+}
+.detail-toggle-btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.detail-toggle-btn.is-open { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+/* Settings switch */
+.s-switch { position: relative; display: inline-block; width: 42px; height: 22px; flex-shrink: 0; }
+.s-switch input { opacity: 0; width: 0; height: 0; }
+.s-switch-slider { position: absolute; cursor: pointer; inset: 0; background: #ccc; border-radius: 22px; transition: 0.2s; }
+.s-switch-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+input:checked + .s-switch-slider { background: var(--accent); }
+input:checked + .s-switch-slider:before { transform: translateX(20px); }
+.settings-box { margin: 12px 8px 0; background: var(--surface2); border-radius: var(--radius); padding: 10px 12px; border: 1px solid var(--border); }
+.settings-box-title { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 8px; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; }
+.settings-row-label { font-size: 0.8rem; color: var(--text); }
+.settings-row small { display: block; font-size: 0.68rem; color: var(--text-muted); }
 .think-log-wrapper {
   margin: 0 14px 10px 52px;
 }
@@ -1577,12 +1599,16 @@ function colorSwatchPicker(selectedIdx, onChange) {
   let filterStatus     = 'all';
   let searchQuery      = '';
   let activeTimers     = new Map();   // taskId → { iv, startMs }
-  let noteCollapsed    = new Map();   // taskId → bool
+  let detailOpenState  = new Map();   // taskId → bool (per-task override)
+  let defaultDetailOpen = false;      // global default
   let pendingEditId    = null;
 
   // ── Boot ──────────────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', function() {
     seedDemoDataIfEmpty();
+    // Load persisted settings
+    const savedSettings = JSON.parse(localStorage.getItem('qpm_settings') || '{}');
+    if (savedSettings.defaultDetailOpen !== undefined) defaultDetailOpen = savedSettings.defaultDetailOpen;
     render();
 
     // ── Think Log overlay event wiring ────────────────────────────────────
@@ -1812,6 +1838,19 @@ function colorSwatchPicker(selectedIdx, onChange) {
         </div>
         <button class="nav-item" onclick="APP.exportData()" style="font-size:0.78rem"><span class="nav-icon">⬇</span> Export Data</button>
         <button class="nav-item" onclick="APP.importDataPrompt()" style="font-size:0.78rem"><span class="nav-icon">⬆</span> Import Data</button>
+        <div class="settings-box">
+          <div class="settings-box-title">⚙ Default View</div>
+          <div class="settings-row">
+            <div class="settings-row-label">
+              Show Details panel
+              <small>Subtasks, Notes &amp; Think Log</small>
+            </div>
+            <label class="s-switch">
+              <input type="checkbox" id="defaultDetailToggle" ${defaultDetailOpen ? 'checked' : ''} onchange="APP.setDefaultDetailOpen(this.checked)">
+              <span class="s-switch-slider"></span>
+            </label>
+          </div>
+        </div>
       </div>`;
   }
 
@@ -1987,6 +2026,25 @@ function colorSwatchPicker(selectedIdx, onChange) {
       <input type="date" class="form-input" id="quickDueDate" style="min-width:136px">
       <button class="btn btn-primary btn-sm" onclick="APP.quickAddTask()">+ Add</button>
     </div></div>`;
+  }
+
+  // ── Settings helpers ──────────────────────────────────────────────────────
+  function saveSettings() {
+    localStorage.setItem('qpm_settings', JSON.stringify({ defaultDetailOpen }));
+  }
+
+  // Unified per-task detail toggle (subtasks + notes + think log)
+  function toggleDetail(taskId) {
+    const cur = detailOpenState.has(taskId) ? detailOpenState.get(taskId) : defaultDetailOpen;
+    const next = !cur;
+    detailOpenState.set(taskId, next);
+    // DOM-only update to avoid full re-render
+    const li = document.querySelector(`.task-item[data-id="${taskId}"]`);
+    if (!li) return;
+    const panel = li.querySelector('.task-detail-panel');
+    const btn   = li.querySelector('.detail-toggle-btn');
+    if (panel) panel.style.display = next ? 'block' : 'none';
+    if (btn)   { btn.classList.toggle('is-open', next); btn.textContent = next ? 'Details ▲' : 'Details ▶'; }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2181,39 +2239,24 @@ function colorSwatchPicker(selectedIdx, onChange) {
     tw.appendChild(tdisp); tw.appendChild(tbtn); tw.appendChild(tpre);
     actions.appendChild(tw);
 
-    // 📝 Note toggle — opens inline textarea editor
+    // 📝 Note — quick-add/edit (keep as action button for adding notes when none exist)
     const noteBtn = document.createElement('button');
     noteBtn.className = `act-btn ${task.note ? 'note-active' : ''}`;
     noteBtn.innerHTML = '📝'; noteBtn.title = task.note ? 'Edit note' : 'Add note';
     noteBtn.addEventListener('click', () => openNoteEditor(task, li));
     actions.appendChild(noteBtn);
 
-    // 💬 Think — opens Self-Chat popout for this task
+    // 💬 Think Log — opens overlay
     const thinkBtn = document.createElement('button');
     thinkBtn.className = `act-btn think-btn ${(task.thinkLog && task.thinkLog.length) ? 'has-log' : ''}`;
-    thinkBtn.title = 'Think Log — jot thoughts about this task';
+    thinkBtn.title = 'Think Log';
     thinkBtn.innerHTML = '💬';
     if (task.thinkLog && task.thinkLog.length) {
-      const badge = document.createElement('span');
-      badge.className = 'think-badge';
+      const badge = document.createElement('span'); badge.className = 'think-badge';
       thinkBtn.appendChild(badge);
     }
     thinkBtn.addEventListener('click', () => openThinkLog(task));
     actions.appendChild(thinkBtn);
-
-    // ▾/▸ Subtask visibility toggle (only if subtasks exist)
-    if (task.subtasks && task.subtasks.length > 0) {
-      const stog = document.createElement('button');
-      stog.className = 'act-btn';
-      stog.innerHTML = task.subtasksVisible ? '▾' : '▸';
-      stog.title = task.subtasksVisible ? 'Hide subtasks' : 'Show subtasks';
-      stog.addEventListener('click', e => {
-        e.stopPropagation();
-        DB.updateTask(task.id, { subtasksVisible: !task.subtasksVisible });
-        render();
-      });
-      actions.appendChild(stog);
-    }
 
     // ⊕ Add subtask
     const addStBtn = document.createElement('button');
@@ -2247,13 +2290,34 @@ function colorSwatchPicker(selectedIdx, onChange) {
     delBtn.addEventListener('click', () => confirmDialog('Delete this task?', () => { DB.deleteTask(task.id); render(); }));
     actions.appendChild(delBtn);
 
+    // ▶ Details — unified toggle for subtasks + notes + think log
+    const hasDetails = (task.subtasks && task.subtasks.length > 0) || task.note || (task.thinkLog && task.thinkLog.length > 0);
+    const isOpen = detailOpenState.has(task.id) ? detailOpenState.get(task.id) : defaultDetailOpen;
+    const detailToggle = document.createElement('button');
+    detailToggle.className = `detail-toggle-btn${isOpen ? ' is-open' : ''}`;
+    detailToggle.textContent = isOpen ? 'Details ▲' : 'Details ▶';
+    detailToggle.title = 'Toggle subtasks, notes & think log';
+    detailToggle.addEventListener('click', e => { e.stopPropagation(); toggleDetail(task.id); });
+    actions.appendChild(detailToggle);
+
     row.appendChild(actions);
     li.appendChild(row);
 
-    // ── Subtask list ───────────────────────────────────────────────────────
+    // ── Unified detail panel (subtasks + notes + think log) ────────────────
+    const detailPanel = document.createElement('div');
+    detailPanel.className = 'task-detail-panel';
+    detailPanel.style.display = isOpen ? 'block' : 'none';
+    detailPanel.style.cssText += '; padding: 0 14px 10px 14px;';
+
+    // — Subtasks section —
     if (task.subtasks && task.subtasks.length > 0) {
+      const secLbl = document.createElement('div');
+      secLbl.style.cssText = 'font-size:0.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.05em;padding:8px 0 4px;';
+      secLbl.textContent = '📋 Subtasks';
+      detailPanel.appendChild(secLbl);
+
       const stList = document.createElement('ul');
-      stList.className = `subtask-list ${task.subtasksVisible ? '' : 'hidden'}`;
+      stList.className = 'subtask-list';
       task.subtasks.forEach(st => {
         const stLi = document.createElement('li'); stLi.className = 'subtask-item';
         const dh2  = document.createElement('span'); dh2.className = 'drag-handle'; dh2.innerHTML = '⠿';
@@ -2278,12 +2342,11 @@ function colorSwatchPicker(selectedIdx, onChange) {
           lbl2.addEventListener('keydown', e => {
             if (e.key === 'Enter') {
               e.preventDefault(); lbl2.blur();
-              // Spawn new subtask input after save
               setTimeout(() => {
                 const liveLi = document.querySelector(`.task-item[data-id="${task.id}"]`);
                 if (!liveLi) return;
                 let stl = liveLi.querySelector('.subtask-list');
-                if (!stl) { stl = document.createElement('ul'); stl.className = 'subtask-list'; liveLi.appendChild(stl); }
+                if (!stl) { stl = document.createElement('ul'); stl.className = 'subtask-list'; liveLi.querySelector('.task-detail-panel').appendChild(stl); }
                 const phLi = document.createElement('li'); phLi.className = 'subtask-item';
                 const phInp = document.createElement('input');
                 phInp.type = 'text'; phInp.placeholder = 'New subtask… (Esc to cancel)';
@@ -2308,23 +2371,19 @@ function colorSwatchPicker(selectedIdx, onChange) {
         stLi.appendChild(dh2); stLi.appendChild(cb2); stLi.appendChild(lbl2); stLi.appendChild(del2);
         stList.appendChild(stLi);
       });
-      li.appendChild(stList);
+      detailPanel.appendChild(stList);
     }
 
-    // ── Note display (collapsible, below task row) ─────────────────────────
+    // — Notes section —
     if (task.note) {
-      const isCollapsed = noteCollapsed.get(task.id) || false;
-      const wrapper = document.createElement('div'); wrapper.className = 'task-note-wrapper';
-      const colBtn  = document.createElement('button'); colBtn.className = 'note-collapse-btn';
-      colBtn.innerHTML = isCollapsed ? '▶ Show note' : '▼ Hide note';
-      colBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        noteCollapsed.set(task.id, !noteCollapsed.get(task.id));
-        render();
-      });
-      wrapper.appendChild(colBtn);
+      const secLbl2 = document.createElement('div');
+      secLbl2.style.cssText = 'font-size:0.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.05em;padding:8px 0 4px;';
+      secLbl2.textContent = '📝 Notes';
+      detailPanel.appendChild(secLbl2);
+
       const noteDiv = document.createElement('div');
-      noteDiv.className = `task-note ${isCollapsed ? 'hidden' : ''}`;
+      noteDiv.className = 'task-note';
+      noteDiv.style.display = 'block'; // always visible within the panel
       noteDiv.innerHTML = `<div class="task-note-text">📌 ${formatNoteAsHtml(task.note)}</div>
         <div class="note-actions">
           <button class="btn btn-ghost btn-xs">Edit</button>
@@ -2333,33 +2392,24 @@ function colorSwatchPicker(selectedIdx, onChange) {
       noteDiv.querySelector('.note-actions button:first-child').addEventListener('click', () => openNoteEditor(task, li));
       noteDiv.querySelector('.note-actions button:last-child').addEventListener('click', () =>
         confirmDialog('Delete this note?', () => { DB.updateTask(task.id, { note: '' }); render(); }));
-      wrapper.appendChild(noteDiv);
-      li.appendChild(wrapper);
+      detailPanel.appendChild(noteDiv);
     }
 
-    // ── Think Log display (collapsible) ───────────────────────────────────
+    // — Think Log section —
     if (task.thinkLog && task.thinkLog.length > 0) {
-      const tlWrapper = document.createElement('div');
-      tlWrapper.className = 'think-log-wrapper';
-      const isCollapsed = (window._thinkLogCollapsed && window._thinkLogCollapsed.has(task.id));
-      const colBtn = document.createElement('button');
-      colBtn.className = 'think-log-collapse-btn';
-      colBtn.innerHTML = isCollapsed ? '▶ 💬 Think Log (' + task.thinkLog.length + ')' : '▼ 💬 Think Log (' + task.thinkLog.length + ')';
-      colBtn.addEventListener('click', e => {
-        e.stopPropagation();
-        if (!window._thinkLogCollapsed) window._thinkLogCollapsed = new Set();
-        if (window._thinkLogCollapsed.has(task.id)) window._thinkLogCollapsed.delete(task.id);
-        else window._thinkLogCollapsed.add(task.id);
-        render();
-      });
-      tlWrapper.appendChild(colBtn);
-      const panel = document.createElement('div');
-      panel.className = `think-log-panel ${isCollapsed ? 'hidden' : ''}`;
+      const secLbl3 = document.createElement('div');
+      secLbl3.style.cssText = 'font-size:0.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.05em;padding:8px 0 4px;';
+      secLbl3.textContent = '💬 Think Log';
+      detailPanel.appendChild(secLbl3);
+
+      const tlPanel = document.createElement('div');
+      tlPanel.className = 'think-log-panel';
+      tlPanel.style.display = 'block'; // always visible within the detail panel
       task.thinkLog.forEach(entry => {
-        const row = document.createElement('div');
-        row.className = `think-log-entry${entry.isSubchat ? ' is-subchat' : ''}${entry.isYellow ? ' is-yellow' : ''}${entry.isOrange ? ' is-orange' : ''}`;
-        row.innerHTML = `<span class="think-log-ts">${entry.timestamp || ''}</span><span class="think-log-text">${escHtml(entry.text || '')}</span>`;
-        panel.appendChild(row);
+        const eRow = document.createElement('div');
+        eRow.className = `think-log-entry${entry.isSubchat ? ' is-subchat' : ''}${entry.isYellow ? ' is-yellow' : ''}${entry.isOrange ? ' is-orange' : ''}`;
+        eRow.innerHTML = `<span class="think-log-ts">${entry.timestamp || ''}</span><span class="think-log-text">${escHtml(entry.text || '')}</span>`;
+        tlPanel.appendChild(eRow);
       });
       const tlActions = document.createElement('div');
       tlActions.className = 'think-log-actions';
@@ -2372,16 +2422,15 @@ function colorSwatchPicker(selectedIdx, onChange) {
       clearLogBtn.style.color = 'var(--danger)';
       clearLogBtn.innerHTML = '✕ Clear';
       clearLogBtn.addEventListener('click', () =>
-        confirmDialog('Clear the Think Log for this task?', () => {
-          DB.updateTask(task.id, { thinkLog: [] }); render();
-        })
+        confirmDialog('Clear the Think Log for this task?', () => { DB.updateTask(task.id, { thinkLog: [] }); render(); })
       );
       tlActions.appendChild(openAgainBtn);
       tlActions.appendChild(clearLogBtn);
-      panel.appendChild(tlActions);
-      tlWrapper.appendChild(panel);
-      li.appendChild(tlWrapper);
+      tlPanel.appendChild(tlActions);
+      detailPanel.appendChild(tlPanel);
     }
+
+    li.appendChild(detailPanel);
 
     return li;
   }
@@ -2404,6 +2453,14 @@ function colorSwatchPicker(selectedIdx, onChange) {
   function openNoteEditor(task, li) {
     li.querySelector('.task-note-wrapper')?.remove();
     li.querySelector('.note-input-wrap')?.remove();
+    // Ensure detail panel is open
+    if (!detailOpenState.get(task.id) && !defaultDetailOpen) {
+      detailOpenState.set(task.id, true);
+      const panel = li.querySelector('.task-detail-panel');
+      const btn   = li.querySelector('.detail-toggle-btn');
+      if (panel) panel.style.display = 'block';
+      if (btn)   { btn.classList.add('is-open'); btn.textContent = 'Details ▲'; }
+    }
     const wrap = document.createElement('div'); wrap.className = 'note-input-wrap';
     const ta   = document.createElement('textarea'); ta.className = 'note-textarea'; ta.rows = 4;
     ta.placeholder = 'Each line becomes a bullet •\nType your notes here…\nDrag bottom-right corner to resize';
@@ -2419,7 +2476,11 @@ function colorSwatchPicker(selectedIdx, onChange) {
     canB.addEventListener('click', () => { wrap.remove(); render(); });
     btnGroup.appendChild(saveB); btnGroup.appendChild(canB);
     wrap.appendChild(ta); wrap.appendChild(btnGroup);
-    li.appendChild(wrap); ta.focus();
+    // Place inside the detail panel if it exists, otherwise at end of li
+    const detailPanel = li.querySelector('.task-detail-panel');
+    if (detailPanel) detailPanel.appendChild(wrap);
+    else li.appendChild(wrap);
+    ta.focus();
   }
 
   // ── Think Log — in-page overlay ─────────────────────────────────────────
@@ -2740,6 +2801,14 @@ function colorSwatchPicker(selectedIdx, onChange) {
 
   function openSubtaskAddRow(task, li) {
     if (li.querySelector('.subtask-input-row')) return;
+    // Ensure detail panel is open
+    if (!detailOpenState.get(task.id) && !defaultDetailOpen) {
+      detailOpenState.set(task.id, true);
+      const panel = li.querySelector('.task-detail-panel');
+      const btn   = li.querySelector('.detail-toggle-btn');
+      if (panel) panel.style.display = 'block';
+      if (btn)   { btn.classList.add('is-open'); btn.textContent = 'Details ▲'; }
+    }
     const stRow = document.createElement('div'); stRow.className = 'subtask-input-row';
     const inp   = document.createElement('input'); inp.type = 'text'; inp.className = 'task-input'; inp.placeholder = 'Subtask…';
     const addB  = document.createElement('button'); addB.className = 'btn btn-primary btn-sm'; addB.textContent = 'Add';
@@ -2748,7 +2817,10 @@ function colorSwatchPicker(selectedIdx, onChange) {
     inp.addEventListener('keypress', e => { if (e.key === 'Enter') doAdd(); });
     inp.addEventListener('keydown',  e => { if (e.key === 'Escape') stRow.remove(); });
     stRow.appendChild(inp); stRow.appendChild(addB);
-    li.appendChild(stRow); inp.focus();
+    const detailPanel = li.querySelector('.task-detail-panel');
+    if (detailPanel) detailPanel.appendChild(stRow);
+    else li.appendChild(stRow);
+    inp.focus();
   }
 
   // ── Timer ─────────────────────────────────────────────────────────────────
@@ -2990,6 +3062,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
     openThinkLog,
     openThinkLogById: id => { const t = DB.getTask(id); if (t) openThinkLog(t); },
     _kDel: id => confirmDialog('Delete this task?', () => { DB.deleteTask(id); render(); }),
+    setDefaultDetailOpen(val) { defaultDetailOpen = !!val; saveSettings(); },
   };
 })();
 
@@ -3178,46 +3251,84 @@ function stopDrivePoll() {
 }
 
 function setupCloudUI() {
-  const toggleBtn  = document.getElementById('cloudToggleBtn');
-  const dropdown   = document.getElementById('cloudDropdown');
-  if (!toggleBtn) return;
+  // Use event delegation on document.body so listeners survive sidebar re-renders
+  document.body.addEventListener('click', async e => {
+    const toggleBtn = document.getElementById('cloudToggleBtn');
+    const dropdown  = document.getElementById('cloudDropdown');
+    if (!dropdown) return;
 
-  toggleBtn.addEventListener('click', e => {
-    e.stopPropagation();
-    dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-  });
-  document.addEventListener('click', e => {
-    if (!toggleBtn.contains(e.target) && !dropdown.contains(e.target))
+    // Toggle the dropdown open/closed
+    if (toggleBtn && toggleBtn.contains(e.target)) {
+      e.stopPropagation();
+      dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+      return;
+    }
+
+    // Close dropdown when clicking outside
+    if (!dropdown.contains(e.target)) {
       dropdown.style.display = 'none';
-  });
+      return;
+    }
 
-  document.getElementById('signInMenuItem')?.addEventListener('click', async () => {
-    if (!fbAuth) { alert('Firebase not ready'); return; }
-    try {
-      await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    // Sign in
+    if (e.target.closest('#signInMenuItem')) {
+      e.stopPropagation();
+      if (!fbAuth) { alert('Firebase not ready'); return; }
+      // Show visual feedback immediately
+      const item = e.target.closest('#signInMenuItem');
+      const orig = item.innerHTML;
+      item.innerHTML = '<span class="cloud-dropdown-icon">⏳</span>Signing in…';
+      item.style.pointerEvents = 'none';
+      try {
+        await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+        dropdown.style.display = 'none';
+      } catch(err) {
+        item.innerHTML = orig;
+        item.style.pointerEvents = '';
+        if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
+          alert('Sign-in failed: ' + err.message);
+        }
+      }
+      return;
+    }
+
+    // Sign out
+    if (e.target.closest('#signOutMenuItem')) {
+      e.stopPropagation();
+      if (fbAuth) await fbAuth.signOut();
+      autoSyncEnabled = false; updateCloudUI(false);
       dropdown.style.display = 'none';
-    } catch(e) { alert('Sign-in failed: ' + e.message); }
+      return;
+    }
+
+    // Save to cloud
+    if (e.target.closest('#saveNowMenuItem')) {
+      e.stopPropagation();
+      if (fbUser) { await fbSaveAll(false); } else alert('Please sign in first');
+      dropdown.style.display = 'none';
+      return;
+    }
+
+    // Load from cloud
+    if (e.target.closest('#loadNowMenuItem')) {
+      e.stopPropagation();
+      if (fbUser) { await fbLoadAll(false); } else alert('Please sign in first');
+      dropdown.style.display = 'none';
+      return;
+    }
+
+    // Auto-sync toggle row click (but not the checkbox itself — let its own change handler fire)
+    if (e.target.closest('#autoSyncItem') && e.target.type !== 'checkbox') {
+      e.stopPropagation();
+      const cb = document.getElementById('autoSyncToggle');
+      if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); }
+      return;
+    }
   });
 
-  document.getElementById('signOutMenuItem')?.addEventListener('click', async () => {
-    if (fbAuth) await fbAuth.signOut();
-    autoSyncEnabled = false; updateCloudUI(false);
-    dropdown.style.display = 'none';
-  });
-
-  document.getElementById('saveNowMenuItem')?.addEventListener('click', async () => {
-    if (fbUser) { await fbSaveAll(false); } else alert('Please sign in first');
-    dropdown.style.display = 'none';
-  });
-
-  document.getElementById('loadNowMenuItem')?.addEventListener('click', async () => {
-    if (fbUser) { await fbLoadAll(false); } else alert('Please sign in first');
-    dropdown.style.display = 'none';
-  });
-
-  const autoSyncToggle = document.getElementById('autoSyncToggle');
-  if (autoSyncToggle) {
-    autoSyncToggle.addEventListener('change', e => {
+  // Auto-sync checkbox — also delegated so it works after re-renders
+  document.body.addEventListener('change', e => {
+    if (e.target.id === 'autoSyncToggle') {
       autoSyncEnabled = e.target.checked;
       if (fbUser) {
         localStorage.setItem('qpm_autoSync_' + fbUser.uid, autoSyncEnabled);
@@ -3225,8 +3336,8 @@ function setupCloudUI() {
         else stopDrivePoll();
       }
       updateSyncStatus();
-    });
-  }
+    }
+  });
 }
 
 // Boot the sync system after DOM is ready
