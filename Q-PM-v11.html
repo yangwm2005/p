@@ -1640,6 +1640,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
   let detailOpenState  = new Map();   // taskId → bool (per-task override)
   let defaultDetailOpen = false;      // global default
   let pendingEditId    = null;
+  let projectSort      = 'updated';   // 'updated' | 'priority' | 'progress' | 'name' | 'newest' | 'oldest'
 
   // ── Boot ──────────────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', function() {
@@ -1647,6 +1648,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
     // Load persisted settings
     const savedSettings = JSON.parse(localStorage.getItem('qpm_settings') || '{}');
     if (savedSettings.defaultDetailOpen !== undefined) defaultDetailOpen = savedSettings.defaultDetailOpen;
+    if (savedSettings.projectSort       !== undefined) projectSort       = savedSettings.projectSort;
     render();
 
     // ── Think Log overlay event wiring ────────────────────────────────────
@@ -1966,16 +1968,73 @@ function colorSwatchPicker(selectedIdx, onChange) {
   }
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
+  function sortProjects(projects, tasks) {
+    const enriched = projects.map(p => {
+      const pt   = tasks.filter(t => t.projectId === p.id);
+      const done = pt.filter(t => t.status === 'done').length;
+      const ppct = pt.length > 0 ? Math.round(done / pt.length * 100) : 0;
+      const crit = pt.filter(t => t.priority === 'critical' && t.status !== 'done').length;
+      const high = pt.filter(t => t.priority === 'high'     && t.status !== 'done').length;
+      // "last updated" = latest createdAt or completedAt among its tasks, falling back to project createdAt
+      const lastActivity = pt.reduce((mx, t) => Math.max(mx, t.createdAt||0, t.completedAt||0), p.createdAt||0);
+      return { p, pt, done, ppct, crit, high, lastActivity };
+    });
+
+    const sorted = [...enriched];
+    switch (projectSort) {
+      case 'updated':
+        sorted.sort((a, b) => b.lastActivity - a.lastActivity);
+        break;
+      case 'priority':
+        sorted.sort((a, b) => {
+          // critical first, then high, then by name
+          if (b.crit !== a.crit) return b.crit - a.crit;
+          if (b.high !== a.high) return b.high - a.high;
+          return a.p.name.localeCompare(b.p.name);
+        });
+        break;
+      case 'progress':
+        // least complete first (most work remaining)
+        sorted.sort((a, b) => a.ppct - b.ppct);
+        break;
+      case 'name':
+        sorted.sort((a, b) => a.p.name.localeCompare(b.p.name));
+        break;
+      case 'newest':
+        sorted.sort((a, b) => (b.p.createdAt||0) - (a.p.createdAt||0));
+        break;
+      case 'oldest':
+        sorted.sort((a, b) => (a.p.createdAt||0) - (b.p.createdAt||0));
+        break;
+    }
+    return sorted;
+  }
+
   function buildDashboard() {
     const stats    = DB.getStats();
     const projects = DB.getProjects();
     const tasks    = DB.getTasks();
     const pct = stats.totalTasks > 0 ? Math.round(stats.doneTasks / stats.totalTasks * 100) : 0;
-    const cards = projects.map(p => {
-      const pt   = tasks.filter(t => t.projectId === p.id);
-      const done = pt.filter(t => t.status === 'done').length;
-      const ppct = pt.length > 0 ? Math.round(done / pt.length * 100) : 0;
-      const crit = pt.filter(t => t.priority === 'critical' && t.status !== 'done').length;
+
+    const sortOptions = [
+      { key: 'updated',  label: '🕐 Last Updated' },
+      { key: 'priority', label: '🔴 Priority' },
+      { key: 'progress', label: '📊 Progress' },
+      { key: 'name',     label: '🔤 Name A–Z' },
+      { key: 'newest',   label: '✨ Newest' },
+      { key: 'oldest',   label: '📅 Oldest' },
+    ];
+    const sortBar = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+        <span style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-light);">Sort:</span>
+        ${sortOptions.map(o => `
+          <button class="filter-chip ${projectSort === o.key ? 'active' : ''}"
+            onclick="APP.setProjectSort('${o.key}')">${o.label}</button>
+        `).join('')}
+      </div>`;
+
+    const sorted = sortProjects(projects, tasks);
+    const cards = sorted.map(({ p, pt, done, ppct, crit, high }) => {
       const inp  = pt.filter(t => t.status === 'progress').length;
       const col  = projColor(p.color);
       return `<div class="project-card" onclick="APP.navigate('project','${p.id}')">
@@ -2003,6 +2062,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
         <div class="stat-card"><div class="stat-value" style="color:${stats.critical>0?'var(--danger)':'var(--text)'}">${stats.critical}</div><div class="stat-label">Critical Open</div></div>
         <div class="stat-card"><div class="stat-value" style="color:${stats.overdue>0?'var(--warn)':'var(--text)'}">${stats.overdue}</div><div class="stat-label">Overdue</div></div>
       </div>
+      ${sortBar}
       <div class="projects-grid">${cards}
         <div class="project-card" onclick="APP.showNewProjectDialog()"
           style="border:2px dashed var(--border);background:transparent;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;min-height:160px;cursor:pointer"
@@ -2068,7 +2128,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
 
   // ── Settings helpers ──────────────────────────────────────────────────────
   function saveSettings() {
-    localStorage.setItem('qpm_settings', JSON.stringify({ defaultDetailOpen }));
+    localStorage.setItem('qpm_settings', JSON.stringify({ defaultDetailOpen, projectSort }));
   }
 
   // Unified per-task detail toggle (subtasks + notes + think log)
@@ -3121,6 +3181,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
   function setFilter(type,value){ if(type==='priority') filterPriority=value; if(type==='status') filterStatus=value; renderContent(); }
   function setSearch(q){ searchQuery=q; renderContent(); }
   function setView(v){ currentView=v; renderContent(); renderTopbar(); }
+  function setProjectSort(key){ projectSort=key; saveSettings(); renderContent(); }
 
   // ── Public API ────────────────────────────────────────────────────────────
   window.APP = {
@@ -3128,7 +3189,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
     showNewProjectDialog, showEditProjectDialog, deleteProjectPrompt,
     showNewTaskDialog, showEditTaskDialog,
     quickAddTask,
-    setFilter, setSearch, setView,
+    setFilter, setSearch, setView, setProjectSort,
     exportData, importDataPrompt,
     kanbanDragStart, kanbanDragEnd, kanbanDragOver, kanbanDragEnter, kanbanDragLeave, kanbanDrop,
     openThinkLog,
