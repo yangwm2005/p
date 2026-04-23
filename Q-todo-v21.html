@@ -715,6 +715,16 @@
                     <span class="tog-track"></span>
                 </label>
             </div>
+            <div class="settings-row">
+                <label for="togAddToTop">
+                    Add new tasks to top
+                    <small>New tasks appear at the top of the list instead of the bottom</small>
+                </label>
+                <label class="tog-switch">
+                    <input type="checkbox" id="togAddToTop">
+                    <span class="tog-track"></span>
+                </label>
+            </div>
         </div>
     </header>
     <div class="tab-bar">
@@ -770,6 +780,13 @@
                     <span class="dd-toggle-label">Panels expanded by default<br><small>Subtasks, notes & think log</small></span>
                     <label class="dd-tog-switch">
                         <input type="checkbox" id="ddTogDefaultOn">
+                        <span class="dd-tog-track"></span>
+                    </label>
+                </div>
+                <div class="dd-toggle-row">
+                    <span class="dd-toggle-label">Add new tasks to top<br><small>New tasks added at top of list</small></span>
+                    <label class="dd-tog-switch">
+                        <input type="checkbox" id="ddTogAddToTop">
                         <span class="dd-tog-track"></span>
                     </label>
                 </div>
@@ -1573,6 +1590,11 @@
         const realTog = document.getElementById('togDefaultOn');
         const ddTog   = document.getElementById('ddTogDefaultOn');
         if (realTog && ddTog) ddTog.checked = realTog.checked;
+
+        // Add-to-top mirror
+        const realAddToTop = document.getElementById('togAddToTop');
+        const ddAddToTop   = document.getElementById('ddTogAddToTop');
+        if (realAddToTop && ddAddToTop) ddAddToTop.checked = realAddToTop.checked;
     }
 
     function _ddClose() {
@@ -1628,6 +1650,12 @@
         if (real && real.checked !== this.checked) real.click();
     });
 
+    // Wire ddTogAddToTop → real togAddToTop
+    document.getElementById('ddTogAddToTop').addEventListener('change', function() {
+        const real = document.getElementById('togAddToTop');
+        if (real && real.checked !== this.checked) real.click();
+    });
+
     // Close dropdown when clicking outside
     document.addEventListener('click', function(e) {
         const wrap = document.getElementById('cloudSyncDropdownWrap');
@@ -1662,7 +1690,10 @@
         let dateVal = document.getElementById('taskDate').value; 
         let targetDate = formatDate(new Date(dateVal));
         let newTask = { id: Date.now(), text, completed: false, date: targetDate, subtasks: [], subtasksVisible: true, timeSpentSeconds: 0 };
-        let ts = loadTasks(targetDate); ts.push(newTask); saveTasksToDate(targetDate, ts);
+        let ts = loadTasks(targetDate);
+        const addToTop = localStorage.getItem('qt_addToTop') === '1';
+        if (addToTop) ts.unshift(newTask); else ts.push(newTask);
+        saveTasksToDate(targetDate, ts);
         if(targetDate===todayStr) tasks = ts;
         taskInputEl.value = ''; document.getElementById('taskDate').value = formatInput(today);
         if(targetDate===formatDate(currentViewDate)) loadTasksForView();
@@ -2375,6 +2406,16 @@
         // Load saved setting (default: on)
         const saved = localStorage.getItem('qt_panelsDefaultOpen');
         tog.checked = saved !== '0';
+
+        // Add-to-top toggle
+        const togAddToTop = document.getElementById('togAddToTop');
+        togAddToTop.checked = localStorage.getItem('qt_addToTop') === '1';
+        togAddToTop.addEventListener('change', () => {
+            localStorage.setItem('qt_addToTop', togAddToTop.checked ? '1' : '0');
+            // sync mirror
+            const dd = document.getElementById('ddTogAddToTop');
+            if (dd) dd.checked = togAddToTop.checked;
+        });
 
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
