@@ -2465,9 +2465,442 @@ input:checked + .slider:before {
 }
         
     </style>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         MOBILE QUICK-WRITE ENHANCEMENT (v24)
+         On screens ≤ 768 px the layout switches to a focused
+         phone-first experience:
+           • Compact sticky header with date + sync pill
+           • Three main fields (Morning / Self-awareness / Night)
+             always visible, minimal chrome
+           • Every other section (calendar, Clip2Dynalist,
+             Health Journal, action buttons) collapsed into
+             a "More ▾" drawer — tap to expand when needed
+    ═══════════════════════════════════════════════════════════ -->
+    <style id="mobile-quick-style">
+    @media (max-width: 768px) {
+
+        /* ── reset body / container ── */
+        body { background: #f0f4f8; }
+        .container { padding: 0 0 100px 0; max-width: 100%; }
+
+        /* ── hide the big desktop header ── */
+        header { display: none !important; }
+
+        /* ── collapse grid into single column ── */
+        .main-content { display: flex !important; flex-direction: column !important; gap: 0 !important; }
+
+        /* ── hide entire calendar section (moved to drawer) ── */
+        .calendar-section { display: none !important; }
+
+        /* ── reflection section full width ── */
+        .reflection-section { padding: 0; width: 100%; }
+
+        /* ── reflection cards: clean minimal cards ── */
+        .reflection-card {
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            margin-bottom: 0 !important;
+            border-bottom: 1px solid #e2e8f0 !important;
+            padding: 14px 16px 16px !important;
+            background: white !important;
+        }
+        .morning-reflection  { border-top: 3px solid var(--morning-color)  !important; border-left: none !important; }
+        .selfaware-reflection { border-top: 3px solid var(--selfaware-color) !important; border-left: none !important; }
+        .night-reflection    { border-top: 3px solid var(--night-color)     !important; border-left: none !important; }
+
+        .reflection-header { margin-bottom: 6px !important; }
+        .reflection-title  { font-size: 1rem !important; }
+        .reflection-icon   { font-size: 1rem !important; }
+
+        .reflection-prompt { font-size: 0.78rem !important; padding: 5px 10px !important; margin-bottom: 8px !important; }
+
+        /* ── formatting toolbars: hide until focused (JS toggles class) ── */
+        .formatting-toolbar { display: none !important; }
+        .formatting-toolbar.mfmt-show { display: flex !important; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+
+        /* ── timestamp toolbar row inside self-awareness ── */
+        #mobile-ts-row { display: none !important; }
+        #mobile-ts-row.mfmt-show { display: flex !important; gap: 6px; margin-bottom: 8px; }
+
+        /* ── textarea ── */
+        textarea {
+            min-height: 130px !important;
+            resize: none !important;
+            font-size: 1rem !important;
+            padding: 12px !important;
+            border-radius: 8px !important;
+        }
+
+        /* ── hide desktop-only elements ── */
+        .section-popout-btn { display: none !important; }
+
+        /* ── hide bullet-timestamp Enter toggle row ── */
+        #bullet-ts-toggle-row { display: none !important; }
+
+        /* ── hide action-groups, health journal (togglable in drawer) ── */
+        .action-group { display: none !important; }
+        .action-group.drawer-open { display: block !important; padding: 12px 16px !important; background: #f8fafc !important; border-bottom: 1px solid #e2e8f0 !important; border-radius: 0 !important; }
+
+        /* health journal card hidden by default */
+        .reflection-card[style*="e53e3e"] { display: none !important; }
+        .reflection-card[style*="e53e3e"].drawer-open { display: block !important; }
+
+        /* ── Clip2Dynalist always hidden on mobile ── */
+        #clip-content { display: none !important; }
+        .reflection-header[onclick] { display: none !important; }
+        p[style*="Clip2Dynalist"], p[style*="Dynalist"] { display: none !important; }
+
+        /* ════════════════════════════════════
+           STICKY MOBILE HEADER
+        ════════════════════════════════════ */
+        #mobile-header {
+            position: sticky;
+            top: 0;
+            z-index: 500;
+            display: flex !important;
+            align-items: center;
+            justify-content: space-between;
+            background: linear-gradient(135deg, #5d7ba6, #667eea);
+            color: white;
+            padding: 10px 16px;
+            padding-top: calc(10px + env(safe-area-inset-top));
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        #mobile-header .mh-left { display: flex; flex-direction: column; line-height: 1.2; }
+        #mobile-header .mh-title { font-size: 1rem; font-weight: 700; }
+        #mobile-header .mh-date  { font-size: 0.72rem; opacity: 0.85; margin-top: 1px; }
+        #mobile-header .mh-right { display: flex; align-items: center; gap: 8px; }
+
+        #mobile-more-btn {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.4);
+            color: white;
+            border-radius: 8px;
+            padding: 7px 13px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        #mobile-more-btn:active { opacity: 0.75; }
+        #mobile-more-btn .arrow { font-size: 0.65rem; transition: transform 0.2s; }
+        #mobile-more-btn.open .arrow { transform: rotate(180deg); }
+
+        /* ════════════════════════════════════
+           "MORE" DRAWER
+        ════════════════════════════════════ */
+        #mobile-more-drawer {
+            display: none;
+            background: white;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        #mobile-more-drawer.open { display: block; }
+
+        .drawer-item {
+            display: flex;
+            align-items: center;
+            padding: 15px 18px;
+            border-bottom: 1px solid #f0f4f8;
+            cursor: pointer;
+            font-size: 0.93rem;
+            font-weight: 600;
+            color: #2d3748;
+            transition: background 0.1s;
+            user-select: none;
+        }
+        .drawer-item:last-child { border-bottom: none; }
+        .drawer-item:active { background: #f8fafc; }
+        .drawer-item .di-icon { font-size: 1.1rem; margin-right: 12px; }
+        .drawer-item .di-arrow { margin-left: auto; font-size: 0.75rem; color: #a0aec0; transition: transform 0.2s; }
+        .drawer-item.expanded .di-arrow { transform: rotate(90deg); }
+
+        .drawer-pane { display: none; }
+        .drawer-pane.open { display: block; }
+
+        /* Calendar pane */
+        #drawer-calendar-pane .calendar-section {
+            display: block !important;
+            padding: 14px;
+            border-radius: 0;
+            box-shadow: none;
+            border-top: none !important;
+        }
+        .calendar-views { flex-wrap: wrap; gap: 6px; }
+        .view-btn { padding: 8px 12px; font-size: 0.8rem; }
+
+        /* Quick-actions pane */
+        .mobile-action-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            padding: 14px 18px;
+        }
+        .mobile-action-btn {
+            padding: 13px 10px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.88rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            transition: opacity 0.15s;
+        }
+        .mobile-action-btn:active { opacity: 0.8; }
+        .mab-save   { background: #48bb78; color: white; }
+        .mab-export { background: #667eea; color: white; }
+        .mab-load   { background: #f8fafc; color: #2d3748; border: 1.5px solid #e2e8f0; }
+        .mab-clear  { background: #fff5f5; color: #f56565; border: 1.5px solid #fed7d7; }
+
+        /* Health journal pane */
+        #drawer-health-pane .reflection-card[style*="e53e3e"] {
+            display: block !important;
+            border-radius: 0 !important;
+        }
+
+        /* ════════════════════════════════════
+           FLOATING FORMAT BAR (bottom)
+        ════════════════════════════════════ */
+        #mobile-fmt-bar {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 600;
+            background: white;
+            border-top: 1px solid #e2e8f0;
+            padding: 8px 12px;
+            padding-bottom: calc(8px + env(safe-area-inset-bottom));
+            box-shadow: 0 -4px 12px rgba(0,0,0,0.1);
+            align-items: center;
+            gap: 8px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        #mobile-fmt-bar.visible { display: flex; }
+
+        .mfb-btn {
+            flex-shrink: 0;
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1.5px solid #e2e8f0;
+            background: white;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            color: #2d3748;
+        }
+        .mfb-btn:active { background: #f0f4f8; }
+        .mfb-sep { width: 1px; height: 22px; background: #e2e8f0; flex-shrink: 0; }
+        .mfb-done { background: #5d7ba6; color: white; border-color: #5d7ba6; margin-left: auto; }
+
+        /* ── hide the gdrive panel content area (keep dropdown button) ── */
+        #gdrive-panel { display: none !important; }
+
+        /* ════════════════════════════════════
+           SECTION TOGGLE PILL BAR
+        ════════════════════════════════════ */
+        #section-toggle-bar {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            background: #edf2f7;
+            border-bottom: 2px solid #e2e8f0;
+            padding: 10px 12px;
+            position: sticky;
+            top: 0;
+            z-index: 490;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .stb-pill {
+            flex: 1;
+            min-width: 0;
+            padding: 9px 8px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            transition: all 0.2s;
+            background: white;
+            color: #718096;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            position: relative;
+            white-space: nowrap;
+        }
+        .stb-pill + .stb-pill { margin-left: 6px; }
+
+        /* active state per section */
+        .stb-pill.active-morning {
+            background: var(--morning-color);
+            color: white;
+            box-shadow: 0 3px 10px rgba(246,173,85,0.45);
+            transform: translateY(-1px);
+        }
+        .stb-pill.active-self {
+            background: var(--selfaware-color);
+            color: white;
+            box-shadow: 0 3px 10px rgba(76,154,138,0.45);
+            transform: translateY(-1px);
+        }
+        .stb-pill.active-night {
+            background: var(--night-color);
+            color: white;
+            box-shadow: 0 3px 10px rgba(126,107,201,0.45);
+            transform: translateY(-1px);
+        }
+
+        /* dot badge when section has content */
+        .stb-pill .stb-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            opacity: 0.6;
+            flex-shrink: 0;
+            display: none;
+        }
+        .stb-pill.has-content .stb-dot { display: inline-block; }
+
+        /* ── Focus mode: when one section is active,
+              collapse the others to compact header-only strips ── */
+        .reflection-card.section-collapsed {
+            padding: 0 !important;
+            border-bottom: 1px solid #e8edf3 !important;
+        }
+        .reflection-card.section-collapsed .reflection-header {
+            padding: 12px 16px;
+            margin-bottom: 0 !important;
+            cursor: pointer;
+        }
+        .reflection-card.section-collapsed .reflection-prompt,
+        .reflection-card.section-collapsed .formatting-toolbar,
+        .reflection-card.section-collapsed textarea,
+        .reflection-card.section-collapsed div[style*="display: flex"] {
+            display: none !important;
+        }
+
+        /* the single expanded card gets extra textarea height */
+        .reflection-card.section-focused {
+            padding: 14px 16px 20px !important;
+        }
+        .reflection-card.section-focused textarea {
+            min-height: calc(100dvh - 230px) !important;
+            transition: min-height 0.3s ease;
+        }
+
+        /* subtle collapsed label */
+        .section-collapsed-label {
+            display: none;
+            font-size: 0.72rem;
+            font-weight: 600;
+            opacity: 0.5;
+            margin-left: 6px;
+        }
+        .reflection-card.section-collapsed .section-collapsed-label { display: inline; }
+
+    }
+
+    /* desktop: always hide the mobile-only elements */
+    @media (min-width: 769px) {
+        #mobile-header { display: none !important; }
+        #mobile-more-drawer { display: none !important; }
+        #mobile-fmt-bar { display: none !important; }
+        #section-toggle-bar { display: none !important; }
+    }
+    </style>
 </head>
 <body>
     <div class="container">
+
+        <!-- ══ MOBILE STICKY HEADER + MORE DRAWER (hidden on desktop) ══ -->
+        <div id="mobile-header">
+            <div class="mh-left">
+                <div class="mh-title">🌅 Mindful Reflections</div>
+                <div class="mh-date" id="mobile-header-date"></div>
+            </div>
+            <div class="mh-right">
+                <button id="mobile-more-btn">☰ More <span class="arrow">▾</span></button>
+            </div>
+        </div>
+
+        <!-- More drawer -->
+        <div id="mobile-more-drawer">
+
+            <!-- 1. Calendar & History -->
+            <div class="drawer-item" id="di-calendar">
+                <span class="di-icon">📅</span> Calendar &amp; History
+                <span class="di-arrow">›</span>
+            </div>
+            <div class="drawer-pane" id="drawer-calendar-pane"></div>
+
+            <!-- 2. Quick Actions -->
+            <div class="drawer-item" id="di-actions">
+                <span class="di-icon">⚡</span> Quick Actions
+                <span class="di-arrow">›</span>
+            </div>
+            <div class="drawer-pane" id="drawer-actions-pane">
+                <div class="mobile-action-grid">
+                    <button class="mobile-action-btn mab-save"   id="mob-save-btn">💾 Save</button>
+                    <button class="mobile-action-btn mab-export" id="mob-export-btn">📤 Export</button>
+                    <label  class="mobile-action-btn mab-load"   for="mob-file-input">📂 Load JSON</label>
+                    <button class="mobile-action-btn mab-clear"  id="mob-clear-btn">🗑 Clear</button>
+                </div>
+                <input type="file" id="mob-file-input" style="display:none" accept=".json">
+            </div>
+
+            <!-- 3. Cloud Sync -->
+            <div class="drawer-item" id="di-sync">
+                <span class="di-icon">☁️</span> Cloud Sync
+                <span class="di-arrow">›</span>
+            </div>
+            <div class="drawer-pane" id="drawer-sync-pane" style="padding:14px 18px 18px;"></div>
+
+            <!-- 4. Health Journal -->
+            <div class="drawer-item" id="di-health">
+                <span class="di-icon">❤️</span> Health Journal
+                <span class="di-arrow">›</span>
+            </div>
+            <div class="drawer-pane" id="drawer-health-pane"></div>
+
+        </div>
+
+        <!-- ══ SECTION TOGGLE PILL BAR (mobile only, always visible) ══ -->
+        <div id="section-toggle-bar">
+            <button class="stb-pill active-morning" id="stb-morning" data-section="morning">
+                ☀️ Morning <span class="stb-dot"></span>
+            </button>
+            <button class="stb-pill active-self" id="stb-self" data-section="self">
+                🧠 Awareness <span class="stb-dot"></span>
+            </button>
+            <button class="stb-pill active-night" id="stb-night" data-section="night">
+                🌙 Evening <span class="stb-dot"></span>
+            </button>
+        </div>
+
+        <!-- Floating format toolbar (shown when a textarea is focused on mobile) -->
+        <div id="mobile-fmt-bar">
+            <button class="mfb-btn" id="mfb-bullet">• Bullet</button>
+            <button class="mfb-btn" id="mfb-number">1. Number</button>
+            <div class="mfb-sep"></div>
+            <button class="mfb-btn" id="mfb-timestamp">⏰ Time</button>
+            <button class="mfb-btn" id="mfb-bt">•⏰ Bullet+Time</button>
+            <div class="mfb-sep"></div>
+            <button class="mfb-btn mfb-done" id="mfb-done">Done ✓</button>
+        </div>
+        <!-- END MOBILE UI -->
+
         <header>
             <h1>🌅 Mindful Reflections</h1>
             <p class="subtitle">Cultivate self-awareness through daily reflections</p>
@@ -5221,5 +5654,392 @@ if (timestripeBtn) {
         // END FIREBASE CLOUD SYNC
         // ════════════════════════════════════════════════════════════════
     </script>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         MOBILE QUICK-WRITE JAVASCRIPT (v24)
+         Runs only when viewport width ≤ 768 px.
+    ════════════════════════════════════════════════════════════════ -->
+    <script>
+    (function() {
+        function isMobile() { return window.innerWidth <= 768; }
+
+        /* ── Populate mobile header date ── */
+        function setMobileDate() {
+            const el = document.getElementById('mobile-header-date');
+            if (!el) return;
+            const now = new Date();
+            el.textContent = now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        }
+
+        /* ── Drawer logic ── */
+        const drawerItems = {
+            'di-calendar': 'drawer-calendar-pane',
+            'di-actions' : 'drawer-actions-pane',
+            'di-sync'    : 'drawer-sync-pane',
+            'di-health'  : 'drawer-health-pane',
+        };
+
+        function initCalendarPane() {
+            const pane = document.getElementById('drawer-calendar-pane');
+            if (!pane || pane.dataset.populated) return;
+            // Move the calendar section into the pane
+            const cal = document.querySelector('.calendar-section');
+            if (cal) pane.appendChild(cal);
+            pane.dataset.populated = '1';
+        }
+
+        function initHealthPane() {
+            const pane = document.getElementById('drawer-health-pane');
+            if (!pane || pane.dataset.populated) return;
+            // Move the health journal card
+            const health = document.querySelector('.reflection-card[style*="e53e3e"]');
+            if (health) pane.appendChild(health);
+            pane.dataset.populated = '1';
+        }
+
+        function initSyncPane() {
+            const pane = document.getElementById('drawer-sync-pane');
+            if (!pane || pane.dataset.populated) return;
+            // Clone the dropdown content into the pane with nicer layout
+            pane.innerHTML = `
+                <div style="display:flex;flex-direction:column;gap:10px">
+                    <div id="mob-sync-status" style="font-size:0.85rem;color:#718096;padding:8px 0;"></div>
+                    <button id="mob-signin-btn" style="padding:11px;background:#4285f4;color:white;border:none;border-radius:10px;font-weight:700;font-size:0.9rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">🔐 Sign in with Google</button>
+                    <div style="display:flex;gap:8px;">
+                        <button id="mob-cloud-save" style="flex:1;padding:11px;background:#48bb78;color:white;border:none;border-radius:10px;font-weight:700;font-size:0.85rem;cursor:pointer;">☁ Save Now</button>
+                        <button id="mob-cloud-load" style="flex:1;padding:11px;background:#f8fafc;color:#2d3748;border:1.5px solid #e2e8f0;border-radius:10px;font-weight:700;font-size:0.85rem;cursor:pointer;">⬇ Load</button>
+                    </div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;">
+                        <div>
+                            <div style="font-weight:700;font-size:0.88rem;color:#2d3748;">🔄 Auto-sync</div>
+                            <div style="font-size:0.75rem;color:#a0aec0;margin-top:2px;">Saves changes automatically</div>
+                        </div>
+                        <label class="switch" style="margin:0">
+                            <input type="checkbox" id="mob-autosync-toggle">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <button id="mob-signout-btn" style="padding:10px;background:#fff5f5;color:#f56565;border:1.5px solid #fed7d7;border-radius:10px;font-weight:700;font-size:0.85rem;cursor:pointer;">🚪 Sign Out</button>
+                </div>
+            `;
+            pane.dataset.populated = '1';
+
+            // Wire up sync buttons to the existing Firebase functions
+            document.getElementById('mob-signin-btn')?.addEventListener('click', () => {
+                document.getElementById('dropdown-signin')?.click();
+            });
+            document.getElementById('mob-cloud-save')?.addEventListener('click', () => {
+                document.getElementById('dropdown-save')?.click();
+            });
+            document.getElementById('mob-cloud-load')?.addEventListener('click', () => {
+                document.getElementById('dropdown-load')?.click();
+            });
+            document.getElementById('mob-signout-btn')?.addEventListener('click', () => {
+                document.getElementById('dropdown-signout')?.click();
+            });
+            const mobAuto = document.getElementById('mob-autosync-toggle');
+            const dropAuto = document.getElementById('dropdown-autosync-toggle');
+            if (mobAuto && dropAuto) {
+                mobAuto.checked = dropAuto.checked;
+                mobAuto.addEventListener('change', function() {
+                    dropAuto.checked = this.checked;
+                    dropAuto.dispatchEvent(new Event('change'));
+                });
+                dropAuto.addEventListener('change', function() {
+                    mobAuto.checked = this.checked;
+                });
+            }
+        }
+
+        function setupDrawer() {
+            const moreBtn = document.getElementById('mobile-more-btn');
+            const drawer  = document.getElementById('mobile-more-drawer');
+            if (!moreBtn || !drawer) return;
+
+            moreBtn.addEventListener('click', () => {
+                const open = drawer.classList.toggle('open');
+                moreBtn.classList.toggle('open', open);
+                if (open) {
+                    // lazy-init panes
+                    initCalendarPane();
+                    initHealthPane();
+                    initSyncPane();
+                    // Restore calendar display inside pane
+                    const cal = drawer.querySelector('.calendar-section');
+                    if (cal) cal.style.display = '';
+                }
+            });
+
+            Object.keys(drawerItems).forEach(diId => {
+                const di   = document.getElementById(diId);
+                const pane = document.getElementById(drawerItems[diId]);
+                if (!di || !pane) return;
+                di.addEventListener('click', () => {
+                    const expanding = !pane.classList.contains('open');
+                    // Close all panes first
+                    Object.values(drawerItems).forEach(pid => {
+                        const p = document.getElementById(pid);
+                        if (p) p.classList.remove('open');
+                    });
+                    document.querySelectorAll('.drawer-item').forEach(d => d.classList.remove('expanded'));
+                    if (expanding) {
+                        pane.classList.add('open');
+                        di.classList.add('expanded');
+                    }
+                });
+            });
+        }
+
+        /* ── Quick-action buttons wiring ── */
+        function setupQuickActions() {
+            document.getElementById('mob-save-btn')?.addEventListener('click', () => {
+                document.getElementById('save-btn')?.click();
+            });
+            document.getElementById('mob-export-btn')?.addEventListener('click', () => {
+                document.getElementById('export-btn')?.click();
+            });
+            document.getElementById('mob-clear-btn')?.addEventListener('click', () => {
+                document.getElementById('clear-btn')?.click();
+            });
+            document.getElementById('mob-file-input')?.addEventListener('change', function() {
+                const realInput = document.getElementById('file-input');
+                if (!realInput || !this.files[0]) return;
+                const dt = new DataTransfer();
+                dt.items.add(this.files[0]);
+                realInput.files = dt.files;
+                realInput.dispatchEvent(new Event('change'));
+            });
+        }
+
+        /* ── Floating format bar ── */
+        let activeMobileTextarea = null;
+
+        function getActiveTextareaId() {
+            if (!activeMobileTextarea) return null;
+            return activeMobileTextarea.id;
+        }
+
+        function setupFmtBar() {
+            const fmtBar = document.getElementById('mobile-fmt-bar');
+            if (!fmtBar) return;
+
+            const textareas = ['morning-text', 'selfaware-text', 'night-text'];
+            textareas.forEach(id => {
+                const ta = document.getElementById(id);
+                if (!ta) return;
+                ta.addEventListener('focus', () => {
+                    if (!isMobile()) return;
+                    activeMobileTextarea = ta;
+                    fmtBar.classList.add('visible');
+                });
+            });
+
+            // Done button — blur textarea, hide bar
+            document.getElementById('mfb-done')?.addEventListener('click', () => {
+                if (activeMobileTextarea) activeMobileTextarea.blur();
+                fmtBar.classList.remove('visible');
+                activeMobileTextarea = null;
+            });
+
+            // Format buttons — delegate to existing applyFormatting or insert helpers
+            function doFormat(formatType) {
+                const ta = activeMobileTextarea;
+                if (!ta) return;
+                // Find the matching toolbar button and click it
+                const toolbar = document.querySelector(`.formatting-toolbar[data-target="${ta.id}"]`);
+                if (toolbar) {
+                    const btn = toolbar.querySelector(`[data-format="${formatType}"]`);
+                    if (btn) { btn.click(); return; }
+                }
+                // Fallback: simple insertion
+                const start = ta.selectionStart;
+                const prefix = formatType === 'bullet' ? '• ' : '1. ';
+                ta.value = ta.value.substring(0, start) + prefix + ta.value.substring(start);
+                ta.selectionStart = ta.selectionEnd = start + prefix.length;
+                ta.dispatchEvent(new Event('input'));
+            }
+
+            document.getElementById('mfb-bullet')?.addEventListener('click', () => doFormat('bullet'));
+            document.getElementById('mfb-number')?.addEventListener('click', () => doFormat('number'));
+
+            document.getElementById('mfb-timestamp')?.addEventListener('click', () => {
+                const ta = activeMobileTextarea;
+                if (!ta) return;
+                // Try clicking the existing timestamp button for this section
+                const section = ta.id.replace('-text', '');
+                const tsBtn = document.getElementById(`timestamp-${section}-btn`);
+                if (tsBtn) { tsBtn.click(); return; }
+                // Fallback
+                const now = new Date();
+                const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const pos = ta.selectionStart;
+                ta.value = ta.value.substring(0, pos) + `[${ts}] ` + ta.value.substring(pos);
+                ta.selectionStart = ta.selectionEnd = pos + ts.length + 3;
+                ta.dispatchEvent(new Event('input'));
+            });
+
+            document.getElementById('mfb-bt')?.addEventListener('click', () => {
+                const ta = activeMobileTextarea;
+                if (!ta) return;
+                const section = ta.id.replace('-text', '');
+                const btBtn = document.getElementById(`bullet-timestamp-${section}-btn`);
+                if (btBtn) { btBtn.click(); return; }
+                // Fallback
+                const now = new Date();
+                const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const pos = ta.selectionStart;
+                const insert = `• [${ts}] `;
+                ta.value = ta.value.substring(0, pos) + insert + ta.value.substring(pos);
+                ta.selectionStart = ta.selectionEnd = pos + insert.length;
+                ta.dispatchEvent(new Event('input'));
+            });
+        }
+
+        /* ════════════════════════════════════════════
+           SECTION TOGGLE LOGIC
+           Three pills: tap once = focus that section
+                        tap again = restore all three
+        ════════════════════════════════════════════ */
+        function setupSectionToggles() {
+            if (!isMobile()) return;
+
+            const sections = [
+                {
+                    id: 'morning',
+                    pillId: 'stb-morning',
+                    cardSel: '.morning-reflection',
+                    activeClass: 'active-morning',
+                    textareaId: 'morning-text',
+                },
+                {
+                    id: 'self',
+                    pillId: 'stb-self',
+                    cardSel: '.selfaware-reflection',
+                    activeClass: 'active-self',
+                    textareaId: 'selfaware-text',
+                },
+                {
+                    id: 'night',
+                    pillId: 'stb-night',
+                    cardSel: '.night-reflection',
+                    activeClass: 'active-night',
+                    textareaId: 'night-text',
+                },
+            ];
+
+            // track which section is in focus-mode (null = all visible)
+            let focusedSection = null;
+
+            function getCard(s) {
+                return document.querySelector(s.cardSel);
+            }
+
+            function applyState() {
+                sections.forEach(s => {
+                    const card = getCard(s);
+                    const pill = document.getElementById(s.pillId);
+                    if (!card || !pill) return;
+
+                    if (focusedSection === null) {
+                        // All-visible mode
+                        card.classList.remove('section-collapsed', 'section-focused');
+                        pill.classList.add(s.activeClass);
+                        pill.style.opacity = '1';
+                        pill.title = `Focus on ${s.id}`;
+                    } else if (focusedSection === s.id) {
+                        // This one is focused
+                        card.classList.remove('section-collapsed');
+                        card.classList.add('section-focused');
+                        pill.classList.add(s.activeClass);
+                        pill.style.opacity = '1';
+                        pill.title = 'Show all sections';
+                    } else {
+                        // Others are collapsed
+                        card.classList.remove('section-focused');
+                        card.classList.add('section-collapsed');
+                        pill.classList.remove(s.activeClass);
+                        pill.style.opacity = '0.42';
+                        pill.title = `Switch to ${s.id}`;
+                    }
+                });
+            }
+
+            function updateDots() {
+                sections.forEach(s => {
+                    const ta = document.getElementById(s.textareaId);
+                    const pill = document.getElementById(s.pillId);
+                    if (!ta || !pill) return;
+                    pill.classList.toggle('has-content', ta.value.trim().length > 0);
+                });
+            }
+
+            // Tap pill: if already focused → restore all; else focus that section
+            sections.forEach(s => {
+                const pill = document.getElementById(s.pillId);
+                if (!pill) return;
+                pill.addEventListener('click', () => {
+                    if (!isMobile()) return;
+                    if (focusedSection === s.id) {
+                        focusedSection = null;   // toggle off → show all
+                    } else {
+                        focusedSection = s.id;   // focus this one
+                        // Auto-scroll to the focused card
+                        setTimeout(() => {
+                            const card = getCard(s);
+                            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }, 80);
+                    }
+                    applyState();
+                });
+            });
+
+            // Tapping the collapsed header strip switches focus to that section
+            sections.forEach(s => {
+                const card = getCard(s);
+                if (!card) return;
+                const header = card.querySelector('.reflection-header');
+                if (!header) return;
+                header.addEventListener('click', () => {
+                    if (!isMobile()) return;
+                    if (card.classList.contains('section-collapsed')) {
+                        focusedSection = s.id;
+                        applyState();
+                        setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+                    }
+                });
+            });
+
+            // Watch textarea content changes to show/hide dots
+            sections.forEach(s => {
+                const ta = document.getElementById(s.textareaId);
+                if (ta) {
+                    ta.addEventListener('input', updateDots);
+                    // Also update when data loads
+                    new MutationObserver(updateDots).observe(ta, { characterData: true, subtree: true });
+                }
+            });
+
+            // Initial state and dot refresh after data likely loaded
+            applyState();
+            setTimeout(updateDots, 800);
+        }
+
+        /* ── Initialize on DOM ready ── */
+        function init() {
+            setMobileDate();
+            setupDrawer();
+            setupQuickActions();
+            setupFmtBar();
+            setupSectionToggles();
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    })();
+    </script>
+    <!-- END MOBILE QUICK-WRITE JAVASCRIPT -->
 </body>
 </html>
