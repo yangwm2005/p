@@ -2704,6 +2704,112 @@ input:checked + .slider:before {
         /* ── hide the gdrive panel content area (keep dropdown button) ── */
         #gdrive-panel { display: none !important; }
 
+        /* ════════════════════════════════════
+           SECTION TOGGLE PILL BAR
+        ════════════════════════════════════ */
+        #section-toggle-bar {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            background: #edf2f7;
+            border-bottom: 2px solid #e2e8f0;
+            padding: 10px 12px;
+            position: sticky;
+            top: 0;
+            z-index: 490;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .stb-pill {
+            flex: 1;
+            min-width: 0;
+            padding: 9px 8px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            transition: all 0.2s;
+            background: white;
+            color: #718096;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            position: relative;
+            white-space: nowrap;
+        }
+        .stb-pill + .stb-pill { margin-left: 6px; }
+
+        /* active state per section */
+        .stb-pill.active-morning {
+            background: var(--morning-color);
+            color: white;
+            box-shadow: 0 3px 10px rgba(246,173,85,0.45);
+            transform: translateY(-1px);
+        }
+        .stb-pill.active-self {
+            background: var(--selfaware-color);
+            color: white;
+            box-shadow: 0 3px 10px rgba(76,154,138,0.45);
+            transform: translateY(-1px);
+        }
+        .stb-pill.active-night {
+            background: var(--night-color);
+            color: white;
+            box-shadow: 0 3px 10px rgba(126,107,201,0.45);
+            transform: translateY(-1px);
+        }
+
+        /* dot badge when section has content */
+        .stb-pill .stb-dot {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            opacity: 0.6;
+            flex-shrink: 0;
+            display: none;
+        }
+        .stb-pill.has-content .stb-dot { display: inline-block; }
+
+        /* ── Focus mode: when one section is active,
+              collapse the others to compact header-only strips ── */
+        .reflection-card.section-collapsed {
+            padding: 0 !important;
+            border-bottom: 1px solid #e8edf3 !important;
+        }
+        .reflection-card.section-collapsed .reflection-header {
+            padding: 12px 16px;
+            margin-bottom: 0 !important;
+            cursor: pointer;
+        }
+        .reflection-card.section-collapsed .reflection-prompt,
+        .reflection-card.section-collapsed .formatting-toolbar,
+        .reflection-card.section-collapsed textarea,
+        .reflection-card.section-collapsed div[style*="display: flex"] {
+            display: none !important;
+        }
+
+        /* the single expanded card gets extra textarea height */
+        .reflection-card.section-focused {
+            padding: 14px 16px 20px !important;
+        }
+        .reflection-card.section-focused textarea {
+            min-height: calc(100dvh - 230px) !important;
+            transition: min-height 0.3s ease;
+        }
+
+        /* subtle collapsed label */
+        .section-collapsed-label {
+            display: none;
+            font-size: 0.72rem;
+            font-weight: 600;
+            opacity: 0.5;
+            margin-left: 6px;
+        }
+        .reflection-card.section-collapsed .section-collapsed-label { display: inline; }
+
     }
 
     /* desktop: always hide the mobile-only elements */
@@ -2711,6 +2817,7 @@ input:checked + .slider:before {
         #mobile-header { display: none !important; }
         #mobile-more-drawer { display: none !important; }
         #mobile-fmt-bar { display: none !important; }
+        #section-toggle-bar { display: none !important; }
     }
     </style>
 </head>
@@ -2767,6 +2874,19 @@ input:checked + .slider:before {
             </div>
             <div class="drawer-pane" id="drawer-health-pane"></div>
 
+        </div>
+
+        <!-- ══ SECTION TOGGLE PILL BAR (mobile only, always visible) ══ -->
+        <div id="section-toggle-bar">
+            <button class="stb-pill active-morning" id="stb-morning" data-section="morning">
+                ☀️ Morning <span class="stb-dot"></span>
+            </button>
+            <button class="stb-pill active-self" id="stb-self" data-section="self">
+                🧠 Awareness <span class="stb-dot"></span>
+            </button>
+            <button class="stb-pill active-night" id="stb-night" data-section="night">
+                🌙 Evening <span class="stb-dot"></span>
+            </button>
         </div>
 
         <!-- Floating format toolbar (shown when a textarea is focused on mobile) -->
@@ -5775,12 +5895,142 @@ if (timestripeBtn) {
             });
         }
 
+        /* ════════════════════════════════════════════
+           SECTION TOGGLE LOGIC
+           Three pills: tap once = focus that section
+                        tap again = restore all three
+        ════════════════════════════════════════════ */
+        function setupSectionToggles() {
+            if (!isMobile()) return;
+
+            const sections = [
+                {
+                    id: 'morning',
+                    pillId: 'stb-morning',
+                    cardSel: '.morning-reflection',
+                    activeClass: 'active-morning',
+                    textareaId: 'morning-text',
+                },
+                {
+                    id: 'self',
+                    pillId: 'stb-self',
+                    cardSel: '.selfaware-reflection',
+                    activeClass: 'active-self',
+                    textareaId: 'selfaware-text',
+                },
+                {
+                    id: 'night',
+                    pillId: 'stb-night',
+                    cardSel: '.night-reflection',
+                    activeClass: 'active-night',
+                    textareaId: 'night-text',
+                },
+            ];
+
+            // track which section is in focus-mode (null = all visible)
+            let focusedSection = null;
+
+            function getCard(s) {
+                return document.querySelector(s.cardSel);
+            }
+
+            function applyState() {
+                sections.forEach(s => {
+                    const card = getCard(s);
+                    const pill = document.getElementById(s.pillId);
+                    if (!card || !pill) return;
+
+                    if (focusedSection === null) {
+                        // All-visible mode
+                        card.classList.remove('section-collapsed', 'section-focused');
+                        pill.classList.add(s.activeClass);
+                        pill.style.opacity = '1';
+                        pill.title = `Focus on ${s.id}`;
+                    } else if (focusedSection === s.id) {
+                        // This one is focused
+                        card.classList.remove('section-collapsed');
+                        card.classList.add('section-focused');
+                        pill.classList.add(s.activeClass);
+                        pill.style.opacity = '1';
+                        pill.title = 'Show all sections';
+                    } else {
+                        // Others are collapsed
+                        card.classList.remove('section-focused');
+                        card.classList.add('section-collapsed');
+                        pill.classList.remove(s.activeClass);
+                        pill.style.opacity = '0.42';
+                        pill.title = `Switch to ${s.id}`;
+                    }
+                });
+            }
+
+            function updateDots() {
+                sections.forEach(s => {
+                    const ta = document.getElementById(s.textareaId);
+                    const pill = document.getElementById(s.pillId);
+                    if (!ta || !pill) return;
+                    pill.classList.toggle('has-content', ta.value.trim().length > 0);
+                });
+            }
+
+            // Tap pill: if already focused → restore all; else focus that section
+            sections.forEach(s => {
+                const pill = document.getElementById(s.pillId);
+                if (!pill) return;
+                pill.addEventListener('click', () => {
+                    if (!isMobile()) return;
+                    if (focusedSection === s.id) {
+                        focusedSection = null;   // toggle off → show all
+                    } else {
+                        focusedSection = s.id;   // focus this one
+                        // Auto-scroll to the focused card
+                        setTimeout(() => {
+                            const card = getCard(s);
+                            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }, 80);
+                    }
+                    applyState();
+                });
+            });
+
+            // Tapping the collapsed header strip switches focus to that section
+            sections.forEach(s => {
+                const card = getCard(s);
+                if (!card) return;
+                const header = card.querySelector('.reflection-header');
+                if (!header) return;
+                header.addEventListener('click', () => {
+                    if (!isMobile()) return;
+                    if (card.classList.contains('section-collapsed')) {
+                        focusedSection = s.id;
+                        applyState();
+                        setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+                    }
+                });
+            });
+
+            // Watch textarea content changes to show/hide dots
+            sections.forEach(s => {
+                const ta = document.getElementById(s.textareaId);
+                if (ta) {
+                    ta.addEventListener('input', updateDots);
+                    // Also update when data loads
+                    new MutationObserver(updateDots).observe(ta, { characterData: true, subtree: true });
+                }
+            });
+
+            // Initial state and dot refresh after data likely loaded
+            applyState();
+            setTimeout(updateDots, 800);
+        }
+
         /* ── Initialize on DOM ready ── */
         function init() {
             setMobileDate();
             setupDrawer();
             setupQuickActions();
             setupFmtBar();
+            setupSectionToggles();
         }
 
         if (document.readyState === 'loading') {
