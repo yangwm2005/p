@@ -8606,6 +8606,23 @@ function toggleAutoSave() {
             el._t = setTimeout(()=>{ el.style.display='none'; }, 5000);
         }
 
+        // ── Expose core functions as globals for mobile sheet access ──
+        window._rnFirebase = {
+            getAuth:    function(){ return fbAuth; },
+            getUser:    function(){ return fbUser; },
+            init:       function(){ return initFirebase(); },
+            saveAll:    function(silent){ return fbSaveAll(silent); },
+            loadAll:    function(silent){ return fbLoadAll(silent); },
+            startPoll:  function(){ return fbStartPoll(); },
+            stopPoll:   function(){ return fbStopPoll(); },
+            isAutoSync: function(){ return fbIsAutoSyncEnabled(); },
+            updateAutoSyncUI: function(){ return fbUpdateAutoSyncUI(); },
+            cgmStatus:  function(msg,ok){ return cgmStatus(msg,ok); },
+            cgmBadge:   function(s){ return cgmUpdateBadge(s); },
+            cgmTs:      function(){ return cgmUpdateTimestamps(); },
+            cgmSignInState: function(){ return cgmUpdateSignInState(); }
+        };
+
         // Wrap fbSaveAll / fbLoadAll to capture cloud timestamps
         const _origFbSaveAll = fbSaveAll;
         window.fbSaveAll = async function(silent){
@@ -9080,25 +9097,135 @@ function toggleAutoSave() {
         }
         window._rnBar = updateSyncBar;
 
-        /* wire buttons */
-        var btnPairs = [
-            ['rs-signin',  function(){ var b=document.getElementById('cgm-signin')||document.getElementById('fbSignInBtn'); if(b)b.click(); closeSheet(); }],
-            ['rs-save',    function(){ var b=document.getElementById('cgm-save-now')||document.getElementById('gd-save-now'); if(b)b.click(); }],
-            ['rs-load',    function(){ var b=document.getElementById('cgm-load')||document.getElementById('gd-load'); if(b)b.click(); }],
-            ['rs-signout', function(){ var b=document.getElementById('cgm-signout')||document.getElementById('gdriveSignOutBtn'); if(b)b.click(); closeSheet(); }]
-        ];
-        btnPairs.forEach(function(p){
-            var btn = document.getElementById(p[0]);
-            if(btn) btn.addEventListener('click', p[1]);
-        });
+        /* ── Wire sheet buttons: call Firebase functions directly ── */
 
-        /* autosync toggle */
+        // Helper: show a status message inside the sheet
+        function sheetStatus(msg, ok){
+            var bt = document.getElementById('rs-bt');
+            var banner = document.getElementById('rs-banner');
+            if(!bt || !banner) return;
+            var prev = bt.textContent;
+            bt.textContent = msg;
+            banner.className = 'rs-banner ' + (ok ? 'ok' : 'error');
+            setTimeout(function(){ bt.textContent = prev; }, 3500);
+        }
+
+        // ── Sign In ──
+        var signinBtn = document.getElementById('rs-signin');
+        if(signinBtn){
+            signinBtn.addEventListener('click', function(){
+                var rn = window._rnFirebase;
+                if(!rn){ sheetStatus('Firebase not ready', false); return; }
+                if(!rn.init()){ sheetStatus('Firebase not configured', false); return; }
+                var auth = rn.getAuth();
+                if(!auth){ sheetStatus('Auth not initialised', false); return; }
+                var provider = new firebase.auth.GoogleAuthProvider();
+                sheetStatus('Opening Google sign-in…', true);
+                auth.signInWithPopup(provider).then(function(result){
+                    // onAuthStateChanged will fire and call cgmUpdateSignInState → updates sheet
+                    sheetStatus('Signed in!', true);
+                }).catch(function(e){
+                    if(e.code !== 'auth/popup-closed-by-user')
+                        sheetStatus('Sign-in failed: ' + e.message, false);
+                });
+                // Don't close sheet — user needs to see the result
+            });
+        }
+
+        // ── Save Now ──
+        var saveBtn = document.getElementById('rs-save');
+        if(saveBtn){
+            saveBtn.addEventListener('click', function(){
+                var rn = window._rnFirebase;
+                if(!rn || !rn.getUser()){ sheetStatus('Not signed in', false); return; }
+                sheetStatus('Saving to cloud…', true);
+                rn.cgmBadge('syncing');
+                rn.saveAll(false).then(function(){
+                    rn.cgmBadge('ok');
+                    rn.cgmTs();
+                    sheetStatus('Saved to cloud!', true);
+                    // Refresh timestamps in sheet
+                    var lk = localStorage.getItem('cgm_lastLocalSave') || '';
+                    var ck = localStorage.getItem('cgm_lastCloudSync') || '';
+                    var elL = document.getElementById('rs-ts-local');
+                    var elC = document.getElementById('rs-ts-cloud');
+                    if(elL) elL.textContent = fmt(lk);
+                    if(elC) elC.textContent = fmt(ck);
+                }).catch(function(e){
+                    rn.cgmBadge('error');
+                    sheetStatus('Save failed: ' + e.message, false);
+                });
+            });
+        }
+
+        // ── Load from Cloud ──
+        var loadBtn = document.getElementById('rs-load');
+        if(loadBtn){
+            loadBtn.addEventListener('click', function(){
+                var rn = window._rnFirebase;
+                if(!rn || !rn.getUser()){ sheetStatus('Not signed in', false); return; }
+                sheetStatus('Loading from cloud…', true);
+                rn.cgmBadge('syncing');
+                rn.loadAll(false).then(function(){
+                    rn.cgmBadge('ok');
+                    rn.cgmTs();
+                    sheetStatus('Loaded from cloud!', true);
+                    var lk = localStorage.getItem('cgm_lastLocalSave') || '';
+                    var ck = localStorage.getItem('cgm_lastCloudSync') || '';
+                    var elL = document.getElementById('rs-ts-local');
+                    var elC = document.getElementById('rs-ts-cloud');
+                    if(elL) elL.textContent = fmt(lk);
+                    if(elC) elC.textContent = fmt(ck);
+                }).catch(function(e){
+                    rn.cgmBadge('error');
+                    sheetStatus('Load failed: ' + e.message, false);
+                });
+            });
+        }
+
+        // ── Sign Out ──
+        var signoutBtn = document.getElementById('rs-signout');
+        if(signoutBtn){
+            signoutBtn.addEventListener('click', function(){
+                var rn = window._rnFirebase;
+                if(!rn){ closeSheet(); return; }
+                var auth = rn.getAuth();
+                if(auth){ auth.signOut().then(function(){
+                    localStorage.setItem('gdriveAutoSync','0');
+                    rn.updateAutoSyncUI();
+                    rn.cgmSignInState();
+                    rn.cgmBadge('');
+                    rn.cgmStatus('Signed out.', true);
+                    sheetStatus('Signed out.', true);
+                    closeSheet();
+                }); } else { closeSheet(); }
+            });
+        }
+
+        /* ── Auto-sync toggle: mirrors cgm-autosync directly ── */
         var rsA = document.getElementById('rs-autosync');
         var cgA = document.getElementById('cgm-autosync');
-        if(rsA && cgA){
-            rsA.checked = cgA.checked;
-            rsA.addEventListener('change', function(){ cgA.checked=this.checked; cgA.dispatchEvent(new Event('change')); });
-            cgA.addEventListener('change', function(){ rsA.checked=this.checked; });
+        if(rsA){
+            // Set initial state
+            rsA.checked = cgA ? cgA.checked : (localStorage.getItem('gdriveAutoSync')==='1');
+            rsA.addEventListener('change', function(){
+                var on = this.checked;
+                var rn = window._rnFirebase;
+                localStorage.setItem('gdriveAutoSync', on ? '1' : '0');
+                if(rn) rn.updateAutoSyncUI();
+                if(cgA){ cgA.checked = on; cgA.dispatchEvent(new Event('change')); return; }
+                // fallback if cgA not ready
+                if(on){
+                    if(!rn || !rn.getUser()){ sheetStatus('Sign in first to enable auto-sync', false); rsA.checked=false; return; }
+                    rn.loadAll(false).then(function(){ rn.startPoll(); sheetStatus('Auto-sync on', true); });
+                } else {
+                    if(rn){ rn.stopPoll(); rn.cgmBadge(''); }
+                    sheetStatus('Auto-sync off', true);
+                }
+            });
+        }
+        if(cgA && rsA){
+            cgA.addEventListener('change', function(){ rsA.checked = this.checked; });
         }
 
         var hasCloud = !!(localStorage.getItem('rn_lastSync')||localStorage.getItem('rf_lastCloudSync'));
