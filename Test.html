@@ -8823,10 +8823,42 @@ function toggleAutoSave() {
 
     /* ── quick actions ── */
     function setupActions(){
-        var pairs = [['mb-save','save-data-btn'],['mb-load','load-data-btn'],['mb-today','today-btn'],['mb-review','review-view-btn']];
-        pairs.forEach(function(p){
-            var btn = document.getElementById(p[0]);
-            if(btn) btn.addEventListener('click', function(){ var t=document.getElementById(p[1]); if(t) t.click(); });
+        // Save JSON — call the global function directly (hidden button workaround)
+        var saveBtn = document.getElementById('mb-save');
+        if(saveBtn) saveBtn.addEventListener('click', function(){
+            if(typeof manualSaveToJsonFile === 'function') manualSaveToJsonFile();
+        });
+
+        // Load JSON — trigger the file input directly
+        var loadBtn = document.getElementById('mb-load');
+        if(loadBtn) loadBtn.addEventListener('click', function(){
+            // find the first file-input that is a child of the main container (not dynalist)
+            var fi = document.querySelector('.view-controls-bar #file-input, .top-nav-bar #file-input, #file-input');
+            // Prefer the one at the top level (not inside the dynalist section)
+            var allFi = document.querySelectorAll('input[type=file][id=file-input]');
+            var target = allFi[0]; // first one is the main app one
+            if(target) target.click();
+        });
+
+        // Today — call directly
+        var todayBtn = document.getElementById('mb-today');
+        if(todayBtn) todayBtn.addEventListener('click', function(){
+            var b = document.getElementById('today-btn');
+            if(b){ b.click(); return; }
+            // fallback: call app function directly
+            if(typeof selectedDate !== 'undefined'){
+                selectedDate = new Date();
+                if(typeof updateDateDisplays === 'function') updateDateDisplays();
+                if(typeof loadDailyView === 'function') loadDailyView();
+            }
+        });
+
+        // 7-Day review
+        var reviewBtn = document.getElementById('mb-review');
+        if(reviewBtn) reviewBtn.addEventListener('click', function(){
+            var b = document.getElementById('review-view-btn');
+            if(b){ b.click(); return; }
+            if(typeof showWeeklyReview === 'function') showWeeklyReview();
         });
     }
 
@@ -9075,6 +9107,47 @@ function toggleAutoSave() {
 
     /* ── firebase hooks ── */
     function hookFirebase(){
+        // ── Patch cgmUpdateSignInState so the sheet always mirrors sign-in ──
+        // Wait a tick so the app's own cgmUpdateSignInState is defined first
+        setTimeout(function(){
+            var _orig = window.cgmUpdateSignInState || function(){};
+            window.cgmUpdateSignInState = function(){
+                _orig();  // run the original first
+                // now read fbUser (defined in app scope via closure — read from DOM)
+                var userDiv = document.getElementById('cgm-user');
+                var signedIn = document.getElementById('cgm-signed-in');
+                var isIn = signedIn && signedIn.style.display !== 'none' && signedIn.style.display !== '';
+                if(isIn && userDiv){
+                    var txt = userDiv.textContent.trim().replace(/^[✓\s]+/,'');
+                    // Also try gdriveUserInfo for richer display name
+                    var gdi = document.getElementById('gdriveUserInfo');
+                    var fullTxt = (gdi && gdi.textContent) ? gdi.textContent : txt;
+                    var em = fullTxt.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+                    var name = fullTxt.replace(em ? em[0] : '','').replace(/[✓():]/g,'').trim() || txt;
+                    window._rnUser = {
+                        displayName: name || null,
+                        email: em ? em[0] : txt,
+                        photoURL: null
+                    };
+                    // Check if Firebase has a photo URL
+                    if(typeof fbUser !== 'undefined' && fbUser && fbUser.photoURL){
+                        window._rnUser.photoURL = fbUser.photoURL;
+                    }
+                    var syncState = 'ok';
+                    var badge = document.getElementById('ctrl-sync-badge');
+                    if(badge){
+                        var bc = badge.className + badge.textContent;
+                        syncState = bc.indexOf('syncing')>=0 ? 'syncing' : bc.indexOf('error')>=0 ? 'error' : 'ok';
+                    }
+                    if(window._rnSheet) window._rnSheet(syncState, window._rnUser);
+                } else {
+                    window._rnUser = null;
+                    if(window._rnSheet) window._rnSheet('offline', null);
+                }
+            };
+        }, 500);
+
+        // ── Watch the ctrl-sync-badge for state changes ──
         var badge = document.getElementById('ctrl-sync-badge') || document.getElementById('gdrive-sync-badge');
         if(badge){
             new MutationObserver(function(){
@@ -9085,24 +9158,41 @@ function toggleAutoSave() {
                 if(window._rnSheet) window._rnSheet(state, window._rnUser||null);
             }).observe(badge, {childList:true,characterData:true,subtree:true,attributes:true,attributeFilter:['class']});
         }
-        var uInfo = document.getElementById('gdriveUserInfo') || document.getElementById('cgm-user');
-        if(uInfo){
-            new MutationObserver(function(){
-                var txt = uInfo.textContent.trim();
-                if(!txt || txt.length < 4){ window._rnUser=null; return; }
-                var em = txt.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
-                window._rnUser = em ? {displayName: txt.replace(em[0],'').replace(/[\u2713:,]/g,'').trim()||null, email:em[0], photoURL:null} : null;
-                if(window._rnUser && window._rnSheet) window._rnSheet('ok', window._rnUser);
-            }).observe(uInfo, {childList:true,subtree:true,characterData:true});
-        }
-        var siPanel = document.getElementById('fbSignedIn') || document.getElementById('cgm-signed-in');
+
+        // ── Watch fbSignedIn panel show/hide for sign-in/sign-out ──
+        var siPanel = document.getElementById('fbSignedIn');
         if(siPanel){
             new MutationObserver(function(){
-                if(siPanel.style.display==='none'||siPanel.style.display===''){
+                var visible = siPanel.style.display !== 'none' && siPanel.style.display !== '';
+                if(visible){
+                    // User just signed in — give Firebase a moment then read user
+                    setTimeout(function(){
+                        var gdi = document.getElementById('gdriveUserInfo');
+                        var txt = gdi ? gdi.textContent.trim() : '';
+                        var em  = txt.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+                        var name = txt.replace(em ? em[0] : '','').replace(/[✓():]/g,'').trim();
+                        var photo = (typeof fbUser !== 'undefined' && fbUser) ? fbUser.photoURL : null;
+                        window._rnUser = {displayName: name||null, email: em ? em[0] : '', photoURL: photo||null};
+                        if(window._rnSheet) window._rnSheet('ok', window._rnUser);
+                    }, 400);
+                } else {
                     window._rnUser = null;
                     if(window._rnSheet) window._rnSheet('offline', null);
                 }
-            }).observe(siPanel, {attributes:true,attributeFilter:['style']});
+            }).observe(siPanel, {attributes:true, attributeFilter:['style']});
+        }
+
+        // ── Also watch cgm-signed-in ──
+        var cgmIn = document.getElementById('cgm-signed-in');
+        if(cgmIn){
+            new MutationObserver(function(){
+                var visible = cgmIn.style.display !== 'none' && cgmIn.style.display !== '';
+                if(visible && !window._rnUser){
+                    setTimeout(function(){
+                        if(typeof cgmUpdateSignInState === 'function') cgmUpdateSignInState();
+                    }, 200);
+                }
+            }).observe(cgmIn, {attributes:true, attributeFilter:['style']});
         }
     }
 
