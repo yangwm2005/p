@@ -8424,10 +8424,50 @@ function toggleAutoSave() {
                     // keep inline dropdown in sync
                     if(typeof cgmUpdateSignInState === 'function') cgmUpdateSignInState();
                 });
+                // Handle any pending redirect sign-in (mobile)
+                fbHandleRedirectResult();
                 return true;
             } catch(e){
                 fbStatus('✗ Firebase init error: '+e.message, false);
                 return false;
+            }
+        }
+
+        // ── Mobile-aware Google sign-in ───────────────────────────────
+        // On mobile browsers signInWithPopup is blocked; use redirect instead.
+        function isMobileDevice(){
+            return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
+        }
+
+        async function fbSignIn(){
+            if(!initFirebase()) return false;
+            const provider = new firebase.auth.GoogleAuthProvider();
+            if(isMobileDevice()){
+                // Store flag so we can show "Returning from sign-in…" on redirect back
+                sessionStorage.setItem('fb_redirect_pending','1');
+                await fbAuth.signInWithRedirect(provider);
+                return true; // page will reload
+            } else {
+                await fbAuth.signInWithPopup(provider);
+                return true;
+            }
+        }
+
+        // ── Handle redirect result on page load ───────────────────────
+        // Called once Firebase is initialised; resolves any pending redirect sign-in.
+        async function fbHandleRedirectResult(){
+            if(!fbAuth) return;
+            try {
+                const result = await fbAuth.getRedirectResult();
+                if(result && result.user){
+                    sessionStorage.removeItem('fb_redirect_pending');
+                    // onAuthStateChanged will fire and update all UI automatically
+                }
+            } catch(e){
+                if(e.code !== 'auth/redirect-cancelled-by-user'){
+                    fbStatus('✗ Sign-in failed: '+e.message, false);
+                }
+                sessionStorage.removeItem('fb_redirect_pending');
             }
         }
 
@@ -8669,9 +8709,8 @@ function toggleAutoSave() {
             document.getElementById('cgm-signin').addEventListener('click', async ()=>{
                 if(!initFirebase()) return;
                 try {
-                    const provider = new firebase.auth.GoogleAuthProvider();
-                    await fbAuth.signInWithPopup(provider);
-                    cgmUpdateSignInState();
+                    await fbSignIn();
+                    if(!isMobileDevice()) cgmUpdateSignInState();
                 } catch(e){
                     if(e.code !== 'auth/popup-closed-by-user')
                         cgmStatus('✗ Sign-in failed: '+e.message, false);
@@ -8739,8 +8778,7 @@ function toggleAutoSave() {
             document.getElementById('fbSignInBtn').addEventListener('click', async ()=>{
                 if(!initFirebase()) return;
                 try {
-                    const provider = new firebase.auth.GoogleAuthProvider();
-                    await fbAuth.signInWithPopup(provider);
+                    await fbSignIn();
                 } catch(e){
                     if(e.code !== 'auth/popup-closed-by-user')
                         fbStatus('✗ Sign-in failed: '+e.message, false, true);
@@ -8771,6 +8809,14 @@ function toggleAutoSave() {
             });
 
             fbUpdateAutoSyncUI();
+
+            // ── Show "returning from sign-in" hint if we redirected to Google ──
+            if(sessionStorage.getItem('fb_redirect_pending') === '1'){
+                var rsBtn = document.getElementById('rs-signin');
+                if(rsBtn){ rsBtn.textContent = '⏳ Completing sign-in…'; rsBtn.disabled = true; }
+                var spLbl = document.getElementById('sp-lbl');
+                if(spLbl) spLbl.textContent = 'Signing in…';
+            }
         });
 
         // ════════════════════════════════════════════════════════════════
@@ -9120,11 +9166,12 @@ function toggleAutoSave() {
                     return;
                 }
                 try {
-                    const provider = new firebase.auth.GoogleAuthProvider();
                     sheetStatus('Opening Google sign-in…', true);
-                    await fbAuth.signInWithPopup(provider);
-                    // onAuthStateChanged fires → cgmUpdateSignInState → hookFirebase updates sheet
-                    sheetStatus('✓ Signed in!', true);
+                    await fbSignIn();
+                    // On desktop: onAuthStateChanged fires → sheet updates automatically.
+                    // On mobile: page redirects to Google then comes back; redirect result
+                    // is handled by fbHandleRedirectResult() on reload.
+                    if(!isMobileDevice()) sheetStatus('✓ Signed in!', true);
                 } catch(e){
                     if(e.code !== 'auth/popup-closed-by-user')
                         sheetStatus('Sign-in failed: ' + e.message, false);
