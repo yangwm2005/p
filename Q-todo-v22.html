@@ -247,7 +247,7 @@
         .group-divider[data-group="someday"] { background: var(--surface2); border-bottom-color: var(--border); }
         .group-divider[data-group="someday"] .group-divider-label { color: var(--text-muted); }
         /* Group badge on task row */
-        .group-badge { padding: 2px 7px; border-radius: 20px; font-size: 0.68rem; font-weight: 600; white-space: nowrap; cursor: pointer; border: none; font-family: inherit; }
+        .group-badge { padding: 2px 7px; border-radius: 20px; font-size: 0.68rem; font-weight: 600; white-space: nowrap; cursor: pointer; border: none; font-family: inherit; order: 10; margin-left: 36px; }
         .group-badge:hover { opacity: 0.8; }
         .group-badge[data-group="important"]    { background: #fff1e6; color: #9a3412; }
         .group-badge[data-group="undertracking"]{ background: #fef9c3; color: #854d0e; }
@@ -920,7 +920,7 @@
             </div>
         </div>
     </div>
-    <div class="app-footer">Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. version 22 (Group DnD really fixed)</div>
+    <div class="app-footer">Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. version 22 (Drag tasks between groups)</div>
 </div>
 <div class="print-view" id="printableView">
     <h2 style="margin-bottom:6px">Daily To-Do</h2>
@@ -965,7 +965,7 @@
     function goToToday(){ currentViewDate = new Date(today); updateViewDisplay(); loadTasksForView(); }
     function loadTasksForView(){ const d = formatDate(currentViewDate); tasks = loadTasks(d); if(d===todayStr) loadPreviousDayTasks(); else previousDayTasks = []; renderTasks(); }
     
-    function findTaskById(id, list){ for(let t of list){ if(String(t.id)===String(id)) return t; if(t.subtasks){ let f = findTaskById(id, t.subtasks); if(f) return f; } } return null; }
+    function findTaskById(id, list){ for(let t of list){ if(t.id===id) return t; if(t.subtasks){ let f = findTaskById(id, t.subtasks); if(f) return f; } } return null; }
     
     function toggleTask(id, date, isPrev=false){
         let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date;
@@ -1423,10 +1423,9 @@
         li.addEventListener('dragend', ()=>{
             li.classList.remove('dragging');
             li.setAttribute('draggable','false');
+            _draggingTaskId = null; _draggingTaskDate = null; _draggingTaskIsPrev = false;
             document.querySelectorAll('.task-item.drag-over').forEach(el=>el.classList.remove('drag-over'));
             document.querySelectorAll('.group-divider.group-drop-active').forEach(el=>el.classList.remove('group-drop-active'));
-            // Delay clearing so group header drop handlers can still read these
-            setTimeout(()=>{ _draggingTaskId = null; _draggingTaskDate = null; _draggingTaskIsPrev = false; }, 100);
         });
         li.addEventListener('dragover', (e)=>{
             if(!e.dataTransfer.types.includes('Files')){
@@ -1442,26 +1441,20 @@
         });
         li.addEventListener('dragleave', ()=>li.classList.remove('drag-over'));
         li.addEventListener('drop', (e)=>{
-            if(e.dataTransfer.types.includes('Files')) return;
+            if(e.dataTransfer.types.includes('Files')) return; // let file-drop bubble up
             e.preventDefault(); e.stopPropagation();
             li.classList.remove('drag-over');
-            // Use dataTransfer directly — always available in drop events
-            const draggedId = e.dataTransfer.getData('text/plain');
+            const draggedId = _draggingTaskId || e.dataTransfer.getData('text/plain');
             if(!draggedId || draggedId === String(task.id)) return;
             const viewDate = formatDate(currentViewDate);
             let arr = loadTasks(viewDate);
             const fromIdx = arr.findIndex(t=>String(t.id)===draggedId);
             const toIdx   = arr.findIndex(t=>String(t.id)===String(task.id));
             if(fromIdx === -1 || toIdx === -1) return;
-            // Capture target group BEFORE splicing (indices shift after splice)
-            const targetGroup = task.group ?? '';
             const [moved] = arr.splice(fromIdx, 1);
-            // Recalculate toIdx after removal
-            const newToIdx = arr.findIndex(t=>String(t.id)===String(task.id));
-            if(newToIdx === -1) return;
-            // Adopt the target task's group
-            moved.group = targetGroup;
-            arr.splice(newToIdx, 0, moved);
+            // Adopt the target task's group so dropping into a group section works
+            moved.group = arr[toIdx > fromIdx ? toIdx - 1 : toIdx]?.group ?? task.group ?? moved.group;
+            arr.splice(toIdx > fromIdx ? toIdx : toIdx, 0, moved);
             saveTasksToDate(viewDate, arr);
             tasks = arr;
             renderTasks();
@@ -1561,7 +1554,7 @@
             gbadge.textContent = GROUPS[currentGroup]?.emoji + ' ' + GROUPS[currentGroup]?.label;
             gbadge.title = 'Click to change group';
             gbadge.addEventListener('click', (e) => { e.stopPropagation(); _openGroupPicker(gbadge, task.id, taskDate, isPrev); });
-            row.insertBefore(gbadge, actions);
+            row.appendChild(gbadge);
         }
 
         // Determine if panels area is open
@@ -1717,8 +1710,7 @@
             // ── Drop-to-group support on the header ──
             hdr.addEventListener('dragover', (e) => {
                 if (e.dataTransfer.types.includes('Files')) return;
-                // Accept any task drag (check types instead of _draggingTaskId to avoid timing issues)
-                if (!e.dataTransfer.types.includes('text/plain')) return;
+                if (!_draggingTaskId) return;
                 e.preventDefault(); e.stopPropagation();
                 document.querySelectorAll('.task-item.drag-over').forEach(el=>el.classList.remove('drag-over'));
                 document.querySelectorAll('.group-divider.group-drop-active').forEach(el=>el.classList.remove('group-drop-active'));
@@ -1731,11 +1723,9 @@
                 if (e.dataTransfer.types.includes('Files')) return;
                 e.preventDefault(); e.stopPropagation();
                 hdr.classList.remove('group-drop-active');
-                // dataTransfer is always readable in drop events
-                const draggedId = e.dataTransfer.getData('text/plain');
+                const draggedId = _draggingTaskId || e.dataTransfer.getData('text/plain');
                 if (!draggedId) return;
-                // Use _draggingTaskDate for the actual date of the dragged task
-                const d = _draggingTaskDate || todayStr;
+                const d = (_draggingTaskIsPrev ? formatDate(new Date(today.getTime()-86400000)) : dateStr);
                 const ts = loadTasks(d);
                 const t = findTaskById(draggedId, ts);
                 if (t) { t.group = g; saveTasksToDate(d, ts); if(d===todayStr) tasks=ts; if(_draggingTaskIsPrev) previousDayTasks=ts; renderTasks(); }
