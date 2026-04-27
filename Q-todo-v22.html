@@ -261,11 +261,6 @@
         .group-divider.group-drop-active { background: var(--accent-soft) !important; border-bottom-color: var(--accent) !important; outline: 2px dashed var(--accent); outline-offset: -2px; }
         .group-divider.group-drop-active .group-drop-hint { opacity: 1; }
         .group-divider.group-drop-active .group-divider-label { color: var(--accent) !important; }
-        /* Empty group divider — dimmed, no collapse arrow */
-        .group-divider.group-divider-empty { opacity: 0.55; cursor: default; }
-        .group-divider.group-divider-empty .group-divider-icon { visibility: hidden; }
-        .group-divider.group-divider-empty:hover { opacity: 0.75; }
-        .group-divider.group-drop-active.group-divider-empty { opacity: 1; }
 
         .empty-state { text-align: center; padding: 52px 20px; color: var(--text-muted); }
         .toolbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface2); }
@@ -920,7 +915,7 @@
             </div>
         </div>
     </div>
-    <div class="app-footer">Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. version 25 (Drag tasks between groups)</div>
+    <div class="app-footer">Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. version 24 (Groups + Subtask DnD)</div>
 </div>
 <div class="print-view" id="printableView">
     <h2 style="margin-bottom:6px">Daily To-Do</h2>
@@ -1444,17 +1439,15 @@
             if(e.dataTransfer.types.includes('Files')) return; // let file-drop bubble up
             e.preventDefault(); e.stopPropagation();
             li.classList.remove('drag-over');
-            const draggedId = _draggingTaskId || e.dataTransfer.getData('text/plain');
-            if(!draggedId || draggedId === String(task.id)) return;
+            const draggedId = e.dataTransfer.getData('text/plain');
+            if(!draggedId || draggedId === task.id) return;
             const viewDate = formatDate(currentViewDate);
             let arr = loadTasks(viewDate);
             const fromIdx = arr.findIndex(t=>String(t.id)===draggedId);
             const toIdx   = arr.findIndex(t=>String(t.id)===String(task.id));
             if(fromIdx === -1 || toIdx === -1) return;
             const [moved] = arr.splice(fromIdx, 1);
-            // Adopt the target task's group so dropping into a group section works
-            moved.group = arr[toIdx > fromIdx ? toIdx - 1 : toIdx]?.group ?? task.group ?? moved.group;
-            arr.splice(toIdx > fromIdx ? toIdx : toIdx, 0, moved);
+            arr.splice(toIdx, 0, moved);
             saveTasksToDate(viewDate, arr);
             tasks = arr;
             renderTasks();
@@ -1669,7 +1662,7 @@
     if (!window._groupCollapsed) window._groupCollapsed = new Set();
 
     function _appendGroupedTasks(container, taskList, dateStr, isPrev) {
-        // Check if any task has a group set — if so, enter "group mode"
+        // Check if any task has a group set
         const hasGroups = taskList.some(t => t.group && t.group !== '');
         if (!hasGroups) {
             taskList.forEach(t => container.appendChild(createTaskElement(t, dateStr, isPrev)));
@@ -1685,29 +1678,26 @@
         });
         GROUP_ORDER.forEach(g => {
             const list = buckets[g];
+            if (!list.length) return;
             const meta = GROUP_META[g];
             const groupKey = dateStr + '-' + (isPrev?'prev':'')+'-' + g;
             const isCollapsed = window._groupCollapsed.has(groupKey);
-
-            // Always render header (even for empty groups) so they act as drop targets
+            // Header — use <li> so it's valid inside <ul class="task-list">
             const hdr = document.createElement('li');
-            hdr.className = 'group-divider' + (!list.length ? ' group-divider-empty' : '');
-            hdr.setAttribute('data-group', g);
+            hdr.className = 'group-divider'; hdr.setAttribute('data-group', g);
             hdr.setAttribute('data-group-key', groupKey);
             hdr.setAttribute('data-group-date', dateStr);
             hdr.setAttribute('data-group-isprev', isPrev ? '1' : '0');
             hdr.innerHTML = '<span class="group-divider-icon' + (isCollapsed?' collapsed':'') + '">▾</span>' +
                             '<span class="group-divider-label">' + meta.label + '</span>' +
-                            (list.length ? '<span class="group-divider-count">' + list.length + '</span>' : '') +
+                            '<span class="group-divider-count">' + list.length + '</span>' +
                             '<span class="group-drop-hint">drop here</span>';
             hdr.addEventListener('click', () => {
-                if (!list.length) return; // nothing to collapse
                 if (window._groupCollapsed.has(groupKey)) window._groupCollapsed.delete(groupKey);
                 else window._groupCollapsed.add(groupKey);
                 renderTasks();
             });
-
-            // ── Drop-to-group support on the header ──
+            // ── Drop-to-group support ──
             hdr.addEventListener('dragover', (e) => {
                 if (e.dataTransfer.types.includes('Files')) return;
                 if (!_draggingTaskId) return;
@@ -1717,6 +1707,7 @@
                 hdr.classList.add('group-drop-active');
             });
             hdr.addEventListener('dragleave', (e) => {
+                // Only remove if leaving the header entirely (not entering a child)
                 if (!hdr.contains(e.relatedTarget)) hdr.classList.remove('group-drop-active');
             });
             hdr.addEventListener('drop', (e) => {
@@ -1731,7 +1722,6 @@
                 if (t) { t.group = g; saveTasksToDate(d, ts); if(d===todayStr) tasks=ts; if(_draggingTaskIsPrev) previousDayTasks=ts; renderTasks(); }
             });
             container.appendChild(hdr);
-
             if (!isCollapsed) {
                 list.forEach(t => container.appendChild(createTaskElement(t, dateStr, isPrev)));
             }
