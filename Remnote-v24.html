@@ -8463,7 +8463,13 @@ function toggleAutoSave() {
                 appId: "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
         };
 
-        let fbApp = null, fbAuth = null, fbDb = null, fbUser = null;
+        let fbApp = null, fbAuth = null, fbDb = null;
+        let fbUser = null;
+        // Expose fbUser on window so the mobile IIFE script can read sign-in state
+        Object.defineProperty(window, 'fbUser', {
+            get(){ return fbUser; },
+            configurable: true
+        });
         let _fbSyncTimer = null, _fbSyncing = false, _fbLastSavedAt = 0, _fbPollInterval = null;
 
         function isFirebaseConfigured(){
@@ -8483,6 +8489,9 @@ function toggleAutoSave() {
                 fbAuth.onAuthStateChanged(user => {
                     if(user){
                         fbUser = user;
+                        // Clear the redirect-pending flag — sign-in succeeded
+                        localStorage.removeItem('fb_redirect_pending');
+                        sessionStorage.removeItem('fb_redirect_pending');
                         document.getElementById('fbNotSignedIn').style.display='none';
                         document.getElementById('fbSignedIn').style.display='block';
                         document.getElementById('gdriveUserInfo').innerHTML =
@@ -8500,8 +8509,11 @@ function toggleAutoSave() {
                     }
                     // keep inline dropdown in sync
                     if(typeof cgmUpdateSignInState === 'function') cgmUpdateSignInState();
-                    // keep mobile sheet in sync
-                    if(typeof window.mobUpdateSignInState === 'function') setTimeout(window.mobUpdateSignInState, 100);
+                    // keep mobile sheet in sync — retry a few times to beat IIFE timing race
+                    const _syncMob = () => { if(typeof window.mobUpdateSignInState==='function') window.mobUpdateSignInState(); };
+                    setTimeout(_syncMob, 100);
+                    setTimeout(_syncMob, 600);
+                    setTimeout(_syncMob, 1500);
                 });
                 // Handle redirect result AFTER onAuthStateChanged is wired (use setTimeout to yield)
                 setTimeout(() => fbHandleRedirectResult(), 0);
@@ -8512,24 +8524,34 @@ function toggleAutoSave() {
             }
         }
 
-        // ── Mobile-aware Google sign-in ───────────────────────────────
-        // On mobile browsers signInWithPopup is blocked; use redirect instead.
+        // ── Device detection helpers ──────────────────────────────────
         function isMobileDevice(){
             return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
         }
         window.isMobileDevice = isMobileDevice;
 
+        // ── Sign-in ───────────────────────────────────────────────────
+        // Always try popup first — it works on iOS Safari when called from a
+        // user-gesture tap (which we always do). signInWithRedirect is broken
+        // on iOS Safari due to ITP blocking Firebase's auth handshake cookies.
+        // Only fall back to redirect if the popup is explicitly blocked.
         async function fbSignIn(){
             if(!initFirebase()) return false;
             const provider = new firebase.auth.GoogleAuthProvider();
-            if(isMobileDevice()){
-                // Store flag so we can show "Returning from sign-in…" on redirect back
-                sessionStorage.setItem('fb_redirect_pending','1');
-                await fbAuth.signInWithRedirect(provider);
-                return true; // page will reload
-            } else {
+            provider.addScope('email');
+            provider.addScope('profile');
+            try {
                 await fbAuth.signInWithPopup(provider);
                 return true;
+            } catch(popupErr){
+                if(popupErr.code === 'auth/popup-blocked'){
+                    // Popup blocked (some Android browsers) — fall back to redirect
+                    localStorage.setItem('fb_redirect_pending','1');
+                    sessionStorage.setItem('fb_redirect_pending','1');
+                    await fbAuth.signInWithRedirect(provider);
+                    return true;
+                }
+                throw popupErr;
             }
         }
 
@@ -8540,22 +8562,45 @@ function toggleAutoSave() {
             try {
                 const result = await fbAuth.getRedirectResult();
                 if(result && result.user){
+                    // Success — clear flags (onAuthStateChanged also clears them)
+                    localStorage.removeItem('fb_redirect_pending');
                     sessionStorage.removeItem('fb_redirect_pending');
                     // onAuthStateChanged fires automatically and updates all UI
+                } else {
+                    // No redirect result — if we thought we were pending, the redirect
+                    // may have been handled by onAuthStateChanged already, so clear the flag
+                    // after a grace period to avoid the "stuck" state
+                    setTimeout(() => {
+                        if(!fbUser) {
+                            // Still not signed in after grace period — clear stuck state
+                            localStorage.removeItem('fb_redirect_pending');
+                            sessionStorage.removeItem('fb_redirect_pending');
+                            _resetMobSigninBtn();
+                        }
+                    }, 3000);
                 }
             } catch(e){
+                localStorage.removeItem('fb_redirect_pending');
+                sessionStorage.removeItem('fb_redirect_pending');
+                _resetMobSigninBtn();
                 if(e.code !== 'auth/redirect-cancelled-by-user'){
                     fbStatus('✗ Sign-in failed: '+e.message, false);
-                    // Show error in mobile sheet too
-                    const mobStatus = document.getElementById('mob-cgm-status');
-                    if(mobStatus){
-                        mobStatus.textContent = '✗ Sign-in failed: ' + e.message;
-                        mobStatus.style.cssText = 'display:block;padding:8px 12px;border-radius:8px;font-size:.82rem;font-weight:600;background:rgba(245,101,101,.1);color:#e53e3e;border:1px solid rgba(245,101,101,.2)';
-                        setTimeout(()=>{ mobStatus.style.display='none'; }, 5000);
+                    const statusEl = document.getElementById('mob-cgm-status');
+                    if(statusEl){
+                        statusEl.textContent = '✗ Sign-in failed: ' + e.message;
+                        statusEl.style.cssText = 'display:block;padding:8px 12px;border-radius:8px;font-size:.82rem;font-weight:600;background:rgba(245,101,101,.1);color:#e53e3e;border:1px solid rgba(245,101,101,.2)';
+                        setTimeout(()=>{ statusEl.style.display='none'; }, 5000);
                     }
                 }
-                sessionStorage.removeItem('fb_redirect_pending');
             }
+        }
+
+        // Reset the mobile sign-in button to its default state
+        function _resetMobSigninBtn(){
+            const btn = document.getElementById('mob-signin');
+            if(btn){ btn.textContent = '🔑 Sign in with Google'; btn.disabled = false; }
+            const spLbl = document.getElementById('sp-lbl');
+            if(spLbl && spLbl.textContent === 'Signing in…') spLbl.textContent = 'Sync';
         }
 
         function fbIsAutoSyncEnabled(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
@@ -8797,9 +8842,9 @@ function toggleAutoSave() {
                 if(!initFirebase()) return;
                 try {
                     await fbSignIn();
-                    if(!isMobileDevice()) cgmUpdateSignInState();
+                    cgmUpdateSignInState();
                 } catch(e){
-                    if(e.code !== 'auth/popup-closed-by-user')
+                    if(e.code !== 'auth/popup-closed-by-user' && e.code !== 'auth/cancelled-popup-request')
                         cgmStatus('✗ Sign-in failed: '+e.message, false);
                 }
             });
@@ -8897,17 +8942,31 @@ function toggleAutoSave() {
 
             fbUpdateAutoSyncUI();
 
-            // ── Show "returning from sign-in" hint if we redirected to Google ──
-            if(sessionStorage.getItem('fb_redirect_pending') === '1'){
-                var mobSigninBtn = document.getElementById('mob-signin');
-                if(mobSigninBtn){ mobSigninBtn.textContent = '⏳ Completing sign-in…'; mobSigninBtn.disabled = true; }
+            // ── Handle return from Google redirect sign-in ──
+            var _isPending = localStorage.getItem('fb_redirect_pending')==='1' || sessionStorage.getItem('fb_redirect_pending')==='1';
+            if(_isPending){
+                // Show brief "completing" state — Firebase onAuthStateChanged will update UI
+                // or fbHandleRedirectResult will clear the stuck state after 3s
                 var spLbl = document.getElementById('sp-lbl');
                 if(spLbl) spLbl.textContent = 'Signing in…';
-                // Auto-open the sheet so user sees the progress
+                var mobSigninBtn = document.getElementById('mob-signin');
+                if(mobSigninBtn){ mobSigninBtn.textContent = '⏳ Completing sign-in…'; mobSigninBtn.disabled = true; }
+                // Auto-open the sheet so user sees progress
                 var rnSheet = document.getElementById('rn-sheet');
                 var rnBackdrop = document.getElementById('rn-backdrop');
                 if(rnSheet){ rnSheet.classList.add('open'); document.body.style.overflow='hidden'; }
                 if(rnBackdrop) rnBackdrop.classList.add('open');
+                // Safety net: if sign-in doesn't resolve in 5s, reset everything
+                setTimeout(function(){
+                    var stillPending = localStorage.getItem('fb_redirect_pending')==='1' || sessionStorage.getItem('fb_redirect_pending')==='1';
+                    if(stillPending){
+                        localStorage.removeItem('fb_redirect_pending');
+                        sessionStorage.removeItem('fb_redirect_pending');
+                        if(typeof _resetMobSigninBtn==='function') _resetMobSigninBtn();
+                        // Check if actually signed in despite flag
+                        if(typeof window.mobUpdateSignInState==='function') window.mobUpdateSignInState();
+                    }
+                }, 5000);
             }
         });
 
@@ -9155,15 +9214,41 @@ function toggleAutoSave() {
         }
 
         function mobUpdateSignInState(){
-            var desktopIn=document.getElementById('cgm-signed-in');
-            var isIn=desktopIn&&desktopIn.style.display!=='none'&&desktopIn.style.display!=='';
-            var signedIn=document.getElementById('mob-signed-in'),notSignedIn=document.getElementById('mob-not-signed-in');
-            var userDiv=document.getElementById('mob-cgm-user'),desktopUser=document.getElementById('cgm-user');
-            if(signedIn) signedIn.style.display=isIn?'block':'none';
-            if(notSignedIn) notSignedIn.style.display=isIn?'none':'block';
-            if(userDiv){if(isIn&&desktopUser&&desktopUser.textContent.trim()){userDiv.textContent=desktopUser.textContent.trim();userDiv.style.display='block';}else{userDiv.style.display='none';}}
-            var mobA=document.getElementById('mob-autosync'),cgA=document.getElementById('cgm-autosync');
-            if(mobA&&cgA) mobA.checked=cgA.checked;
+            // Get user from the reliable window._rnFirebase bridge (fbUser is a let in app closure)
+            var rf = window._rnFirebase;
+            var currentUser = rf ? rf.getUser() : null;
+            // Also cross-check via DOM in case bridge isn't ready yet
+            var desktopIn = document.getElementById('cgm-signed-in');
+            var domSignedIn = desktopIn && desktopIn.style.display !== 'none' && desktopIn.style.display !== '';
+            var hasUser = !!(currentUser || domSignedIn);
+
+            var signedIn = document.getElementById('mob-signed-in');
+            var notSignedIn = document.getElementById('mob-not-signed-in');
+            var userDiv = document.getElementById('mob-cgm-user');
+            var desktopUser = document.getElementById('cgm-user');
+
+            if(signedIn) signedIn.style.display = hasUser ? 'block' : 'none';
+            if(notSignedIn) notSignedIn.style.display = hasUser ? 'none' : 'block';
+
+            if(userDiv){
+                var nameText = '';
+                if(currentUser && currentUser.displayName) nameText = '✓ ' + currentUser.displayName + (currentUser.email ? ' (' + currentUser.email + ')' : '');
+                else if(desktopUser && desktopUser.textContent.trim()) nameText = desktopUser.textContent.trim();
+                if(hasUser && nameText){ userDiv.textContent = nameText; userDiv.style.display = 'block'; }
+                else { userDiv.style.display = 'none'; }
+            }
+
+            // If signed in, clear any stuck pending state and reset button
+            if(hasUser){
+                localStorage.removeItem('fb_redirect_pending');
+                sessionStorage.removeItem('fb_redirect_pending');
+                var mobSigninBtn = document.getElementById('mob-signin');
+                if(mobSigninBtn){ mobSigninBtn.textContent = '🔑 Sign in with Google'; mobSigninBtn.disabled = false; }
+            }
+
+            var mobA = document.getElementById('mob-autosync');
+            var cgA = document.getElementById('cgm-autosync');
+            if(mobA && cgA) mobA.checked = cgA.checked;
             refreshTs();
         }
         window.mobUpdateSignInState=mobUpdateSignInState;
@@ -9199,23 +9284,35 @@ function toggleAutoSave() {
             btn.textContent = '⏳ Signing in…';
             btn.disabled = true;
             try {
-                // _rnFirebase is exposed on window from the first script block
                 var rf = window._rnFirebase;
                 if(!rf || !rf.init()){
                     btn.textContent='🔑 Sign in with Google'; btn.disabled=false; return;
                 }
-                var fbAuth = rf.getAuth();
-                if(!fbAuth){ btn.textContent='🔑 Sign in with Google'; btn.disabled=false; return; }
-                var isMob = window.innerWidth<=768 || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+                var auth = rf.getAuth();
+                if(!auth){ btn.textContent='🔑 Sign in with Google'; btn.disabled=false; return; }
                 var provider = new firebase.auth.GoogleAuthProvider();
-                if(isMob){
-                    sessionStorage.setItem('fb_redirect_pending','1');
-                    await fbAuth.signInWithRedirect(provider);
-                    // page will reload — button stays in loading state
-                } else {
-                    await fbAuth.signInWithPopup(provider);
+                provider.addScope('email');
+                provider.addScope('profile');
+                // Always try popup first — works on iOS Safari from a tap gesture.
+                // signInWithRedirect is broken on iPhone/iPad (ITP kills auth cookies).
+                try {
+                    await auth.signInWithPopup(provider);
+                    // Success — onAuthStateChanged fires → mobUpdateSignInState() runs via retries
                     btn.textContent = '✓ Signed In';
-                    if(typeof mobUpdateSignInState==='function') setTimeout(mobUpdateSignInState, 300);
+                    setTimeout(function(){ if(typeof window.mobUpdateSignInState==='function') window.mobUpdateSignInState(); }, 300);
+                } catch(popupErr){
+                    if(popupErr.code === 'auth/popup-blocked'){
+                        // Only use redirect as last resort (Android browsers that block popups)
+                        localStorage.setItem('fb_redirect_pending','1');
+                        sessionStorage.setItem('fb_redirect_pending','1');
+                        await auth.signInWithRedirect(provider);
+                        // page reloads — button stays loading
+                    } else if(popupErr.code === 'auth/popup-closed-by-user' || popupErr.code === 'auth/cancelled-popup-request'){
+                        btn.textContent = '🔑 Sign in with Google';
+                        btn.disabled = false;
+                    } else {
+                        throw popupErr;
+                    }
                 }
             } catch(e){
                 btn.textContent = '🔑 Sign in with Google';
@@ -9230,25 +9327,29 @@ function toggleAutoSave() {
         });
         var mobSave=document.getElementById('mob-save-now');
         if(mobSave) mobSave.addEventListener('click',async function(){
-            if(typeof fbUser==='undefined'||!fbUser){mobStatus('Not signed in',false);return;}
+            var _rf = window._rnFirebase;
+            if(!_rf || !_rf.getUser()){ mobStatus('Not signed in',false); return; }
             mobStatus('⬆ Saving…',true); if(typeof cgmUpdateBadge==='function') cgmUpdateBadge('syncing');
-            try{await fbSaveAll(false);if(typeof cgmUpdateBadge==='function')cgmUpdateBadge('ok');if(typeof cgmUpdateTimestamps==='function')cgmUpdateTimestamps();refreshTs();mobStatus('✓ Saved!',true);}
-            catch(e){if(typeof cgmUpdateBadge==='function')cgmUpdateBadge('error');mobStatus('Save failed: '+e.message,false);}
+            try{ await _rf.saveAll(false); if(typeof cgmUpdateBadge==='function') cgmUpdateBadge('ok'); if(typeof cgmUpdateTimestamps==='function') cgmUpdateTimestamps(); refreshTs(); mobStatus('✓ Saved!',true); }
+            catch(e){ if(typeof cgmUpdateBadge==='function') cgmUpdateBadge('error'); mobStatus('Save failed: '+e.message,false); }
         });
         var mobLoad=document.getElementById('mob-load');
         if(mobLoad) mobLoad.addEventListener('click',async function(){
-            if(typeof fbUser==='undefined'||!fbUser){mobStatus('Not signed in',false);return;}
+            var _rf = window._rnFirebase;
+            if(!_rf || !_rf.getUser()){ mobStatus('Not signed in',false); return; }
             mobStatus('⬇ Loading…',true); if(typeof cgmUpdateBadge==='function') cgmUpdateBadge('syncing');
-            try{await fbLoadAll(false);if(typeof cgmUpdateBadge==='function')cgmUpdateBadge('ok');if(typeof cgmUpdateTimestamps==='function')cgmUpdateTimestamps();refreshTs();mobStatus('✓ Loaded!',true);}
-            catch(e){if(typeof cgmUpdateBadge==='function')cgmUpdateBadge('error');mobStatus('Load failed: '+e.message,false);}
+            try{ await _rf.loadAll(false); if(typeof cgmUpdateBadge==='function') cgmUpdateBadge('ok'); if(typeof cgmUpdateTimestamps==='function') cgmUpdateTimestamps(); refreshTs(); mobStatus('✓ Loaded!',true); }
+            catch(e){ if(typeof cgmUpdateBadge==='function') cgmUpdateBadge('error'); mobStatus('Load failed: '+e.message,false); }
         });
         var mobSignout=document.getElementById('mob-signout');
         if(mobSignout) mobSignout.addEventListener('click',async function(){
-            if(typeof fbAuth!=='undefined'&&fbAuth) await fbAuth.signOut();
+            var _rf = window._rnFirebase;
+            var auth = _rf ? _rf.getAuth() : null;
+            if(auth) await auth.signOut();
             localStorage.setItem('gdriveAutoSync','0');
-            if(typeof fbUpdateAutoSyncUI==='function') fbUpdateAutoSyncUI();
-            if(typeof cgmUpdateSignInState==='function') cgmUpdateSignInState();
-            if(typeof cgmUpdateBadge==='function') cgmUpdateBadge('');
+            if(_rf) _rf.updateAutoSyncUI();
+            if(_rf) _rf.cgmSignInState();
+            if(_rf) _rf.cgmBadge('');
             mobUpdateSignInState(); mobStatus('Signed out.',true); closeSheet();
         });
         var mobA=document.getElementById('mob-autosync'),cgA=document.getElementById('cgm-autosync');
