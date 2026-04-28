@@ -3118,7 +3118,7 @@ body.force-desktop .section{border-radius:12px!important;box-shadow:0 2px 10px r
             <button class="nav-btn" id="prev-day">
                 <i class="fas fa-chevron-left"></i>
             </button>
-            <div class="current-date-display" id="nav-date-display">December 10, 2023</div>
+            <div class="current-date-display" id="nav-date-display">Loading...</div>
             <button class="nav-btn" id="next-day">
                 <i class="fas fa-chevron-right"></i>
             </button>
@@ -3688,7 +3688,7 @@ body.force-desktop .section{border-radius:12px!important;box-shadow:0 2px 10px r
 
         // Global variables
         let currentDate = new Date();
-        let selectedDate = new Date(currentDate);
+        var selectedDate = new Date(currentDate); // var so mobile IIFE script can access window.selectedDate
         let miniCalendarMonth = new Date().getMonth();
         let miniCalendarYear = new Date().getFullYear();
         let selectedItemForMove = null;
@@ -3725,7 +3725,10 @@ body.force-desktop .section{border-radius:12px!important;box-shadow:0 2px 10px r
 
         // Initialize the app
         function initApp() {
-            loadSampleData();
+            // Always start on today — reset so stale localStorage state can't set a wrong date
+            selectedDate = new Date();
+            miniCalendarMonth = selectedDate.getMonth();
+            miniCalendarYear = selectedDate.getFullYear();
             updateDateDisplays();
             updateWeekNavigation();
             updateMiniCalendar();
@@ -3733,7 +3736,7 @@ body.force-desktop .section{border-radius:12px!important;box-shadow:0 2px 10px r
             loadRecentNotes();
             updateStats();
             setupEventListeners();
-            loadFromLocalStorage();
+            loadFromLocalStorage(); // restores notes/todos/goals but does NOT change selectedDate
             setupAutoRemoveBlankItems();
             
             // Only setup monitoring if auto-save is enabled
@@ -8070,6 +8073,7 @@ function toggleAutoSave() {
                 selectedDate.setDate(selectedDate.getDate() - 1);
                 updateDateDisplays();
                 updateWeekNavigation();
+                updateMiniCalendar();
                 loadDailyView();
                 updateRecentNotesActiveState();
             });
@@ -8078,6 +8082,7 @@ function toggleAutoSave() {
                 selectedDate.setDate(selectedDate.getDate() + 1);
                 updateDateDisplays();
                 updateWeekNavigation();
+                updateMiniCalendar();
                 loadDailyView();
                 updateRecentNotesActiveState();
             });
@@ -8486,24 +8491,19 @@ function toggleAutoSave() {
                         if(fbIsAutoSyncEnabled()){
                             fbLoadAll(true).then(()=>fbStartPoll());
                         }
-                        // Update mobile sheet UI when sign-in state changes
-                        if(typeof window.mobUpdateSignInState === 'function') {
-                            setTimeout(() => window.mobUpdateSignInState(), 100);
-                        }
                     } else {
                         fbUser = null;
                         document.getElementById('fbNotSignedIn').style.display='block';
                         document.getElementById('fbSignedIn').style.display='none';
                         fbBadge('off');
                         fbStopPoll();
-                        if(typeof window.mobUpdateSignInState === 'function') {
-                            setTimeout(() => window.mobUpdateSignInState(), 100);
-                        }
                     }
                     // keep inline dropdown in sync
                     if(typeof cgmUpdateSignInState === 'function') cgmUpdateSignInState();
+                    // keep mobile sheet in sync
+                    if(typeof window.mobUpdateSignInState === 'function') setTimeout(window.mobUpdateSignInState, 100);
                 });
-                // Handle any pending redirect sign-in (mobile) — must be called AFTER onAuthStateChanged
+                // Handle redirect result AFTER onAuthStateChanged is wired (use setTimeout to yield)
                 setTimeout(() => fbHandleRedirectResult(), 0);
                 return true;
             } catch(e){
@@ -8517,6 +8517,7 @@ function toggleAutoSave() {
         function isMobileDevice(){
             return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
         }
+        window.isMobileDevice = isMobileDevice;
 
         async function fbSignIn(){
             if(!initFirebase()) return false;
@@ -8540,24 +8541,17 @@ function toggleAutoSave() {
                 const result = await fbAuth.getRedirectResult();
                 if(result && result.user){
                     sessionStorage.removeItem('fb_redirect_pending');
-                    // onAuthStateChanged will fire and update all UI automatically
-                    // Extra: update mobile "returning from sign-in" hint buttons
-                    const mobSignin = document.getElementById('mob-signin');
-                    if(mobSignin){ mobSignin.textContent = '✓ Signed In'; mobSignin.disabled = true; }
-                    const spLbl = document.getElementById('sp-lbl');
-                    if(spLbl) spLbl.textContent = 'Synced';
+                    // onAuthStateChanged fires automatically and updates all UI
                 }
             } catch(e){
                 if(e.code !== 'auth/redirect-cancelled-by-user'){
                     fbStatus('✗ Sign-in failed: '+e.message, false);
-                    // Also show error on mobile if sheet is open
+                    // Show error in mobile sheet too
                     const mobStatus = document.getElementById('mob-cgm-status');
                     if(mobStatus){
                         mobStatus.textContent = '✗ Sign-in failed: ' + e.message;
-                        mobStatus.style.display = 'block';
-                        mobStatus.style.background = 'rgba(245,101,101,.1)';
-                        mobStatus.style.color = '#e53e3e';
-                        mobStatus.style.border = '1px solid rgba(245,101,101,.2)';
+                        mobStatus.style.cssText = 'display:block;padding:8px 12px;border-radius:8px;font-size:.82rem;font-weight:600;background:rgba(245,101,101,.1);color:#e53e3e;border:1px solid rgba(245,101,101,.2)';
+                        setTimeout(()=>{ mobStatus.style.display='none'; }, 5000);
                     }
                 }
                 sessionStorage.removeItem('fb_redirect_pending');
@@ -8801,18 +8795,10 @@ function toggleAutoSave() {
 
             document.getElementById('cgm-signin').addEventListener('click', async ()=>{
                 if(!initFirebase()) return;
-                const btn = document.getElementById('cgm-signin');
-                const origText = btn ? btn.innerHTML : '';
                 try {
-                    if(btn){ btn.innerHTML = '⏳ Signing in…'; btn.style.pointerEvents='none'; }
                     await fbSignIn();
-                    // Popup path only: update UI (redirect reloads page)
-                    if(!isMobileDevice()){
-                        if(btn){ btn.innerHTML = origText; btn.style.pointerEvents=''; }
-                        cgmUpdateSignInState();
-                    }
-                } catch(e){\
-                    if(btn){ btn.innerHTML = origText; btn.style.pointerEvents=''; }
+                    if(!isMobileDevice()) cgmUpdateSignInState();
+                } catch(e){
                     if(e.code !== 'auth/popup-closed-by-user')
                         cgmStatus('✗ Sign-in failed: '+e.message, false);
                 }
@@ -8878,15 +8864,9 @@ function toggleAutoSave() {
 
             document.getElementById('fbSignInBtn').addEventListener('click', async ()=>{
                 if(!initFirebase()) return;
-                const btn = document.getElementById('fbSignInBtn');
-                const origHTML = btn ? btn.innerHTML : '';
                 try {
-                    if(btn){ btn.innerHTML = '⏳ Signing in…'; btn.disabled = true; }
                     await fbSignIn();
-                    // popup path: restore button
-                    if(!isMobileDevice() && btn){ btn.innerHTML = origHTML; btn.disabled = false; }
                 } catch(e){
-                    if(btn){ btn.innerHTML = origHTML; btn.disabled = false; }
                     if(e.code !== 'auth/popup-closed-by-user')
                         fbStatus('✗ Sign-in failed: '+e.message, false, true);
                 }
@@ -8923,7 +8903,7 @@ function toggleAutoSave() {
                 if(mobSigninBtn){ mobSigninBtn.textContent = '⏳ Completing sign-in…'; mobSigninBtn.disabled = true; }
                 var spLbl = document.getElementById('sp-lbl');
                 if(spLbl) spLbl.textContent = 'Signing in…';
-                // Also open the sheet automatically so user sees progress
+                // Auto-open the sheet so user sees the progress
                 var rnSheet = document.getElementById('rn-sheet');
                 var rnBackdrop = document.getElementById('rn-backdrop');
                 if(rnSheet){ rnSheet.classList.add('open'); document.body.style.overflow='hidden'; }
@@ -8962,8 +8942,22 @@ function toggleAutoSave() {
     function setupNav(){
         var prev = document.getElementById('mob-prev');
         var next = document.getElementById('mob-next');
-        if(prev) prev.addEventListener('click', function(){ var b=document.getElementById('prev-day'); if(b) b.click(); });
-        if(next) next.addEventListener('click', function(){ var b=document.getElementById('next-day'); if(b) b.click(); });
+        if(prev) prev.addEventListener('click', function(){
+            selectedDate.setDate(selectedDate.getDate() - 1);
+            if(typeof updateDateDisplays==='function') updateDateDisplays();
+            if(typeof updateWeekNavigation==='function') updateWeekNavigation();
+            if(typeof updateMiniCalendar==='function') updateMiniCalendar();
+            if(typeof loadDailyView==='function') loadDailyView();
+            if(typeof updateRecentNotesActiveState==='function') updateRecentNotesActiveState();
+        });
+        if(next) next.addEventListener('click', function(){
+            selectedDate.setDate(selectedDate.getDate() + 1);
+            if(typeof updateDateDisplays==='function') updateDateDisplays();
+            if(typeof updateWeekNavigation==='function') updateWeekNavigation();
+            if(typeof updateMiniCalendar==='function') updateMiniCalendar();
+            if(typeof loadDailyView==='function') loadDailyView();
+            if(typeof updateRecentNotesActiveState==='function') updateRecentNotesActiveState();
+        });
     }
 
     /* ── drawer ── */
@@ -9205,18 +9199,33 @@ function toggleAutoSave() {
             btn.textContent = '⏳ Signing in…';
             btn.disabled = true;
             try {
-                if(!initFirebase()){ btn.textContent='⚠ Config error'; btn.disabled=false; return; }
-                await fbSignIn();
-                // For popup (desktop forced mobile): update UI immediately
-                if(!isMobileDevice()){
+                // _rnFirebase is exposed on window from the first script block
+                var rf = window._rnFirebase;
+                if(!rf || !rf.init()){
+                    btn.textContent='🔑 Sign in with Google'; btn.disabled=false; return;
+                }
+                var fbAuth = rf.getAuth();
+                if(!fbAuth){ btn.textContent='🔑 Sign in with Google'; btn.disabled=false; return; }
+                var isMob = window.innerWidth<=768 || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+                var provider = new firebase.auth.GoogleAuthProvider();
+                if(isMob){
+                    sessionStorage.setItem('fb_redirect_pending','1');
+                    await fbAuth.signInWithRedirect(provider);
+                    // page will reload — button stays in loading state
+                } else {
+                    await fbAuth.signInWithPopup(provider);
                     btn.textContent = '✓ Signed In';
                     if(typeof mobUpdateSignInState==='function') setTimeout(mobUpdateSignInState, 300);
                 }
-                // For redirect (real mobile): page reloads automatically — button stays disabled
             } catch(e){
-                btn.textContent = '↩ Sign in with Google';
+                btn.textContent = '🔑 Sign in with Google';
                 btn.disabled = false;
-                mobStatus('Sign-in failed: '+(e.message||e.code||e), false);
+                var statusEl = document.getElementById('mob-cgm-status');
+                if(statusEl){
+                    statusEl.textContent = 'Sign-in failed: '+(e.message||e.code||'Unknown error');
+                    statusEl.style.cssText = 'display:block;padding:8px 12px;border-radius:8px;font-size:.82rem;font-weight:600;background:rgba(245,101,101,.1);color:#e53e3e;border:1px solid rgba(245,101,101,.2)';
+                    setTimeout(function(){ statusEl.style.display='none'; }, 4000);
+                }
             }
         });
         var mobSave=document.getElementById('mob-save-now');
