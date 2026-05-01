@@ -661,7 +661,85 @@ body {
   color: var(--text-muted);
 }
 
-/* ── Dashboard stats ─────────────────────────────────── */
+/* ── Open task list inside project cards (dashboard) ─── */
+.proj-open-tasks {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.proj-open-tasks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.proj-open-tasks-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-light);
+}
+.proj-open-tasks-chips {
+  display: flex;
+  gap: 4px;
+}
+.pot-chip {
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 20px;
+}
+.pot-chip-progress { background: var(--warn-soft); color: var(--warn); }
+.pot-chip-todo     { background: var(--surface2);  color: var(--text-muted); }
+.proj-task-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.12s;
+  margin-bottom: 2px;
+}
+.proj-task-row:hover { background: var(--surface2); }
+.proj-task-row:last-child { margin-bottom: 0; }
+.proj-task-dot-sm {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.proj-task-name-sm {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  line-height: 1.3;
+}
+.proj-task-pri-sm {
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.proj-task-due-sm {
+  font-size: 0.62rem;
+  font-family: 'DM Mono', monospace;
+  color: var(--text-light);
+  flex-shrink: 0;
+}
+.proj-more-link {
+  font-size: 0.72rem;
+  color: var(--text-light);
+  text-align: center;
+  padding: 4px 2px 0;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.proj-more-link:hover { color: var(--accent); }
 .stats-row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -1828,7 +1906,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
       </button>`;
     }).join('');
     document.getElementById('sidebar').innerHTML = `
-      <div class="sidebar-brand"><div class="brand-logo">Q<span>·</span>PM</div><div class="brand-sub"> (Copyright @ 2026 Dr. Wen-Ming Yang v11 + Cloud Sync)</div></div>
+      <div class="sidebar-brand"><div class="brand-logo">Q<span>·</span>PM</div><div class="brand-sub"> (Copyright @ 2026 Dr. Wen-Ming Yang v12 + Cloud Sync)</div></div>
       <div class="sidebar-section">
         <div class="sidebar-section-label">Workspace</div>
         <button class="nav-item ${currentPage==='dashboard'?'active':''}" onclick="APP.navigate('dashboard')"><span class="nav-icon">◼</span> Dashboard</button>
@@ -2035,8 +2113,65 @@ function colorSwatchPicker(selectedIdx, onChange) {
 
     const sorted = sortProjects(projects, tasks);
     const cards = sorted.map(({ p, pt, done, ppct, crit, high }) => {
-      const inp  = pt.filter(t => t.status === 'progress').length;
       const col  = projColor(p.color);
+
+      // Build open task list (in-progress first, then todo), up to 5 shown
+      const inProgressTasks = pt.filter(t => t.status === 'progress');
+      const todoTasks       = pt.filter(t => t.status === 'todo');
+      const openTasks       = [...inProgressTasks, ...todoTasks];
+      const MAX_SHOW        = 5;
+      const shownTasks      = openTasks.slice(0, MAX_SHOW);
+      const hiddenCount     = openTasks.length - shownTasks.length;
+
+      const priStyle = (pri) => {
+        if (pri === 'critical') return 'background:var(--p-critical-soft);color:var(--p-critical)';
+        if (pri === 'high')     return 'background:var(--p-high-soft);color:var(--p-high)';
+        if (pri === 'medium')   return 'background:var(--p-medium-soft);color:var(--p-medium)';
+        return 'background:var(--p-low-soft);color:var(--p-low)';
+      };
+      const priIcon = (pri) => {
+        if (pri === 'critical') return '🔴';
+        if (pri === 'high')     return '🟠';
+        if (pri === 'medium')   return '🔵';
+        return '⚪';
+      };
+      const dotColor = (status) => status === 'progress' ? 'var(--warn)' : 'var(--text-light)';
+
+      const taskRowsHtml = shownTasks.length === 0
+        ? `<div style="font-size:0.75rem;color:var(--text-light);padding:3px 2px;font-style:italic;">No open tasks</div>`
+        : shownTasks.map(t => {
+            const dueHtml = t.dueDate ? (() => {
+              const d = new Date(t.dueDate + 'T00:00:00');
+              const now = new Date(); now.setHours(0,0,0,0);
+              const diff = Math.round((d - now) / 86400000);
+              const str = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              const col = diff < 0 ? 'var(--danger)' : diff === 0 ? 'var(--success)' : diff <= 2 ? 'var(--warn)' : 'var(--text-light)';
+              return `<span class="proj-task-due-sm" style="color:${col}">${diff < 0 ? '⚠ ' : ''}${str}</span>`;
+            })() : '';
+            return `<div class="proj-task-row" onclick="event.stopPropagation();APP.navigate('project','${p.id}')" title="${escHtml(t.title)}">
+              <span class="proj-task-dot-sm" style="background:${dotColor(t.status)}"></span>
+              <span class="proj-task-name-sm">${escHtml(t.title)}</span>
+              <span class="proj-task-pri-sm" style="${priStyle(t.priority)}">${priIcon(t.priority)}</span>
+              ${dueHtml}
+            </div>`;
+          }).join('');
+
+      const chipsHtml = (inProgressTasks.length > 0 || todoTasks.length > 0)
+        ? `<div class="proj-open-tasks-chips">
+            ${inProgressTasks.length > 0 ? `<span class="pot-chip pot-chip-progress">🔄 ${inProgressTasks.length}</span>` : ''}
+            ${todoTasks.length > 0       ? `<span class="pot-chip pot-chip-todo">📋 ${todoTasks.length}</span>`           : ''}
+          </div>` : '';
+
+      const openTasksSection = `
+        <div class="proj-open-tasks">
+          <div class="proj-open-tasks-head">
+            <span class="proj-open-tasks-label">Open Tasks</span>
+            ${chipsHtml}
+          </div>
+          ${taskRowsHtml}
+          ${hiddenCount > 0 ? `<div class="proj-more-link" onclick="event.stopPropagation();APP.navigate('project','${p.id}')">+${hiddenCount} more task${hiddenCount > 1 ? 's' : ''}…</div>` : ''}
+        </div>`;
+
       return `<div class="project-card" onclick="APP.navigate('project','${p.id}')">
         <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${col};border-radius:var(--radius-lg) var(--radius-lg) 0 0"></div>
         <div class="project-card-header">
@@ -2048,10 +2183,11 @@ function colorSwatchPicker(selectedIdx, onChange) {
           <div class="progress-label"><span>${done}/${pt.length} tasks</span><span>${ppct}%</span></div>
         </div>
         <div class="project-stats">
-          ${inp  > 0 ? `<div class="project-stat" style="color:var(--warn)">● ${inp} in progress</div>` : ''}
+          ${inProgressTasks.length > 0 ? `<div class="project-stat" style="color:var(--warn)">● ${inProgressTasks.length} in progress</div>` : ''}
           ${crit > 0 ? `<div class="project-stat" style="color:var(--danger)">🔴 ${crit} critical</div>` : ''}
-          ${crit === 0 && inp === 0 && done === pt.length && pt.length > 0 ? `<div class="project-stat" style="color:var(--success)">✓ All done</div>` : ''}
+          ${crit === 0 && inProgressTasks.length === 0 && done === pt.length && pt.length > 0 ? `<div class="project-stat" style="color:var(--success)">✓ All done</div>` : ''}
         </div>
+        ${openTasksSection}
       </div>`;
     }).join('');
     return `
@@ -3286,6 +3422,20 @@ function initFirebase() {
     fbApp  = firebase.initializeApp(FIREBASE_CONFIG);
     fbAuth = firebase.auth();
     fbDb   = firebase.firestore();
+
+    // Handle redirect result (signInWithRedirect flow)
+    fbAuth.getRedirectResult().then(result => {
+      if (result && result.user) {
+        const dd = document.getElementById('cloudDropdown');
+        if (dd) dd.style.display = 'none';
+      }
+    }).catch(err => {
+      if (err && err.code !== 'auth/no-auth-event') {
+        console.error('Redirect sign-in error:', err);
+        alert('Sign-in failed: ' + err.message);
+      }
+    });
+
     fbAuth.onAuthStateChanged(user => {
       if (user) {
         fbUser = user;
@@ -3305,7 +3455,6 @@ function initFirebase() {
     return true;
   } catch(e) { console.error('Firebase init error:', e); return false; }
 }
-
 // Export all localStorage data for this app into one object
 function getLocalSnapshot() {
   return {
@@ -3384,79 +3533,48 @@ function stopDrivePoll() {
 }
 
 function setupCloudUI() {
-  // Use event delegation on document.body so listeners survive sidebar re-renders
   document.body.addEventListener('click', async e => {
     const toggleBtn = document.getElementById('cloudToggleBtn');
     const dropdown  = document.getElementById('cloudDropdown');
     if (!dropdown) return;
 
-    // Toggle the dropdown open/closed
+    // Toggle dropdown
     if (toggleBtn && toggleBtn.contains(e.target)) {
       e.stopPropagation();
       dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
       return;
     }
 
-    // Close dropdown when clicking outside
-    if (!dropdown.contains(e.target)) {
+    // Close when clicking outside - but NOT during sign-in redirect
+    if (!dropdown.contains(e.target) && !window._qpmSigningIn) {
       dropdown.style.display = 'none';
       return;
     }
 
-    // Sign in
+    // Sign in - use signInWithRedirect to avoid popup eaten by click-outside handler
     if (e.target.closest('#signInMenuItem')) {
       e.stopPropagation();
       if (!fbAuth) { alert('Firebase not ready'); return; }
-
-      // Prevent re-entrant sign-in attempts
       if (window._qpmSigningIn) return;
       window._qpmSigningIn = true;
-
-      const resetSignInUI = () => {
-        window._qpmSigningIn = false;
-        const el = document.getElementById('signInMenuItem');
-        if (el) {
-          el.innerHTML = '<span class="cloud-dropdown-icon">🔑</span>Sign in with Google';
-          el.style.pointerEvents = '';
-        }
-      };
-
-      // Show visual feedback
-      const item = document.getElementById('signInMenuItem');
-      if (item) {
-        item.innerHTML = '<span class="cloud-dropdown-icon">⏳</span>Signing in…';
-        item.style.pointerEvents = 'none';
-      }
-
-      // Timeout guard: reset UI if popup never resolves after 60s
-      const timeoutId = setTimeout(() => {
-        resetSignInUI();
-        alert('Sign-in timed out. Please try again.');
-      }, 60000);
-
       try {
         const provider = new firebase.auth.GoogleAuthProvider();
         provider.setCustomParameters({ prompt: 'select_account' });
-        await fbAuth.signInWithPopup(provider);
-        clearTimeout(timeoutId);
-        resetSignInUI();
-        const dd = document.getElementById('cloudDropdown');
-        if (dd) dd.style.display = 'none';
-      } catch(err) {
-        clearTimeout(timeoutId);
-        resetSignInUI();
-        const silent = [
-          'auth/popup-closed-by-user',
-          'auth/cancelled-popup-request',
-          'auth/user-cancelled',
-        ];
-        if (!silent.includes(err.code)) {
-          if (err.code === 'auth/popup-blocked') {
-            alert('Popup was blocked by your browser. Please allow popups for this site and try again.');
-          } else {
-            alert('Sign-in failed: ' + err.message);
-          }
+        const item = document.getElementById('signInMenuItem');
+        if (item) {
+          item.innerHTML = '<span class="cloud-dropdown-icon">&#x23F3;</span>Redirecting&#x2026;';
+          item.style.pointerEvents = 'none';
         }
+        await fbAuth.signInWithRedirect(provider);
+        // page will reload - nothing below runs
+      } catch(err) {
+        window._qpmSigningIn = false;
+        const item = document.getElementById('signInMenuItem');
+        if (item) {
+          item.innerHTML = '<span class="cloud-dropdown-icon">&#x1F511;</span>Sign in with Google';
+          item.style.pointerEvents = '';
+        }
+        alert('Sign-in failed: ' + err.message);
       }
       return;
     }
@@ -3486,7 +3604,7 @@ function setupCloudUI() {
       return;
     }
 
-    // Auto-sync toggle row click (but not the checkbox itself — let its own change handler fire)
+    // Auto-sync toggle row
     if (e.target.closest('#autoSyncItem') && e.target.type !== 'checkbox') {
       e.stopPropagation();
       const cb = document.getElementById('autoSyncToggle');
@@ -3495,7 +3613,6 @@ function setupCloudUI() {
     }
   });
 
-  // Auto-sync checkbox — also delegated so it works after re-renders
   document.body.addEventListener('change', e => {
     if (e.target.id === 'autoSyncToggle') {
       autoSyncEnabled = e.target.checked;
@@ -3508,7 +3625,6 @@ function setupCloudUI() {
     }
   });
 }
-
 // Boot the sync system after DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
   initFirebase();
