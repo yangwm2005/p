@@ -1970,9 +1970,10 @@ function colorSwatchPicker(selectedIdx, onChange) {
           </div>
         </div>
       </div>`;
-    // Restore auto-sync checkbox state after sidebar re-render
-    const _toggle = document.getElementById('autoSyncToggle');
-    if (_toggle) _toggle.checked = autoSyncEnabled;
+    // Restore UI state after sidebar re-render
+    const _at = document.getElementById('autoSyncToggle');
+    if (_at) _at.checked = autoSyncEnabled;
+    updateCloudUI(!!(typeof fbUser !== 'undefined' && fbUser));
   }
 
   // ── Topbar ────────────────────────────────────────────────────────────────
@@ -3357,11 +3358,14 @@ let gdriveSyncing    = false;
 let gdriveLastSavedAt = 0;
 let gdrivePollInterval = null;
 let lastLocalSavedAt   = 0;
+// Initialize from any existing localStorage writes
+try { const _ex = localStorage.getItem('qpm_tasks') || localStorage.getItem('qpm_projects'); if (_ex) lastLocalSavedAt = Date.now(); } catch(e){}
 
 // Called by DB layer after every write
 function scheduleAutoSync() {
   lastLocalSavedAt = Date.now();
-  updateSyncStatus();
+  // Update sidebar status display (guard: element may not exist yet)
+  if (document.getElementById('syncStatusMessage')) updateSyncStatus();
   if (!autoSyncEnabled || !fbUser) return;
   if (gdriveSyncTimer) clearTimeout(gdriveSyncTimer);
   gdriveSyncTimer = setTimeout(() => fbSaveAll(true), 2000);
@@ -3523,8 +3527,13 @@ function stopDrivePoll() {
 }
 
 function setupCloudUI() {
-  // Use event delegation on document.body so listeners survive sidebar re-renders
+  // Suppress "outside click closes dropdown" briefly after popup auth returns,
+  // because the popup close generates a synthetic body-click that would
+  // immediately re-close the dropdown or interfere with auth state.
+  let _suppressOutsideClose = false;
+
   document.body.addEventListener('click', async e => {
+    // Always re-query so we never hold a stale reference to a detached element
     const toggleBtn = document.getElementById('cloudToggleBtn');
     const dropdown  = document.getElementById('cloudDropdown');
     if (!dropdown) return;
@@ -3536,9 +3545,9 @@ function setupCloudUI() {
       return;
     }
 
-    // Close dropdown when clicking outside
+    // Close dropdown when clicking outside — but not right after a popup auth
     if (!dropdown.contains(e.target)) {
-      dropdown.style.display = 'none';
+      if (!_suppressOutsideClose) dropdown.style.display = 'none';
       return;
     }
 
@@ -3573,17 +3582,25 @@ function setupCloudUI() {
         alert('Sign-in timed out. Please try again.');
       }, 60000);
 
+      // Suppress outside-click dismissal while popup is open and for a short
+      // window after it closes (popup close fires a synthetic body click)
+      _suppressOutsideClose = true;
+
       try {
         const provider = new firebase.auth.GoogleAuthProvider();
         provider.setCustomParameters({ prompt: 'select_account' });
         await fbAuth.signInWithPopup(provider);
         clearTimeout(timeoutId);
         resetSignInUI();
-        const dd = document.getElementById('cloudDropdown');
-        if (dd) dd.style.display = 'none';
+        // Keep dropdown open so the user can see they're signed in;
+        // onAuthStateChanged will call updateCloudUI which updates the panel.
+        // Release suppression after a tick so the synthetic popup-close click
+        // has already been swallowed.
+        setTimeout(() => { _suppressOutsideClose = false; }, 300);
       } catch(err) {
         clearTimeout(timeoutId);
         resetSignInUI();
+        _suppressOutsideClose = false;
         const silent = [
           'auth/popup-closed-by-user',
           'auth/cancelled-popup-request',
@@ -3603,9 +3620,13 @@ function setupCloudUI() {
     // Sign out
     if (e.target.closest('#signOutMenuItem')) {
       e.stopPropagation();
+      autoSyncEnabled = false;
+      stopDrivePoll();
       if (fbAuth) await fbAuth.signOut();
-      autoSyncEnabled = false; updateCloudUI(false);
-      dropdown.style.display = 'none';
+      // fbUser will be cleared by onAuthStateChanged; update UI immediately
+      fbUser = null;
+      updateCloudUI(false);
+      document.getElementById('cloudDropdown').style.display = 'none';
       return;
     }
 
@@ -3613,7 +3634,8 @@ function setupCloudUI() {
     if (e.target.closest('#saveNowMenuItem')) {
       e.stopPropagation();
       if (fbUser) { await fbSaveAll(false); } else alert('Please sign in first');
-      dropdown.style.display = 'none';
+      const dd2 = document.getElementById('cloudDropdown');
+      if (dd2) dd2.style.display = 'none';
       return;
     }
 
@@ -3621,11 +3643,12 @@ function setupCloudUI() {
     if (e.target.closest('#loadNowMenuItem')) {
       e.stopPropagation();
       if (fbUser) { await fbLoadAll(false); } else alert('Please sign in first');
-      dropdown.style.display = 'none';
+      const dd3 = document.getElementById('cloudDropdown');
+      if (dd3) dd3.style.display = 'none';
       return;
     }
 
-    // Auto-sync toggle row click (but not the checkbox itself — let its own change handler fire)
+    // Auto-sync toggle row click (but not the checkbox itself — let its change handler fire)
     if (e.target.closest('#autoSyncItem') && e.target.type !== 'checkbox') {
       e.stopPropagation();
       const cb = document.getElementById('autoSyncToggle');
@@ -3634,12 +3657,12 @@ function setupCloudUI() {
     }
   });
 
-  // Auto-sync checkbox — also delegated so it works after re-renders
+  // Auto-sync checkbox — delegated so it works after sidebar re-renders
   document.body.addEventListener('change', e => {
     if (e.target.id === 'autoSyncToggle') {
       autoSyncEnabled = e.target.checked;
       if (fbUser) {
-        localStorage.setItem('qpm_autoSync_' + fbUser.uid, autoSyncEnabled);
+        localStorage.setItem('qpm_autoSync_' + fbUser.uid, String(autoSyncEnabled));
         if (autoSyncEnabled) { fbLoadAll(true).then(() => startDrivePoll()); }
         else stopDrivePoll();
       }
