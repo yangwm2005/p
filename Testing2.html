@@ -1213,6 +1213,8 @@ select.status-badge option {
 .cloud-toggle-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 2px; bottom: 2px; background: white; transition: 0.2s; border-radius: 50%; }
 input:checked + .cloud-toggle-slider { background: var(--accent); }
 input:checked + .cloud-toggle-slider:before { transform: translateX(20px); }
+.cloud-toggle-switch.toggle-on .cloud-toggle-slider { background: var(--accent); }
+.cloud-toggle-switch.toggle-on .cloud-toggle-slider:before { transform: translateX(20px); }
 
 /* ── Think Log (Self-Chat integration) ───────────────────── */
 .think-btn { position: relative; }
@@ -1942,9 +1944,9 @@ function colorSwatchPicker(selectedIdx, onChange) {
                 <div class="cloud-dropdown-avatar" id="dropdownAvatar">👤</div>
                 <div><div class="cloud-dropdown-name" id="dropdownName"></div><div class="cloud-dropdown-email" id="dropdownEmail"></div></div>
               </div>
-              <div class="cloud-dropdown-item" id="autoSyncItem">
+              <div class="cloud-dropdown-item" id="autoSyncItem" style="cursor:pointer">
                 <span class="cloud-dropdown-icon">🔄</span><span style="flex:1">Auto-sync</span>
-                <label class="cloud-toggle-switch" for="autoSyncToggle"><input type="checkbox" id="autoSyncToggle"><span class="cloud-toggle-slider"></span></label>
+                <div class="cloud-toggle-switch" id="autoSyncToggleTrack"><span class="cloud-toggle-slider"></span></div>
               </div>
               <div class="cloud-dropdown-item" id="saveNowMenuItem"><span class="cloud-dropdown-icon">☁</span>Save to Cloud</div>
               <div class="cloud-dropdown-item" id="loadNowMenuItem"><span class="cloud-dropdown-icon">⬇</span>Load from Cloud</div>
@@ -1971,11 +1973,11 @@ function colorSwatchPicker(selectedIdx, onChange) {
         </div>
       </div>`;
     // Restore UI state after sidebar re-render
-    const _at = document.getElementById('autoSyncToggle');
-    if (_at) _at.checked = autoSyncEnabled;
-    // Re-paint cloud UI and status bar with current state
+    // Re-paint cloud UI and restore toggle visual after sidebar re-render
     if (typeof fbUser !== 'undefined') {
       updateCloudUI(!!fbUser);
+      const track = document.getElementById('autoSyncToggleTrack');
+      if (track) track.classList.toggle('toggle-on', autoSyncEnabled);
       updateSyncStatus();
     }
   }
@@ -3438,9 +3440,11 @@ function initFirebase() {
         fbUser = user;
         updateCloudUI(true);
         const saved = localStorage.getItem('qpm_autoSync_' + user.uid);
+        // Restore saved auto-sync preference (don't call setAutoSync here
+        // because fbLoadAll/startDrivePoll are called below if needed)
         autoSyncEnabled = saved === 'true';
-        const toggle = document.getElementById('autoSyncToggle');
-        if (toggle) toggle.checked = autoSyncEnabled;
+        const track = document.getElementById('autoSyncToggleTrack');
+        if (track) track.classList.toggle('toggle-on', autoSyncEnabled);
         updateSyncStatus();
         if (autoSyncEnabled) fbLoadAll(true).then(() => startDrivePoll());
       } else {
@@ -3528,6 +3532,20 @@ function startDrivePoll() {
 function stopDrivePoll() {
   if (gdrivePollInterval) { clearInterval(gdrivePollInterval); gdrivePollInterval = null; }
   if (gdriveSyncTimer)    { clearTimeout(gdriveSyncTimer);     gdriveSyncTimer    = null; }
+}
+
+function setAutoSync(val) {
+  autoSyncEnabled = !!val;
+  // Persist per-user preference
+  if (fbUser) localStorage.setItem('qpm_autoSync_' + fbUser.uid, String(autoSyncEnabled));
+  // Update the visual toggle track
+  const track = document.getElementById('autoSyncToggleTrack');
+  if (track) track.classList.toggle('toggle-on', autoSyncEnabled);
+  // Start or stop cloud polling
+  if (autoSyncEnabled) { fbLoadAll(true).then(() => startDrivePoll()); }
+  else stopDrivePoll();
+  // Refresh status bar
+  updateSyncStatus();
 }
 
 function setupCloudUI() {
@@ -3652,31 +3670,15 @@ function setupCloudUI() {
       return;
     }
 
-    // Auto-sync row: let the <label> + checkbox handle their own change event.
-    // We only need to stop propagation so the dropdown doesn't close.
+    // Auto-sync row: toggle on every click of the row
     if (e.target.closest('#autoSyncItem')) {
       e.stopPropagation();
+      setAutoSync(!autoSyncEnabled);
       return;
     }
   });
 
-  // Auto-sync checkbox — delegated so it works after sidebar re-renders
-  document.body.addEventListener('change', e => {
-    if (e.target.id === 'autoSyncToggle') {
-      e.stopPropagation();
-      autoSyncEnabled = e.target.checked;
-      // Persist preference per user
-      if (fbUser) {
-        localStorage.setItem('qpm_autoSync_' + fbUser.uid, String(autoSyncEnabled));
-        if (autoSyncEnabled) { fbLoadAll(true).then(() => startDrivePoll()); }
-        else stopDrivePoll();
-      }
-      // Sync the checkbox visual in case this fired from the row-click path
-      const cb = document.getElementById('autoSyncToggle');
-      if (cb) cb.checked = autoSyncEnabled;
-      updateSyncStatus();
-    }
-  });
+  // (autoSync is now handled by setAutoSync() called from the click handler above)
 }
 
 // Boot the sync system after DOM is ready
