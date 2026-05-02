@@ -2616,31 +2616,81 @@ function colorSwatchPicker(selectedIdx, onChange) {
       panel.appendChild(stList);
     }
 
-    // — Think Log section —
+    // — Think Log section — collapsible, full entry preview —
     if (task.thinkLog && task.thinkLog.length > 0) {
-      const tlSec = document.createElement('div');
-      tlSec.style.cssText = 'font-size:0.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.05em;padding:8px 0 4px;';
-      tlSec.textContent = '💬 Think Log';
-      panel.appendChild(tlSec);
+      const log = task.thinkLog;
+      const msgCount = log.filter(e => !e.isSubtitle).length;
 
+      // Collapsible header bar
+      const tlHdr = document.createElement('div');
+      tlHdr.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;background:#f5f3ff;border:1px solid #ede9fe;border-radius:6px 6px 0 0;cursor:pointer;user-select:none;margin-top:8px;';
+      const tlArrow = document.createElement('span');
+      tlArrow.style.cssText = 'font-size:0.65rem;color:#7c3aed;transition:transform 0.18s;';
+      tlArrow.textContent = '▶';
+      tlArrow.classList.add('tl-note-arrow', 'open');
+      const tlLabel = document.createElement('span');
+      tlLabel.style.cssText = 'font-size:0.72rem;font-weight:700;color:#5b21b6;flex:1;';
+      tlLabel.textContent = '💬 Think Log';
+      const tlCount = document.createElement('span');
+      tlCount.style.cssText = 'font-size:0.65rem;background:#ede9fe;color:#7c3aed;border-radius:20px;padding:1px 8px;font-weight:600;';
+      tlCount.textContent = msgCount + (msgCount === 1 ? ' entry' : ' entries');
+      const tlOpenBtn = document.createElement('button');
+      tlOpenBtn.className = 'btn btn-ghost btn-xs';
+      tlOpenBtn.style.cssText = 'font-size:0.68rem;padding:1px 8px;color:#7c3aed;border-color:#ddd6fe;';
+      tlOpenBtn.textContent = 'Open 💬';
+      tlOpenBtn.addEventListener('click', e => { e.stopPropagation(); openThinkLog(task); });
+      tlHdr.appendChild(tlArrow); tlHdr.appendChild(tlLabel);
+      tlHdr.appendChild(tlCount); tlHdr.appendChild(tlOpenBtn);
+      panel.appendChild(tlHdr);
+
+      // Entries panel
       const tlPanel = document.createElement('div');
       tlPanel.className = 'think-log-panel';
-      task.thinkLog.forEach(entry => {
-        const eRow = document.createElement('div');
-        eRow.className = 'think-log-entry' + (entry.isSubchat ? ' is-subchat' : '') + (entry.isYellow ? ' is-yellow' : '') + (entry.isOrange ? ' is-orange' : '');
-        eRow.innerHTML = '<span class="think-log-ts">' + (entry.timestamp||'') + '</span><span class="think-log-text">' + escHtml(entry.text||'') + '</span>';
-        tlPanel.appendChild(eRow);
+      tlPanel.style.cssText = 'border-radius:0 0 6px 6px;border-top:none;max-height:280px;overflow-y:auto;';
+
+      log.forEach(entry => {
+        if (entry.isSubtitle) {
+          // Section header (Decision / Problem / Idea etc.)
+          const sec = document.createElement('div');
+          sec.style.cssText = 'background:#7c3aed;color:#fff;border-radius:3px;padding:2px 10px;font-weight:700;font-size:0.7rem;text-align:center;margin:5px 0 2px;';
+          sec.textContent = entry.text || '';
+          tlPanel.appendChild(sec);
+        } else {
+          const eRow = document.createElement('div');
+          eRow.className = 'think-log-entry'
+            + (entry.isSubchat ? ' is-subchat' : '')
+            + (entry.isYellow  ? ' is-yellow'  : '')
+            + (entry.isOrange  ? ' is-orange'  : '');
+          const ts = document.createElement('span');
+          ts.className = 'think-log-ts'; ts.textContent = entry.timestamp || '';
+          const txt = document.createElement('span');
+          txt.className = 'think-log-text'; txt.textContent = entry.text || '';
+          eRow.appendChild(ts); eRow.appendChild(txt);
+          tlPanel.appendChild(eRow);
+        }
       });
+
+      // Actions row
       const tlAct = document.createElement('div'); tlAct.className = 'think-log-actions';
-      const openTLBtn = document.createElement('button'); openTLBtn.className = 'btn btn-ghost btn-xs';
-      openTLBtn.innerHTML = '💬 Open Think Log';
-      openTLBtn.addEventListener('click', () => openThinkLog(task));
-      const clearTLBtn = document.createElement('button'); clearTLBtn.className = 'btn btn-ghost btn-xs';
-      clearTLBtn.style.color = 'var(--danger)'; clearTLBtn.innerHTML = '✕ Clear';
-      clearTLBtn.addEventListener('click', () => confirmDialog('Clear Think Log?', () => { DB.updateTask(task.id, { thinkLog: [] }); render(); }));
-      tlAct.appendChild(openTLBtn); tlAct.appendChild(clearTLBtn);
+      tlAct.style.cssText = 'padding:4px 8px 8px;border-top:1px solid #ede9fe;';
+      const clearTLBtn = document.createElement('button');
+      clearTLBtn.className = 'btn btn-ghost btn-xs';
+      clearTLBtn.style.color = 'var(--danger)'; clearTLBtn.textContent = '✕ Clear log';
+      clearTLBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        confirmDialog('Clear Think Log for this note?', () => { DB.updateTask(task.id, { thinkLog: [] }); render(); });
+      });
+      tlAct.appendChild(clearTLBtn);
       tlPanel.appendChild(tlAct);
       panel.appendChild(tlPanel);
+
+      // Toggle collapse
+      let tlOpen = true;
+      tlHdr.addEventListener('click', () => {
+        tlOpen = !tlOpen;
+        tlPanel.style.display = tlOpen ? 'block' : 'none';
+        tlArrow.style.transform = tlOpen ? 'rotate(90deg)' : '';
+      });
     }
 
     li.appendChild(panel);
