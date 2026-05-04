@@ -1459,7 +1459,7 @@ input:checked + .s-switch-slider:before { transform: translateX(20px); }
       <button class="tl-cbtn" id="tlExportBtn">&#x1F4C4; Export .txt</button>
       <button class="tl-cbtn tl-red" id="tlClearBtn">&#x1F5D1; Clear all</button>
     </div>
-    <div id="tlStatusBar">Ready &#x2014; click &#x201C;Save to Task&#x201D; to persist</div>
+    <div id="tlStatusBar">Auto-saves after each entry &#x2014; or click &#x201C;Save to Task&#x201D; anytime</div>
   </div>
 </div>
 <div id="tlSubPicker">
@@ -1978,7 +1978,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
       </button>`;
     }).join('');
     document.getElementById('sidebar').innerHTML = `
-      <div class="sidebar-brand"><div class="brand-logo">Q<span>·</span>PM</div><div class="brand-sub"> (Copyright @ 2026 Dr. Wen-Ming Yang v12 + Cloud Sync)</div></div>
+      <div class="sidebar-brand"><div class="brand-logo">Q<span>·</span>PM</div><div class="brand-sub"> (Copyright @ 2026 Dr. Wen-Ming Yang v13 + Cloud Sync)</div></div>
       <div class="sidebar-section">
         <div class="sidebar-section-label">Workspace</div>
         <button class="nav-item ${currentPage==='dashboard'?'active':''}" onclick="APP.navigate('dashboard')"><span class="nav-icon">◼</span> Dashboard</button>
@@ -2380,13 +2380,17 @@ function colorSwatchPicker(selectedIdx, onChange) {
       li.classList.remove('drag-over');
       const fromId = e.dataTransfer.getData('text/plain');
       if (!fromId || fromId === task.id) return;
-      const arr = DB.getTasks(task.projectId);
-      const fromIdx = arr.findIndex(t => t.id === fromId);
-      const toIdx   = arr.findIndex(t => t.id === task.id);
+      // Use DOM order (the visible sorted list) to determine new positions
+      const ul = li.parentNode;
+      if (!ul) return;
+      const domItems = Array.from(ul.querySelectorAll(':scope > li.task-item, :scope > div.task-item'));
+      const domIds   = domItems.map(el => el.dataset.id).filter(Boolean);
+      const fromIdx  = domIds.indexOf(fromId);
+      const toIdx    = domIds.indexOf(task.id);
       if (fromIdx === -1 || toIdx === -1) return;
-      const [moved] = arr.splice(fromIdx, 1);
-      arr.splice(toIdx, 0, moved);
-      arr.forEach((t, i) => DB.updateTask(t.id, { order: i }));
+      domIds.splice(fromIdx, 1);
+      domIds.splice(toIdx, 0, fromId);
+      domIds.forEach((id, i) => DB.updateTask(id, { order: i }));
       renderContent();
     });
     li.style.position = 'relative';
@@ -2805,13 +2809,19 @@ function colorSwatchPicker(selectedIdx, onChange) {
       li.classList.remove('drag-over');
       const fromId = e.dataTransfer.getData('text/plain');
       if (!fromId || fromId === task.id) return;
-      let arr = DB.getTasks(task.projectId);
-      const fromIdx = arr.findIndex(t => t.id === fromId);
-      const toIdx   = arr.findIndex(t => t.id === task.id);
+      // Use DOM order (the visible sorted list) to determine new positions
+      const ul = li.parentNode;
+      if (!ul) return;
+      const domItems = Array.from(ul.querySelectorAll(':scope > li.task-item, :scope > div.task-item'));
+      const domIds   = domItems.map(el => el.dataset.id).filter(Boolean);
+      const fromIdx  = domIds.indexOf(fromId);
+      const toIdx    = domIds.indexOf(task.id);
       if (fromIdx === -1 || toIdx === -1) return;
-      const [moved] = arr.splice(fromIdx, 1);
-      arr.splice(toIdx, 0, moved);
-      arr.forEach((t, i) => DB.updateTask(t.id, { order: i }));
+      // Reorder the domIds array
+      domIds.splice(fromIdx, 1);
+      domIds.splice(toIdx, 0, fromId);
+      // Persist new order: assign order by position in the new domIds sequence
+      domIds.forEach((id, i) => DB.updateTask(id, { order: i }));
       renderContent();
     });
     row.appendChild(dh);
@@ -3202,6 +3212,26 @@ function colorSwatchPicker(selectedIdx, onChange) {
 
   // ── Think Log — in-page overlay ─────────────────────────────────────────
   let _tlTask = null, _tlMsgs = [], _tlSel = new Set(), _tlDirty = false;
+  var _tlAutoSaveTimer = null;
+
+  function _tlAutoSave() {
+    if (!_tlTask) return;
+    clearTimeout(_tlAutoSaveTimer);
+    _tlAutoSaveTimer = setTimeout(function() {
+      if (!_tlTask) return;
+      DB.updateTask(_tlTask.id, { thinkLog: _tlMsgs });
+      _tlDirty = false;
+      var b = document.getElementById('tlSaveBtn');
+      if (b) { b.textContent = '\u2713 Auto-saved'; b.className = 'tl-savebtn saved'; }
+      _tlStat('\u2713 Auto-saved', true);
+      setTimeout(function() {
+        var b2 = document.getElementById('tlSaveBtn');
+        if (b2 && b2.className === 'tl-savebtn saved') {
+          b2.textContent = '\u{1F4BE} Save to Task'; b2.className = 'tl-savebtn';
+        }
+      }, 2000);
+    }, 600);
+  }
 
   function _tlTs() {
     var d=new Date(),h=d.getHours(),m=d.getMinutes(),ap=h>=12?'PM':'AM';
@@ -3216,7 +3246,8 @@ function colorSwatchPicker(selectedIdx, onChange) {
   function _tlDirtyMark() {
     _tlDirty=true;
     var b=document.getElementById('tlSaveBtn');
-    if(b){ b.textContent='\u{1F4BE} Save to Task \u2605'; b.className='tl-savebtn dirty'; }
+    if(b){ b.textContent='\u{1F4BE} Saving\u2026'; b.className='tl-savebtn dirty'; }
+    _tlAutoSave();
   }
 
   function _tlRender() {
@@ -3505,6 +3536,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
 
   function _tlSaveToTask() {
     if(!_tlTask) return;
+    clearTimeout(_tlAutoSaveTimer);
     DB.updateTask(_tlTask.id, { thinkLog: _tlMsgs });
     render();
     toast('Think Log saved \u2713', 'success');
@@ -3516,7 +3548,10 @@ function colorSwatchPicker(selectedIdx, onChange) {
   }
 
   function _tlClose() {
-    if(_tlDirty && _tlMsgs.length && !confirm('Close without saving?')) return;
+    clearTimeout(_tlAutoSaveTimer);
+    if (_tlTask && _tlMsgs.length) {
+      DB.updateTask(_tlTask.id, { thinkLog: _tlMsgs });
+    }
     document.getElementById('tlOverlay').classList.remove('tl-open');
     _tlTask=null; _tlMsgs=[]; _tlSel=new Set(); _tlDirty=false;
   }
@@ -3542,7 +3577,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
       panel.style.left = Math.max(0, (window.innerWidth  - pw) / 2) + 'px';
       panel.style.top  = Math.max(0, (window.innerHeight - ph) / 2) + 'px';
     }
-    _tlStat('Ready \u2014 click \u201CSave to Task\u201D to persist');
+    _tlStat('Auto-saves after each entry \u2014 or click \u201CSave to Task\u201D anytime');
     _tlRender();
     document.getElementById('tlOverlay').classList.add('tl-open');
     setTimeout(function(){ var inp=document.getElementById('tlTextInput'); if(inp) inp.focus(); }, 80);
