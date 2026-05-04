@@ -525,7 +525,11 @@ body {
   gap: 8px;
   min-height: 80px;
 }
-.kanban-cards.drag-over { background: var(--accent-soft); border-radius: var(--radius); }
+.kanban-board-with-notes { grid-template-columns: repeat(4, minmax(200px, 1fr)) minmax(200px, 240px); }
+.kanban-col-notes { border-left: 2px dashed #c4b5fd; }
+.kanban-note-card { cursor: pointer; border-left: 3px solid #6366f1; background: #faf9ff; }
+.kanban-note-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.kanban-card { cursor: pointer; }
 
 .kanban-card {
   background: var(--surface);
@@ -891,7 +895,8 @@ body {
 /* ── Responsive ──────────────────────────────────────── */
 @media (max-width: 768px) {
   .sidebar { width: 200px; }
-  .kanban-board { grid-template-columns: repeat(2, minmax(200px, 1fr)); }
+  .kanban-board { grid-template-columns: repeat(3, minmax(200px, 1fr)); }
+  .kanban-board-with-notes { grid-template-columns: repeat(3, minmax(180px, 1fr)); }
 }
 @media (max-width: 600px) {
   .shell { flex-direction: column; }
@@ -900,6 +905,7 @@ body {
   .sidebar-section-label { display: none; }
   .sidebar-brand { display: none; }
   .kanban-board { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
+  .kanban-board-with-notes { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
   .kanban-wrap { padding: 0 12px 16px; }
 }
 
@@ -3642,8 +3648,10 @@ function colorSwatchPicker(selectedIdx, onChange) {
   // ── Kanban ────────────────────────────────────────────────────────────────
   let _dragId = null;
   function buildKanban(tasks) {
-    return `<div class="kanban-board">${['todo','progress','review','done'].map(status => {
-      const m = STATUS_META[status]; const ct = tasks.filter(t => t.status === status);
+    const taskItems = tasks.filter(t => t.type !== 'note');
+    const noteItems = tasks.filter(t => t.type === 'note');
+    const taskCols  = ['todo','progress','review','done'].map(status => {
+      const m = STATUS_META[status]; const ct = taskItems.filter(t => t.status === status);
       return `<div class="kanban-col">
         <div class="kanban-col-header">
           <div class="kanban-col-dot" style="background:${m.dot}"></div>
@@ -3657,7 +3665,18 @@ function colorSwatchPicker(selectedIdx, onChange) {
         </div>
         <button class="kanban-add-btn" data-action="kanban-add" data-status="${status}">+ Add task</button>
       </div>`;
-    }).join('')}</div>`;
+    }).join('');
+    const noteCol = `<div class="kanban-col kanban-col-notes">
+      <div class="kanban-col-header">
+        <div class="kanban-col-dot" style="background:#6366f1"></div>
+        <div class="kanban-col-name">Notes</div>
+        <div class="kanban-col-count">${noteItems.length}</div>
+      </div>
+      <div class="kanban-cards">
+        ${noteItems.map(t => buildKanbanNoteCard(t)).join('')}
+      </div>
+    </div>`;
+    return `<div class="kanban-board kanban-board-with-notes">${taskCols}${noteCol}</div>`;
   }
 
   function buildKanbanCard(task) {
@@ -3669,17 +3688,66 @@ function colorSwatchPicker(selectedIdx, onChange) {
     const think = (task.thinkLog && task.thinkLog.length) ? `<span style="font-size:0.68rem;color:#7c3aed" title="${task.thinkLog.length} think log entries">💬${task.thinkLog.length}</span>` : '';
     return `<div class="kanban-card" draggable="true" data-id="${task.id}"
       ondragstart="APP.kanbanDragStart(event,'${task.id}')" ondragend="APP.kanbanDragEnd(event)"
-      ondblclick="APP.showEditTaskDialog('${task.id}')">
+      onclick="APP.jumpToItem('${task.id}')">
       <div class="kanban-card-title ${task.status==='done'?'done':''}">${escHtml(task.title)}</div>
       <div class="kanban-card-footer">${projTag}${priorityBadge(task.priority)}${subStr}${note}${think}
         ${task.dueDate?`<span class="kanban-card-date">${formatDate(task.dueDate)}</span>`:''}
       </div>
       <div style="display:flex;gap:4px;margin-top:8px;opacity:0;transition:opacity 0.1s" class="kcard-actions">
-        <button class="btn btn-ghost btn-xs" onclick="APP.showEditTaskDialog('${task.id}')">Edit</button>
-        <button class="btn btn-xs" style="background:#ede9fe;color:#7c3aed;border:1px solid #ddd6fe" onclick="APP.openThinkLogById('${task.id}')">💬</button>
-        <button class="btn btn-xs btn-danger" onclick="APP._kDel('${task.id}')">✕</button>
+        <button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();APP.showEditTaskDialog('${task.id}')">Edit</button>
+        <button class="btn btn-xs" style="background:#ede9fe;color:#7c3aed;border:1px solid #ddd6fe" onclick="event.stopPropagation();APP.openThinkLogById('${task.id}')">💬</button>
+        <button class="btn btn-xs btn-danger" onclick="event.stopPropagation();APP._kDel('${task.id}')">✕</button>
       </div>
     </div>`;
+  }
+
+  function buildKanbanNoteCard(task) {
+    const proj    = DB.getProjects().find(p => p.id === task.projectId);
+    const projTag = proj && currentPage !== 'project'
+      ? `<span class="task-project-tag" style="background:${projColor(proj.color)};font-size:0.65rem;padding:1px 5px">${escHtml(proj.name)}</span>` : '';
+    const typeColors = { summary:'#6366f1', ideas:'#f59e0b', progress:'#10b981', review:'#ef4444', custom:'#8b5cf6' };
+    const typeColor  = typeColors[task.noteType] || '#6366f1';
+    const typeLbl    = (task.noteType||'note').charAt(0).toUpperCase() + (task.noteType||'note').slice(1);
+    const preview    = (task.body||'').replace(/\n/g,' ').slice(0,80) + ((task.body||'').length>80?'…':'');
+    return `<div class="kanban-card kanban-note-card" data-id="${task.id}" onclick="APP.jumpToItem('${task.id}')">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <span style="font-size:0.6rem;font-weight:600;letter-spacing:0.04em;background:${typeColor};color:#fff;padding:1px 6px;border-radius:10px">${escHtml(typeLbl)}</span>
+        ${projTag}
+      </div>
+      <div class="kanban-card-title" style="font-size:0.82rem">${task.title ? escHtml(task.title) : '<em style="color:var(--text-muted);font-weight:400">Untitled note</em>'}</div>
+      ${preview ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:4px;line-height:1.4">${escHtml(preview)}</div>` : ''}
+    </div>`;
+  }
+
+  function jumpToItem(taskId) {
+    const task = DB.getTask(taskId);
+    if (!task) return;
+    // Switch to list view
+    currentView = 'list';
+    // Navigate to the right page if needed
+    if (currentPage !== 'project' || currentProjectId !== task.projectId) {
+      currentPage      = 'project';
+      currentProjectId = task.projectId;
+      filterPriority   = 'all';
+      filterStatus     = 'all';
+      searchQuery      = '';
+    }
+    // Open detail for this item
+    detailOpenState.set(taskId, true);
+    render();
+    // Scroll to the item
+    setTimeout(() => {
+      const sel = task.type === 'note'
+        ? `.note-item-card[data-id="${taskId}"]`
+        : `li.task-item[data-id="${taskId}"], div.task-item[data-id="${taskId}"]`;
+      const el = document.querySelector(sel);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.outline = '2px solid var(--accent)';
+        el.style.outlineOffset = '2px';
+        setTimeout(() => { el.style.outline = ''; el.style.outlineOffset = ''; }, 1800);
+      }
+    }, 80);
   }
 
   function kanbanDragStart(e,id){ _dragId=id; setTimeout(()=>e.target.classList.add('dragging'),0); e.dataTransfer.effectAllowed='move'; }
@@ -3846,6 +3914,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
     setFilter, setSearch, setView, setProjectSort,
     exportData, importDataPrompt, addNoteItem,
     kanbanDragStart, kanbanDragEnd, kanbanDragOver, kanbanDragEnter, kanbanDragLeave, kanbanDrop,
+    jumpToItem,
     openThinkLog,
     openThinkLogById: id => { const t = DB.getTask(id); if (t) openThinkLog(t); },
     _kDel: id => confirmDialog('Delete this task?', () => { DB.deleteTask(id); render(); }),
