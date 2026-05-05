@@ -994,6 +994,23 @@
       _tlDirty=true;
       var b=document.getElementById('tlSaveBtn');
       if(b){ b.textContent='💾 Save to Task ★'; b.className='tl-savebtn dirty'; }
+      _tlAutoSave();
+    }
+
+    var _tlAutoSaveTimer = null;
+    function _tlAutoSave() {
+      clearTimeout(_tlAutoSaveTimer);
+      _tlAutoSaveTimer = setTimeout(function() {
+        if (!_tlTask) return;
+        var d = _tlTaskIsPrev ? formatDate(new Date(today.getTime()-86400000)) : _tlTaskDate;
+        var ts = loadTasks(d);
+        var t2 = findTaskById(_tlTask.id, ts);
+        if (t2) { t2.thinkLog = _tlMsgs; saveTasksToDate(d, ts); if(d===todayStr) tasks=ts; renderTasks(); }
+        _tlDirty = false;
+        var b = document.getElementById('tlSaveBtn');
+        if (b) { b.textContent = '💾 Save to Task'; b.className = 'tl-savebtn'; }
+        _tlStat('✓ Auto-saved', true);
+      }, 600);
     }
 
     function _tlRender() {
@@ -1166,7 +1183,7 @@
       _tlMsgs.push({ text:t, timestamp:_tlTs(), isSubchat:false, isYellow:false, isOrange:false });
       inp.value=''; inp.style.height='auto';
       _tlDirtyMark(); _tlRender();
-      _tlStat('Unsaved — click "Save to Task" when ready');
+      _tlStat('Saving…');
     }
 
     function _tlInsertSub(lbl) {
@@ -1247,7 +1264,13 @@
     }
 
     function _tlClose() {
-      if(_tlDirty && _tlMsgs.length && !confirm('Close without saving?')) return;
+      if (_tlDirty && _tlTask) {
+        clearTimeout(_tlAutoSaveTimer);
+        var d = _tlTaskIsPrev ? formatDate(new Date(today.getTime()-86400000)) : _tlTaskDate;
+        var ts = loadTasks(d);
+        var t2 = findTaskById(_tlTask.id, ts);
+        if (t2) { t2.thinkLog = _tlMsgs; saveTasksToDate(d, ts); if(d===todayStr) tasks=ts; renderTasks(); }
+      }
       document.getElementById('tlOverlay').classList.remove('tl-open');
       _tlTask=null; _tlTaskDate=null; _tlTaskIsPrev=false;
       _tlMsgs=[]; _tlSel=new Set(); _tlDirty=false;

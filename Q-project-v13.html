@@ -1740,6 +1740,25 @@ window.openThinkLog = openThinkLog;
     _tlDirty=true;
     var b=document.getElementById('tlSaveBtn');
     if(b){ b.textContent='\u{1F4BE} Save to Task \u2605'; b.className='tl-savebtn dirty'; }
+    // Auto-save silently whenever the log is mutated
+    _tlAutoSave();
+  }
+
+  var _tlAutoSaveTimer = null;
+  function _tlAutoSave() {
+    clearTimeout(_tlAutoSaveTimer);
+    _tlAutoSaveTimer = setTimeout(function() {
+      if (!_tlTask) return;
+      var __t = tasks.find(function(t){ return t.id === _tlTask.id; });
+      if (__t) {
+        __t.thinkLog = JSON.parse(JSON.stringify(_tlMsgs));
+        saveData();
+      }
+      _tlDirty = false;
+      var b = document.getElementById('tlSaveBtn');
+      if (b) { b.textContent = '\u{1F4BE} Save to Task'; b.className = 'tl-savebtn'; }
+      _tlStat('\u2713 Auto-saved', true);
+    }, 600);
   }
 
   function _tlRender() {
@@ -1950,7 +1969,7 @@ window.openThinkLog = openThinkLog;
     _tlMsgs.push({ text:t, timestamp:_tlTs(), isSubchat:false, isYellow:false, isOrange:false });
     inp.value=''; inp.style.height='auto';
     _tlDirtyMark(); _tlRender();
-    _tlStat('Unsaved \u2014 click \u201CSave to Task\u201D when ready');
+    _tlStat('Saving\u2026');
   }
 
   function _tlInsertSub(lbl) {
@@ -2024,6 +2043,7 @@ window.openThinkLog = openThinkLog;
   }
 
   function _tlSaveToTask() {
+    clearTimeout(_tlAutoSaveTimer);
     if(!_tlTask) return;
     var __t = tasks.find(function(t){ return t.id === _tlTask.id; });
     if (__t) { __t.thinkLog = JSON.parse(JSON.stringify(_tlMsgs)); saveData(); }
@@ -2036,7 +2056,12 @@ window.openThinkLog = openThinkLog;
   }
 
   function _tlClose() {
-    if(_tlDirty && _tlMsgs.length && !confirm('Close without saving?')) return;
+    // Flush any pending auto-save immediately before closing
+    if (_tlDirty && _tlTask) {
+      clearTimeout(_tlAutoSaveTimer);
+      var __t = tasks.find(function(t){ return t.id === _tlTask.id; });
+      if (__t) { __t.thinkLog = JSON.parse(JSON.stringify(_tlMsgs)); saveData(); }
+    }
     document.getElementById('tlOverlay').classList.remove('tl-open');
     _tlTask=null; _tlMsgs=[]; _tlSel=new Set(); _tlDirty=false;
   }
