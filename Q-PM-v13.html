@@ -2547,43 +2547,68 @@ function colorSwatchPicker(selectedIdx, onChange) {
     panel.style.display = isOpen ? 'block' : 'none';
     panel.style.cssText += ';padding:0 14px 12px 28px;';
 
-    // — Body textarea —
+    // — Body (single unified click-to-edit area) —
     const bodySec = document.createElement('div');
     bodySec.style.cssText = 'font-size:0.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.05em;padding:8px 0 4px;';
     bodySec.textContent = '📝 Notes';
     panel.appendChild(bodySec);
 
-    const body = document.createElement('div');
-    body.className = 'note-item-body';
-    body.style.display = 'block';
-    body.textContent = task.body || '';
-    if (!task.body) { body.style.color = 'var(--text-muted)'; body.textContent = 'Click to write…'; }
+    const noteBody = document.createElement('div');
+    noteBody.className = 'note-item-body unified-note-body';
+    noteBody.style.cssText = 'cursor:text;min-height:36px;';
 
-    const editor = document.createElement('textarea');
-    editor.className = 'note-item-editor hidden';
-    editor.value = task.body || '';
-    editor.placeholder = 'Write your note here…';
-    let saveTimer;
-    editor.addEventListener('input', () => {
-      clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => DB.updateTask(task.id, { body: editor.value }), 600);
-    });
-    editor.addEventListener('blur', () => {
-      clearTimeout(saveTimer);
-      DB.updateTask(task.id, { body: editor.value });
-      editor.classList.add('hidden');
-      body.textContent = editor.value || 'Click to write…';
-      body.style.color = editor.value ? 'var(--text)' : 'var(--text-muted)';
-      body.classList.remove('hidden');
-    });
-    body.addEventListener('click', e => {
+    const updateBodyDisplay = () => {
+      if (task.body) {
+        noteBody.textContent = task.body;
+        noteBody.style.color = 'var(--text)';
+        noteBody.style.fontStyle = '';
+      } else {
+        noteBody.textContent = 'Click to write…';
+        noteBody.style.color = 'var(--text-muted)';
+        noteBody.style.fontStyle = 'italic';
+      }
+    };
+    updateBodyDisplay();
+
+    let bodyEditing = false;
+    noteBody.addEventListener('click', e => {
       e.stopPropagation();
-      body.classList.add('hidden');
-      editor.classList.remove('hidden');
-      editor.focus();
+      if (bodyEditing) return;
+      bodyEditing = true;
+
+      const ta = document.createElement('textarea');
+      ta.className = 'note-item-editor';
+      ta.value = task.body || '';
+      ta.placeholder = 'Write your note here…';
+
+      noteBody.style.display = 'none';
+      noteBody.parentNode.insertBefore(ta, noteBody.nextSibling);
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+
+      let saveTimer;
+      const finish = () => {
+        clearTimeout(saveTimer);
+        const v = ta.value;
+        DB.updateTask(task.id, { body: v });
+        task.body = v;
+        ta.remove();
+        noteBody.style.display = '';
+        updateBodyDisplay();
+        bodyEditing = false;
+      };
+
+      ta.addEventListener('input', () => {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => DB.updateTask(task.id, { body: ta.value }), 600);
+      });
+      ta.addEventListener('blur', () => setTimeout(finish, 150));
+      ta.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { e.preventDefault(); finish(); }
+      });
     });
-    panel.appendChild(body);
-    panel.appendChild(editor);
+
+    panel.appendChild(noteBody);
 
     // — Subtasks section —
     if (task.subtasks && task.subtasks.length > 0) {
@@ -3024,7 +3049,8 @@ function colorSwatchPicker(selectedIdx, onChange) {
     actions.appendChild(delBtn);
 
     // ▶ Details — unified toggle for subtasks + notes + think log
-    const hasDetails = (task.subtasks && task.subtasks.length > 0) || task.note || (task.thinkLog && task.thinkLog.length > 0);
+    // Note area is always available, so hasDetails is always true
+    const hasDetails = true;
     const isOpen = detailOpenState.has(task.id) ? detailOpenState.get(task.id) : defaultDetailOpen;
     const detailToggle = document.createElement('button');
     detailToggle.className = `detail-toggle-btn${isOpen ? ' is-open' : ''}`;
@@ -3107,25 +3133,105 @@ function colorSwatchPicker(selectedIdx, onChange) {
       detailPanel.appendChild(stList);
     }
 
-    // — Notes section —
-    if (task.note) {
+    // — Notes section — (single click-to-edit field)
+    {
       const secLbl2 = document.createElement('div');
       secLbl2.style.cssText = 'font-size:0.7rem;font-weight:700;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.05em;padding:8px 0 4px;';
       secLbl2.textContent = '📝 Notes';
       detailPanel.appendChild(secLbl2);
 
-      const noteDiv = document.createElement('div');
-      noteDiv.className = 'task-note';
-      noteDiv.style.display = 'block'; // always visible within the panel
-      noteDiv.innerHTML = `<div class="task-note-text">📌 ${formatNoteAsHtml(task.note)}</div>
-        <div class="note-actions">
-          <button class="btn btn-ghost btn-xs">Edit</button>
-          <button class="btn btn-ghost btn-xs" style="color:var(--danger)">✕</button>
-        </div>`;
-      noteDiv.querySelector('.note-actions button:first-child').addEventListener('click', () => openNoteEditor(task, li));
-      noteDiv.querySelector('.note-actions button:last-child').addEventListener('click', () =>
-        confirmDialog('Delete this note?', () => { DB.updateTask(task.id, { note: '' }); render(); }));
-      detailPanel.appendChild(noteDiv);
+      // Single unified note area: shows text when idle, becomes a textarea on click
+      const noteArea = document.createElement('div');
+      noteArea.className = 'unified-note-area';
+      noteArea.style.cssText = `
+        padding:8px 12px;
+        background:var(--purple-soft);
+        border-left:3px solid var(--purple);
+        border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+        font-size:0.82rem;
+        color:#4c1d95;
+        min-height:36px;
+        cursor:text;
+        white-space:pre-wrap;
+        word-break:break-word;
+        line-height:1.5;
+        position:relative;
+      `;
+      const updateNoteDisplay = () => {
+        if (task.note) {
+          noteArea.textContent = task.note;
+          noteArea.style.color = '#4c1d95';
+        } else {
+          noteArea.textContent = 'Click to add a note…';
+          noteArea.style.color = 'var(--text-light)';
+          noteArea.style.fontStyle = 'italic';
+        }
+      };
+      updateNoteDisplay();
+
+      let noteEditing = false;
+      noteArea.addEventListener('click', () => {
+        if (noteEditing) return;
+        noteEditing = true;
+
+        const ta = document.createElement('textarea');
+        ta.value = task.note || '';
+        ta.placeholder = 'Type your note here…';
+        ta.style.cssText = `
+          width:100%; box-sizing:border-box;
+          padding:8px 12px;
+          border:1px solid var(--purple);
+          border-radius:var(--radius-sm);
+          font-family:inherit; font-size:0.82rem; line-height:1.5;
+          background:var(--surface);
+          color:var(--text);
+          resize:vertical;
+          min-height:80px;
+          outline:none;
+          display:block;
+        `;
+
+        // Swap display div for textarea
+        noteArea.style.display = 'none';
+        noteArea.parentNode.insertBefore(ta, noteArea.nextSibling);
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+
+        // Add a small delete button row below the textarea
+        const delRow = document.createElement('div');
+        delRow.style.cssText = 'display:flex;justify-content:flex-end;margin-top:4px;';
+        const delB = document.createElement('button');
+        delB.className = 'btn btn-ghost btn-xs';
+        delB.style.color = 'var(--danger)';
+        delB.textContent = '✕ Delete note';
+        delB.addEventListener('mousedown', e => e.preventDefault()); // prevent blur before click
+        delB.addEventListener('click', () => {
+          confirmDialog('Delete this note?', () => { DB.updateTask(task.id, { note: '' }); render(); });
+        });
+        delRow.appendChild(delB);
+        ta.parentNode.insertBefore(delRow, ta.nextSibling);
+
+        const finish = () => {
+          const v = ta.value.trim();
+          DB.updateTask(task.id, { note: v });
+          task.note = v;
+          ta.remove();
+          delRow.remove();
+          noteArea.style.display = '';
+          updateNoteDisplay();
+          noteEditing = false;
+          // update the note button icon in the action bar
+          const nb = li.querySelector('.act-btn.note-active, .act-btn[title="Add note"], .act-btn[title="Edit note"]');
+          if (nb) { nb.classList.toggle('note-active', !!v); nb.title = v ? 'Edit note' : 'Add note'; }
+        };
+
+        ta.addEventListener('blur', () => setTimeout(finish, 150));
+        ta.addEventListener('keydown', e => {
+          if (e.key === 'Escape') { e.preventDefault(); finish(); }
+        });
+      });
+
+      detailPanel.appendChild(noteArea);
     }
 
     // — Think Log section —
@@ -3184,8 +3290,6 @@ function colorSwatchPicker(selectedIdx, onChange) {
   }
 
   function openNoteEditor(task, li) {
-    li.querySelector('.task-note-wrapper')?.remove();
-    li.querySelector('.note-input-wrap')?.remove();
     // Ensure detail panel is open
     if (!detailOpenState.get(task.id) && !defaultDetailOpen) {
       detailOpenState.set(task.id, true);
@@ -3194,26 +3298,9 @@ function colorSwatchPicker(selectedIdx, onChange) {
       if (panel) panel.style.display = 'block';
       if (btn)   { btn.classList.add('is-open'); btn.textContent = 'Details ▲'; }
     }
-    const wrap = document.createElement('div'); wrap.className = 'note-input-wrap';
-    const ta   = document.createElement('textarea'); ta.className = 'note-textarea'; ta.rows = 4;
-    ta.placeholder = 'Each line becomes a bullet •\nType your notes here…\nDrag bottom-right corner to resize';
-    if (task.note) ta.value = noteToEditor(task.note);
-    const btnGroup = document.createElement('div');
-    btnGroup.style.cssText = 'display:flex;gap:6px;justify-content:flex-end;margin-top:6px';
-    const saveB = document.createElement('button'); saveB.className = 'btn btn-primary btn-sm'; saveB.textContent = 'Save Note';
-    const canB  = document.createElement('button'); canB.className  = 'btn btn-ghost btn-sm';   canB.textContent  = 'Cancel';
-    saveB.addEventListener('click', () => {
-      const cleaned = noteFromEditor(ta.value);
-      DB.updateTask(task.id, { note: cleaned }); wrap.remove(); render();
-    });
-    canB.addEventListener('click', () => { wrap.remove(); render(); });
-    btnGroup.appendChild(saveB); btnGroup.appendChild(canB);
-    wrap.appendChild(ta); wrap.appendChild(btnGroup);
-    // Place inside the detail panel if it exists, otherwise at end of li
-    const detailPanel = li.querySelector('.task-detail-panel');
-    if (detailPanel) detailPanel.appendChild(wrap);
-    else li.appendChild(wrap);
-    ta.focus();
+    // Click the unified note area to enter edit mode
+    const noteArea = li.querySelector('.unified-note-area');
+    if (noteArea) setTimeout(() => noteArea.click(), 0);
   }
 
   // ── Think Log — in-page overlay ─────────────────────────────────────────
