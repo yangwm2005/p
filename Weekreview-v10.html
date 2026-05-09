@@ -1,0 +1,1536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Horizon | Week Review</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<style>
+:root {
+  --ink: #1a1a2e;
+  --ink2: #4a4a6a;
+  --ink3: #8888aa;
+  --bg: #f7f5f0;
+  --card: #ffffff;
+  --border: #e4e0d8;
+  --accent: #2d5be3;
+  --accent2: #7c3aed;
+  --gold: #c9862a;
+  --green: #059669;
+  --red: #dc2626;
+  --teal: #0d9488;
+  --radius: 14px;
+  --shadow: 0 2px 12px rgba(0,0,0,0.07);
+}
+
+* { box-sizing: border-box; margin:0; padding:0; }
+body { font-family: 'DM Sans', system-ui, sans-serif; background: var(--bg); color: var(--ink); min-height: 100vh; font-size: 15px; }
+
+/* HEADER */
+.topbar {
+  position: sticky; top:0; z-index:200;
+  background: rgba(255,255,255,0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 28px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.topbar-title { font-family: 'Lora', serif; font-size: 20px; font-weight: 600; color: var(--ink); }
+.topbar-title span { color: var(--accent); }
+.topbar-right { display: flex; gap: 10px; align-items: center; }
+
+input[type="date"] {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: #faf9f7;
+  color: var(--ink);
+  cursor: pointer;
+}
+input[type="date"]:focus { outline: 2px solid var(--accent); border-color: transparent; }
+
+.btn {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px; font-weight: 500;
+  border: none; border-radius: 8px;
+  padding: 9px 20px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-primary { background: var(--accent); color: white; }
+.btn-primary:hover { background: #1f46c4; }
+.btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--ink2); }
+.btn-ghost:hover { background: #f1eee8; }
+.btn-ai { background: linear-gradient(135deg, #7c3aed, #2d5be3); color: white; }
+.btn-ai:hover { opacity: 0.9; }
+
+/* LAYOUT */
+.layout { display: flex; height: calc(100vh - 58px); }
+
+/* SIDEBAR */
+.sidebar {
+  width: 260px;
+  min-width: 260px;
+  background: white;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sidebar-top { padding: 16px 16px 10px; }
+.sidebar-section { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; color: var(--ink3); padding: 14px 16px 8px; }
+.sidebar-scroll { flex:1; overflow-y: auto; padding-bottom: 16px; }
+
+.compass-card {
+  margin: 0 12px 8px;
+  background: linear-gradient(135deg, #1a1a2e, #2d1b69);
+  border-radius: 10px;
+  padding: 16px;
+  color: white;
+}
+.compass-title { font-family: 'Lora', serif; font-size: 13px; font-weight: 400; font-style: italic; opacity: 0.7; margin-bottom: 6px; }
+.compass-text { font-size: 13px; line-height: 1.6; opacity: 0.9; }
+
+.week-item {
+  font-size: 13px;
+  padding: 7px 16px;
+  cursor: pointer;
+  color: var(--ink2);
+  border-left: 2px solid transparent;
+  transition: all 0.1s;
+}
+.week-item:hover { background: #f7f5f0; color: var(--ink); border-left-color: var(--accent); }
+.week-item.active { background: #eef1fd; color: var(--accent); border-left-color: var(--accent); font-weight: 500; }
+.week-item small { display: block; font-size: 11px; color: var(--ink3); margin-top: 2px; }
+
+/* MAIN */
+.main { flex:1; overflow-y: auto; }
+
+/* TAB NAV */
+.tab-nav {
+  display: flex;
+  gap: 0;
+  background: white;
+  border-bottom: 1px solid var(--border);
+  padding: 0 28px;
+  position: sticky; top: 0; z-index: 100;
+}
+.tab {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink3);
+  padding: 14px 18px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.tab:hover { color: var(--ink); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* PANELS */
+.panel { display: none; padding: 26px 30px 90px; }
+.panel.active { display: block; }
+
+/* CARDS */
+.card {
+  background: var(--card);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  padding: 22px 26px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+}
+.card-title {
+  font-family: 'Lora', serif;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-title .icon { font-size: 18px; }
+.card-subtitle { font-size: 13px; color: var(--ink3); margin-bottom: 18px; }
+
+/* COACH PROMPT */
+.coach-prompt {
+  background: #faf6ff;
+  border: 1px solid #e0d4f7;
+  border-radius: 8px;
+  padding: 11px 15px;
+  font-size: 13px;
+  color: #5b21b6;
+  line-height: 1.6;
+  margin-bottom: 10px;
+  font-style: italic;
+}
+.coach-prompt strong { font-style: normal; font-weight: 600; color: #4c1d95; }
+
+/* ALLOCATION */
+.alloc-row { display: grid; grid-template-columns: 120px 1fr; gap: 16px; margin-bottom: 20px; align-items: start; }
+.alloc-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--ink3); margin-bottom: 4px; }
+.alloc-num { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.alloc-num input {
+  width: 70px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  background: #faf9f7;
+  color: var(--ink);
+  font-family: 'DM Sans', sans-serif;
+}
+.alloc-num input:focus { border-color: var(--accent); outline: none; }
+.alloc-unit { font-size: 13px; color: var(--ink3); }
+.alloc-bar { height: 5px; background: #ede9e0; border-radius: 2px; margin-bottom: 8px; }
+.alloc-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+
+textarea {
+  width: 100%;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 11px 14px;
+  font-size: 14px;
+  font-family: 'DM Sans', sans-serif;
+  background: #faf9f7;
+  color: var(--ink);
+  resize: vertical;
+  min-height: 88px;
+  line-height: 1.6;
+  transition: border-color 0.15s;
+}
+textarea:focus { border-color: var(--accent); outline: none; background: white; }
+textarea.mono { font-family: 'Courier New', monospace; font-size: 13px; }
+
+/* GRID */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; }
+
+.field-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: var(--ink3); margin-bottom: 6px; display: block; }
+.field-hint { font-size: 12px; color: var(--ink3); margin-bottom: 10px; display: block; line-height: 1.5; }
+
+/* FLOW / DRAIN */
+.flow-card { border-radius: 10px; padding: 16px; }
+.flow-card.flow { background: #f0fdf4; border: 1px solid #bbf7d0; }
+.flow-card.drain { background: #fef2f2; border: 1px solid #fecaca; }
+.flow-label { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+.flow-label.flow { color: var(--green); }
+.flow-label.drain { color: var(--red); }
+.flow-card textarea { background: white; }
+
+/* INSIGHT BOX */
+.insight-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  margin-right: 4px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.insight-tag:hover { opacity: 0.8; }
+
+/* CHART CONTAINER */
+.chart-container { position: relative; height: 260px; }
+
+/* TREND PANEL */
+.trend-mini { position: relative; height: 60px; }
+
+/* COACH RESPONSE */
+.ai-response {
+  background: linear-gradient(135deg, #f8f4ff, #eef1fd);
+  border: 1px solid #d4c9f5;
+  border-radius: 10px;
+  padding: 18px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ink);
+  margin-top: 12px;
+  white-space: pre-wrap;
+}
+.ai-response-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent2); margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.typing { display: inline-block; width: 6px; height: 6px; background: var(--accent2); border-radius: 50%; animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* STREAK & STATS */
+.stat-box {
+  background: #f7f5f0;
+  border-radius: 10px;
+  padding: 14px 18px;
+  text-align: center;
+}
+.stat-num { font-size: 32px; font-weight: 600; color: var(--ink); font-family: 'Lora', serif; }
+.stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--ink3); margin-top: 4px; }
+
+/* HORIZON PILLARS */
+.pillar {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  position: relative;
+  overflow: hidden;
+}
+.pillar::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+}
+.pillar-r { color: var(--accent); }
+.pillar-t { color: var(--teal); }
+.pillar-s { color: var(--red); }
+.pillar-p { color: var(--accent2); }
+.pillar::before { background: currentColor; }
+.pillar-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; margin-bottom: 4px; }
+.pillar-q { font-size: 13px; color: var(--ink2); line-height: 1.5; }
+
+/* FOOTER */
+.footer {
+  position: fixed;
+  bottom: 0; left: 260px; right: 0;
+  background: rgba(255,255,255,0.95);
+  border-top: 1px solid var(--border);
+  padding: 9px 28px;
+  font-size: 12px;
+  color: var(--ink3);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 150;
+}
+
+/* PULSE dot */
+.pulse-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; display: inline-block; margin-right: 7px; animation: pulse 2s infinite; }
+
+/* CLOUD SYNC */
+.cloud-toggle-wrapper { position: relative; }
+.cloud-toggle-btn {
+  background: white; border: 1px solid var(--border); border-radius: 30px;
+  padding: 7px 16px 7px 12px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500;
+  transition: all 0.15s;
+}
+.cloud-toggle-btn:hover { border-color: var(--accent); background: #f0f4ff; }
+.cloud-sync-dot {
+  width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0;
+}
+.sync-ok { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.sync-syncing { background: var(--accent); animation: pulse 1s infinite; }
+.sync-off { background: var(--ink3); }
+
+.cloud-dropdown {
+  position: absolute; top: calc(100% + 8px); right: 0;
+  background: white; border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12); min-width: 290px; z-index: 9999;
+  overflow: hidden; animation: dropIn 0.15s ease;
+}
+@keyframes dropIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+.cloud-dd-header { padding: 13px 18px; background: #f7f5f0; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--ink3); }
+.cloud-dd-user { padding: 14px 18px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); }
+.cloud-dd-avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--accent); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; flex-shrink: 0; }
+.cloud-dd-name { font-size: 14px; font-weight: 600; }
+.cloud-dd-email { font-size: 12px; color: var(--ink3); }
+.cloud-dd-item {
+  padding: 12px 18px; display: flex; align-items: center; gap: 12px;
+  cursor: pointer; transition: background 0.1s; border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.cloud-dd-item:hover { background: #f7f5f0; }
+.cloud-dd-item:last-child { border-bottom: none; }
+.cloud-dd-icon { width: 22px; font-size: 16px; }
+.cloud-dd-footer { padding: 10px 18px; font-size: 11px; color: var(--ink3); line-height: 1.7; border-top: 1px solid var(--border); }
+.cloud-toggle-switch { position: relative; display: inline-block; width: 36px; height: 18px; margin-left: auto; }
+.cloud-toggle-switch input { opacity:0; width:0; height:0; }
+.cloud-toggle-slider { position:absolute; cursor:pointer; inset:0; background:#ccc; border-radius:18px; transition:0.2s; }
+.cloud-toggle-slider:before { position:absolute; content:""; height:14px; width:14px; left:2px; bottom:2px; background:white; border-radius:50%; transition:0.2s; }
+input:checked + .cloud-toggle-slider { background: var(--accent); }
+input:checked + .cloud-toggle-slider:before { transform:translateX(18px); }
+
+/* SELECT */
+select {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #faf9f7;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+/* MOMENTUM */
+.momentum-bar { display: flex; gap: 4px; align-items: flex-end; height: 40px; }
+.m-bar { flex:1; border-radius: 3px 3px 0 0; min-width: 8px; background: var(--accent); opacity: 0.3; transition: opacity 0.2s; }
+.m-bar:last-child { opacity: 1; }
+.m-bar.high { background: var(--green); }
+.m-bar.low { background: var(--red); }
+
+/* HIGHLIGHT QUOTE */
+.highlight-quote {
+  border-left: 3px solid var(--gold);
+  padding-left: 16px;
+  margin: 18px 0;
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 16px;
+  color: var(--ink2);
+  line-height: 1.7;
+}
+
+.divider { height: 1px; background: var(--border); margin: 18px 0; }
+
+.badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px; }
+.badge-blue { background: #dbeafe; color: #1e40af; }
+.badge-purple { background: #ede9fe; color: #5b21b6; }
+.badge-green { background: #d1fae5; color: #065f46; }
+.badge-gold { background: #fef3c7; color: #92400e; }
+
+/* Loading spinner */
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.4); border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div style="display:flex; align-items:center; gap:12px;">
+    <div class="topbar-title">Horizon <span>Portal</span></div>
+    <span class="badge badge-gold">30-Year System</span>
+  </div>
+  <div class="topbar-right">
+    <button class="btn btn-ghost" onclick="popCalendar()">📅 Week Events</button>
+    <input type="date" id="week">
+    <button class="btn btn-primary" onclick="save()">Save Review</button>
+
+    <!-- Cloud Sync -->
+    <div class="cloud-toggle-wrapper">
+      <div class="cloud-toggle-btn" id="cloudToggleBtn">
+        <span>☁</span>
+        <span id="cloudStatusText">Sign in</span>
+        <span class="cloud-sync-dot sync-off" id="cloudSyncDot"></span>
+      </div>
+      <div class="cloud-dropdown" id="cloudDropdown" style="display:none;">
+        <!-- Not signed in: show sign-in + guest export/import -->
+        <div id="cloudNotSignedIn" style="display:none;">
+          <div class="cloud-dd-header">Cloud Sync</div>
+          <div class="cloud-dd-item" id="signInMenuItem">
+            <span class="cloud-dd-icon">🔐</span>Sign in with Google
+          </div>
+          <div class="cloud-dd-footer">Sync your reviews across all devices</div>
+        </div>
+        <!-- Signed in -->
+        <div id="cloudSignedIn" style="display:none;">
+          <div class="cloud-dd-user">
+            <div class="cloud-dd-avatar" id="ddAvatar">?</div>
+            <div>
+              <div class="cloud-dd-name" id="ddName"></div>
+              <div class="cloud-dd-email" id="ddEmail"></div>
+            </div>
+          </div>
+          <div class="cloud-dd-item" id="autoSyncItem">
+            <span class="cloud-dd-icon">🔄</span>Auto-sync
+            <label class="cloud-toggle-switch" style="margin-left:auto;" onclick="event.stopPropagation()">
+              <input type="checkbox" id="autoSyncCheck" onchange="setAutoSync(this.checked)">
+              <span class="cloud-toggle-slider"></span>
+            </label>
+          </div>
+          <div class="cloud-dd-item" id="saveCloudItem">
+            <span class="cloud-dd-icon">☁</span>Save to Cloud
+          </div>
+          <div class="cloud-dd-item" id="loadCloudItem">
+            <span class="cloud-dd-icon">⬇</span>Load from Cloud
+          </div>
+          <div class="cloud-dd-item" id="exportItem">
+            <span class="cloud-dd-icon">💾</span>Export all (JSON file)
+          </div>
+          <div class="cloud-dd-item" id="importItem">
+            <span class="cloud-dd-icon">📂</span>Import from file
+          </div>
+          <input type="file" id="importFileInput" accept=".json" style="display:none;">
+          <div class="cloud-dd-item" id="signOutItem" style="color:var(--red);">
+            <span class="cloud-dd-icon">🚪</span>Sign Out
+          </div>
+          <div class="cloud-dd-footer" id="syncStatusMsg">💾 Local: Never<br>☁ Not synced</div>
+        </div>
+        <!-- Export/Import when not signed in -->
+        <div id="cloudGuestActions">
+          <div class="cloud-dd-header">Backup & Sync</div>
+          <div class="cloud-dd-item" id="signInMenuItemGuest">
+            <span class="cloud-dd-icon">🔐</span>Sign in with Google
+          </div>
+          <div class="cloud-dd-item" id="exportItemGuest">
+            <span class="cloud-dd-icon">💾</span>Export all (JSON file)
+          </div>
+          <div class="cloud-dd-item" id="importItemGuest">
+            <span class="cloud-dd-icon">📂</span>Import from file
+          </div>
+          <input type="file" id="importFileInputGuest" accept=".json" style="display:none;">
+          <div class="cloud-dd-footer">Sign in with Google to enable cloud sync</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-top">
+      <div class="compass-card">
+        <div class="compass-title">Your 30-Year Compass</div>
+        <div class="compass-text">Mentorship · Creation · Joy · Legacy<br><br>Each week is a brick in the cathedral.</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">Past Reviews</div>
+    <div style="padding: 0 12px 10px; display:flex; flex-direction:column; gap:6px;">
+      <button onclick="exportToFile()" style="width:100%; font-family:'DM Sans',sans-serif; font-size:11px; font-weight:600; padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:#f7f5f0; color:var(--ink2); cursor:pointer; text-align:left; display:flex; align-items:center; gap:7px;" onmouseover="this.style.background='#edeae3'" onmouseout="this.style.background='#f7f5f0'">
+        💾 <span>Export backup file</span>
+      </button>
+      <label style="width:100%; font-family:'DM Sans',sans-serif; font-size:11px; font-weight:600; padding:7px 10px; border-radius:8px; border:1px solid var(--border); background:#f7f5f0; color:var(--ink2); cursor:pointer; display:flex; align-items:center; gap:7px; box-sizing:border-box;" onmouseover="this.style.background='#edeae3'" onmouseout="this.style.background='#f7f5f0'">
+        📂 <span>Restore from file</span>
+        <input type="file" id="sidebarImportFile" accept=".json" style="display:none;" onchange="if(this.files[0]) importFromFile(this.files[0]); this.value='';">
+      </label>
+    </div>
+    <div class="sidebar-scroll">
+      <div id="weeks"></div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="tab-nav">
+      <div class="tab active" onclick="switchTab('log')">Weekly Log</div>
+      <div class="tab" onclick="switchTab('coach')">AI Coach</div>
+      <div class="tab" onclick="switchTab('trends')">Momentum</div>
+      <div class="tab" onclick="switchTab('horizon')">30-Yr Vision</div>
+    </div>
+
+    <!-- TAB: LOG -->
+    <div class="panel active" id="tab-log">
+
+      <!-- TIME ALLOCATION -->
+      <div class="card">
+        <div class="card-title"><span class="icon">⏱</span> Time Allocation</div>
+        <div class="card-subtitle">How did you spend your energy this week? (hours)</div>
+
+        <div class="alloc-row">
+          <div>
+            <div class="alloc-label">Research</div>
+            <div class="alloc-num">
+              <input type="number" id="t1" value="0" min="0" oninput="updateChart(); updateBars()">
+              <span class="alloc-unit">hr</span>
+            </div>
+            <div class="alloc-bar"><div class="alloc-fill" id="bar1" style="background:#2d5be3; width:0%"></div></div>
+          </div>
+          <div>
+            <div class="coach-prompt">
+              <strong>Coach asks:</strong> Was your research time <em>Deep Work</em> or mostly logistics? What's one idea that genuinely excited you this week?
+            </div>
+            <textarea id="c1" placeholder="Lab breakthroughs, PhD progress, your own ideas brewing..."></textarea>
+          </div>
+        </div>
+
+        <div class="alloc-row">
+          <div>
+            <div class="alloc-label">Teaching</div>
+            <div class="alloc-num">
+              <input type="number" id="t2" value="0" min="0" oninput="updateChart(); updateBars()">
+              <span class="alloc-unit">hr</span>
+            </div>
+            <div class="alloc-bar"><div class="alloc-fill" id="bar2" style="background:#0d9488; width:0%"></div></div>
+          </div>
+          <div>
+            <div class="coach-prompt">
+              <strong>Coach asks:</strong> Did you spark curiosity in anyone this week — or just deliver content? What moment made a student's eyes light up?
+            </div>
+            <textarea id="c2" placeholder="Delivery moments, curriculum ideas, student breakthroughs..."></textarea>
+          </div>
+        </div>
+
+        <div class="alloc-row">
+          <div>
+            <div class="alloc-label">Service</div>
+            <div class="alloc-num">
+              <input type="number" id="t3" value="0" min="0" oninput="updateChart(); updateBars()">
+              <span class="alloc-unit">hr</span>
+            </div>
+            <div class="alloc-bar"><div class="alloc-fill" id="bar3" style="background:#f43f5e; width:0%"></div></div>
+          </div>
+          <div>
+            <div class="coach-prompt">
+              <strong>Coach asks:</strong> Of all service tasks, which could only YOU do — and which could you delegate or eliminate next time?
+            </div>
+            <textarea id="c3" placeholder="Meetings, admin, committees — energy drain vs. genuine contribution..."></textarea>
+          </div>
+        </div>
+
+        <div class="alloc-row">
+          <div>
+            <div class="alloc-label">Personal</div>
+            <div class="alloc-num">
+              <input type="number" id="t4" value="0" min="0" oninput="updateChart(); updateBars()">
+              <span class="alloc-unit">hr</span>
+            </div>
+            <div class="alloc-bar"><div class="alloc-fill" id="bar4" style="background:#7c3aed; width:0%"></div></div>
+          </div>
+          <div>
+            <div class="coach-prompt">
+              <strong>Coach asks:</strong> Your app, your passions, your uncovered talents — did you make progress on <em>the version of yourself beyond the university</em>?
+            </div>
+            <textarea id="c4" placeholder="App progress, new talent explored, reflection, future identity work..."></textarea>
+          </div>
+        </div>
+
+        <div class="chart-container" style="max-width: 300px; margin: 0 auto;">
+          <canvas id="balanceChart" role="img" aria-label="Doughnut chart showing weekly time allocation across Research, Teaching, Service, and Personal categories"></canvas>
+        </div>
+      </div>
+
+      <!-- SYNTHESIS -->
+      <div class="card">
+        <div class="card-title"><span class="icon">✦</span> Synthesis & Expression</div>
+        <div class="card-subtitle">Capture the texture of this week before it fades</div>
+
+        <div class="grid2" style="margin-bottom: 16px;">
+          <div>
+            <span class="field-label">Key Moments</span>
+            <span class="field-hint">The 2–3 specific events that will define how you remember this week</span>
+            <textarea id="m1" placeholder="The conversation, the breakthrough, the surprise..."></textarea>
+          </div>
+          <div>
+            <span class="field-label">New Insights</span>
+            <span class="field-hint">Something you now understand about people, teaching, or yourself that you didn't before</span>
+            <textarea id="i1" placeholder="A truth about human behavior, biology, or your own wiring..."></textarea>
+          </div>
+        </div>
+
+        <span class="field-label">Expression / Creation Log</span>
+        <span class="field-hint">What did you build, write, or articulate this week? (App features, frameworks, new ways to explain complexity)</span>
+        <textarea id="e1" class="mono" style="min-height:70px;" placeholder="v0.x: Added feature... / New analogy for explaining X / Framework for Y..."></textarea>
+
+        <div class="highlight-quote" id="quote-preview" style="display:none;"></div>
+      </div>
+
+      <!-- LIFE ALIGNMENT -->
+      <div class="card">
+        <div class="card-title"><span class="icon">◉</span> Energy Audit</div>
+        <div class="card-subtitle">Where did you feel most alive — and what drained you?</div>
+
+        <div class="grid2" style="margin-bottom: 16px;">
+          <div class="flow-card flow">
+            <div class="flow-label flow">▲ Felt like myself when...</div>
+            <span class="field-hint" style="color:#065f46">When did you feel Flow? When did you sound joyful?</span>
+            <textarea id="l1" style="background:white;" placeholder="Teaching that clicked, a conversation that sparked, a moment of creative flow..."></textarea>
+          </div>
+          <div class="flow-card drain">
+            <div class="flow-label drain">▼ Felt drained when...</div>
+            <span class="field-hint" style="color:#991b1b">What felt like a "tax" — time you can never get back?</span>
+            <textarea id="l2" style="background:white;" placeholder="The meeting that could've been an email, the obligation that depleted you..."></textarea>
+          </div>
+        </div>
+
+        <span class="field-label">Energy Score (1-10)</span>
+        <span class="field-hint">Your honest read on this week's vitality</span>
+        <div style="display:flex; align-items:center; gap:12px;">
+          <input type="range" id="energy" min="1" max="10" value="5" style="flex:1;" oninput="document.getElementById('energy-val').textContent = this.value">
+          <span id="energy-val" style="font-size:20px; font-weight:600; min-width:24px; color:var(--accent);">5</span>
+        </div>
+      </div>
+
+      <!-- NEXT SHIFT -->
+      <div class="card" style="border: 1.5px solid #bfdbfe; background: #f0f7ff;">
+        <div class="card-title" style="color:#1e3a8a;"><span class="icon">→</span> Next Shift (Homeostasis)</div>
+        <div class="card-subtitle" style="color:#1e40af;">One adjustment to stop the drift. Not a to-do list. One signal change.</div>
+        <div class="coach-prompt" style="background:#dbeafe; border-color:#93c5fd; color:#1e3a8a;">
+          <strong>Coach asks:</strong> If you were advising a brilliant friend with exactly your week — what's the ONE thing you'd tell them to change next week to move closer to their 30-year vision?
+        </div>
+        <textarea id="n1" style="border-color:#bfdbfe;" placeholder="Next week I will... / I will stop... / I will protect time for..."></textarea>
+      </div>
+
+      <!-- MENTORSHIP -->
+      <div class="card">
+        <div class="card-title"><span class="icon">◈</span> Mentorship Log</div>
+        <div class="card-subtitle">Your lab is full of futures. What happened this week?</div>
+
+        <div class="coach-prompt">
+          <strong>Coach asks:</strong> Who did you "lead to an easy thing so a good thing happened"? Who needs a nudge, a challenge, or just someone to believe in them?
+        </div>
+
+        <textarea id="mentor" placeholder="Student breakthroughs, conversations that mattered, seeds you planted..."></textarea>
+
+        <div style="margin-top: 12px;">
+          <span class="field-label">Student Mood (general sense)</span>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px;">
+            <span class="badge badge-blue" id="m-tag-1" style="cursor:pointer; padding: 5px 12px;" onclick="toggleMoodTag(1)">Energized</span>
+            <span class="badge badge-purple" id="m-tag-2" style="cursor:pointer; padding: 5px 12px;" onclick="toggleMoodTag(2)">Struggling</span>
+            <span class="badge badge-green" id="m-tag-3" style="cursor:pointer; padding: 5px 12px;" onclick="toggleMoodTag(3)">Breakthrough</span>
+            <span class="badge badge-gold" id="m-tag-4" style="cursor:pointer; padding: 5px 12px;" onclick="toggleMoodTag(4)">Needs direction</span>
+          </div>
+          <input type="hidden" id="mood-tags" value="">
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB: AI COACH -->
+    <div class="panel" id="tab-coach">
+      <div class="card">
+        <div class="card-title"><span class="icon">◎</span> Your AI Mentor</div>
+        <div class="card-subtitle">Ask anything about your week, your patterns, or your 30-year path. I'll push back honestly.</div>
+
+        <div style="margin-bottom: 16px;">
+          <span class="field-label">Quick prompts</span>
+          <div style="display:flex; gap: 8px; flex-wrap: wrap; margin-top: 6px;">
+            <button class="btn btn-ghost" style="font-size:12px; padding:6px 12px;" onclick="fillCoachPrompt('What does my time allocation this week reveal about my real priorities? Be honest.')">Reveal my blind spots</button>
+            <button class="btn btn-ghost" style="font-size:12px; padding:6px 12px;" onclick="fillCoachPrompt('Based on what I shared, what talent or passion am I NOT exploring that I should investigate?')">Uncovered talents</button>
+            <button class="btn btn-ghost" style="font-size:12px; padding:6px 12px;" onclick="fillCoachPrompt('How does this week connect to a meaningful 30-year legacy? What should I double down on?')">30-yr lens</button>
+            <button class="btn btn-ghost" style="font-size:12px; padding:6px 12px;" onclick="fillCoachPrompt('What would a bold version of me — the one who has fully embraced his uncovered talents — do differently next week?')">Bold version of me</button>
+            <button class="btn btn-ghost" style="font-size:12px; padding:6px 12px;" onclick="fillCoachPrompt('Which student interaction this week has the most long-term leverage? What should I do about it?')">Mentorship leverage</button>
+          </div>
+        </div>
+
+        <span class="field-label">Your question</span>
+        <textarea id="coach-q" style="min-height: 80px;" placeholder="Ask me anything about your week, your patterns, your future..."></textarea>
+        <div style="margin-top: 10px; display:flex; gap: 10px; align-items:center; flex-wrap:wrap;">
+          <button class="btn btn-ai" id="coach-btn" onclick="askCoach()">
+            📋 Copy prompt &amp; Open Claude ↗
+          </button>
+          <button class="btn btn-ghost" style="font-size:12px;" onclick="copyPromptOnly()">
+            Copy prompt only
+          </button>
+          <span style="font-size: 11px; color: var(--ink3);">Copies your week data + question → opens Claude.ai</span>
+        </div>
+
+        <div id="coach-output" style="display:none; margin-top:16px;">
+          <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px 16px; font-size:13px; color:#065f46; line-height:1.6;">
+            <strong>✓ Prompt copied to clipboard!</strong><br>
+            Claude.ai is opening in a new tab — just paste (<strong>Ctrl+V</strong> or <strong>⌘+V</strong>) and press Enter.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">◌</span> Reflection Prompts Library</div>
+        <div class="card-subtitle">Deep questions to sit with. Pick one and write freely.</div>
+
+        <div class="grid2">
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <div class="coach-prompt" style="margin:0; cursor:pointer;" onclick="fillCoachPrompt(this.dataset.q)" data-q="If I had only 5 years of good health and energy left, would I spend this week the same way? What would I change?">
+              <strong>5-year test:</strong> If you had only 5 great years left, was this week the right investment?
+            </div>
+            <div class="coach-prompt" style="margin:0; cursor:pointer;" onclick="fillCoachPrompt(this.dataset.q)" data-q="Which student in my lab is most likely to have a breakthrough moment in the next 6 months, and what can I do to make that happen?">
+              <strong>Student catalyst:</strong> Who's close to a breakthrough, and what does it take?
+            </div>
+            <div class="coach-prompt" style="margin:0; cursor:pointer;" onclick="fillCoachPrompt(this.dataset.q)" data-q="What would I create — book, movement, tool, method — if I knew it would outlive the university and reach people I'll never meet?">
+              <strong>Legacy question:</strong> What would you create if it outlived you?
+            </div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <div class="coach-prompt" style="margin:0; cursor:pointer;" onclick="fillCoachPrompt(this.dataset.q)" data-q="What talent or passion have I been ignoring because it doesn't fit the professor identity? Is there a way to explore it this month?">
+              <strong>Hidden talent:</strong> What are you ignoring because it doesn't fit the role?
+            </div>
+            <div class="coach-prompt" style="margin:0; cursor:pointer;" onclick="fillCoachPrompt(this.dataset.q)" data-q="When I'm most joyful in my work, what exactly is happening? How can I engineer more of that into my week?">
+              <strong>Joy engineering:</strong> What exactly is happening when you feel most joyful?
+            </div>
+            <div class="coach-prompt" style="margin:0; cursor:pointer;" onclick="fillCoachPrompt(this.dataset.q)" data-q="What is one thing I could build, write, or share this year that would make the next generation of students better — even if I'm not there to teach them?">
+              <strong>Scalable gift:</strong> What can you build that teaches without you?
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: TRENDS -->
+    <div class="panel" id="tab-trends">
+      <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:16px; margin-bottom:20px;">
+        <div class="stat-box">
+          <div class="stat-num" id="streak-count">0</div>
+          <div class="stat-label">Week Streak</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-num" id="total-reviews">0</div>
+          <div class="stat-label">Total Reviews</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-num" id="avg-energy">—</div>
+          <div class="stat-label">Avg Energy</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-num" id="top-category">—</div>
+          <div class="stat-label">Top Category</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">◈</span> Time Allocation Trends</div>
+        <div class="card-subtitle">Last 12 weeks — how have your priorities actually shifted?</div>
+        <div style="position:relative; height: 280px;">
+          <canvas id="trendChart" role="img" aria-label="Line chart showing weekly time allocation trends over the past 12 weeks for Research, Teaching, Service, and Personal categories"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">◌</span> Energy Momentum</div>
+        <div class="card-subtitle">Your vitality rating across recent weeks</div>
+        <div style="position:relative; height: 180px;">
+          <canvas id="energyChart" role="img" aria-label="Bar chart showing weekly energy scores"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">◉</span> Pattern Insights</div>
+        <div class="card-subtitle">What your data is telling you</div>
+        <div id="pattern-insights" style="font-size:13px; color:var(--ink2); line-height:1.7;">
+          Save a few weeks of reviews to unlock pattern insights here.
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: 30-YR VISION -->
+    <div class="panel" id="tab-horizon">
+      <div class="card" style="background: linear-gradient(135deg, #1a1a2e, #2d1b69); border:none; color:white;">
+        <div class="card-title" style="color:white; font-family:'Lora',serif; font-size:18px;">Your 30-Year Compass</div>
+        <p style="font-size:13px; color:rgba(255,255,255,0.7); margin-top:4px; line-height:1.6;">
+          You have freedom, passion, and the ability to ignite people. This is the space to architect your legacy — not just survive the semester.
+        </p>
+      </div>
+
+      <div class="grid2" style="margin-bottom: 18px;">
+        <div class="card">
+          <div class="card-title"><span class="icon">◎</span> North Star</div>
+          <div class="card-subtitle">In 30 years, what do you want people to say you made possible?</div>
+          <textarea id="h-northstar" style="min-height:100px;" placeholder="He made it possible for hundreds of students to discover their direction... He built something that... He showed people that..."></textarea>
+        </div>
+        <div class="card">
+          <div class="card-title"><span class="icon">✦</span> Uncovered Talents</div>
+          <div class="card-subtitle">What abilities in you are waiting to be fully expressed?</div>
+          <textarea id="h-talents" placeholder="Writing, building, leading movements, explaining complexity, creating systems..."></textarea>
+          <div style="margin-top:10px;">
+            <span class="field-label">Am I exploring these this year?</span>
+            <select id="h-talent-status" style="width:100%; margin-top:4px;">
+              <option>Not yet — they stay hidden</option>
+              <option>Experimenting slowly</option>
+              <option>Actively building toward them</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">◈</span> The 5-Year Sprint</div>
+        <div class="card-subtitle">Concrete bets — what will you have built or launched by then?</div>
+        <div class="grid3">
+          <div>
+            <span class="field-label">Create</span>
+            <textarea id="h-create" placeholder="A book, tool, method, platform, course..."></textarea>
+          </div>
+          <div>
+            <span class="field-label">Mentor</span>
+            <textarea id="h-mentor" placeholder="The kind of impact you want on your students' trajectories..."></textarea>
+          </div>
+          <div>
+            <span class="field-label">Explore</span>
+            <textarea id="h-explore" placeholder="Talent or domain you will actively develop..."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">→</span> This Week's Connection</div>
+        <div class="card-subtitle">How did this week serve your 30-year vision?</div>
+        <div class="coach-prompt">
+          <strong>Coach asks:</strong> Rate honestly — was this week a brick in your cathedral, or was it maintenance? What's the ratio?
+        </div>
+        <div class="grid2">
+          <div>
+            <span class="field-label">Brick moments (vision-building)</span>
+            <textarea id="h-bricks" placeholder="The things this week that will matter in 10 years..."></textarea>
+          </div>
+          <div>
+            <span class="field-label">Maintenance (necessary but not the point)</span>
+            <textarea id="h-maint" placeholder="The obligations that kept the machine running..."></textarea>
+          </div>
+        </div>
+        <div style="margin-top:14px;">
+          <span class="field-label">This week's cathedral ratio: <span id="ratio-display">50%</span> vision-building</span>
+          <input type="range" id="h-ratio" min="0" max="100" value="50" style="width:100%; margin-top:6px;"
+            oninput="document.getElementById('ratio-display').textContent = this.value + '%'">
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">◌</span> Joy Inventory</div>
+        <div class="card-subtitle">Your future identity is built from joy signals</div>
+        <div class="grid2">
+          <div>
+            <span class="field-label">What made you sound joyful this week?</span>
+            <textarea id="h-joy" placeholder="The conversations, the moments, the topics where your voice changed..."></textarea>
+          </div>
+          <div>
+            <span class="field-label">What do you want more of in the next 30 years?</span>
+            <textarea id="h-more" placeholder="Freedom, creation, deep conversations, building, exploring new domains..."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align:right; margin-top:8px;">
+        <button class="btn btn-primary" onclick="saveHorizon()">Save Vision</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="footer">
+  <div><span class="pulse-dot"></span><span id="footer-msg">System ready. Select a date and begin your review.</span></div>
+  <div style="display:flex; gap:16px; align-items:center;">
+    <span style="font-size:10px; color:var(--ink3); opacity:0.7;">© 2026 Dr. Wen-Ming Yang. All rights reserved. Version 10</span>
+    <span id="footer-week"></span>
+    <span id="footer-time"></span>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// CONSTANTS & STATE
+// ═══════════════════════════════════════════════
+const PREFIX      = 'HORIZON_';
+const HORIZON_KEY = 'HORIZON_VISION';
+const HORIZON_COL = 'horizon_reviews';
+
+let chart = null, trendChart = null, energyChart = null;
+let activeMoodTags = new Set();
+let fbApp = null, fbAuth = null, fbDb = null, fbUser = null;
+let autoSyncEnabled = false;
+let syncTimer = null, pollTimer = null;
+let lastLocalSaved = 0, lastCloudSaved = 0, isSyncing = false;
+const FIELD_IDS = ['t1','t2','t3','t4','c1','c2','c3','c4','m1','i1','e1','l1','l2','n1','mentor','energy','mood-tags'];
+const HORIZON_IDS = ['h-northstar','h-talents','h-talent-status','h-create','h-mentor','h-explore','h-bricks','h-maint','h-ratio','h-joy','h-more'];
+
+// ═══════════════════════════════════════════════
+// UTILITY
+// ═══════════════════════════════════════════════
+function $(id) { return document.getElementById(id); }
+function setFooter(msg, ms) {
+  $('footer-msg').textContent = msg;
+  if (ms) setTimeout(() => $('footer-msg').textContent = 'System ready.', ms);
+}
+
+// ═══════════════════════════════════════════════
+// TABS
+// ═══════════════════════════════════════════════
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => {
+    t.classList.toggle('active', t.getAttribute('onclick').includes("'" + name + "'"));
+  });
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  $('tab-' + name).classList.add('active');
+  if (name === 'trends') renderTrends();
+}
+
+// ═══════════════════════════════════════════════
+// CALENDAR POP-OUT
+// ═══════════════════════════════════════════════
+function popCalendar() {
+  const url = 'https://yangwm2005.github.io/p/weekcalendar2-q.html';
+  const w = 1000, h = 800;
+  window.open(url, 'CalendarReview',
+    `width=${w},height=${h},left=${(screen.width-w)/2},top=${(screen.height-h)/2},scrollbars=yes,resizable=yes`);
+}
+
+// ═══════════════════════════════════════════════
+// CHART
+// ═══════════════════════════════════════════════
+function updateChart() {
+  const vals = [
+    parseFloat($('t1').value)||0,
+    parseFloat($('t2').value)||0,
+    parseFloat($('t3').value)||0,
+    parseFloat($('t4').value)||0
+  ];
+  if (chart) {
+    chart.data.datasets[0].data = vals;
+    chart.update();
+  } else {
+    chart = new Chart($('balanceChart').getContext('2d'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Research','Teaching','Service','Personal'],
+        datasets: [{ data: vals, backgroundColor: ['#2d5be3','#0d9488','#f43f5e','#7c3aed'], borderWidth: 0 }]
+      },
+      options: {
+        cutout: '72%',
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+          tooltip: { callbacks: { label: c => {
+            const t = vals.reduce((a,b)=>a+b,0);
+            return ` ${c.raw}h (${t>0?Math.round(c.raw/t*100):0}%)`;
+          }}}
+        }
+      }
+    });
+  }
+}
+
+function updateBars() {
+  const vals = [
+    parseFloat($('t1').value)||0,
+    parseFloat($('t2').value)||0,
+    parseFloat($('t3').value)||0,
+    parseFloat($('t4').value)||0
+  ];
+  const max = Math.max(...vals, 1);
+  vals.forEach((v,i) => {
+    const b = $('bar'+(i+1));
+    if (b) b.style.width = Math.round(v/max*100)+'%';
+  });
+}
+
+// ═══════════════════════════════════════════════
+// MOOD TAGS
+// ═══════════════════════════════════════════════
+function toggleMoodTag(n) {
+  if (activeMoodTags.has(n)) activeMoodTags.delete(n);
+  else activeMoodTags.add(n);
+  [1,2,3,4].forEach(i => {
+    const el = $('m-tag-'+i);
+    if (!el) return;
+    el.style.opacity = activeMoodTags.has(i) ? '1' : '0.4';
+    el.style.transform = activeMoodTags.has(i) ? 'scale(1.05)' : '';
+  });
+  $('mood-tags').value = [...activeMoodTags].join(',');
+}
+
+// ═══════════════════════════════════════════════
+// SAVE / LOAD WEEK
+// ═══════════════════════════════════════════════
+function save() {
+  const week = $('week').value;
+  if (!week) { alert('Please select a date first.'); return; }
+  const data = {};
+  FIELD_IDS.forEach(id => { const el = $(id); if (el) data[id] = el.value; });
+  localStorage.setItem(PREFIX + week, JSON.stringify(data));
+  lastLocalSaved = Date.now();
+  scheduleAutoSync();
+  loadWeeks();
+  updateSyncStatus();
+  setFooter('✓ Review saved for ' + week, 3000);
+}
+
+function loadWeek(k) {
+  const data = JSON.parse(localStorage.getItem(k) || '{}');
+  FIELD_IDS.forEach(id => { const el = $(id); if (el && data[id] !== undefined) el.value = data[id]; });
+  $('week').value = k.replace(PREFIX, '');
+  const ev = $('energy-val');
+  if (ev) ev.textContent = $('energy').value;
+  updateChart();
+  updateBars();
+  // mood tags
+  activeMoodTags.clear();
+  const tags = (data['mood-tags'] || '').split(',').filter(Boolean);
+  tags.forEach(n => activeMoodTags.add(parseInt(n)));
+  [1,2,3,4].forEach(i => {
+    const el = $('m-tag-'+i);
+    if (el) el.style.opacity = activeMoodTags.has(i) ? '1' : '0.4';
+  });
+  // mark active in sidebar
+  document.querySelectorAll('.week-item').forEach(el => el.classList.remove('active'));
+  const match = document.querySelector(`[data-key="${k}"]`);
+  if (match) match.classList.add('active');
+}
+
+function deleteWeek(k) {
+  const dateStr = k.replace(PREFIX, '');
+  if (!confirm('Delete review for ' + dateStr + '? This cannot be undone.')) return;
+  localStorage.removeItem(k);
+  if ($('week').value === dateStr) {
+    $('week').value = new Date().toISOString().slice(0,10);
+    FIELD_IDS.forEach(id => { const el = $(id); if (el) el.value = id.startsWith('t') && id.length===2 ? '0' : ''; });
+    $('energy').value = 5; $('energy-val').textContent = '5';
+    updateChart(); updateBars();
+  }
+  loadWeeks();
+  setFooter('✕ Deleted review for ' + dateStr, 3000);
+}
+
+function loadWeeks() {
+  const container = $('weeks');
+  if (!container) return;
+  container.innerHTML = '';
+  const keys = Object.keys(localStorage)
+    .filter(k => k.startsWith(PREFIX) && k !== HORIZON_KEY)
+    .sort().reverse();
+
+  // Stats
+  if ($('total-reviews')) $('total-reviews').textContent = keys.length;
+  let totalEnergy = 0, eCount = 0, totals = {t1:0,t2:0,t3:0,t4:0};
+  keys.forEach(k => {
+    const d = JSON.parse(localStorage.getItem(k)||'{}');
+    if (d.energy) { totalEnergy += parseInt(d.energy); eCount++; }
+    ['t1','t2','t3','t4'].forEach(t => totals[t] += parseFloat(d[t]||0));
+  });
+  if ($('avg-energy')) $('avg-energy').textContent = eCount > 0 ? (totalEnergy/eCount).toFixed(1) : '—';
+  const catNames = {t1:'Res',t2:'Tea',t3:'Ser',t4:'Per'};
+  const topCat = Object.entries(totals).sort((a,b)=>b[1]-a[1])[0];
+  if ($('top-category')) $('top-category').textContent = topCat && topCat[1]>0 ? catNames[topCat[0]] : '—';
+
+  // Streak
+  let streak = 0;
+  const now = new Date();
+  for (let i = 0; i < keys.length; i++) {
+    const d = new Date(keys[i].replace(PREFIX,''));
+    const diffWeeks = (now - d) / (1000*60*60*24*7);
+    if (diffWeeks <= i + 1.5) streak++; else break;
+  }
+  if ($('streak-count')) $('streak-count').textContent = streak;
+
+  // Render list
+  keys.forEach(k => {
+    const dateStr = k.replace(PREFIX, '');
+    const d = JSON.parse(localStorage.getItem(k)||'{}');
+    const hrs = Math.round(['t1','t2','t3','t4'].reduce((s,t)=>s+(parseFloat(d[t]||0)),0));
+    const dt = new Date(dateStr);
+    const startOfYear = new Date(dt.getFullYear(), 0, 1);
+    const wkNum = Math.ceil(((dt - startOfYear) / 86400000 + startOfYear.getDay() + 1) / 7);
+    const label = `${dateStr}-wk${String(wkNum).padStart(2,'0')}`;
+    const row = document.createElement('div');
+    row.className = 'week-item';
+    row.setAttribute('data-key', k);
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:4px;padding:6px 8px 6px 16px;';
+    row.innerHTML = `
+      <div style="flex:1;cursor:pointer;min-width:0;" onclick="loadWeek('${k}')">
+        <div style="font-size:12px;font-weight:500;color:var(--ink2);">${label}</div>
+        <div style="font-size:10px;color:var(--ink3);margin-top:1px;">${hrs}h · E:${d.energy||'?'}/10</div>
+      </div>
+      <button title="Delete this review" onclick="deleteWeek('${k}')"
+        style="background:#fef2f2;border:1px solid #fecaca;cursor:pointer;font-size:12px;font-weight:700;color:#dc2626;padding:2px 7px;border-radius:5px;flex-shrink:0;line-height:1.4;"
+        onmouseover="this.style.background='#dc2626';this.style.color='white'"
+        onmouseout="this.style.background='#fef2f2';this.style.color='#dc2626'">✕</button>`;
+    container.appendChild(row);
+  });
+}
+
+// ═══════════════════════════════════════════════
+// HORIZON VISION SAVE / LOAD
+// ═══════════════════════════════════════════════
+function saveHorizon() {
+  const data = {};
+  HORIZON_IDS.forEach(id => { const el = $(id); if (el) data[id] = el.value; });
+  localStorage.setItem(HORIZON_KEY, JSON.stringify(data));
+  setFooter('✓ 30-year vision saved.', 3000);
+}
+
+function loadHorizon() {
+  const raw = localStorage.getItem(HORIZON_KEY);
+  if (!raw) return;
+  const data = JSON.parse(raw);
+  HORIZON_IDS.forEach(id => { const el = $(id); if (el && data[id] !== undefined) el.value = data[id]; });
+  const r = $('h-ratio'); if (r) $('ratio-display').textContent = r.value + '%';
+}
+
+// ═══════════════════════════════════════════════
+// EXPORT / IMPORT
+// ═══════════════════════════════════════════════
+function exportAllData() {
+  const weeks = {};
+  Object.keys(localStorage).filter(k => k.startsWith(PREFIX)).forEach(k => {
+    weeks[k] = JSON.parse(localStorage.getItem(k));
+  });
+  const vision = localStorage.getItem(HORIZON_KEY);
+  return { weeks, vision: vision ? JSON.parse(vision) : null, exportedAt: Date.now(), version: 'horizon-v12' };
+}
+
+function importAllData(data) {
+  if (data.weeks) Object.entries(data.weeks).forEach(([k,v]) => localStorage.setItem(k, JSON.stringify(v)));
+  if (data.vision) localStorage.setItem(HORIZON_KEY, JSON.stringify(data.vision));
+  lastLocalSaved = Date.now();
+  loadWeeks();
+  loadHorizon();
+  updateSyncStatus();
+}
+
+function exportToFile() {
+  const data = exportAllData();
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const d = new Date();
+  const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  const startOfYear = new Date(d.getFullYear(), 0, 1);
+  const wkNum = Math.ceil(((d - startOfYear) / 86400000 + startOfYear.getDay() + 1) / 7);
+  const filename = `Weekreview-${stamp}-wk${String(wkNum).padStart(2,'0')}.json`;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+  setFooter('💾 Exported: ' + filename, 3000);
+}
+
+function importFromFile(file) {
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!data.weeks && !data.vision) { alert('Invalid Horizon backup file.'); return; }
+      const count = Object.keys(data.weeks || {}).length;
+      if (!confirm(`Import ${count} week review(s)? This merges with existing data.`)) return;
+      importAllData(data);
+      setFooter('✓ Imported ' + count + ' reviews successfully.', 4000);
+    } catch(e) { alert('Could not read file: ' + e.message); }
+  };
+  reader.readAsText(file);
+}
+
+// ═══════════════════════════════════════════════
+// TRENDS
+// ═══════════════════════════════════════════════
+function renderTrends() {
+  const keys = Object.keys(localStorage)
+    .filter(k => k.startsWith(PREFIX) && k !== HORIZON_KEY)
+    .sort().slice(-12);
+
+  if (keys.length < 2) {
+    $('pattern-insights').textContent = 'Save at least 2 weeks of reviews to see trends.';
+    return;
+  }
+
+  const labels = keys.map(k => k.replace(PREFIX,'').slice(5));
+  const get = (k, id) => parseFloat(JSON.parse(localStorage.getItem(k)||'{}')[id]||0);
+  const t1 = keys.map(k=>get(k,'t1')), t2 = keys.map(k=>get(k,'t2'));
+  const t3 = keys.map(k=>get(k,'t3')), t4 = keys.map(k=>get(k,'t4'));
+  const en = keys.map(k=>get(k,'energy')||5);
+
+  if (trendChart) trendChart.destroy();
+  trendChart = new Chart($('trendChart').getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets: [
+      {label:'Research', data:t1, borderColor:'#2d5be3', backgroundColor:'rgba(45,91,227,0.06)', tension:0.4, fill:true, borderWidth:2, pointRadius:3},
+      {label:'Teaching', data:t2, borderColor:'#0d9488', backgroundColor:'rgba(13,148,136,0.06)', tension:0.4, fill:true, borderWidth:2, pointRadius:3},
+      {label:'Service',  data:t3, borderColor:'#f43f5e', backgroundColor:'rgba(244,63,94,0.06)', tension:0.4, fill:true, borderWidth:2, pointRadius:3},
+      {label:'Personal', data:t4, borderColor:'#7c3aed', backgroundColor:'rgba(124,58,237,0.06)', tension:0.4, fill:true, borderWidth:2, pointRadius:3},
+    ]},
+    options: { responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ position:'bottom', labels:{boxWidth:10,font:{size:11}} } },
+      scales:{ y:{beginAtZero:true,ticks:{font:{size:11}}}, x:{ticks:{font:{size:11}}} }
+    }
+  });
+
+  if (energyChart) energyChart.destroy();
+  energyChart = new Chart($('energyChart').getContext('2d'), {
+    type: 'bar',
+    data: { labels, datasets: [{
+      label:'Energy', data:en,
+      backgroundColor: en.map(v => v>=7?'rgba(5,150,105,0.7)':v>=4?'rgba(45,91,227,0.6)':'rgba(220,38,38,0.6)'),
+      borderRadius:4, borderWidth:0
+    }]},
+    options: { responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{ y:{min:0,max:10,ticks:{stepSize:2,font:{size:11}}}, x:{ticks:{font:{size:11}}} }
+    }
+  });
+
+  const avgPer = t4.reduce((a,b)=>a+b,0)/t4.length;
+  const avgEn  = en.reduce((a,b)=>a+b,0)/en.length;
+  const trend  = t4[t4.length-1] - t4[0];
+  let insights = [];
+  if (avgPer < 3)  insights.push('⚠ Personal time is only '+avgPer.toFixed(1)+'h/wk avg — your uncovered talents need more room.');
+  if (avgPer >= 5) insights.push('✓ Protecting Personal time well ('+avgPer.toFixed(1)+'h avg). This is where your 30-year future is built.');
+  if (avgEn < 5)   insights.push('⚠ Energy avg is '+avgEn.toFixed(1)+'/10 — check your Drain entries for the pattern.');
+  if (avgEn >= 7)  insights.push('✓ Strong energy ('+avgEn.toFixed(1)+'/10). You\'re living close to your values.');
+  if (trend > 0)   insights.push('↑ Personal time is trending UP — great signal.');
+  if (trend < 0)   insights.push('↓ Personal time is trending DOWN — your future self needs more investment.');
+  $('pattern-insights').innerHTML = insights.length
+    ? insights.map(i=>`<p style="margin-bottom:10px;">${i}</p>`).join('')
+    : 'Keep reviewing weekly to unlock pattern insights.';
+}
+
+// ═══════════════════════════════════════════════
+// AI COACH
+// ═══════════════════════════════════════════════
+function fillCoachPrompt(q) {
+  $('coach-q').value = q;
+  switchTab('coach');
+  $('coach-q').focus();
+}
+
+function gatherContext() {
+  return [
+    'Week: ' + $('week').value,
+    'Time: Research '+($('t1').value||0)+'h | Teaching '+($('t2').value||0)+'h | Service '+($('t3').value||0)+'h | Personal '+($('t4').value||0)+'h',
+    'Energy: ' + ($('energy').value||5) + '/10',
+    'Research notes: ' + ($('c1').value||''),
+    'Teaching notes: ' + ($('c2').value||''),
+    'Service notes: '  + ($('c3').value||''),
+    'Personal notes: ' + ($('c4').value||''),
+    'Key moments: '    + ($('m1').value||''),
+    'Insights: '       + ($('i1').value||''),
+    'Flow moments: '   + ($('l1').value||''),
+    'Drain moments: '  + ($('l2').value||''),
+    'Next shift: '     + ($('n1').value||''),
+    'Mentorship: '     + ($('mentor').value||''),
+  ].join('\n');
+}
+
+function buildCoachPrompt() {
+  const q = ($('coach-q').value||'').trim();
+  return `You are my personal coach. I am a full professor at a national university in Taiwan — free from promotion pressure, joyful, warm, love helping students discover their futures, building an app as a passion project, and exploring uncovered talents over the next 5–30 years.
+
+My weekly review:
+${gatherContext()}
+
+Coach me honestly on this — push back if needed, connect my week to my long-term arc, and end with ONE specific action for next week:
+
+${q || '(General: What does this week reveal about my real priorities and 30-year direction?)'}`;
+}
+
+function askCoach() {
+  const prompt = buildCoachPrompt();
+  const out = $('coach-output');
+  navigator.clipboard.writeText(prompt).then(() => {
+    out.style.display = 'block';
+    out.innerHTML = `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px;font-size:13px;color:#065f46;line-height:1.6;">
+      <strong>✓ Prompt copied!</strong><br>Claude.ai is opening — paste with <strong>Ctrl+V</strong> or <strong>⌘+V</strong> and press Enter.
+    </div>`;
+    window.open('https://claude.ai', '_blank');
+  }).catch(() => {
+    out.style.display = 'block';
+    out.innerHTML = `<div style="background:#fef9c3;border:1px solid #fde047;border-radius:10px;padding:12px 16px;font-size:13px;color:#854d0e;margin-bottom:8px;">
+      ⚠ Clipboard blocked. Select all text below and copy manually.
+    </div>
+    <textarea style="width:100%;min-height:160px;font-size:11px;font-family:monospace;border:1px solid var(--border);border-radius:8px;padding:10px;" readonly onclick="this.select()">${prompt}</textarea>
+    <div style="margin-top:8px;"><a href="https://claude.ai" target="_blank" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#2d5be3);color:white;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;text-decoration:none;">Open Claude.ai ↗</a></div>`;
+  });
+}
+
+function copyPromptOnly() {
+  const btn = event.currentTarget;
+  navigator.clipboard.writeText(buildCoachPrompt()).then(() => {
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => btn.textContent = 'Copy prompt only', 2000);
+  }).catch(() => alert('Copy failed — try the main button.'));
+}
+
+// ═══════════════════════════════════════════════
+// FOOTER TIME
+// ═══════════════════════════════════════════════
+function updateFooterTime() {
+  const el = $('footer-time');
+  if (el) el.textContent = new Date().toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'});
+}
+
+// ═══════════════════════════════════════════════
+// FIREBASE CLOUD SYNC
+// ═══════════════════════════════════════════════
+const FB_CONFIG = {
+  apiKey: 'AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc',
+  authDomain: 'qtodo-syn.firebaseapp.com',
+  projectId: 'qtodo-syn',
+  storageBucket: 'qtodo-syn.firebasestorage.app',
+  messagingSenderId: '663058774385',
+  appId: '1:663058774385:web:a2972f2eb032c8cc4d5ed0'
+};
+
+function initFirebase() {
+  fbApp  = firebase.initializeApp(FB_CONFIG);
+  fbAuth = firebase.auth();
+  fbDb   = firebase.firestore();
+  fbAuth.onAuthStateChanged(user => {
+    fbUser = user;
+    updateCloudUI(!!user);
+    if (user) {
+      autoSyncEnabled = localStorage.getItem('horizonAutoSync_'+user.uid) === 'true';
+      $('autoSyncCheck').checked = autoSyncEnabled;
+      updateSyncStatus();
+      if (autoSyncEnabled) fbLoad(true).then(startPoll);
+    } else {
+      stopPoll();
+    }
+  });
+}
+
+function updateCloudUI(signedIn) {
+  $('cloudNotSignedIn').style.display = 'none';
+  $('cloudSignedIn').style.display    = signedIn ? 'block' : 'none';
+  $('cloudGuestActions').style.display = signedIn ? 'none' : 'block';
+  $('cloudStatusText').textContent = signedIn
+    ? (fbUser.displayName||fbUser.email||'').split(/[ @]/)[0] || 'Signed in'
+    : 'Sign in';
+  $('cloudSyncDot').className = 'cloud-sync-dot ' + (signedIn ? 'sync-ok' : 'sync-off');
+  if (signedIn && fbUser) {
+    $('ddAvatar').textContent = (fbUser.displayName||fbUser.email||'?')[0].toUpperCase();
+    $('ddName').textContent   = fbUser.displayName || fbUser.email.split('@')[0];
+    $('ddEmail').textContent  = fbUser.email;
+  }
+}
+
+function updateSyncStatus() {
+  const el  = $('syncStatusMsg');
+  const dot = $('cloudSyncDot');
+  if (!el) return;
+  const local = lastLocalSaved ? new Date(lastLocalSaved).toLocaleTimeString() : 'Never';
+  const cloud = lastCloudSaved ? new Date(lastCloudSaved).toLocaleTimeString() : 'Never';
+  if (isSyncing) {
+    dot.className = 'cloud-sync-dot sync-syncing';
+    el.innerHTML  = `💾 Local: ${local}<br>☁ Syncing…`;
+  } else if (autoSyncEnabled && fbUser) {
+    dot.className = 'cloud-sync-dot sync-ok';
+    el.innerHTML  = `💾 Local: ${local}<br>☁ Cloud: ${cloud}`;
+  } else {
+    dot.className = 'cloud-sync-dot ' + (fbUser ? 'sync-ok' : 'sync-off');
+    el.innerHTML  = `💾 Local: ${local}<br>☁ Auto-sync off`;
+  }
+}
+
+async function fbSave(silent) {
+  if (!fbUser || !fbDb || isSyncing) return false;
+  isSyncing = true; updateSyncStatus();
+  try {
+    await fbDb.collection(HORIZON_COL).doc(fbUser.uid).set(
+      { data: exportAllData(), updatedAt: Date.now() }, { merge: true }
+    );
+    lastCloudSaved = Date.now();
+    isSyncing = false; updateSyncStatus();
+    if (!silent) setFooter('☁ Saved to cloud!', 3000);
+    return true;
+  } catch(e) {
+    isSyncing = false; updateSyncStatus();
+    if (!silent) alert('Cloud save failed: ' + e.message);
+    return false;
+  }
+}
+
+async function fbLoad(silent) {
+  if (!fbUser || !fbDb || isSyncing) return false;
+  isSyncing = true; updateSyncStatus();
+  try {
+    const snap = await fbDb.collection(HORIZON_COL).doc(fbUser.uid).get();
+    if (snap.exists && snap.data().data) {
+      importAllData(snap.data().data);
+      lastCloudSaved = snap.data().updatedAt || Date.now();
+      isSyncing = false; updateSyncStatus();
+      if (!silent) setFooter('☁ Loaded from cloud!', 3000);
+      return true;
+    } else {
+      if (!silent) alert('No cloud data yet. Save first.');
+    }
+    isSyncing = false; updateSyncStatus();
+    return false;
+  } catch(e) {
+    isSyncing = false; updateSyncStatus();
+    if (!silent) alert('Cloud load failed: ' + e.message);
+    return false;
+  }
+}
+
+function scheduleAutoSync() {
+  if (!autoSyncEnabled || !fbUser) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => fbSave(true), 3000);
+}
+
+function setAutoSync(val) {
+  autoSyncEnabled = !!val;
+  if (fbUser) localStorage.setItem('horizonAutoSync_'+fbUser.uid, String(autoSyncEnabled));
+  updateSyncStatus();
+  if (autoSyncEnabled) { fbLoad(true).then(startPoll); } else stopPoll();
+}
+
+function startPoll() {
+  stopPoll();
+  pollTimer = setInterval(async () => {
+    if (!autoSyncEnabled || !fbUser || isSyncing || !fbDb) return;
+    try {
+      const snap = await fbDb.collection(HORIZON_COL).doc(fbUser.uid).get();
+      if (snap.exists && (snap.data().updatedAt||0) > lastCloudSaved + 5000) await fbLoad(true);
+    } catch(e) {}
+  }, 30000);
+}
+
+function stopPoll() {
+  clearInterval(pollTimer); pollTimer = null;
+  clearTimeout(syncTimer);  syncTimer = null;
+}
+
+// Cloud dropdown wiring
+function setupCloudUI() {
+  const btn = $('cloudToggleBtn');
+  const dd  = $('cloudDropdown');
+  if (!btn || !dd) return;
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    dd.style.display = dd.style.display === 'block' ? 'none' : 'block';
+  });
+  document.addEventListener('click', e => {
+    if (!btn.contains(e.target) && !dd.contains(e.target)) dd.style.display = 'none';
+  });
+
+  function wireSignIn(id) {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener('click', async () => {
+      try {
+        await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+        dd.style.display = 'none';
+      } catch(e) { alert('Sign-in failed: ' + e.message); }
+    });
+  }
+  wireSignIn('signInMenuItem');
+  wireSignIn('signInMenuItemGuest');
+
+  $('signOutItem')?.addEventListener('click', async () => {
+    await fbAuth.signOut(); setAutoSync(false); dd.style.display = 'none';
+  });
+  $('saveCloudItem')?.addEventListener('click', async () => { await fbSave(false); dd.style.display='none'; });
+  $('loadCloudItem')?.addEventListener('click', async () => { await fbLoad(false); dd.style.display='none'; });
+
+  // Export/import (signed in)
+  $('exportItem')?.addEventListener('click', () => { exportToFile(); dd.style.display='none'; });
+  $('importItem')?.addEventListener('click', () => { $('importFileInput').click(); dd.style.display='none'; });
+  $('importFileInput')?.addEventListener('change', e => { if(e.target.files[0]) importFromFile(e.target.files[0]); e.target.value=''; });
+
+  // Export/import (guest)
+  $('exportItemGuest')?.addEventListener('click', () => { exportToFile(); dd.style.display='none'; });
+  $('importItemGuest')?.addEventListener('click', () => { $('importFileInputGuest').click(); dd.style.display='none'; });
+  $('importFileInputGuest')?.addEventListener('change', e => { if(e.target.files[0]) importFromFile(e.target.files[0]); e.target.value=''; });
+
+  // Sidebar buttons
+  $('sidebarImportFile')?.addEventListener('change', e => { if(e.target.files[0]) importFromFile(e.target.files[0]); e.target.value=''; });
+}
+
+// ═══════════════════════════════════════════════
+// STARTUP
+// ═══════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  $('week').value = new Date().toISOString().slice(0,10);
+  loadWeeks();
+  updateChart();
+  updateBars();
+  loadHorizon();
+  updateFooterTime();
+  setInterval(updateFooterTime, 60000);
+  setupCloudUI();
+  try { initFirebase(); } catch(e) { console.warn('Firebase unavailable:', e); }
+});
+</script>
+</body>
+</html>
