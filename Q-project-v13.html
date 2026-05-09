@@ -1070,7 +1070,33 @@ function startTimer(taskId) { if (activeTimers.has(taskId)) return; const start 
 function stopTimer(taskId) { const timer = activeTimers.get(taskId); if (timer) { clearInterval(timer.interval); const elapsed = Math.floor((Date.now() - timer.start) / 1000); const task = tasks.find(t => t.id === taskId); if (task) { task.timeSpent = (task.timeSpent || 0) + elapsed; saveData(); } activeTimers.delete(taskId); const btn = document.querySelector(`.timer-btn[data-task-id="${taskId}"]`); if (btn) btn.textContent = '▶'; const disp = document.querySelector(`.timer-display[data-task-id="${taskId}"]`); if (disp) { disp.classList.remove('running'); disp.textContent = formatTimeMMSS(task?.timeSpent || 0); } } }
 function toggleTimer(taskId) { activeTimers.has(taskId) ? stopTimer(taskId) : startTimer(taskId); }
 function addTimeToTask(taskId, minutes) { const task = tasks.find(t => t.id === taskId); if (task) { task.timeSpent = (task.timeSpent || 0) + (minutes * 60); saveData(); } const disp = document.querySelector(`.timer-display[data-task-id="${taskId}"]`); if (disp) disp.textContent = formatTimeMMSS(task?.timeSpent || 0); }
-function addSubtask(taskId) { const input = document.querySelector(`.new-subtask-input[data-task-id="${taskId}"]`); const text = input?.value.trim(); if (text) { const task = tasks.find(t => t.id === taskId); if (task) { task.subtasks = task.subtasks || []; task.subtasks.push({ id: Date.now(), text, completed: false }); saveData(); renderCurrentView(); if (document.getElementById('focusModeOverlay')) renderFocusMode(); } if (input) input.value = ''; } }
+function addSubtask(taskId) {
+  const input = document.querySelector(`.new-subtask-input[data-task-id="${taskId}"]`);
+  const text = input?.value.trim();
+  if (text) {
+    const task = tasks.find(t => t.id === taskId);
+    if (task) {
+      task.subtasks = task.subtasks || [];
+      const newSt = { id: Date.now(), text, completed: false };
+      task.subtasks.push(newSt);
+      saveData();
+      // Append to live DOM instead of full re-render
+      const stList = input?.closest('.task-detail, .subtask-input-row')?.parentNode?.querySelector('.subtask-list');
+      if (stList) {
+        const div = document.createElement('div'); div.className = 'subtask-item';
+        div.innerHTML = `<input type="checkbox" class="subtask-check" onchange="toggleSubtask('${taskId}',${newSt.id})">
+          <span class="subtask-text">${escapeHtml(text)}</span>
+          <button class="subtask-del" onclick="deleteSubtask('${taskId}',${newSt.id})">✕</button>`;
+        stList.appendChild(div);
+      }
+      if (document.getElementById('focusModeOverlay')) renderFocusMode();
+    }
+    if (input) { input.value = ''; input.placeholder = 'Next subtask… (Enter to add, Esc to finish)'; input.focus(); }
+  } else {
+    // Empty entry — dismiss input
+    if (input) { input.blur(); }
+  }
+}
 function deleteSubtask(taskId, subtaskId) { const task = tasks.find(t => t.id === taskId); if (task?.subtasks) { task.subtasks = task.subtasks.filter(st => st.id != subtaskId); saveData(); renderCurrentView(); if (document.getElementById('focusModeOverlay')) renderFocusMode(); } }
 function editSubtask(taskId, subtaskId) {
   const task = tasks.find(t => t.id === taskId); if (!task?.subtasks) return;
@@ -1142,7 +1168,7 @@ function renderFocusMode() {
       <div class="task-detail-panel" data-task-id="${task.id}" style="display:${isOpen ? 'block' : 'none'}; padding:8px 14px 12px; border-top:1px solid var(--border);">
         <div style="margin-bottom:8px; font-size:0.72rem; font-weight:700; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.05em;">📋 Subtasks</div>
         ${subtasksHtml}
-        <div class="subtask-input-row"><input type="text" class="new-subtask-input" data-task-id="${task.id}" placeholder="Add a subtask…" onkeypress="if(event.key==='Enter') window.addSubtask('${task.id}')"><button class="btn btn-primary btn-sm" onclick="window.addSubtask('${task.id}')">+ Add</button></div>
+        <div class="subtask-input-row"><input type="text" class="new-subtask-input" data-task-id="${task.id}" placeholder="Add a subtask… (Enter to add, Esc to finish)" onkeypress="if(event.key==='Enter'){event.preventDefault();window.addSubtask('${task.id}')}" onkeydown="if(event.key==='Escape'){event.target.value='';event.target.blur()}" onblur="if(!this.value.trim())this.placeholder='Add a subtask… (Enter to add, Esc to finish)'"><button class="btn btn-primary btn-sm" onclick="window.addSubtask('${task.id}')">+ Add</button></div>
         <div style="margin:10px 0 6px; font-size:0.72rem; font-weight:700; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.05em;">📝 Notes</div>
         ${notesHtml}
         <div style="margin:10px 0 4px; font-size:0.72rem; font-weight:700; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.05em;">💬 Think Log</div>
@@ -1325,14 +1351,22 @@ function enterNoteFocusMode(noteId) {
   }
   function addSubtask() {
     const inp = document.getElementById('nfm-st-input'); if (!inp) return;
-    const text = inp.value.trim(); if (!text) return;
+    const text = inp.value.trim();
+    if (!text) { inp.blur(); return; } // empty → dismiss
     const n = tasks.find(x => x.id === noteId); if (!n) return;
     n.subtasks = n.subtasks || [];
     n.subtasks.push({ id: Date.now(), text, completed: false });
-    saveData(); inp.value = ''; refreshSubtasks();
+    saveData();
+    inp.value = '';
+    inp.placeholder = 'Next subtask… (Enter to add, Esc to finish)';
+    inp.focus();
+    refreshSubtasks();
   }
   document.getElementById('nfm-add-st-btn').addEventListener('click', addSubtask);
-  document.getElementById('nfm-st-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); addSubtask(); }});
+  document.getElementById('nfm-st-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); addSubtask(); }
+    if (e.key === 'Escape') { this.value = ''; this.blur(); }
+  });
   // Wire existing subtask checkboxes
   document.querySelectorAll('#nfm-subtasks .nfm-st-cb').forEach(cb => cb.addEventListener('change', function() {
     const n2 = tasks.find(x => x.id === noteId); if (!n2) return;
@@ -2532,6 +2566,7 @@ init();
 .fab-btn .fab-icon { font-size: 1.1rem; line-height: 1; }
 .fab-selfchat  { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; }
 .fab-timestripe { background: linear-gradient(135deg, #0ea5e9, #06b6d4); color: #fff; }
+.fab-flock      { background: linear-gradient(135deg, #e05c2a, #f59e0b); color: #fff; }
 .fab-label { opacity: 0; max-width: 0; overflow: hidden; transition: opacity 0.2s, max-width 0.25s; }
 .fab-group:hover .fab-label { opacity: 1; max-width: 140px; }
 </style>
@@ -2546,6 +2581,11 @@ init();
     onclick="window.open('https://timestripe.com/horizons/','timestripe','width=1100,height=720,resizable=yes,scrollbars=yes')">
     <span class="fab-icon">🗓</span>
     <span class="fab-label">Timestripe</span>
+  </button>
+  <button class="fab-btn fab-flock" title="Open Flock"
+    onclick="window.open('https://web.flock.com/','flock','width=1100,height=720,resizable=yes,scrollbars=yes')">
+    <span class="fab-icon">🐦</span>
+    <span class="fab-label">Flock</span>
   </button>
 </div>
 

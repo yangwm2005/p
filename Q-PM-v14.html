@@ -2581,12 +2581,33 @@ function colorSwatchPicker(selectedIdx, onChange) {
       phInp.type = 'text'; phInp.placeholder = 'New subtask… (Enter / Esc)';
       phInp.className = 'subtask-label'; phInp.style.flex = '1';
       let done = false;
-      const fin = () => { if (done) return; done = true; if (phLi.parentNode) phLi.remove(); };
+      const fin = () => { if (done) return; done = true; if (phLi.parentNode) phLi.remove(); render(); };
+      const addAndContinue = (stList) => {
+        const v = phInp.value.trim();
+        if (v) {
+          DB.addSubtask(task.id, v);
+          // Append saved subtask to live list
+          const newSt = DB.getTask(task.id)?.subtasks?.slice(-1)[0];
+          if (newSt && stList) {
+            const newLi = document.createElement('li'); newLi.className = 'subtask-item';
+            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = false;
+            cb.addEventListener('change', () => { DB.toggleSubtask(task.id, newSt.id); render(); });
+            const lbl = document.createElement('span'); lbl.className = 'subtask-label'; lbl.textContent = newSt.text;
+            newLi.appendChild(cb); newLi.appendChild(lbl);
+            stList.insertBefore(newLi, phLi);
+          }
+          phInp.value = '';
+          phInp.placeholder = 'Next subtask… (Enter to add, Esc to finish)';
+          phInp.focus();
+        } else {
+          fin();
+        }
+      };
       phInp.addEventListener('keydown', pe => {
-        if (pe.key === 'Enter') { pe.preventDefault(); const v = phInp.value.trim(); fin(); if (v) { DB.addSubtask(task.id, v); render(); } }
+        if (pe.key === 'Enter') { pe.preventDefault(); addAndContinue(stList); }
         else if (pe.key === 'Escape') fin();
       });
-      phInp.addEventListener('blur', () => setTimeout(fin, 150));
+      phInp.addEventListener('blur', () => setTimeout(() => { if (!done) fin(); }, 150));
       phLi.appendChild(phInp);
       if (stList) stList.appendChild(phLi);
       else {
@@ -3202,15 +3223,35 @@ function colorSwatchPicker(selectedIdx, onChange) {
                 if (!stl) { stl = document.createElement('ul'); stl.className = 'subtask-list'; liveLi.querySelector('.task-detail-panel').appendChild(stl); }
                 const phLi = document.createElement('li'); phLi.className = 'subtask-item';
                 const phInp = document.createElement('input');
-                phInp.type = 'text'; phInp.placeholder = 'New subtask… (Esc to cancel)';
+                phInp.type = 'text'; phInp.placeholder = 'New subtask… (Enter to add, Esc to finish)';
                 phInp.className = 'subtask-label'; phInp.style.flex = '1';
                 let done2 = false;
-                const fin = () => { if (done2) return; done2 = true; if (phLi.parentNode) phLi.remove(); };
+                const fin = () => { if (done2) return; done2 = true; if (phLi.parentNode) phLi.remove(); render(); };
+                const addAndContinue2 = () => {
+                  const pv = phInp.value.trim();
+                  if (pv) {
+                    DB.addSubtask(task.id, pv);
+                    const newSt = DB.getTask(task.id)?.subtasks?.slice(-1)[0];
+                    if (newSt && stl) {
+                      const newLi2 = document.createElement('li'); newLi2.className = 'subtask-item';
+                      const cb2 = document.createElement('input'); cb2.type = 'checkbox'; cb2.checked = false;
+                      cb2.addEventListener('change', () => { DB.toggleSubtask(task.id, newSt.id); render(); });
+                      const lbl2b = document.createElement('span'); lbl2b.className = 'subtask-label'; lbl2b.textContent = newSt.text;
+                      newLi2.appendChild(cb2); newLi2.appendChild(lbl2b);
+                      stl.insertBefore(newLi2, phLi);
+                    }
+                    phInp.value = '';
+                    phInp.placeholder = 'Next subtask… (Enter to add, Esc to finish)';
+                    phInp.focus();
+                  } else {
+                    fin();
+                  }
+                };
                 phInp.addEventListener('keydown', pe => {
-                  if (pe.key === 'Enter') { pe.preventDefault(); const pv = phInp.value.trim(); fin(); if (pv) { DB.addSubtask(task.id, pv); render(); } }
+                  if (pe.key === 'Enter') { pe.preventDefault(); addAndContinue2(); }
                   else if (pe.key === 'Escape') { fin(); }
                 });
-                phInp.addEventListener('blur', () => setTimeout(fin, 150));
+                phInp.addEventListener('blur', () => setTimeout(() => { if (!done2) fin(); }, 150));
                 phLi.appendChild(phInp); stl.appendChild(phLi); phInp.focus();
               }, 0);
             }
@@ -3787,7 +3828,31 @@ function colorSwatchPicker(selectedIdx, onChange) {
     const addB  = document.createElement('button'); addB.className = 'btn btn-primary btn-sm'; addB.textContent = '+ Add'; addB.style.flexShrink = '0';
     const cancelB = document.createElement('button'); cancelB.className = 'btn btn-ghost btn-sm'; cancelB.textContent = 'Cancel'; cancelB.style.flexShrink = '0';
     cancelB.addEventListener('click', () => stRow.remove());
-    const doAdd = () => { const v = inp.value.trim(); if (v) { DB.addSubtask(task.id, v); render(); } else stRow.remove(); };
+    const doAdd = () => {
+      const v = inp.value.trim();
+      if (v) {
+        DB.addSubtask(task.id, v);
+        // Clear and re-focus for next subtask instead of full re-render
+        inp.value = '';
+        inp.placeholder = 'Next subtask… (Enter to add, Esc to finish)';
+        inp.focus();
+        // Also append the saved subtask to the live DOM so it's visible
+        const stListLive = stRow.parentNode?.querySelector('.subtask-list, .note-subtask-list');
+        if (stListLive) {
+          const newSt = DB.getTask(task.id)?.subtasks?.slice(-1)[0];
+          if (newSt) {
+            const newLi = document.createElement('li'); newLi.className = 'subtask-item';
+            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = newSt.completed;
+            cb.addEventListener('change', () => { DB.toggleSubtask(task.id, newSt.id); render(); });
+            const lbl = document.createElement('span'); lbl.className = 'subtask-label'; lbl.textContent = newSt.text;
+            newLi.appendChild(cb); newLi.appendChild(lbl); stListLive.appendChild(newLi);
+          }
+        }
+      } else {
+        stRow.remove();
+        render(); // only render when done (no text = user finished)
+      }
+    };
     addB.addEventListener('click', doAdd);
     inp.addEventListener('keypress', e => { if (e.key === 'Enter') doAdd(); });
     inp.addEventListener('keydown',  e => { if (e.key === 'Escape') stRow.remove(); });
@@ -4943,6 +5008,10 @@ document.addEventListener('DOMContentLoaded', () => {
   background: linear-gradient(135deg, #0ea5e9, #06b6d4);
   color: #fff;
 }
+.fab-flock {
+  background: linear-gradient(135deg, #e05c2a, #f59e0b);
+  color: #fff;
+}
 .fab-label { opacity: 0; max-width: 0; overflow: hidden; transition: opacity 0.2s, max-width 0.25s; }
 .fab-group:hover .fab-label { opacity: 1; max-width: 140px; }
 </style>
@@ -4957,6 +5026,11 @@ document.addEventListener('DOMContentLoaded', () => {
     onclick="window.open('https://timestripe.com/horizons/','timestripe','width=1100,height=720,resizable=yes,scrollbars=yes')">
     <span class="fab-icon">🗓</span>
     <span class="fab-label">Timestripe</span>
+  </button>
+  <button class="fab-btn fab-flock" title="Open Flock"
+    onclick="window.open('https://web.flock.com/','flock','width=1100,height=720,resizable=yes,scrollbars=yes')">
+    <span class="fab-icon">🐦</span>
+    <span class="fab-label">Flock</span>
   </button>
 </div>
 
