@@ -994,7 +994,23 @@
         let ts = loadTasks(d); let t = findTaskById(id, ts); if(!t) return;
         t.completed = !t.completed; if(t.completed && t.subtasks) t.subtasks.forEach(s=>s.completed=true);
         saveTasksToDate(d, ts); if(d===todayStr) tasks = ts;
-        if(isPrev) previousDayTasks = ts; // keep completed items visible so checkbox stays checked
+        if(isPrev) previousDayTasks = ts;
+        // Update DOM in-place so open panels (subtasks, note, think log) stay expanded
+        const li = document.querySelector(`.task-item[data-task-id="${id}"]`);
+        if (li) {
+            const lbl = li.querySelector('.task-label');
+            if (lbl) { if(t.completed) lbl.classList.add('done'); else lbl.classList.remove('done'); }
+            if (t.completed && t.subtasks) {
+                t.subtasks.forEach(st => {
+                    const scb = li.querySelector(`.subtask-check[data-subtask-id="${st.id}"]`);
+                    if (scb) scb.checked = true;
+                    const slbl = li.querySelector(`.subtask-label[data-subtask-id="${st.id}"]`);
+                    if (slbl) slbl.classList.add('done');
+                });
+            }
+            renderWeeklyCalendar();
+            return;
+        }
         if(d===formatDate(currentViewDate) || isPrev) renderTasks(); else renderFutureTasks();
         renderWeeklyCalendar();
     }
@@ -1338,7 +1354,13 @@
         renderWeeklyCalendar();
     }
     function addSubtask(pid, text, date, isPrev){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(pt){ pt.subtasks = pt.subtasks || []; let newSt = { id: Date.now(), text, completed: false }; pt.subtasks.push(newSt); saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; pendingEditId = newSt.id; pendingEditType = 'subtask'; renderTasks(); renderWeeklyCalendar(); } }
-    function toggleSubtask(pid, sid, date, isPrev=false){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(pt){ let st = pt.subtasks.find(s=>s.id===sid); if(st) st.completed = !st.completed; pt.completed = pt.subtasks.every(s=>s.completed); saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; if(isPrev) previousDayTasks = ts; renderTasks(); renderWeeklyCalendar(); } }
+    function toggleSubtask(pid, sid, date, isPrev=false){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(pt){ let st = pt.subtasks.find(s=>s.id===sid); if(st) st.completed = !st.completed; pt.completed = pt.subtasks.every(s=>s.completed); saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; if(isPrev) previousDayTasks = ts;
+        // In-place DOM update — avoids full re-render so panels stay open
+        const lbl2 = document.querySelector(`.subtask-label[data-subtask-id="${sid}"]`);
+        if(lbl2){ lbl2.classList.toggle('done', !!st?.completed); }
+        const taskLi = document.querySelector(`.task-item[data-task-id="${pid}"]`);
+        if(taskLi){ const taskCb = taskLi.querySelector('.task-check'); if(taskCb) taskCb.checked = pt.completed; const taskLbl = taskLi.querySelector('.task-label'); if(taskLbl) taskLbl.classList.toggle('done', pt.completed); }
+        renderWeeklyCalendar(); } }
     function deleteSubtask(pid, sid, date, isPrev=false){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(pt){ pt.subtasks = pt.subtasks.filter(s=>s.id!==sid); saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; if(isPrev) previousDayTasks = ts; renderTasks(); renderWeeklyCalendar(); } }
     function editSubtask(pid, sid, newText, date, isPrev=false){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(pt){ let st = pt.subtasks.find(s=>s.id===sid); if(st) st.text = newText; saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; if(isPrev) previousDayTasks = ts; renderTasks(); renderWeeklyCalendar(); } }
     
@@ -1657,7 +1679,7 @@
                     saveTasksToDate(d, ts); if(d===todayStr) tasks=ts; if(isPrev) previousDayTasks=ts;
                     renderTasks();
                 });
-                let cb2=document.createElement('input'); cb2.type='checkbox'; cb2.checked=st.completed; cb2.addEventListener('change',()=>toggleSubtask(task.id,st.id,taskDate,isPrev));
+                let cb2=document.createElement('input'); cb2.type='checkbox'; cb2.className='subtask-check'; cb2.setAttribute('data-subtask-id', st.id); cb2.checked=st.completed; cb2.addEventListener('change',()=>toggleSubtask(task.id,st.id,taskDate,isPrev));
                 let lbl2=document.createElement('span'); lbl2.className=`subtask-label ${st.completed?'done':''}`; lbl2.textContent=st.text; lbl2.setAttribute('data-subtask-id', st.id);
                 lbl2.addEventListener('dblclick',function(){ let inp=document.createElement('input'); inp.value=st.text; inp.className='subtask-label editing'; stLi.replaceChild(inp,lbl2); inp.focus(); let saved=false; let save=()=>{ if(saved) return; saved=true; let v=inp.value.trim(); if(v) editSubtask(task.id,st.id,v,taskDate,isPrev); if(inp.parentNode) stLi.replaceChild(lbl2,inp); }; inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); let liveLi = document.querySelector(`.task-item[data-task-id="${task.id}"]`); if(!liveLi) return; let liveStList = liveLi.querySelector('.subtask-list'); if(!liveStList) return; let phLi=document.createElement('li'); phLi.className='subtask-item'; let phInp=document.createElement('input'); phInp.type='text'; phInp.placeholder='New subtask… (Esc to cancel)'; phInp.className='subtask-label editing'; phInp.style.flex='1'; let done=false; let finish=()=>{ if(done) return; done=true; if(phLi.parentNode) phLi.remove(); }; phInp.addEventListener('keydown',pe=>{ if(pe.key==='Enter'){ pe.preventDefault(); let pv=phInp.value.trim(); finish(); if(pv) addSubtask(task.id,pv,taskDate,isPrev); } else if(pe.key==='Escape'){ finish(); } }); phInp.addEventListener('blur',()=>setTimeout(finish,150)); phLi.appendChild(phInp); liveStList.appendChild(phLi); phInp.focus(); } }); inp.addEventListener('blur',save); });
                 let del2=document.createElement('button'); del2.className='act-btn danger'; del2.style.width='22px'; del2.innerHTML='✕'; del2.addEventListener('click',()=>deleteSubtask(task.id,st.id,taskDate,isPrev));
