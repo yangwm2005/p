@@ -1367,7 +1367,7 @@
         saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; if(d===formatDate(currentViewDate)||isPrev) renderTasks(); else renderFutureTasks();
         renderWeeklyCalendar();
     }
-    function addSubtask(pid, text, date, isPrev){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(pt){ pt.subtasks = pt.subtasks || []; let newSt = { id: Date.now(), text, completed: false }; pt.subtasks.push(newSt); saveTasksToDate(d, ts); tasks = loadTasks(formatDate(currentViewDate)); if(isPrev) previousDayTasks = loadTasks(formatDate(new Date(today.getTime()-86400000))); if(!window._panelClosed) window._panelClosed = new Set(); const _defOpen = localStorage.getItem('qt_panelsDefaultOpen') !== '0'; if(_defOpen){ window._panelClosed.delete(pid); } else { window._panelClosed.add(pid); } renderTasks(); renderWeeklyCalendar(); } }
+    function addSubtask(pid, text, date, isPrev){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(!pt) return null; pt.subtasks = pt.subtasks || []; let newSt = { id: Date.now(), text, completed: false }; pt.subtasks.push(newSt); saveTasksToDate(d, ts); tasks = loadTasks(formatDate(currentViewDate)); if(isPrev) previousDayTasks = loadTasks(formatDate(new Date(today.getTime()-86400000))); renderWeeklyCalendar(); return newSt; }
     function toggleSubtask(pid, sid, date, isPrev=false){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(pt){ let st = pt.subtasks.find(s=>s.id===sid); if(st) st.completed = !st.completed; pt.completed = pt.subtasks.every(s=>s.completed); saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; if(isPrev) previousDayTasks = ts;
         // In-place DOM update — avoids full re-render so panels stay open
         const lbl2 = document.querySelector(`.subtask-label[data-subtask-id="${sid}"]`);
@@ -1609,33 +1609,7 @@
         }); actions.appendChild(noteBtn);
 
         let addSt=document.createElement('button'); addSt.className='act-btn'; addSt.style.position='relative'; addSt.innerHTML='⊕'; addSt.title='Add subtask'; if(task.subtasks?.length){ const sb=document.createElement('span'); sb.className='subtask-badge'; addSt.appendChild(sb); } addSt.addEventListener('click',()=>{
-    const liveLi = () => document.querySelector('.task-item[data-task-id="' + task.id + '"]');
-    if(liveLi()?.querySelector('.subtask-input-row')) return;
-    const spawnRow = () => {
-        const targetLi = liveLi(); if(!targetLi) return;
-        if(targetLi.querySelector('.subtask-input-row')) return;
-        const stRow=document.createElement('div'); stRow.className='subtask-input-row';
-        const inp=document.createElement('input'); inp.type='text'; inp.className='task-input'; inp.placeholder='Subtask… (Enter to add, Esc to cancel)';
-        let committed=false;
-        inp.addEventListener('keydown',e=>{
-            if(e.key==='Enter'){
-                e.preventDefault();
-                const v=inp.value.trim();
-                if(v){
-                    committed=true; stRow.remove();
-                    window._pendingSubtaskSpawn = {pid: task.id, date: taskDate};
-                    addSubtask(task.id,v,taskDate);
-                } else {
-                    committed=true; stRow.remove();
-                }
-            } else if(e.key==='Escape'){
-                committed=true; stRow.remove();
-            }
-        });
-        inp.addEventListener('blur',()=>{ if(!committed){ committed=true; stRow.remove(); } });
-        stRow.appendChild(inp); targetLi.appendChild(stRow); inp.focus();
-    };
-    spawnRow();
+    injectSubtaskInput(task.id, taskDate, isPrev);
 }); actions.appendChild(addSt);
         let dateCh=document.createElement('button'); dateCh.className='act-btn'; dateCh.innerHTML='📅'; dateCh.addEventListener('click',()=>{ let di=li.querySelector('.inline-date-input'); if(!di){ di=document.createElement('input'); di.type='date'; di.className='inline-date-input'; di.value=taskDate.length===8?`${taskDate.slice(0,4)}-${taskDate.slice(4,6)}-${taskDate.slice(6,8)}`:formatInput(new Date()); di.addEventListener('change',ce=>{ if(di.value) changeTaskDate(task.id,taskDate,di.value,isPrev); di.remove(); }); di.addEventListener('blur',()=>setTimeout(()=>di.remove(),200)); actions.appendChild(di); di.focus(); di.click(); } }); actions.appendChild(dateCh);
         let del=document.createElement('button'); del.className='act-btn danger'; del.innerHTML='🗑'; del.addEventListener('click',()=>deleteTask(task.id,taskDate,isPrev)); actions.appendChild(del);
@@ -1714,7 +1688,7 @@
                 });
                 let cb2=document.createElement('input'); cb2.type='checkbox'; cb2.className='subtask-check'; cb2.setAttribute('data-subtask-id', st.id); cb2.checked=st.completed; cb2.addEventListener('change',()=>toggleSubtask(task.id,st.id,taskDate,isPrev));
                 let lbl2=document.createElement('span'); lbl2.className=`subtask-label ${st.completed?'done':''}`; lbl2.textContent=st.text; lbl2.setAttribute('data-subtask-id', st.id);
-                lbl2.addEventListener('dblclick',function(){ let inp=document.createElement('input'); inp.value=st.text; inp.className='subtask-label editing'; stLi.replaceChild(inp,lbl2); inp.focus(); let saved=false; let save=()=>{ if(saved) return; saved=true; let v=inp.value.trim(); if(v) editSubtask(task.id,st.id,v,taskDate,isPrev); if(inp.parentNode) stLi.replaceChild(lbl2,inp); }; inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); setTimeout(()=>{ let liveLi2 = document.querySelector(`.task-item[data-task-id="${task.id}"]`); if(!liveLi2) return; let liveStList2 = liveLi2.querySelector('.subtask-list'); if(!liveStList2) return; if(liveStList2.querySelector('.subtask-input-row')) return; let phLi=document.createElement('li'); phLi.className='subtask-item'; let phInp=document.createElement('input'); phInp.type='text'; phInp.placeholder='New subtask… (Esc to cancel)'; phInp.className='subtask-label editing'; phInp.style.flex='1'; let done=false; let finish=()=>{ if(done) return; done=true; if(phLi.parentNode) phLi.remove(); }; phInp.addEventListener('keydown',pe=>{ if(pe.key==='Enter'){ pe.preventDefault(); let pv=phInp.value.trim(); finish(); if(pv){ addSubtask(task.id,pv,taskDate,isPrev); } } else if(pe.key==='Escape'){ finish(); } }); phInp.addEventListener('blur',()=>setTimeout(finish,150)); phLi.appendChild(phInp); liveStList2.appendChild(phLi); phInp.focus(); }, 0); } }); inp.addEventListener('blur',save); });
+                lbl2.addEventListener('dblclick',function(){ let inp=document.createElement('input'); inp.value=st.text; inp.className='subtask-label editing'; stLi.replaceChild(inp,lbl2); inp.focus(); let saved=false; let save=()=>{ if(saved) return; saved=true; let v=inp.value.trim(); if(v) editSubtask(task.id,st.id,v,taskDate,isPrev); if(inp.parentNode) stLi.replaceChild(lbl2,inp); }; inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); setTimeout(()=>injectSubtaskInput(task.id, taskDate, isPrev), 0); } }); inp.addEventListener('blur',save); });
                 let del2=document.createElement('button'); del2.className='act-btn danger'; del2.style.width='22px'; del2.innerHTML='✕'; del2.addEventListener('click',()=>deleteSubtask(task.id,st.id,taskDate,isPrev));
                 stLi.appendChild(dh2); stLi.appendChild(cb2); stLi.appendChild(lbl2); stLi.appendChild(del2); stList.appendChild(stLi);
             }); li.appendChild(stList);
@@ -1850,6 +1824,75 @@
         });
     }
 
+    // Directly inject a new subtask into the live DOM without re-rendering
+    function injectSubtaskInput(taskId, taskDate, isPrev){
+        // Find the live task li
+        const taskLi = document.querySelector(`.task-item[data-task-id="${taskId}"]`);
+        if(!taskLi) return;
+        // Ensure subtask list exists, create if not
+        let stList = taskLi.querySelector('.subtask-list');
+        if(!stList){
+            stList = document.createElement('ul');
+            stList.className = 'subtask-list';
+            taskLi.appendChild(stList);
+        }
+        // Don't double-spawn
+        if(stList.querySelector('.subtask-input-row')) return;
+
+        // Spawn blank input row
+        const spawnBlankInput = () => {
+            if(stList.querySelector('.subtask-input-row')) return;
+            const phLi = document.createElement('li');
+            phLi.className = 'subtask-item subtask-input-row';
+            const phInp = document.createElement('input');
+            phInp.type = 'text';
+            phInp.placeholder = 'New subtask… (Enter to add, Esc to cancel)';
+            phInp.className = 'subtask-label editing';
+            phInp.style.flex = '1';
+            let done = false;
+            const finish = () => { if(done) return; done=true; phLi.remove(); };
+            phInp.addEventListener('keydown', e => {
+                if(e.key === 'Enter'){
+                    e.preventDefault();
+                    const v = phInp.value.trim();
+                    if(v){
+                        done = true; phLi.remove();
+                        const newSt = addSubtask(taskId, v, taskDate, isPrev);
+                        if(newSt){
+                            // Inject the saved subtask li directly into the live DOM
+                            const newLi = document.createElement('li');
+                            newLi.className = 'subtask-item';
+                            const cb = document.createElement('input'); cb.type='checkbox'; cb.className='subtask-check'; cb.checked=false;
+                            cb.addEventListener('change', ()=>toggleSubtask(taskId, newSt.id, taskDate, isPrev));
+                            const lbl = document.createElement('span'); lbl.className='subtask-label'; lbl.textContent=v; lbl.setAttribute('data-subtask-id', newSt.id);
+                            const delBtn = document.createElement('button'); delBtn.className='act-btn danger'; delBtn.style.width='22px'; delBtn.innerHTML='✕';
+                            delBtn.addEventListener('click', ()=>deleteSubtask(taskId, newSt.id, taskDate, isPrev));
+                            newLi.appendChild(cb); newLi.appendChild(lbl); newLi.appendChild(delBtn);
+                            stList.appendChild(newLi);
+                            // Update subtask badge on ⊕ button
+                            const addStBtn = taskLi.querySelector('.act-btn[title="Add subtask"]');
+                            if(addStBtn && !addStBtn.querySelector('.subtask-badge')){
+                                const badge = document.createElement('span'); badge.className='subtask-badge';
+                                addStBtn.appendChild(badge);
+                            }
+                            // Spawn next blank input
+                            spawnBlankInput();
+                        }
+                    } else {
+                        finish(); // empty Enter = dismiss
+                    }
+                } else if(e.key === 'Escape'){
+                    finish();
+                }
+            });
+            phInp.addEventListener('blur', ()=>{ if(!done) setTimeout(finish, 150); });
+            phLi.appendChild(phInp);
+            stList.appendChild(phLi);
+            phInp.focus();
+        };
+        spawnBlankInput();
+    }
+
     function renderTasks(){
         const container = document.getElementById('taskList'); container.innerHTML='';
         const viewDate = formatDate(currentViewDate);
@@ -1876,27 +1919,7 @@
                 }
             }, 0);
         }
-        if(window._pendingSubtaskSpawn != null){
-            const {pid: spawnPid, date: spawnDate} = window._pendingSubtaskSpawn;
-            window._pendingSubtaskSpawn = null;
-            setTimeout(()=>{
-                const targetLi = container.querySelector(`.task-item[data-task-id="${spawnPid}"]`);
-                if(!targetLi || targetLi.querySelector('.subtask-input-row')) return;
-                const stRow = document.createElement('div'); stRow.className = 'subtask-input-row';
-                const inp = document.createElement('input'); inp.type='text'; inp.className='task-input'; inp.placeholder='Subtask… (Enter to add, Esc to cancel)';
-                let committed = false;
-                inp.addEventListener('keydown', e => {
-                    if(e.key === 'Enter'){
-                        e.preventDefault();
-                        const v = inp.value.trim();
-                        if(v){ committed=true; stRow.remove(); window._pendingSubtaskSpawn = {pid: spawnPid, date: spawnDate}; addSubtask(spawnPid, v, spawnDate); }
-                        else { committed=true; stRow.remove(); }
-                    } else if(e.key === 'Escape'){ committed=true; stRow.remove(); }
-                });
-                inp.addEventListener('blur', ()=>{ if(!committed){ committed=true; stRow.remove(); } });
-                stRow.appendChild(inp); targetLi.appendChild(stRow); inp.focus();
-            }, 0);
-        }
+
     }
     
     function renderWeeklyCalendar(){
