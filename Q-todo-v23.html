@@ -131,6 +131,20 @@
         .act-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
         .act-btn.panels-open { background: var(--accent-soft); color: var(--accent); }
         .act-btn.panels-open:hover { background: var(--accent-soft); color: var(--accent-hover); }
+        /* ── Chevron disclosure toggle ── */
+        .chevron-btn {
+            display: flex; align-items: center; justify-content: center;
+            width: 18px; height: 18px; flex-shrink: 0;
+            background: none; border: none; padding: 0;
+            color: var(--text-muted); border-radius: 4px;
+            transition: color 0.15s, background 0.15s;
+            font-size: 0.7rem; line-height: 1;
+        }
+        .chevron-btn.has-panels { cursor: pointer; }
+        .chevron-btn.no-panels { cursor: default; opacity: 0.22; }
+        .chevron-btn.has-panels:hover { color: var(--accent); background: var(--accent-soft); }
+        .chevron-btn svg { display: block; transition: transform 0.2s; }
+        .chevron-btn.open svg { transform: rotate(90deg); }
         /* ── Settings popover ───────────────────────────────── */
         .settings-btn { background: transparent; border: none; cursor: pointer; font-size: 1rem; padding: 4px 7px; border-radius: var(--radius-sm); color: var(--text-muted); transition: all 0.12s; margin-left: auto; }
         .settings-btn:hover { background: var(--surface2); color: var(--text); }
@@ -1353,7 +1367,7 @@
         saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; if(d===formatDate(currentViewDate)||isPrev) renderTasks(); else renderFutureTasks();
         renderWeeklyCalendar();
     }
-    function addSubtask(pid, text, date, isPrev){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(pt){ pt.subtasks = pt.subtasks || []; let newSt = { id: Date.now(), text, completed: false }; pt.subtasks.push(newSt); saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; pendingEditId = newSt.id; pendingEditType = 'subtask'; renderTasks(); renderWeeklyCalendar(); } }
+    function addSubtask(pid, text, date, isPrev){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(pt){ pt.subtasks = pt.subtasks || []; let newSt = { id: Date.now(), text, completed: false }; pt.subtasks.push(newSt); saveTasksToDate(d, ts); tasks = loadTasks(formatDate(currentViewDate)); if(isPrev) previousDayTasks = loadTasks(formatDate(new Date(today.getTime()-86400000))); if(!window._panelClosed) window._panelClosed = new Set(); const _defOpen = localStorage.getItem('qt_panelsDefaultOpen') !== '0'; if(_defOpen){ window._panelClosed.delete(pid); } else { window._panelClosed.add(pid); } renderTasks(); renderWeeklyCalendar(); } }
     function toggleSubtask(pid, sid, date, isPrev=false){ let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date; let ts = loadTasks(d); let pt = findTaskById(pid, ts); if(pt){ let st = pt.subtasks.find(s=>s.id===sid); if(st) st.completed = !st.completed; pt.completed = pt.subtasks.every(s=>s.completed); saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; if(isPrev) previousDayTasks = ts;
         // In-place DOM update — avoids full re-render so panels stay open
         const lbl2 = document.querySelector(`.subtask-label[data-subtask-id="${sid}"]`);
@@ -1397,7 +1411,9 @@
     function addNoteToTask(id, text, date, isPrev=false){
         let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date;
         let ts = loadTasks(d); let t = findTaskById(id, ts); if(t) t.note = text;
-        saveTasksToDate(d, ts); if(d===todayStr) tasks = ts; renderTasks(); renderWeeklyCalendar();
+        saveTasksToDate(d, ts); if(d===todayStr) tasks = ts;
+        if(!window._panelClosed) window._panelClosed = new Set(); const _defOpen = localStorage.getItem('qt_panelsDefaultOpen') !== '0'; if(_defOpen){ window._panelClosed.delete(id); } else { window._panelClosed.add(id); }
+        renderTasks(); renderWeeklyCalendar();
     }
     function deleteNoteFromTask(id, date, isPrev=false){
         let d = isPrev ? formatDate(new Date(today.getTime()-86400000)) : date;
@@ -1534,6 +1550,30 @@
             tasks = arr;
             renderTasks();
         });
+        // ── Chevron disclosure toggle (always visible) ──
+        const hasThinkLog = task.thinkLog?.length > 0;
+        const _hasPanelsNow = !!(task.subtasks?.length || task.note || hasThinkLog);
+        if (!window._panelClosed) window._panelClosed = new Set();
+        const _defaultOpen2 = localStorage.getItem('qt_panelsDefaultOpen') !== '0';
+        const _panelOpen2 = _defaultOpen2 ? !window._panelClosed.has(task.id) : window._panelClosed.has(task.id);
+        const chevBtn = document.createElement('button');
+        chevBtn.className = 'chevron-btn' + (_panelOpen2 && _hasPanelsNow ? ' open' : '') + (_hasPanelsNow ? ' has-panels' : ' no-panels');
+        chevBtn.title = _hasPanelsNow ? (_panelOpen2 ? 'Hide details' : 'Show details') : 'No details yet';
+        chevBtn.innerHTML = '<svg width="8" height="12" viewBox="0 0 8 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 1.5L6.5 6L1.5 10.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        chevBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!_hasPanelsNow) return;
+            if (!window._panelClosed) window._panelClosed = new Set();
+            if (window._panelClosed.has(task.id)) window._panelClosed.delete(task.id);
+            else window._panelClosed.add(task.id);
+            const nowOpen = !window._panelClosed.has(task.id);
+            li.querySelectorAll('.subtask-list, .task-note-wrapper, .think-log-wrapper').forEach(p => {
+                p.style.display = nowOpen ? '' : 'none';
+            });
+            chevBtn.className = 'chevron-btn' + (nowOpen ? ' open' : '') + ' has-panels';
+            chevBtn.title = nowOpen ? 'Hide details' : 'Show details';
+        });
+        row.appendChild(chevBtn);
         const cb = document.createElement('input'); cb.type='checkbox'; cb.className='task-check'; cb.checked=task.completed; cb.addEventListener('change',()=>toggleTask(task.id,taskDate,isPrev)); row.appendChild(cb);
         const lbl = document.createElement('span'); lbl.className=`task-label ${task.completed?'done':''}`; lbl.textContent = task.text; lbl.title='Double-click edit'; lbl.addEventListener('dblclick',function(){ let inp=document.createElement('input'); inp.type='text'; inp.value=task.text; inp.className='task-label editing'; row.replaceChild(inp,lbl); inp.focus(); let saved=false; let save=()=>{ if(saved) return; saved=true; let v=inp.value.trim(); if(v) editTask(task.id,v,taskDate,isPrev); if(inp.parentNode) row.replaceChild(lbl,inp); }; inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); /* capture siblings before save() potentially re-renders */ let taskList=li.parentNode; let nextLi=li.nextElementSibling; save(); /* spawn blank next-task placeholder as a list item */ if(!taskList) return; let phLi=document.createElement('li'); phLi.className='task-item'; phLi.style.cssText='border-bottom:1px solid var(--border);'; let phInp=document.createElement('input'); phInp.type='text'; phInp.placeholder='New task… (Esc to cancel)'; phInp.className='task-input'; phInp.style.cssText='width:100%;padding:8px 14px;border:none;border-radius:0;background:var(--accent-soft);font-size:0.9rem;outline:none;'; let done=false; let finish=()=>{ if(done) return; done=true; if(phLi.parentNode) phLi.remove(); }; phInp.addEventListener('keydown',pe=>{ if(pe.key==='Enter'){ pe.preventDefault(); let pv=phInp.value.trim(); finish(); if(pv){ let dateVal=document.getElementById('taskDate').value; let targetDate=formatDate(new Date(dateVal)); let nt={id:Date.now(),text:pv,completed:false,date:targetDate,subtasks:[],subtasksVisible:true,timeSpentSeconds:0}; let ts=loadTasks(targetDate); ts.push(nt); saveTasksToDate(targetDate,ts); if(targetDate===todayStr) tasks=ts; pendingEditId=nt.id; pendingEditType='task'; if(targetDate===formatDate(currentViewDate)) loadTasksForView(); renderFutureTasks(); renderWeeklyCalendar(); } } else if(pe.key==='Escape'){ finish(); } }); phInp.addEventListener('blur',()=>setTimeout(finish,150)); phLi.appendChild(phInp); if(nextLi && nextLi.parentNode===taskList) taskList.insertBefore(phLi,nextLi); else taskList.appendChild(phLi); phInp.focus(); } }); inp.addEventListener('blur',save); }); row.appendChild(lbl);
         const badge = document.createElement('span'); if(taskDate===todayStr&&!isPrev){badge.className='date-badge badge-today'; badge.textContent='Today';} else if(isPrev){badge.className='date-badge badge-yesterday'; badge.textContent='Yesterday';} else{badge.className='date-badge badge-future'; badge.textContent=new Date(+taskDate.slice(0,4),+taskDate.slice(4,6)-1,+taskDate.slice(6,8)).toLocaleDateString('en-US',{month:'short',day:'numeric'});} row.appendChild(badge);
@@ -1568,42 +1608,35 @@
             wrap.appendChild(ta); wrap.appendChild(btnGroup); li.appendChild(wrap); ta.focus(); 
         }); actions.appendChild(noteBtn);
 
-        // ⊞ Unified panels toggle — shows/hides subtasks, note, think log inline
-        const hasSubtasks = task.subtasks?.length > 0;
-        const hasNote = !!task.note;
-        const hasThinkLog = task.thinkLog?.length > 0;
-        const hasPanels = hasSubtasks || hasNote || hasThinkLog;
-        if (hasPanels) {
-            if (!window._panelClosed) window._panelClosed = new Set();
-            const defaultOpen = localStorage.getItem('qt_panelsDefaultOpen') !== '0';
-            const panelOpen = defaultOpen ? !window._panelClosed.has(task.id) : window._panelClosed.has(task.id);
-            const panelToggle = document.createElement('button');
-            panelToggle.className = 'act-btn' + (panelOpen ? ' panels-open' : '');
-            let indicators = '';
-            if (hasSubtasks) indicators += '☑';
-            if (hasNote)     indicators += '📝';
-            if (hasThinkLog) indicators += '🧠';
-            panelToggle.innerHTML = indicators;
-            panelToggle.style.fontSize = '0.72rem';
-            panelToggle.style.width = 'auto';
-            panelToggle.style.padding = '0 6px';
-            panelToggle.title = (panelOpen ? 'Hide' : 'Show') + ' panels';
-            panelToggle.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (!window._panelClosed) window._panelClosed = new Set();
-                if (window._panelClosed.has(task.id)) window._panelClosed.delete(task.id);
-                else window._panelClosed.add(task.id);
-                const nowOpen = !window._panelClosed.has(task.id);
-                li.querySelectorAll('.subtask-list, .task-note-wrapper, .think-log-wrapper').forEach(p => {
-                    p.style.display = nowOpen ? '' : 'none';
-                });
-                panelToggle.className = 'act-btn' + (nowOpen ? ' panels-open' : '');
-                panelToggle.title = (nowOpen ? 'Hide' : 'Show') + ' panels';
-            });
-            actions.appendChild(panelToggle);
-        }
-
-        let addSt=document.createElement('button'); addSt.className='act-btn'; addSt.style.position='relative'; addSt.innerHTML='⊕'; addSt.title='Add subtask'; if(task.subtasks?.length){ const sb=document.createElement('span'); sb.className='subtask-badge'; addSt.appendChild(sb); } addSt.addEventListener('click',()=>{ let stRow=document.createElement('div'); stRow.className='subtask-input-row'; let inp=document.createElement('input'); inp.type='text'; inp.className='task-input'; inp.placeholder='Subtask...'; let add=document.createElement('button'); add.className='btn btn-primary btn-sm'; add.textContent='Add'; let doAdd=()=>{ let v=inp.value.trim(); if(v) addSubtask(task.id,v,taskDate); stRow.remove(); }; add.onclick=doAdd; inp.addEventListener('keypress',e=>{if(e.key==='Enter') doAdd();}); stRow.appendChild(inp); stRow.appendChild(add); li.appendChild(stRow); inp.focus(); }); actions.appendChild(addSt);
+        let addSt=document.createElement('button'); addSt.className='act-btn'; addSt.style.position='relative'; addSt.innerHTML='⊕'; addSt.title='Add subtask'; if(task.subtasks?.length){ const sb=document.createElement('span'); sb.className='subtask-badge'; addSt.appendChild(sb); } addSt.addEventListener('click',()=>{
+    const liveLi = () => document.querySelector('.task-item[data-task-id="' + task.id + '"]');
+    if(liveLi()?.querySelector('.subtask-input-row')) return;
+    const spawnRow = () => {
+        const targetLi = liveLi(); if(!targetLi) return;
+        if(targetLi.querySelector('.subtask-input-row')) return;
+        const stRow=document.createElement('div'); stRow.className='subtask-input-row';
+        const inp=document.createElement('input'); inp.type='text'; inp.className='task-input'; inp.placeholder='Subtask… (Enter to add, Esc to cancel)';
+        let committed=false;
+        inp.addEventListener('keydown',e=>{
+            if(e.key==='Enter'){
+                e.preventDefault();
+                const v=inp.value.trim();
+                if(v){
+                    committed=true; stRow.remove();
+                    window._pendingSubtaskSpawn = {pid: task.id, date: taskDate};
+                    addSubtask(task.id,v,taskDate);
+                } else {
+                    committed=true; stRow.remove();
+                }
+            } else if(e.key==='Escape'){
+                committed=true; stRow.remove();
+            }
+        });
+        inp.addEventListener('blur',()=>{ if(!committed){ committed=true; stRow.remove(); } });
+        stRow.appendChild(inp); targetLi.appendChild(stRow); inp.focus();
+    };
+    spawnRow();
+}); actions.appendChild(addSt);
         let dateCh=document.createElement('button'); dateCh.className='act-btn'; dateCh.innerHTML='📅'; dateCh.addEventListener('click',()=>{ let di=li.querySelector('.inline-date-input'); if(!di){ di=document.createElement('input'); di.type='date'; di.className='inline-date-input'; di.value=taskDate.length===8?`${taskDate.slice(0,4)}-${taskDate.slice(4,6)}-${taskDate.slice(6,8)}`:formatInput(new Date()); di.addEventListener('change',ce=>{ if(di.value) changeTaskDate(task.id,taskDate,di.value,isPrev); di.remove(); }); di.addEventListener('blur',()=>setTimeout(()=>di.remove(),200)); actions.appendChild(di); di.focus(); di.click(); } }); actions.appendChild(dateCh);
         let del=document.createElement('button'); del.className='act-btn danger'; del.innerHTML='🗑'; del.addEventListener('click',()=>deleteTask(task.id,taskDate,isPrev)); actions.appendChild(del);
         // Group picker button
@@ -1681,7 +1714,7 @@
                 });
                 let cb2=document.createElement('input'); cb2.type='checkbox'; cb2.className='subtask-check'; cb2.setAttribute('data-subtask-id', st.id); cb2.checked=st.completed; cb2.addEventListener('change',()=>toggleSubtask(task.id,st.id,taskDate,isPrev));
                 let lbl2=document.createElement('span'); lbl2.className=`subtask-label ${st.completed?'done':''}`; lbl2.textContent=st.text; lbl2.setAttribute('data-subtask-id', st.id);
-                lbl2.addEventListener('dblclick',function(){ let inp=document.createElement('input'); inp.value=st.text; inp.className='subtask-label editing'; stLi.replaceChild(inp,lbl2); inp.focus(); let saved=false; let save=()=>{ if(saved) return; saved=true; let v=inp.value.trim(); if(v) editSubtask(task.id,st.id,v,taskDate,isPrev); if(inp.parentNode) stLi.replaceChild(lbl2,inp); }; inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); let liveLi = document.querySelector(`.task-item[data-task-id="${task.id}"]`); if(!liveLi) return; let liveStList = liveLi.querySelector('.subtask-list'); if(!liveStList) return; let phLi=document.createElement('li'); phLi.className='subtask-item'; let phInp=document.createElement('input'); phInp.type='text'; phInp.placeholder='New subtask… (Esc to cancel)'; phInp.className='subtask-label editing'; phInp.style.flex='1'; let done=false; let finish=()=>{ if(done) return; done=true; if(phLi.parentNode) phLi.remove(); }; phInp.addEventListener('keydown',pe=>{ if(pe.key==='Enter'){ pe.preventDefault(); let pv=phInp.value.trim(); finish(); if(pv) addSubtask(task.id,pv,taskDate,isPrev); } else if(pe.key==='Escape'){ finish(); } }); phInp.addEventListener('blur',()=>setTimeout(finish,150)); phLi.appendChild(phInp); liveStList.appendChild(phLi); phInp.focus(); } }); inp.addEventListener('blur',save); });
+                lbl2.addEventListener('dblclick',function(){ let inp=document.createElement('input'); inp.value=st.text; inp.className='subtask-label editing'; stLi.replaceChild(inp,lbl2); inp.focus(); let saved=false; let save=()=>{ if(saved) return; saved=true; let v=inp.value.trim(); if(v) editSubtask(task.id,st.id,v,taskDate,isPrev); if(inp.parentNode) stLi.replaceChild(lbl2,inp); }; inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); save(); setTimeout(()=>{ let liveLi2 = document.querySelector(`.task-item[data-task-id="${task.id}"]`); if(!liveLi2) return; let liveStList2 = liveLi2.querySelector('.subtask-list'); if(!liveStList2) return; if(liveStList2.querySelector('.subtask-input-row')) return; let phLi=document.createElement('li'); phLi.className='subtask-item'; let phInp=document.createElement('input'); phInp.type='text'; phInp.placeholder='New subtask… (Esc to cancel)'; phInp.className='subtask-label editing'; phInp.style.flex='1'; let done=false; let finish=()=>{ if(done) return; done=true; if(phLi.parentNode) phLi.remove(); }; phInp.addEventListener('keydown',pe=>{ if(pe.key==='Enter'){ pe.preventDefault(); let pv=phInp.value.trim(); finish(); if(pv){ addSubtask(task.id,pv,taskDate,isPrev); } } else if(pe.key==='Escape'){ finish(); } }); phInp.addEventListener('blur',()=>setTimeout(finish,150)); phLi.appendChild(phInp); liveStList2.appendChild(phLi); phInp.focus(); }, 0); } }); inp.addEventListener('blur',save); });
                 let del2=document.createElement('button'); del2.className='act-btn danger'; del2.style.width='22px'; del2.innerHTML='✕'; del2.addEventListener('click',()=>deleteSubtask(task.id,st.id,taskDate,isPrev));
                 stLi.appendChild(dh2); stLi.appendChild(cb2); stLi.appendChild(lbl2); stLi.appendChild(del2); stList.appendChild(stLi);
             }); li.appendChild(stList);
@@ -1841,6 +1874,27 @@
                     const lbl = container.querySelector(`.subtask-label[data-subtask-id="${eid}"]`);
                     if(lbl) lbl.dispatchEvent(new MouseEvent('dblclick', {bubbles:true}));
                 }
+            }, 0);
+        }
+        if(window._pendingSubtaskSpawn != null){
+            const {pid: spawnPid, date: spawnDate} = window._pendingSubtaskSpawn;
+            window._pendingSubtaskSpawn = null;
+            setTimeout(()=>{
+                const targetLi = container.querySelector(`.task-item[data-task-id="${spawnPid}"]`);
+                if(!targetLi || targetLi.querySelector('.subtask-input-row')) return;
+                const stRow = document.createElement('div'); stRow.className = 'subtask-input-row';
+                const inp = document.createElement('input'); inp.type='text'; inp.className='task-input'; inp.placeholder='Subtask… (Enter to add, Esc to cancel)';
+                let committed = false;
+                inp.addEventListener('keydown', e => {
+                    if(e.key === 'Enter'){
+                        e.preventDefault();
+                        const v = inp.value.trim();
+                        if(v){ committed=true; stRow.remove(); window._pendingSubtaskSpawn = {pid: spawnPid, date: spawnDate}; addSubtask(spawnPid, v, spawnDate); }
+                        else { committed=true; stRow.remove(); }
+                    } else if(e.key === 'Escape'){ committed=true; stRow.remove(); }
+                });
+                inp.addEventListener('blur', ()=>{ if(!committed){ committed=true; stRow.remove(); } });
+                stRow.appendChild(inp); targetLi.appendChild(stRow); inp.focus();
             }, 0);
         }
     }
