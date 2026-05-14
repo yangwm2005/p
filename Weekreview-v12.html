@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Horizon | Week Review</title>
+<title>Horizon | Week Review v12</title>
 <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -414,6 +414,9 @@ select {
   </div>
   <div class="topbar-right">
     <button class="btn btn-ghost" onclick="popCalendar()">📅 Week Events</button>
+    <button class="btn btn-ghost" style="background:#fff8ed; border-color:#f5c97a; color:#92400e;" onclick="popMonthPlan()">📊 Month Plan</button>
+    <button class="btn btn-ghost" style="background:#f3f0ff; border-color:#c4b5fd; color:#5b21b6;" onclick="popHorizonGen()">🤖 AI Generator</button>
+    <button class="btn btn-ghost" style="background:#f0fdf4; border-color:#86efac; color:#15803d;" onclick="showHelp()">❓ How it works</button>
     <input type="date" id="week">
     <button class="btn btn-primary" onclick="save()">Save Review</button>
 
@@ -902,7 +905,7 @@ select {
 <div class="footer">
   <div><span class="pulse-dot"></span><span id="footer-msg">System ready. Select a date and begin your review.</span></div>
   <div style="display:flex; gap:16px; align-items:center;">
-    <span style="font-size:10px; color:var(--ink3); opacity:0.7;">© 2026 Dr. Wen-Ming Yang. All rights reserved. Version 10</span>
+    <span style="font-size:10px; color:var(--ink3); opacity:0.7;">© 2026 Dr. Wen-Ming Yang. All rights reserved. Version 12</span>
     <span id="footer-week"></span>
     <span id="footer-time"></span>
   </div>
@@ -955,6 +958,39 @@ function popCalendar() {
   window.open(url, 'CalendarReview',
     `width=${w},height=${h},left=${(screen.width-w)/2},top=${(screen.height-h)/2},scrollbars=yes,resizable=yes`);
 }
+
+function popMonthPlan() {
+  const url = 'https://yangwm2005.github.io/p/monthplan-v23.html';
+  const w = 1200, h = 860;
+  window.open(url, 'MonthPlan',
+    `width=${w},height=${h},left=${(screen.width-w)/2},top=${(screen.height-h)/2},scrollbars=yes,resizable=yes`);
+}
+
+function popHorizonGen() {
+  const url = 'https://yangwm2005.github.io/p/Horizongenerator-v10.html';
+  const w = 1100, h = 860;
+  window.open(url, 'HorizonGenerator',
+    `width=${w},height=${h},left=${(screen.width-w)/2},top=${(screen.height-h)/2},scrollbars=yes,resizable=yes`);
+}
+
+function showHelp() {
+  const modal = document.getElementById('helpModal');
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeHelp() {
+  const modal = document.getElementById('helpModal');
+  modal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+// Close help modal on backdrop click
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('helpModal').addEventListener('click', function(e) {
+    if (e.target === this) closeHelp();
+  });
+});
 
 // ═══════════════════════════════════════════════
 // CHART
@@ -1340,23 +1376,6 @@ function updateFooterTime() {
 // ═══════════════════════════════════════════════
 // FIREBASE CLOUD SYNC
 // ═══════════════════════════════════════════════
-//
-// ⚠ REQUIRED FIRESTORE SECURITY RULES ⚠
-// Go to: Firebase Console → Firestore Database → Rules
-// Paste and publish the following:
-//
-// rules_version = '2';
-// service cloud.firestore {
-//   match /databases/{database}/documents {
-//     match /horizon_reviews/{uid} {
-//       allow read, write: if request.auth != null && request.auth.uid == uid;
-//     }
-//   }
-// }
-//
-// Without these rules, all cloud save/load will fail with
-// "Missing or insufficient permissions".
-//
 const FB_CONFIG = {
   apiKey: 'AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc',
   authDomain: 'qtodo-syn.firebaseapp.com',
@@ -1418,20 +1437,15 @@ function updateSyncStatus() {
 }
 
 async function ensureAuthReady() {
-  // Wait up to 5s for Firebase auth to confirm the current user token
   if (!fbAuth) return false;
   return new Promise(resolve => {
-    const unsub = fbAuth.onAuthStateChanged(user => {
-      unsub();
-      resolve(!!user);
-    });
+    const unsub = fbAuth.onAuthStateChanged(user => { unsub(); resolve(!!user); });
     setTimeout(() => resolve(!!fbUser), 5000);
   });
 }
 
 async function fbSave(silent) {
   if (!fbDb || isSyncing) return false;
-  // Re-confirm auth is still valid before writing
   const authOk = await ensureAuthReady();
   if (!authOk || !fbUser) {
     if (!silent) alert('Cloud save failed: You must be signed in. Please sign in with Google and try again.');
@@ -1439,7 +1453,6 @@ async function fbSave(silent) {
   }
   isSyncing = true; updateSyncStatus();
   try {
-    // Force token refresh to prevent stale-token permission errors
     await fbAuth.currentUser.getIdToken(true);
     await fbDb.collection(HORIZON_COL).doc(fbUser.uid).set(
       { data: exportAllData(), updatedAt: Date.now(), uid: fbUser.uid }, { merge: true }
@@ -1450,13 +1463,7 @@ async function fbSave(silent) {
     return true;
   } catch(e) {
     isSyncing = false; updateSyncStatus();
-    if (!silent) {
-      if (e.code === 'permission-denied' || (e.message||'').toLowerCase().includes('permission')) {
-        alert('Cloud save failed: Firestore permission denied.\n\nPlease update your Firebase security rules — see the instructions in the app comment, or ask your developer to set:\n\nrules_version = \'2\';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /horizon_reviews/{uid} {\n      allow read, write: if request.auth != null && request.auth.uid == uid;\n    }\n  }\n}');
-      } else {
-        alert('Cloud save failed: ' + e.message);
-      }
-    }
+    if (!silent) alert('Cloud save failed: ' + e.message);
     return false;
   }
 }
@@ -1470,7 +1477,6 @@ async function fbLoad(silent) {
   }
   isSyncing = true; updateSyncStatus();
   try {
-    // Force token refresh to prevent stale-token permission errors
     await fbAuth.currentUser.getIdToken(true);
     const snap = await fbDb.collection(HORIZON_COL).doc(fbUser.uid).get();
     if (snap.exists && snap.data().data) {
@@ -1486,13 +1492,7 @@ async function fbLoad(silent) {
     return false;
   } catch(e) {
     isSyncing = false; updateSyncStatus();
-    if (!silent) {
-      if (e.code === 'permission-denied' || (e.message||'').toLowerCase().includes('permission')) {
-        alert('Cloud load failed: Firestore permission denied.\n\nPlease update your Firebase security rules — see the instructions in the app comment, or ask your developer to set:\n\nrules_version = \'2\';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n    match /horizon_reviews/{uid} {\n      allow read, write: if request.auth != null && request.auth.uid == uid;\n    }\n  }\n}');
-      } else {
-        alert('Cloud load failed: ' + e.message);
-      }
-    }
+    if (!silent) alert('Cloud load failed: ' + e.message);
     return false;
   }
 }
@@ -1588,5 +1588,135 @@ document.addEventListener('DOMContentLoaded', () => {
   try { initFirebase(); } catch(e) { console.warn('Firebase unavailable:', e); }
 });
 </script>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- HELP MODAL                                  -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="helpModal" style="display:none; position:fixed; inset:0; z-index:9000; background:rgba(15,15,30,0.55); backdrop-filter:blur(4px); align-items:center; justify-content:center;">
+  <div style="background:white; border-radius:18px; max-width:760px; width:94%; max-height:88vh; overflow-y:auto; box-shadow:0 24px 64px rgba(0,0,0,0.22); font-family:'DM Sans',sans-serif;">
+
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#1a1a2e,#2d1b69); border-radius:18px 18px 0 0; padding:28px 32px 24px;">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between;">
+        <div>
+          <div style="font-family:'Lora',serif; font-size:22px; font-weight:600; color:white; margin-bottom:6px;">How the Horizon System Works</div>
+          <div style="font-size:13px; color:rgba(255,255,255,0.6); line-height:1.6;">A 3-app pipeline that turns your weekly events into a structured life review.</div>
+        </div>
+        <button onclick="closeHelp()" style="background:rgba(255,255,255,0.15); border:none; border-radius:50%; width:34px; height:34px; font-size:18px; cursor:pointer; color:white; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-left:16px;">&times;</button>
+      </div>
+    </div>
+
+    <!-- Flow diagram strip -->
+    <div style="background:#f7f5f0; border-bottom:1px solid #e4e0d8; padding:20px 32px;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <div style="background:white; border:1px solid #f5c97a; border-radius:10px; padding:10px 16px; display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:#92400e;">
+          <span style="font-size:18px;">📊</span>
+          <div><div>Month Plan</div><div style="font-size:11px; font-weight:400; color:#b45309;">monthplan-v23.html</div></div>
+        </div>
+        <div style="font-size:20px; color:#c9862a; font-weight:300;">→</div>
+        <div style="background:#fff3cd; border:1px solid #f5c97a; border-radius:10px; padding:10px 14px; font-size:12px; color:#92400e; text-align:center; line-height:1.5;">
+          Export<br><strong>.xlsx</strong>
+        </div>
+        <div style="font-size:20px; color:#c9862a; font-weight:300;">→</div>
+        <div style="background:white; border:1px solid #c4b5fd; border-radius:10px; padding:10px 16px; display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:#5b21b6;">
+          <span style="font-size:18px;">🤖</span>
+          <div><div>AI Generator</div><div style="font-size:11px; font-weight:400; color:#7c3aed;">Horizongenerator-v10.html</div></div>
+        </div>
+        <div style="font-size:20px; color:#c9862a; font-weight:300;">→</div>
+        <div style="background:#f3f0ff; border:1px solid #c4b5fd; border-radius:10px; padding:10px 14px; font-size:12px; color:#5b21b6; text-align:center; line-height:1.5;">
+          Export<br><strong>.json</strong>
+        </div>
+        <div style="font-size:20px; color:#c9862a; font-weight:300;">→</div>
+        <div style="background:white; border:1px solid #bfdbfe; border-radius:10px; padding:10px 16px; display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:#1e40af;">
+          <span style="font-size:18px;">📋</span>
+          <div><div>Week Review</div><div style="font-size:11px; font-weight:400; color:#3b82f6;">Weekreview-v12.html</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Steps -->
+    <div style="padding:28px 32px; display:flex; flex-direction:column; gap:24px;">
+
+      <!-- Step 1 -->
+      <div style="display:flex; gap:18px; align-items:flex-start;">
+        <div style="flex-shrink:0; width:40px; height:40px; background:#fff8ed; border:2px solid #f5c97a; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; color:#92400e;">1</div>
+        <div style="flex:1;">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+            <span style="font-size:17px;">📊</span>
+            <strong style="font-size:15px; color:#1a1a2e;">Generate Excel from Month Plan</strong>
+            <button onclick="closeHelp(); popMonthPlan();" style="margin-left:auto; background:#fff8ed; border:1px solid #f5c97a; border-radius:7px; padding:5px 14px; font-size:12px; font-weight:600; color:#92400e; cursor:pointer;">Open Month Plan ↗</button>
+          </div>
+          <p style="font-size:13px; color:#4a4a6a; line-height:1.7; margin:0;">
+            Open <strong>Month Plan</strong> and navigate to the week you want to review. It displays all your scheduled events for that week. Click <strong>Export to Excel (.xlsx)</strong> — this generates a structured spreadsheet with your time blocks, categories, and event details that the AI can read.
+          </p>
+          <div style="margin-top:10px; background:#fff8ed; border-radius:8px; padding:10px 14px; font-size:12px; color:#92400e; line-height:1.6;">
+            💡 <strong>Tip:</strong> Make sure the correct week is selected in Month Plan before exporting — the date in the Excel filename should match the week you're reviewing here.
+          </div>
+        </div>
+      </div>
+
+      <div style="height:1px; background:#e4e0d8;"></div>
+
+      <!-- Step 2 -->
+      <div style="display:flex; gap:18px; align-items:flex-start;">
+        <div style="flex-shrink:0; width:40px; height:40px; background:#f3f0ff; border:2px solid #c4b5fd; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; color:#5b21b6;">2</div>
+        <div style="flex:1;">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+            <span style="font-size:17px;">🤖</span>
+            <strong style="font-size:15px; color:#1a1a2e;">Import Excel → AI generates JSON</strong>
+            <button onclick="closeHelp(); popHorizonGen();" style="margin-left:auto; background:#f3f0ff; border:1px solid #c4b5fd; border-radius:7px; padding:5px 14px; font-size:12px; font-weight:600; color:#5b21b6; cursor:pointer;">Open AI Generator ↗</button>
+          </div>
+          <p style="font-size:13px; color:#4a4a6a; line-height:1.7; margin:0;">
+            Open <strong>Horizon Generator</strong> and import the Excel file you just exported. Claude AI analyses your week — categorising time, identifying flow/drain moments, extracting wins and insights — and produces a structured <strong>JSON file</strong> that maps directly to every field in this Week Review.
+          </p>
+          <div style="margin-top:10px; background:#f3f0ff; border-radius:8px; padding:10px 14px; font-size:12px; color:#5b21b6; line-height:1.6;">
+            💡 <strong>Tip:</strong> Review the AI's output before exporting. You can edit any field in the generator before saving the JSON — the AI gives you a strong first draft, not a final answer.
+          </div>
+        </div>
+      </div>
+
+      <div style="height:1px; background:#e4e0d8;"></div>
+
+      <!-- Step 3 -->
+      <div style="display:flex; gap:18px; align-items:flex-start;">
+        <div style="flex-shrink:0; width:40px; height:40px; background:#eff6ff; border:2px solid #93c5fd; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; color:#1e40af;">3</div>
+        <div style="flex:1;">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+            <span style="font-size:17px;">📋</span>
+            <strong style="font-size:15px; color:#1a1a2e;">Import JSON → Complete your Review</strong>
+          </div>
+          <p style="font-size:13px; color:#4a4a6a; line-height:1.7; margin:0;">
+            Back here in <strong>Week Review</strong>, click the cloud menu <strong>☁ → Import from file</strong> and select the JSON. All fields are pre-filled instantly. Add your personal reflections, run the AI Coach if you want deeper insight, then click <strong>Save Review</strong> (and optionally <strong>Save to Cloud</strong> to sync across devices).
+          </p>
+          <div style="margin-top:10px; background:#eff6ff; border-radius:8px; padding:10px 14px; font-size:12px; color:#1e40af; line-height:1.6;">
+            💡 <strong>Tip:</strong> The JSON import fills the AI-generated fields. Your personal Reflections, Coach question, and 30-Year Vision are always yours to write — the AI sets the stage, you write the meaning.
+          </div>
+        </div>
+      </div>
+
+      <div style="height:1px; background:#e4e0d8;"></div>
+
+      <!-- Cloud sync note -->
+      <div style="display:flex; gap:18px; align-items:flex-start;">
+        <div style="flex-shrink:0; width:40px; height:40px; background:#f0fdf4; border:2px solid #86efac; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:20px;">☁</div>
+        <div style="flex:1;">
+          <strong style="font-size:15px; color:#1a1a2e;">Cloud Sync (optional but recommended)</strong>
+          <p style="font-size:13px; color:#4a4a6a; line-height:1.7; margin:6px 0 0;">
+            Sign in with Google via the <strong>☁ Sign in</strong> button in the top-right. Once signed in, use <strong>Save to Cloud</strong> after each review and <strong>Load from Cloud</strong> to restore on any device. Enable <strong>Auto-sync</strong> to have changes saved automatically every few seconds.
+          </p>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div style="background:#f7f5f0; border-top:1px solid #e4e0d8; border-radius:0 0 18px 18px; padding:14px 32px; display:flex; justify-content:space-between; align-items:center;">
+      <span style="font-size:12px; color:#8888aa;">Horizon System · Dr. Wen-Ming Yang · 2026</span>
+      <button onclick="closeHelp()" style="background:var(--accent); color:white; border:none; border-radius:8px; padding:9px 24px; font-size:14px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif;">Got it</button>
+    </div>
+
+  </div>
+</div>
+
 </body>
 </html>
