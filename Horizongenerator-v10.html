@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Horizon | Calendar → Week Review Generator</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --ink:#1a1a2e; --ink2:#4a4a6a; --ink3:#8888aa;
+  --bg:#f7f5f0; --card:#ffffff; --border:#e4e0d8;
+  --accent:#2d5be3; --accent2:#7c3aed;
+  --green:#059669; --red:#dc2626;
+  --r:12px; --shadow:0 2px 12px rgba(0,0,0,.07);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;font-size:15px;}
+
+/* TOPBAR */
+.topbar{position:sticky;top:0;z-index:200;background:rgba(255,255,255,.97);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);padding:11px 26px;display:flex;align-items:center;justify-content:space-between;}
+.logo{font-family:'Lora',serif;font-size:19px;font-weight:600;}
+.logo span{color:var(--accent);}
+.badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;background:#fef3c7;color:#92400e;text-transform:uppercase;letter-spacing:.5px;}
+
+/* LAYOUT */
+.layout{display:flex;height:calc(100vh - 54px);}
+.sidebar{width:256px;min-width:256px;background:white;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
+.sb-scroll{flex:1;overflow-y:auto;padding:13px;display:flex;flex-direction:column;gap:6px;}
+.sb-sec{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.1px;color:var(--ink3);padding:6px 0 3px;}
+.main{flex:1;overflow-y:auto;}
+
+/* UPLOAD ZONE */
+.upload-zone{border:2px dashed var(--border);border-radius:10px;padding:18px 12px;text-align:center;cursor:pointer;transition:all .2s;background:#faf9f7;}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:#eef1fd;}
+.upload-zone.ok{border-color:var(--green);border-style:solid;background:#f0fdf4;}
+.upload-label{font-size:12px;color:var(--ink2);line-height:1.5;}
+.upload-label strong{color:var(--ink);display:block;margin-bottom:2px;}
+
+/* EVENT LIST */
+.ev-item{font-size:11px;padding:5px 7px;border-radius:7px;border:1px solid var(--border);background:#faf9f7;line-height:1.4;}
+.ev-name{font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ev-meta{color:var(--ink3);font-size:10px;margin-top:1px;}
+.tag{display:inline-block;font-size:9px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:2px;}
+.tag-r{background:#dbeafe;color:#1e40af;} .tag-t{background:#d1fae5;color:#065f46;}
+.tag-s{background:#fce7f3;color:#9d174d;} .tag-p{background:#ede9fe;color:#5b21b6;} .tag-o{background:#f1f5f9;color:#475569;}
+.week-btn{font-size:11px;padding:4px 8px;background:white;border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--ink2);text-align:left;width:100%;transition:all .1s;}
+.week-btn:hover{border-color:var(--accent);color:var(--accent);}
+.week-btn.active{background:#eef1fd;border-color:var(--accent);color:var(--accent);font-weight:500;}
+
+/* TABS */
+.tab-nav{display:flex;background:white;border-bottom:1px solid var(--border);padding:0 26px;position:sticky;top:0;z-index:100;}
+.tab{font-size:13px;font-weight:500;color:var(--ink3);padding:12px 16px;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;}
+.tab:hover{color:var(--ink);}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+.panel{display:none;padding:22px 26px 80px;flex-direction:column;gap:13px;}
+.panel.active{display:flex;}
+
+/* STEP FLOW */
+.step-flow{display:flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.step-box{flex:1;padding:9px 11px;background:#faf9f7;border-right:1px solid var(--border);font-size:11px;transition:background .2s;}
+.step-box:last-child{border-right:none;}
+.step-box.done{background:#f0fdf4;} .step-box.active{background:#eef1fd;}
+.step-n{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--ink3);margin-bottom:2px;}
+.step-box.done .step-n{color:var(--green);} .step-box.active .step-n{color:var(--accent2);}
+.step-l{font-weight:500;color:var(--ink);}
+.step-box.done .step-l::before{content:'✓ ';}
+
+/* ALLOC */
+.alloc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.alloc-cell{background:#faf9f7;border-radius:9px;padding:10px;text-align:center;}
+.alloc-num{font-size:21px;font-weight:600;font-family:'Lora',serif;}
+.alloc-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--ink3);margin-top:1px;}
+.alloc-cell.r{border-top:2.5px solid #2d5be3;} .alloc-cell.t{border-top:2.5px solid #0d9488;}
+.alloc-cell.s{border-top:2.5px solid #f43f5e;} .alloc-cell.p{border-top:2.5px solid #7c3aed;}
+
+/* INFO BOXES */
+.info{border-radius:9px;padding:12px 14px;font-size:13px;line-height:1.7;}
+.info.blue{background:#eef1fd;border:1px solid #c7d2fe;color:#1e3a8a;}
+.info.green{background:#f0fdf4;border:1px solid #6ee7b7;color:#065f46;}
+.info.amber{background:#fffbeb;border:1px solid #fcd34d;color:#78350f;}
+.info.red{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;}
+.info b{font-weight:600;}
+.info ol{padding-left:16px;margin-top:4px;}
+.info li{margin-bottom:3px;}
+
+/* PASTE AREA */
+.paste-area{width:100%;border:2px dashed #c7d2fe;border-radius:9px;padding:11px 13px;font-size:12px;font-family:'Courier New',monospace;background:white;color:var(--ink);resize:vertical;min-height:110px;line-height:1.5;transition:border-color .15s;}
+.paste-area:focus{border-color:var(--accent2);outline:none;background:#faf5ff;}
+.paste-area.valid{border-color:var(--green);border-style:solid;}
+.paste-area.invalid{border-color:var(--red);border-style:solid;}
+
+/* REVIEW FIELDS */
+.rf{width:100%;border:1px solid #d8b4fe;border-radius:8px;padding:8px 11px;font-size:12px;font-family:'DM Sans',sans-serif;background:#fdf8ff;color:var(--ink);resize:vertical;min-height:58px;line-height:1.6;}
+.rf:focus{border-color:var(--accent2);outline:none;background:white;}
+.rf-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--ink3);margin-bottom:4px;display:block;}
+.rf2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.rf-block{margin-bottom:10px;}
+.num-f{width:65px;text-align:center;font-size:18px;font-weight:600;border:1px solid #d8b4fe;border-radius:8px;padding:5px;background:#fdf8ff;color:var(--accent2);font-family:'DM Sans',sans-serif;}
+
+/* EXPORT */
+.export-box{background:#f0fdf4;border:1px solid #6ee7b7;border-radius:11px;padding:16px 18px;margin-bottom:12px;}
+.export-title{font-family:'Lora',serif;font-size:15px;font-weight:600;color:#065f46;margin-bottom:8px;}
+
+/* PROMPT BOX */
+.prompt-pre{background:#1a1a2e;border-radius:9px;padding:13px;font-size:10.5px;font-family:'Courier New',monospace;color:#e2e8f0;line-height:1.6;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;margin-bottom:10px;}
+
+/* BUTTONS */
+.btn{font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;transition:all .15s;}
+.btn-ai{background:linear-gradient(135deg,#7c3aed,#2d5be3);color:white;}
+.btn-ai:hover{opacity:.9;}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--ink2);}
+.btn-ghost:hover{background:#f1eee8;}
+.btn-success{background:var(--green);color:white;}
+.btn-success:hover{background:#047857;}
+.btn-primary{background:var(--accent);color:white;}
+.btn-primary:hover{background:#1f46c4;}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+
+/* CHART */
+.chart-wrap{position:relative;height:200px;max-width:240px;margin:10px auto 0;}
+
+/* FOOTER */
+.footer{position:fixed;bottom:0;left:256px;right:0;background:rgba(255,255,255,.95);border-top:1px solid var(--border);padding:8px 26px;font-size:11px;color:var(--ink3);display:flex;justify-content:space-between;z-index:150;}
+.pulse{width:6px;height:6px;background:var(--green);border-radius:50%;display:inline-block;margin-right:6px;animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div style="display:flex;align-items:center;gap:10px;">
+    <div class="logo">Horizon <span>Generator</span></div>
+    <span class="badge">Calendar → Weekreview-v10</span>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span style="font-size:12px;color:var(--ink3);" id="weekLabel">No file loaded</span>
+    <button class="btn btn-ghost" onclick="document.getElementById('fi').click()">📁 Load Excel</button>
+    <input type="file" id="fi" accept=".xlsx,.xls" style="display:none" onchange="loadFile(this)">
+    <button class="btn btn-ai" id="mainBtn" onclick="step1Copy()" disabled>① Copy Prompt</button>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sb-scroll">
+      <div class="upload-zone" id="uz" onclick="document.getElementById('fi').click()"
+        ondragover="event.preventDefault();this.classList.add('drag')"
+        ondragleave="this.classList.remove('drag')"
+        ondrop="event.preventDefault();this.classList.remove('drag');loadFile({files:event.dataTransfer.files})">
+        <div style="font-size:26px;margin-bottom:5px;" id="uico">📊</div>
+        <div class="upload-label">
+          <strong id="utitle">Load Excel Calendar</strong>
+          <span id="usub">planner-events-week-*.xlsx</span>
+        </div>
+      </div>
+
+      <div id="weekNavWrap" style="display:none;">
+        <div class="sb-sec">Select Week</div>
+        <div id="weekBtns" style="display:flex;flex-direction:column;gap:3px;"></div>
+      </div>
+
+      <div class="sb-sec">Events This Week</div>
+      <div id="evList" style="display:flex;flex-direction:column;gap:3px;">
+        <div style="font-size:11px;color:var(--ink3);text-align:center;padding:14px 0;">Load a file</div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);padding-top:8px;font-size:10px;color:var(--ink3);line-height:1.9;">
+        <span class="tag tag-r">R</span>Research &nbsp;<span class="tag tag-t">T</span>Teaching<br>
+        <span class="tag tag-s">S</span>Service &nbsp;<span class="tag tag-p">P</span>Personal
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="tab-nav">
+      <div class="tab active" onclick="switchTab('gen')">① Generate</div>
+      <div class="tab" onclick="switchTab('rev')">② Review Fields</div>
+      <div class="tab" onclick="switchTab('exp')">③ Export to v10</div>
+    </div>
+
+    <!-- GENERATE PANEL -->
+    <div class="panel active" id="pan-gen">
+      <div class="step-flow">
+        <div class="step-box done" id="s1"><div class="step-n">1</div><div class="step-l">Load Excel</div></div>
+        <div class="step-box" id="s2"><div class="step-n">2</div><div class="step-l">Copy Prompt</div></div>
+        <div class="step-box" id="s3"><div class="step-n">3</div><div class="step-l">Run in Claude</div></div>
+        <div class="step-box" id="s4"><div class="step-n">4</div><div class="step-l">Paste JSON</div></div>
+        <div class="step-box" id="s5"><div class="step-n">5</div><div class="step-l">Export</div></div>
+      </div>
+
+      <div id="allocCard" style="display:none;">
+        <div class="alloc-grid" id="allocGrid"></div>
+        <div class="chart-wrap"><canvas id="allocChart"></canvas></div>
+      </div>
+
+      <div id="stEmpty" class="info amber">
+        <b>⬅ Load your Excel file first</b> — drag it onto the sidebar or use the 📁 button above.
+      </div>
+
+      <div id="stReady" style="display:none;flex-direction:column;gap:8px;">
+        <div class="info blue">
+          <b>① Click "Copy Prompt"</b> — builds your full calendar context, copies it to clipboard, and opens <a href="https://claude.ai" target="_blank" style="color:var(--accent);font-weight:600">claude.ai</a> in a new tab.<br>
+          Paste it there, get the JSON back, then paste it here to fill every Weekreview-v10 field automatically.
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-ai" id="copyBtn" onclick="step1Copy()" style="font-size:14px;padding:9px 22px;">① Copy Prompt &amp; Open Claude.ai ↗</button>
+          <button class="btn btn-ghost" onclick="togglePrompt()">Preview prompt</button>
+        </div>
+        <div id="promptPreview" style="display:none;">
+          <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:5px;">Prompt that will be copied:</div>
+          <div class="prompt-pre" id="promptText"></div>
+          <button class="btn btn-ghost" onclick="selectAllPrompt()" style="font-size:11px;padding:5px 12px;">Select all text above</button>
+        </div>
+      </div>
+
+      <div id="stCopied" style="display:none;flex-direction:column;gap:8px;">
+        <div class="info green">
+          <b>✓ Prompt copied! Claude.ai opened.</b>
+          <ol>
+            <li>Paste with <b>Ctrl+V</b> (or <b>⌘+V</b>) and press <b>Enter</b></li>
+            <li>Wait for Claude's full reply</li>
+            <li>Select <b>all</b> of Claude's response → Copy</li>
+            <li>Paste it into the box below ↓</li>
+          </ol>
+        </div>
+        <div>
+          <span class="rf-lbl">② Paste Claude's JSON response here</span>
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:5px;">Claude's reply should start with <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;">{</code> — paste the entire response</div>
+          <textarea class="paste-area" id="pasteArea"
+            placeholder='Paste Claude''s full response here...&#10;&#10;Expected format:&#10;{&#10;  "t1": 6.5,&#10;  "t2": 3.0,&#10;  "c1": "Your research this week...",&#10;  "n1": "Next week, focus on...",&#10;  ...&#10;}'
+            oninput="validatePaste(this)"></textarea>
+          <div id="pasteVal" style="font-size:11px;margin-top:4px;min-height:18px;"></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="parseBtn" onclick="doParseJSON()" disabled style="font-size:14px;padding:9px 22px;">② Parse &amp; Fill All Fields →</button>
+          <button class="btn btn-ghost" onclick="step1Copy()">↺ Re-copy prompt</button>
+        </div>
+      </div>
+
+      <div id="stDone" style="display:none;flex-direction:column;gap:8px;">
+        <div class="info green">
+          <b>✓ All fields generated!</b> <span id="doneMsg"></span>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="switchTab('rev')">② Review &amp; Edit Fields →</button>
+          <button class="btn btn-success" onclick="switchTab('exp')">③ Export to Weekreview-v10 →</button>
+          <button class="btn btn-ghost" onclick="doReset()">↺ Start over</button>
+        </div>
+      </div>
+
+      <div id="stErr" style="display:none;" class="info red"></div>
+    </div>
+
+    <!-- REVIEW PANEL -->
+    <div class="panel" id="pan-rev">
+      <div style="background:white;border-radius:var(--r);border:1px solid var(--border);padding:18px 22px;box-shadow:var(--shadow);">
+        <div style="font-family:'Lora',serif;font-size:16px;font-weight:600;margin-bottom:3px;">② Review &amp; Edit Generated Fields</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:14px;">AI-filled fields shown in purple. Edit freely — all changes are saved on export.</div>
+        <div id="revContent">
+          <div style="text-align:center;padding:30px;color:var(--ink3);">Complete Step ① first.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EXPORT PANEL -->
+    <div class="panel" id="pan-exp">
+      <div style="background:white;border-radius:var(--r);border:1px solid var(--border);padding:18px 22px;box-shadow:var(--shadow);">
+        <div style="font-family:'Lora',serif;font-size:16px;font-weight:600;margin-bottom:3px;">③ Export to Weekreview-v10</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:14px;">Download the JSON and import it directly into your Horizon Portal</div>
+        <div id="expContent">
+          <div style="text-align:center;padding:30px;color:var(--ink3);">Complete Steps ①–② first.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <div><span class="pulse"></span><span id="footMsg">Ready. Load your Excel file to begin.</span></div>
+  <div style="opacity:.5;">© 2026 Dr. Wen-Ming Yang · Horizon System v4</div>
+</div>
+
+<script>
+// ─── STATE ───
+var allEvs=[], wkGroups={}, selWeek=null, fields=null, ch=null;
+
+// ─── HELPERS (defined first so all functions below can call them) ───
+function el(id) { return document.getElementById(id); }
+function show(id) { var e=el(id); if(e) e.style.display='flex'; }
+function showB(id) { var e=el(id); if(e) e.style.display='block'; }
+function hide(id) { var e=el(id); if(e) e.style.display='none'; }
+function foot(msg) { var e=el('footMsg'); if(e) e.textContent=msg; }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ─── CLASSIFY & DURATION ───
+function classify(t) {
+  if (/teaching|teach|lecture|EMI|MS-writing|General Edu|PhD seminar|iLearning|flipping/i.test(t)) return 't';
+  if (/research|learning:|NSTC|grant|WIG|paper|epigenetics|chromatin|H1|EZH2|PRC2|lymphoma/i.test(t)) return 'r';
+  if (/social:|service|meeting|committee|導師|聯合|faculty|weekly report|admin/i.test(t)) return 's';
+  if (/system:|webapp|app|Q-PM|Q-project|Weekreview|family|visit mom|ride to|修理|買|眼科|declutter|relaxing|iPhone|Hao:|Ching-Yi/i.test(t)) return 'p';
+  return 'o';
+}
+function dur(s, e) {
+  function p(t) {
+    if (!t) return 0;
+    var m = String(t).match(/(\d+):(\d+)\s*(AM|PM)?/i);
+    if (!m) return 0;
+    var h=parseInt(m[1]), mn=parseInt(m[2]);
+    if (m[3] && m[3].toUpperCase()==='PM' && h<12) h+=12;
+    if (m[3] && m[3].toUpperCase()==='AM' && h===12) h=0;
+    return h + mn/60;
+  }
+  var d = p(e) - p(s);
+  return d > 0 ? d : 0;
+}
+function getMon(d) {
+  var day=d.getDay(), diff=d.getDate()-day+(day===0?-6:1);
+  return new Date(new Date(d).setDate(diff));
+}
+
+// ─── FILE LOADING ───
+function loadFile(inp) {
+  var file = inp.files[0];
+  if (!file) return;
+  var rd = new FileReader();
+  rd.onload = function(e) {
+    try {
+      var wb = XLSX.read(e.target.result, {type:'array'});
+      var sh = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(sh, {defval:''});
+      allEvs = rows.map(function(r) {
+        return {
+          date: String(r['Date']||''),
+          title: String(r['Title']||'').trim(),
+          start: String(r['Start Time']||''),
+          end: String(r['End Time']||''),
+          notes: String(r['Notes']||'').trim(),
+          cat: classify(String(r['Title']||'')),
+          hrs: dur(r['Start Time'], r['End Time'])
+        };
+      }).filter(function(x) { return x.title; });
+
+      wkGroups = {};
+      allEvs.forEach(function(ev) {
+        var d = new Date(ev.date);
+        if (isNaN(d)) return;
+        var mon = getMon(d).toISOString().slice(0,10);
+        if (!wkGroups[mon]) wkGroups[mon] = [];
+        wkGroups[mon].push(ev);
+      });
+
+      var weeks = Object.keys(wkGroups).sort().reverse();
+      selWeek = weeks[0] || null;
+
+      // Update sidebar upload zone
+      el('uz').classList.add('ok');
+      el('uico').textContent = '✅';
+      el('utitle').textContent = file.name.replace(/\.(xlsx|xls)$/, '').slice(0, 24);
+      el('usub').textContent = allEvs.length + ' events · ' + weeks.length + ' week(s)';
+
+      // Build week nav buttons
+      var nb = el('weekBtns');
+      nb.innerHTML = '';
+      weeks.forEach(function(w) {
+        var b = document.createElement('button');
+        b.className = 'week-btn' + (w === selWeek ? ' active' : '');
+        b.textContent = w;
+        b.onclick = function() {
+          selWeek = w;
+          document.querySelectorAll('.week-btn').forEach(function(x) {
+            x.classList.toggle('active', x.textContent === w);
+          });
+          doSelectWeek();
+        };
+        nb.appendChild(b);
+      });
+      showB('weekNavWrap');
+      el('mainBtn').disabled = false;
+
+      // Switch states
+      hide('stEmpty');
+      show('stReady');
+      setStep(2);
+      doSelectWeek();
+      foot('✓ Loaded ' + allEvs.length + ' events — click "Copy Prompt" to start');
+    } catch(err) {
+      alert('Error reading file: ' + err.message);
+    }
+  };
+  rd.readAsArrayBuffer(file);
+}
+
+function doSelectWeek() {
+  el('weekLabel').textContent = 'Week of ' + selWeek;
+  renderSidebar();
+  renderAlloc();
+  if (el('promptPreview').style.display !== 'none') showPromptText();
+}
+
+// ─── SIDEBAR ───
+function renderSidebar() {
+  var evs = (wkGroups[selWeek]||[]).slice().sort(function(a,b) {
+    return a.date.localeCompare(b.date) || a.start.localeCompare(b.start);
+  });
+  el('evList').innerHTML = evs.length
+    ? evs.map(function(ev) {
+        return '<div class="ev-item"><div class="ev-name"><span class="tag tag-'+ev.cat+'">'+ev.cat.toUpperCase()+'</span>'+esc(ev.title.slice(0,36))+'</div>'
+          +'<div class="ev-meta">'+ev.start+(ev.hrs>0?' · '+ev.hrs.toFixed(1)+'h':'')+'</div></div>';
+      }).join('')
+    : '<div style="font-size:11px;color:var(--ink3);text-align:center;padding:12px 0">No events</div>';
+}
+
+// ─── ALLOC CHART ───
+function renderAlloc() {
+  var evs = wkGroups[selWeek] || [];
+  if (!evs.length) return;
+  var t = {r:0, t:0, s:0, p:0};
+  evs.forEach(function(e) { if (t[e.cat] !== undefined) t[e.cat] += e.hrs; });
+  var tot = t.r + t.t + t.s + t.p;
+  showB('allocCard');
+  el('allocGrid').innerHTML =
+    ac('r','Research',t.r,tot,'#2d5be3') +
+    ac('t','Teaching',t.t,tot,'#0d9488') +
+    ac('s','Service',t.s,tot,'#f43f5e') +
+    ac('p','Personal',t.p,tot,'#7c3aed');
+  setTimeout(function() {
+    var ctx = el('allocChart');
+    if (!ctx) return;
+    if (ch) ch.destroy();
+    ch = new Chart(ctx.getContext('2d'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Research','Teaching','Service','Personal'],
+        datasets: [{data:[t.r,t.t,t.s,t.p], backgroundColor:['#2d5be3','#0d9488','#f43f5e','#7c3aed'], borderWidth:0}]
+      },
+      options: {
+        cutout: '70%',
+        plugins: {
+          legend: {position:'bottom', labels:{boxWidth:9, font:{size:10}}},
+          tooltip: {callbacks:{label:function(c){return ' '+c.raw.toFixed(1)+'h ('+(tot>0?Math.round(c.raw/tot*100):0)+'%)';}}}
+        }
+      }
+    });
+  }, 50);
+}
+function ac(c, lbl, h, tot, col) {
+  return '<div class="alloc-cell '+c+'">'
+    +'<div class="alloc-num" style="color:'+col+'">'+h.toFixed(1)+'h</div>'
+    +'<div class="alloc-lbl">'+lbl+'</div>'
+    +'<div style="font-size:10px;color:var(--ink3)">'+(tot>0?Math.round(h/tot*100):0)+'%</div>'
+    +'</div>';
+}
+
+// ─── BUILD PROMPT ───
+function buildPrompt() {
+  var evs = wkGroups[selWeek] || [];
+  var t = {r:0, t:0, s:0, p:0};
+  evs.forEach(function(e) { if (t[e.cat] !== undefined) t[e.cat] += e.hrs; });
+  var tot = t.r + t.t + t.s + t.p;
+  var byDay = {};
+  evs.forEach(function(e) { if (!byDay[e.date]) byDay[e.date]=[]; byDay[e.date].push(e); });
+  var lines = Object.keys(byDay).sort().map(function(d) {
+    return d + ':\n' + byDay[d].map(function(e) {
+      var cn = {r:'RESEARCH',t:'TEACHING',s:'SERVICE',p:'PERSONAL',o:'OTHER'}[e.cat];
+      return '  • ['+cn+'] '+e.title+(e.hrs>0?' ('+e.hrs.toFixed(1)+'h)':'')+'\n'
+        +'    Notes: '+(e.notes && e.notes.length>5 ? e.notes.slice(0,380).replace(/\n/g,' ') : '(none)');
+    }).join('\n');
+  }).join('\n\n');
+
+  var prompt =
+    'You are the personal Horizon coach for Dr. Wen-Ming Yang, a full professor at NCHU Taiwan. '
+    +'He is free from promotion pressure, joyful and warm, loves helping students discover their futures, '
+    +'builds web apps as a passion project, and is exploring uncovered talents for his 30-year arc.\n\n'
+    +'Analyze his week\'s calendar events and return ONLY a valid JSON object — '
+    +'no markdown, no code fences, no explanation, just the raw JSON:\n\n'
+    +'{\n'
+    +'  "t1": <research hours as decimal number>,\n'
+    +'  "t2": <teaching hours as decimal number>,\n'
+    +'  "t3": <service hours as decimal number>,\n'
+    +'  "t4": <personal hours as decimal number>,\n'
+    +'  "c1": "<2-4 sentences: research coach reflection — reference specific events, deep work vs logistics>",\n'
+    +'  "c2": "<2-4 sentences: teaching coach reflection — what sparked curiosity, what clicked>",\n'
+    +'  "c3": "<2-4 sentences: service coach reflection — what could only he do vs delegate>",\n'
+    +'  "c4": "<2-4 sentences: personal/app reflection — connect to 30-year vision>",\n'
+    +'  "m1": "<2-3 specific events that define how he will remember this week>",\n'
+    +'  "i1": "<one new understanding about people, teaching, research, or himself>",\n'
+    +'  "e1": "<what was built, written, or articulated: app features, frameworks, explanations>",\n'
+    +'  "l1": "<flow moments — when he felt most alive, referencing specific events>",\n'
+    +'  "l2": "<drain moments — what felt like a tax on his time, referencing specific events>",\n'
+    +'  "n1": "<ONE specific next-week adjustment that moves him toward his 30-year vision>",\n'
+    +'  "mentor": "<student interactions this week: seeds planted, conversations that mattered>",\n'
+    +'  "energy": <integer 1-10 based on the overall week>,\n'
+    +'  "mood-tags": "<comma-separated numbers: 1=Energized 2=Struggling 3=Breakthrough 4=NeedsDirection>"\n'
+    +'}\n\n'
+    +'WEEK: '+selWeek+'\n'
+    +'TIME (calculated): Research '+t.r.toFixed(1)+'h | Teaching '+t.t.toFixed(1)+'h | Service '+t.s.toFixed(1)+'h | Personal '+t.p.toFixed(1)+'h | Total: '+tot.toFixed(1)+'h\n\n'
+    +'CALENDAR EVENTS:\n'+lines+'\n\n'
+    +'Return ONLY the JSON object. Nothing before or after it.';
+
+  return {t:t, prompt:prompt};
+}
+
+function showPromptText() { el('promptText').textContent = buildPrompt().prompt; }
+function togglePrompt() {
+  var pp = el('promptPreview');
+  if (pp.style.display === 'none') { showB('promptPreview'); showPromptText(); }
+  else hide('promptPreview');
+}
+function selectAllPrompt() {
+  var e = el('promptText');
+  var r = document.createRange(); r.selectNodeContents(e);
+  var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  try { document.execCommand('copy'); foot('✓ Copied manually!', 2000); }
+  catch(ex) { alert('Press Ctrl+C / ⌘+C to copy the selected text'); }
+}
+
+// ─── STEP 1: COPY PROMPT ───
+function step1Copy() {
+  if (!selWeek) { alert('Load an Excel file first.'); return; }
+  var p = buildPrompt().prompt;
+  var doShow = function() {
+    hide('stReady');
+    show('stCopied');
+    el('pasteArea').value = '';
+    el('pasteVal').innerHTML = '';
+    el('parseBtn').disabled = true;
+    setStep(3);
+    foot('✓ Prompt copied — paste into Claude.ai, then paste the JSON response back here');
+    window.open('https://claude.ai', '_blank');
+  };
+  navigator.clipboard.writeText(p).then(function() {
+    var btn = el('copyBtn');
+    btn.textContent = '✓ Copied!';
+    setTimeout(function() { btn.innerHTML = '① Copy Prompt &amp; Open Claude.ai ↗'; }, 2200);
+    doShow();
+  }).catch(function() {
+    showB('promptPreview');
+    showPromptText();
+    alert('Auto-copy blocked by browser. Manually select and copy all the text in the dark box below, then open claude.ai in a new tab.');
+    doShow();
+  });
+}
+
+// ─── STEP 2: VALIDATE PASTE ───
+function validatePaste(textarea) {
+  var raw = textarea.value.trim();
+  var val = el('pasteVal');
+  var btn = el('parseBtn');
+  if (!raw) { val.innerHTML=''; btn.disabled=true; textarea.className='paste-area'; return; }
+  try {
+    var clean = raw.replace(/^```json\s*/,'').replace(/\s*```$/,'').trim();
+    var parsed = JSON.parse(clean);
+    var hasCore = ['c1','c2','m1','n1','energy'].every(function(k) { return parsed[k] !== undefined; });
+    if (hasCore) {
+      val.innerHTML = '<span style="color:var(--green)">✓ Valid JSON — '+Object.keys(parsed).length+' fields found. Ready!</span>';
+      btn.disabled = false;
+      textarea.className = 'paste-area valid';
+    } else {
+      val.innerHTML = '<span style="color:var(--red)">⚠ JSON parsed but missing required fields — copy Claude\'s full response.</span>';
+      btn.disabled = true;
+      textarea.className = 'paste-area invalid';
+    }
+  } catch(e) {
+    if (raw.startsWith('{') || raw.startsWith('```')) {
+      val.innerHTML = '<span style="color:#c9862a">… Keep pasting — JSON not complete yet</span>';
+    } else {
+      val.innerHTML = '<span style="color:var(--ink3)">Paste Claude\'s full response (should start with {)</span>';
+    }
+    btn.disabled = true;
+    textarea.className = 'paste-area';
+  }
+}
+
+// ─── PARSE JSON ───
+function doParseJSON() {
+  var raw = el('pasteArea').value.trim();
+  var parsed;
+  try {
+    var clean = raw.replace(/^```json\s*/,'').replace(/\s*```$/,'').trim();
+    parsed = JSON.parse(clean);
+  } catch(e) {
+    var m = raw.match(/\{[\s\S]*\}/);
+    if (m) {
+      try { parsed = JSON.parse(m[0]); }
+      catch(e2) { alert('Parse error: ' + e2.message); return; }
+    } else {
+      alert('No valid JSON found. Make sure you copied Claude\'s full response.');
+      return;
+    }
+  }
+
+  // Override hours with our accurate calculations
+  var evs = wkGroups[selWeek] || [];
+  var t = {r:0, t:0, s:0, p:0};
+  evs.forEach(function(e) { if (t[e.cat] !== undefined) t[e.cat] += e.hrs; });
+  parsed.t1 = Math.round(t.r*10)/10;
+  parsed.t2 = Math.round(t.t*10)/10;
+  parsed.t3 = Math.round(t.s*10)/10;
+  parsed.t4 = Math.round(t.p*10)/10;
+  fields = parsed;
+
+  hide('stCopied');
+  show('stDone');
+  el('doneMsg').textContent = Object.keys(parsed).length + ' fields filled for ' + selWeek + ' · Energy: ' + (parsed.energy||'?') + '/10';
+  setStep(4);
+  renderReview();
+  renderExport();
+  foot('✓ Fields parsed — review in the "② Review Fields" tab, then export');
+}
+
+function doReset() {
+  fields = null;
+  hide('stDone'); hide('stCopied'); hide('stErr');
+  show('stReady');
+  hide('promptPreview');
+  setStep(2);
+}
+
+// ─── REVIEW FIELDS ───
+function renderReview() {
+  if (!fields) return;
+  var f = fields;
+  var h = '';
+
+  // Hours row
+  h += '<div style="display:flex;gap:14px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap;">';
+  h += '<div><span class="rf-lbl">⏱ Hours (from calendar)</span><div style="display:flex;gap:8px;margin-top:4px;">';
+  [['t1','Research','#2d5be3'],['t2','Teaching','#0d9488'],['t3','Service','#f43f5e'],['t4','Personal','#7c3aed']].forEach(function(x) {
+    h += '<div style="text-align:center"><div style="font-size:9px;color:var(--ink3);margin-bottom:3px">'+x[1]+'</div>'
+      +'<input class="num-f" type="number" id="rf-'+x[0]+'" value="'+(f[x[0]]||0)+'" min="0" step="0.5" style="color:'+x[2]+';border-color:'+x[2]+'44"></div>';
+  });
+  h += '</div></div>';
+
+  // Energy slider
+  h += '<div style="flex:1;min-width:160px;"><span class="rf-lbl">⚡ Energy (1–10)</span>'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">'
+    +'<input type="range" id="rf-energy" min="1" max="10" value="'+(f.energy||5)+'" style="flex:1" oninput="el(\'rfev\').textContent=this.value">'
+    +'<span id="rfev" style="font-size:20px;font-weight:600;color:var(--accent);min-width:22px">'+(f.energy||5)+'</span>'
+    +'</div></div>';
+  h += '</div>';
+
+  // Coach notes grid
+  h += '<div class="rf2">'+rfb('c1','🔬 Research notes',f.c1)+rfb('c2','📚 Teaching notes',f.c2)+'</div>';
+  h += '<div class="rf2">'+rfb('c3','🏛 Service notes',f.c3)+rfb('c4','✦ Personal / app notes',f.c4)+'</div>';
+  h += '<div class="rf2">'+rfb('m1','✨ Key moments',f.m1)+rfb('i1','💡 New insights',f.i1)+'</div>';
+  h += rfb('e1','🛠 Expression / creation log',f.e1);
+
+  // Flow / Drain
+  h += '<div class="rf2" style="margin-top:2px;">'
+    +'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:9px;padding:10px;">'
+    +'<span class="rf-lbl" style="color:#065f46">▲ Flow moments</span>'
+    +'<textarea class="rf" id="rf-l1" style="background:white;border-color:#6ee7b7">'+esc(f.l1||'')+'</textarea></div>'
+    +'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:9px;padding:10px;">'
+    +'<span class="rf-lbl" style="color:#dc2626">▼ Drain moments</span>'
+    +'<textarea class="rf" id="rf-l2" style="background:white;border-color:#fca5a5">'+esc(f.l2||'')+'</textarea></div>'
+    +'</div>';
+
+  // Next shift
+  h += '<div style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:9px;padding:12px;">'
+    +'<span class="rf-lbl" style="color:#1e3a8a">→ Next shift — one adjustment only</span>'
+    +'<textarea class="rf" id="rf-n1" style="border-color:#93c5fd;background:white">'+esc(f.n1||'')+'</textarea></div>';
+
+  // Mentor
+  h += rfb('mentor','◈ Mentorship log', f.mentor);
+
+  // Buttons
+  h += '<div class="btn-row" style="padding-top:10px;border-top:1px solid var(--border);">'
+    +'<button class="btn btn-success" onclick="collectAndExport()">📥 Download JSON for v10</button>'
+    +'<button class="btn btn-ghost" onclick="switchTab(\'exp\')">Export options →</button>'
+    +'</div>';
+
+  el('revContent').innerHTML = h;
+}
+function rfb(id, lbl, val) {
+  return '<div class="rf-block"><span class="rf-lbl">'+lbl+'</span><textarea class="rf" id="rf-'+id+'">'+esc(val||'')+'</textarea></div>';
+}
+
+function collectFields() {
+  if (!fields) return;
+  ['t1','t2','t3','t4'].forEach(function(id) { var e=el('rf-'+id); if(e) fields[id]=parseFloat(e.value)||0; });
+  var en = el('rf-energy'); if (en) fields.energy = parseInt(en.value)||5;
+  ['c1','c2','c3','c4','m1','i1','e1','l1','l2','n1','mentor'].forEach(function(id) {
+    var e = el('rf-'+id); if (e) fields[id] = e.value;
+  });
+}
+
+// ─── EXPORT ───
+function renderExport() {
+  if (!fields || !selWeek) {
+    el('expContent').innerHTML = '<div style="text-align:center;padding:30px;color:var(--ink3)">Complete Steps ①–② first.</div>';
+    return;
+  }
+  el('expContent').innerHTML =
+    '<div class="export-box">'
+    +'<div class="export-title">✓ Ready to import into Weekreview-v10</div>'
+    +'<ol style="font-size:13px;color:#047857;line-height:2.1;padding-left:18px;">'
+    +'<li>Click <b>Download JSON</b> below</li>'
+    +'<li>Open <b>Weekreview-v10.html</b> in your browser</li>'
+    +'<li>Left sidebar → <b>📂 Restore from file</b></li>'
+    +'<li>Select the downloaded <code>.json</code> file → confirm</li>'
+    +'<li>Click week <b>'+selWeek+'</b> in the sidebar — all fields filled!</li>'
+    +'</ol></div>'
+    +'<div class="btn-row" style="margin-bottom:14px;">'
+    +'<button class="btn btn-success" onclick="collectAndExport()" style="font-size:14px;padding:10px 22px">📥 Download JSON for v10</button>'
+    +'<button class="btn btn-ghost" onclick="togglePre()">Preview JSON</button>'
+    +'</div>'
+    +'<div id="preWrap" style="display:none;margin-bottom:12px;">'
+    +'<pre id="preCode" style="font-size:10.5px;background:#1a1a2e;color:#e2e8f0;border-radius:9px;padding:12px;overflow:auto;max-height:240px;white-space:pre-wrap;"></pre>'
+    +'</div>'
+    +'<div style="background:#faf9f7;border:1px solid var(--border);border-radius:9px;padding:12px;">'
+    +'<div style="font-size:12px;font-weight:600;margin-bottom:8px;">Fields included in the export</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px;color:var(--ink2);">'
+    +'<div>✓ t1–t4 (hours)</div><div>✓ c1–c4 (coach notes)</div>'
+    +'<div>✓ m1 key moments</div><div>✓ i1 insights</div>'
+    +'<div>✓ e1 creation log</div><div>✓ l1/l2 flow &amp; drain</div>'
+    +'<div>✓ n1 next shift</div><div>✓ mentor log</div>'
+    +'<div>✓ energy score</div><div>✓ mood-tags</div>'
+    +'</div></div>';
+}
+
+function togglePre() {
+  var w = el('preWrap');
+  if (w.style.display === 'none') {
+    collectFields();
+    el('preCode').textContent = JSON.stringify(makeObj(), null, 2);
+    showB('preWrap');
+  } else {
+    hide('preWrap');
+  }
+}
+
+function makeObj() {
+  var k = 'HORIZON_' + selWeek, wd = {};
+  ['t1','t2','t3','t4','c1','c2','c3','c4','m1','i1','e1','l1','l2','n1','mentor'].forEach(function(id) {
+    wd[id] = fields[id] !== undefined ? String(fields[id]) : '';
+  });
+  wd.energy = String(fields.energy || 5);
+  wd['mood-tags'] = String(fields['mood-tags'] || '');
+  return {weeks: {[k]: wd}, vision: null, exportedAt: Date.now(), version: 'horizon-v12'};
+}
+
+function collectAndExport() {
+  collectFields();
+  if (!fields || !selWeek) { alert('Generate a review first.'); return; }
+  var blob = new Blob([JSON.stringify(makeObj(), null, 2)], {type:'application/json'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  var d = new Date(selWeek), soy = new Date(d.getFullYear(), 0, 1);
+  var wk = Math.ceil(((d - soy) / 86400000 + soy.getDay() + 1) / 7);
+  a.download = 'Weekreview-' + selWeek.replace(/-/g,'') + '-wk' + String(wk).padStart(2,'0') + '.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+  setStep(5);
+  foot('✓ Downloaded — open Weekreview-v10 and use "📂 Restore from file"');
+}
+
+// ─── TABS & STEPS ───
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(function(t, i) {
+    t.classList.toggle('active', ['gen','rev','exp'][i] === name);
+  });
+  document.querySelectorAll('.panel').forEach(function(p) { p.classList.remove('active'); });
+  var pnl = el('pan-' + name);
+  if (pnl) pnl.classList.add('active');
+  if (name === 'exp') renderExport();
+}
+
+function setStep(n) {
+  [1,2,3,4,5].forEach(function(i) {
+    var e = el('s' + i); if (!e) return;
+    e.className = 'step-box ' + (i < n ? 'done' : i === n ? 'active' : '');
+  });
+}
+
+// ─── DRAG & DROP ON PAGE ───
+document.addEventListener('dragover', function(e) { e.preventDefault(); });
+document.addEventListener('drop', function(e) {
+  e.preventDefault();
+  var f = e.dataTransfer.files[0];
+  if (f && (f.name.endsWith('.xlsx') || f.name.endsWith('.xls'))) loadFile({files: e.dataTransfer.files});
+});
+</script>
+</body>
+</html>
