@@ -1,833 +1,662 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Horizon | Calendar → Week Review Generator</title>
-<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<style>
-:root {
-  --ink: #1a1a2e; --ink2: #4a4a6a; --ink3: #8888aa;
-  --bg: #f7f5f0; --card: #ffffff; --border: #e4e0d8;
-  --accent: #2d5be3; --accent2: #7c3aed; --gold: #c9862a;
-  --green: #059669; --red: #dc2626; --teal: #0d9488;
-  --radius: 14px; --shadow: 0 2px 12px rgba(0,0,0,0.07);
-}
-*{box-sizing:border-box;margin:0;padding:0;}
-body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;font-size:15px;}
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mindful Weekly Reflection Analyzer v11</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f7f4ef;
+      --paper: #fffdf9;
+      --ink: #1c1a17;
+      --ink-muted: #6b6660;
+      --accent: #c0622a;
+      --accent-light: #f5ece4;
+      --accent-mid: #e8c5ae;
+      --border: #e2ddd6;
+      --green: #3a6b4a;
+      --green-light: #eaf2ec;
+      --blue: #2a4a6b;
+      --blue-light: #e8eef5;
+      --gold: #9a7c2e;
+      --gold-light: #f5f0e0;
+    }
 
-.topbar{position:sticky;top:0;z-index:200;background:rgba(255,255,255,0.95);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;}
-.topbar-title{font-family:'Lora',serif;font-size:20px;font-weight:600;}
-.topbar-title span{color:var(--accent);}
-.badge{display:inline-block;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;text-transform:uppercase;letter-spacing:.5px;}
-.badge-gold{background:#fef3c7;color:#92400e;}
-.badge-green{background:#d1fae5;color:#065f46;}
-.badge-blue{background:#dbeafe;color:#1e40af;}
+    * { box-sizing: border-box; margin: 0; padding: 0; }
 
-.layout{display:flex;height:calc(100vh - 58px);}
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
 
-.sidebar{width:270px;min-width:270px;background:white;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;}
-.sidebar-scroll{flex:1;overflow-y:auto;padding:14px;}
-.sidebar-section{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--ink3);padding:10px 0 6px;}
+    h1, h2, h3 {
+      font-family: 'Playfair Display', serif;
+    }
 
-.upload-zone{border:2px dashed var(--border);border-radius:10px;padding:20px 14px;text-align:center;cursor:pointer;transition:all .2s;background:#faf9f7;margin-bottom:12px;}
-.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:#eef1fd;}
-.upload-zone.success{border-color:var(--green);background:#f0fdf4;}
-.upload-label{font-size:12px;color:var(--ink2);line-height:1.5;}
-.upload-label strong{color:var(--ink);display:block;margin-bottom:3px;}
+    .page-header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
 
-.event-item{font-size:12px;padding:6px 8px;border-radius:7px;margin-bottom:3px;border:1px solid var(--border);background:#faf9f7;line-height:1.4;}
-.event-item .ev-title{font-weight:500;color:var(--ink);margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.event-item .ev-meta{color:var(--ink3);font-size:10px;}
-.ev-tag{display:inline-block;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:2px;}
-.tag-research{background:#dbeafe;color:#1e40af;}
-.tag-teaching{background:#d1fae5;color:#065f46;}
-.tag-service{background:#fce7f3;color:#9d174d;}
-.tag-personal{background:#ede9fe;color:#5b21b6;}
-.tag-other{background:#f1f5f9;color:#475569;}
+    .page-header h1 {
+      font-size: 2.4rem;
+      color: var(--ink);
+      letter-spacing: -0.5px;
+    }
 
-.main{flex:1;overflow-y:auto;}
+    .page-header p {
+      color: var(--ink-muted);
+      font-size: 1rem;
+      margin-top: 0.4rem;
+      font-weight: 300;
+    }
 
-.tab-nav{display:flex;background:white;border-bottom:1px solid var(--border);padding:0 28px;position:sticky;top:0;z-index:100;}
-.tab{font-size:14px;font-weight:500;color:var(--ink3);padding:14px 18px;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;}
-.tab:hover{color:var(--ink);}
-.tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+    .version-badge {
+      display: inline-block;
+      background: var(--accent);
+      color: white;
+      font-size: 0.7rem;
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 600;
+      letter-spacing: 1px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      vertical-align: middle;
+      margin-left: 8px;
+      text-transform: uppercase;
+    }
 
-.panel{display:none;padding:24px 28px 80px;}
-.panel.active{display:block;}
+    .layout {
+      max-width: 1280px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 1.5rem;
+      align-items: start;
+    }
 
-.card{background:var(--card);border-radius:var(--radius);border:1px solid var(--border);padding:20px 24px;margin-bottom:18px;box-shadow:var(--shadow);}
-.card-title{font-family:'Lora',serif;font-size:17px;font-weight:600;color:var(--ink);margin-bottom:4px;display:flex;align-items:center;gap:8px;}
-.card-subtitle{font-size:13px;color:var(--ink3);margin-bottom:16px;}
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+    }
 
-.alloc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;}
-.alloc-cell{background:#faf9f7;border-radius:10px;padding:12px;text-align:center;}
-.alloc-num{font-size:24px;font-weight:600;font-family:'Lora',serif;}
-.alloc-label{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--ink3);margin-top:2px;}
-.alloc-cell.research{border-top:3px solid #2d5be3;}
-.alloc-cell.teaching{border-top:3px solid #0d9488;}
-.alloc-cell.service{border-top:3px solid #f43f5e;}
-.alloc-cell.personal{border-top:3px solid #7c3aed;}
+    .card {
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem;
+    }
 
-/* REVIEW FIELDS */
-.review-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
-.field-block{margin-bottom:14px;}
-.field-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--ink3);margin-bottom:5px;display:block;}
-.field-hint{font-size:11px;color:var(--ink3);margin-bottom:6px;display:block;line-height:1.4;}
-.review-field{width:100%;border:1.5px solid var(--border);border-radius:8px;padding:10px 13px;font-size:13px;font-family:'DM Sans',sans-serif;background:#faf9f7;color:var(--ink);resize:vertical;min-height:70px;line-height:1.6;transition:border-color .15s;}
-.review-field:focus{border-color:var(--accent);outline:none;background:white;}
-.review-field.ai-filled{border-color:var(--accent2);background:#fdf8ff;}
-.num-field{width:70px;text-align:center;font-size:20px;font-weight:600;border:1.5px solid var(--border);border-radius:8px;padding:6px;background:#faf9f7;color:var(--ink);font-family:'DM Sans',sans-serif;}
-.num-field.ai-filled{border-color:var(--accent2);background:#fdf8ff;}
+    .card h2 {
+      font-size: 1.4rem;
+      margin-bottom: 1.2rem;
+      color: var(--ink);
+    }
 
-.btn{font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;border:none;border-radius:8px;padding:9px 20px;cursor:pointer;transition:all .15s;}
-.btn-primary{background:var(--accent);color:white;}
-.btn-primary:hover{background:#1f46c4;}
-.btn-ai{background:linear-gradient(135deg,#7c3aed,#2d5be3);color:white;}
-.btn-ai:hover{opacity:.9;}
-.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--ink2);}
-.btn-ghost:hover{background:#f1eee8;}
-.btn-success{background:var(--green);color:white;}
-.btn-success:hover{background:#047857;}
+    label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--ink-muted);
+      margin-bottom: 0.4rem;
+    }
 
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:white;border-radius:50%;animation:spin .7s linear infinite;}
-@keyframes spin{to{transform:rotate(360deg);}}
-.typing-dot{display:inline-block;width:6px;height:6px;background:var(--accent2);border-radius:50%;animation:pulse 1s infinite;}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+    input[type="text"], textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.9rem;
+      color: var(--ink);
+      outline: none;
+      transition: border-color 0.2s;
+      margin-bottom: 1rem;
+    }
 
-.progress-bar{height:4px;background:#e0d9f5;border-radius:2px;margin-bottom:6px;overflow:hidden;}
-.progress-fill{height:100%;background:linear-gradient(90deg,#7c3aed,#2d5be3);border-radius:2px;transition:width .4s;}
+    input[type="text"]:focus, textarea:focus {
+      border-color: var(--accent);
+    }
 
-.step-indicator{display:flex;gap:8px;align-items:center;margin-bottom:20px;}
-.step{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink3);}
-.step.done{color:var(--green);}
-.step.active{color:var(--accent2);font-weight:600;}
-.step-num{width:20px;height:20px;border-radius:50%;border:1.5px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;}
-.step-divider{flex:1;height:1px;background:var(--border);}
+    textarea { resize: vertical; }
 
-.import-box{background:linear-gradient(135deg,#f0fdf4,#d1fae5);border:1.5px solid #6ee7b7;border-radius:12px;padding:20px 22px;margin-top:16px;}
-.import-title{font-family:'Lora',serif;font-size:16px;font-weight:600;color:#065f46;margin-bottom:8px;}
-.import-instructions{font-size:13px;color:#047857;line-height:1.8;margin-bottom:14px;}
-.import-instructions ol{padding-left:18px;}
-.import-instructions li{margin-bottom:4px;}
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      border: none;
+      border-radius: 10px;
+      padding: 0.75rem 1.2rem;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      width: 100%;
+    }
 
-.week-btn{font-size:12px;padding:4px 10px;background:white;border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--ink2);transition:all .1s;margin-bottom:4px;display:block;width:100%;text-align:left;}
-.week-btn:hover{border-color:var(--accent);color:var(--accent);}
-.week-btn.active{background:#eef1fd;border-color:var(--accent);color:var(--accent);font-weight:500;}
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+    .btn-primary:hover { background: #a8531f; }
+    .btn-primary:disabled { background: #d4a58e; cursor: not-allowed; }
 
-.chart-wrap{position:relative;height:220px;max-width:260px;margin:0 auto;}
+    .btn-save { background: var(--green); color: white; }
+    .btn-save:hover { background: #2e5a3c; }
 
-.footer{position:fixed;bottom:0;left:270px;right:0;background:rgba(255,255,255,.95);border-top:1px solid var(--border);padding:9px 28px;font-size:12px;color:var(--ink3);display:flex;justify-content:space-between;align-items:center;z-index:150;}
-.pulse-dot{width:7px;height:7px;background:var(--green);border-radius:50%;display:inline-block;margin-right:7px;animation:pulse 2s infinite;}
-</style>
+    .btn-load { background: var(--blue); color: white; }
+    .btn-load:hover { background: #1e3a58; }
+
+    .btn-pdf { background: var(--ink); color: white; }
+    .btn-pdf:hover { background: #333; }
+
+    .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+
+    .ai-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--accent-light);
+      border: 1px solid var(--accent-mid);
+      border-radius: 10px;
+      padding: 0.8rem 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .ai-badge .dot {
+      width: 10px; height: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      flex-shrink: 0;
+      animation: blink 2s infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .ai-badge span {
+      font-size: 0.82rem;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Dashboard KPI cards */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.8rem;
+      margin-bottom: 1.5rem;
+    }
+
+    @media (max-width: 600px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+
+    .kpi {
+      border-radius: 12px;
+      padding: 1rem;
+      text-align: center;
+      border: 1px solid var(--border);
+    }
+
+    .kpi .kpi-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--ink-muted);
+      margin-bottom: 0.4rem;
+    }
+
+    .kpi .kpi-value {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.5rem;
+      color: var(--ink);
+    }
+
+    .kpi-emotion { background: var(--blue-light); }
+    .kpi-clarity { background: var(--green-light); }
+    .kpi-energy { background: #fff4e8; }
+    .kpi-growth { background: var(--gold-light); }
+
+    /* Analysis sections */
+    .analysis-section {
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.2rem 1.4rem;
+      margin-bottom: 0.8rem;
+    }
+
+    .analysis-section h3 {
+      font-size: 1.05rem;
+      color: var(--ink);
+      margin-bottom: 0.6rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .analysis-section h3 .icon { font-size: 1.1rem; }
+
+    .analysis-section p {
+      font-size: 0.9rem;
+      line-height: 1.75;
+      color: #3a3733;
+    }
+
+    .analysis-section ul {
+      margin-left: 1.2rem;
+      font-size: 0.9rem;
+      line-height: 1.9;
+      color: #3a3733;
+    }
+
+    .section-accent { border-left: 3px solid var(--accent); }
+    .section-green { border-left: 3px solid var(--green); background: var(--green-light); }
+    .section-blue { border-left: 3px solid var(--blue); background: var(--blue-light); }
+    .section-gold { border-left: 3px solid var(--gold); background: var(--gold-light); }
+
+    .ai-analysis-block {
+      background: #faf8f5;
+      border: 1px solid var(--accent-mid);
+      border-radius: 12px;
+      padding: 1.2rem 1.4rem;
+      margin-bottom: 0.8rem;
+    }
+
+    .ai-analysis-block h3 {
+      font-size: 1.05rem;
+      color: var(--accent);
+      margin-bottom: 0.6rem;
+      font-family: 'Playfair Display', serif;
+    }
+
+    .ai-analysis-block .content {
+      font-size: 0.9rem;
+      line-height: 1.8;
+      color: #3a3733;
+      white-space: pre-wrap;
+    }
+
+    .status-bar {
+      font-size: 0.8rem;
+      color: var(--ink-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .status-bar.loading { color: var(--accent); }
+
+    .spinner {
+      width: 12px; height: 12px;
+      border: 2px solid var(--accent-mid);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .placeholder-msg {
+      color: var(--ink-muted);
+      font-style: italic;
+      font-size: 0.9rem;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 1rem 0;
+    }
+
+    .tip-box {
+      border-radius: 10px;
+      padding: 0.9rem 1rem;
+      font-size: 0.8rem;
+      line-height: 1.7;
+      margin-bottom: 0.8rem;
+    }
+
+    .tip-box.green { background: var(--green-light); border: 1px solid #b8d9c2; color: var(--green); }
+    .tip-box.amber { background: var(--gold-light); border: 1px solid #d4c08a; color: #7a6020; }
+
+    .tip-box strong { display: block; margin-bottom: 0.3rem; }
+    .tip-box ul { margin-left: 1rem; }
+
+    @media print {
+      body { background: white; padding: 0; }
+      .input-panel { display: none; }
+      .layout { display: block; }
+      .card { border: none; box-shadow: none; }
+    }
+  </style>
 </head>
 <body>
 
-<header class="topbar">
-  <div style="display:flex;align-items:center;gap:10px;">
-    <div class="topbar-title">Horizon <span>Generator</span></div>
-    <span class="badge badge-gold">Calendar → Weekreview-v10</span>
-  </div>
-  <div style="display:flex;gap:8px;align-items:center;">
-    <span style="font-size:12px;color:var(--ink3);" id="weekLabel">No file loaded</span>
-    <button class="btn btn-ghost" onclick="document.getElementById('fileInput').click()" style="font-size:13px;padding:7px 14px;">📁 Load Excel</button>
-    <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none;" onchange="loadFile(this)">
-    <button class="btn btn-ai" id="generateBtn" onclick="startGeneration()" disabled>✦ Generate Review</button>
-  </div>
-</header>
-
-<div class="layout">
-  <div class="sidebar">
-    <div class="sidebar-scroll">
-      <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()"
-        ondragover="event.preventDefault();this.classList.add('drag')"
-        ondragleave="this.classList.remove('drag')"
-        ondrop="event.preventDefault();this.classList.remove('drag');loadFile({files:event.dataTransfer.files})">
-        <div style="font-size:28px;margin-bottom:6px;" id="uploadIcon">📊</div>
-        <div class="upload-label">
-          <strong id="uploadTitle">Load Excel Calendar</strong>
-          <span id="uploadSub">planner-events-week-*.xlsx</span>
-        </div>
-      </div>
-
-      <div id="weekNavWrap" style="display:none;">
-        <div class="sidebar-section">Select Week</div>
-        <div id="weekNavBtns"></div>
-      </div>
-
-      <div class="sidebar-section">This Week's Events</div>
-      <div id="eventList"><div style="font-size:12px;color:var(--ink3);text-align:center;padding:16px 0;">Load a file to see events</div></div>
-
-      <div class="sidebar-section" style="margin-top:6px;">Categories</div>
-      <div style="font-size:11px;display:flex;flex-direction:column;gap:3px;">
-        <div><span class="ev-tag tag-research">Research</span> Learning, grants, lab, ideas</div>
-        <div><span class="ev-tag tag-teaching">Teaching</span> Classes, seminars, students</div>
-        <div><span class="ev-tag tag-service">Service</span> Social, admin, meetings</div>
-        <div><span class="ev-tag tag-personal">Personal</span> App, family, health, system</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="main">
-    <div class="tab-nav">
-      <div class="tab active" onclick="switchTab('generate')">✦ Generate</div>
-      <div class="tab" onclick="switchTab('review')">📝 Review Fields</div>
-      <div class="tab" onclick="switchTab('export')">📤 Export to v10</div>
-    </div>
-
-    <!-- TAB: GENERATE -->
-    <div class="panel active" id="tab-generate">
-      <div class="card" id="generateCard">
-        <div class="card-title">✦ AI Week Review Generator</div>
-        <div class="card-subtitle">Analyzes your calendar events and fills every field in Weekreview-v10</div>
-
-        <div class="step-indicator" id="stepIndicator">
-          <div class="step" id="step1"><div class="step-num">1</div>Load Excel</div>
-          <div class="step-divider"></div>
-          <div class="step" id="step2"><div class="step-num">2</div>AI Analysis</div>
-          <div class="step-divider"></div>
-          <div class="step" id="step3"><div class="step-num">3</div>Review Fields</div>
-          <div class="step-divider"></div>
-          <div class="step" id="step4"><div class="step-num">4</div>Export to v10</div>
-        </div>
-
-        <div id="preGenState">
-          <p style="font-size:13px;color:var(--ink2);line-height:1.7;margin-bottom:16px;">
-            This tool reads your planner Excel file, classifies each event, calculates time allocation, extracts notes, then uses <strong>Claude AI</strong> to write every field in Weekreview-v10 — including coach notes, energy audit, key moments, mentorship observations, and next-shift recommendation.
-          </p>
-          <p style="font-size:13px;color:var(--ink2);line-height:1.7;margin-bottom:16px;">
-            The result is a <strong>Weekreview-v10 import JSON file</strong> you can load directly into v10 via <em>Restore from file</em>.
-          </p>
-          <div id="preGenEmpty" style="background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:12px 16px;font-size:13px;color:#854d0e;margin-bottom:14px;">
-            ⬅ Load your Excel file first using the sidebar or the button above.
-          </div>
-          <div id="preGenReady" style="display:none;background:#f0fdf4;border:1px solid #6ee7b7;border-radius:8px;padding:12px 16px;font-size:13px;color:#065f46;margin-bottom:14px;">
-            ✓ File loaded. Click <strong>✦ Generate Review</strong> above to begin AI analysis.
-          </div>
-        </div>
-
-        <div id="genProgress" style="display:none;">
-          <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
-          <div id="progressMsg" style="font-size:13px;color:var(--ink2);margin-bottom:16px;display:flex;align-items:center;gap:8px;">
-            <span class="typing-dot"></span> <span id="progressText">Starting...</span>
-          </div>
-          <div id="streamLog" style="font-size:12px;color:var(--ink3);line-height:1.8;max-height:200px;overflow-y:auto;background:#faf9f7;border-radius:8px;padding:10px 14px;"></div>
-        </div>
-
-        <div id="genDone" style="display:none;">
-          <div style="background:#f0fdf4;border:1px solid #6ee7b7;border-radius:10px;padding:16px 18px;margin-bottom:16px;">
-            <div style="font-size:14px;font-weight:600;color:#065f46;margin-bottom:6px;">✓ Review generated successfully!</div>
-            <div style="font-size:13px;color:#047857;line-height:1.7;" id="genSummary"></div>
-          </div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            <button class="btn btn-primary" onclick="switchTab('review')">📝 Review & Edit Fields</button>
-            <button class="btn btn-success" onclick="switchTab('export')">📤 Export to Weekreview-v10</button>
-            <button class="btn btn-ghost" onclick="startGeneration()" style="font-size:13px;">↺ Regenerate</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Time allocation preview -->
-      <div class="card" id="allocPreview" style="display:none;">
-        <div class="card-title">⏱ Time Allocation (from calendar)</div>
-        <div class="card-subtitle" id="allocSubtitle"></div>
-        <div class="alloc-grid" id="allocGrid"></div>
-        <div class="chart-wrap"><canvas id="allocChart"></canvas></div>
-      </div>
-    </div>
-
-    <!-- TAB: REVIEW FIELDS -->
-    <div class="panel" id="tab-review">
-      <div class="card">
-        <div class="card-title">📝 Review & Edit Generated Fields</div>
-        <div class="card-subtitle">All fields from Weekreview-v10 — AI-filled content shown in purple. Edit anything before exporting.</div>
-        <div id="reviewFieldsContent">
-          <div style="text-align:center;padding:40px;color:var(--ink3);">Generate a review first to see fields here.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- TAB: EXPORT -->
-    <div class="panel" id="tab-export">
-      <div class="card">
-        <div class="card-title">📤 Export to Weekreview-v10</div>
-        <div class="card-subtitle">Download the JSON file and import it directly into your Horizon Portal</div>
-
-        <div id="exportContent">
-          <div style="text-align:center;padding:40px;color:var(--ink3);">Generate a review first to enable export.</div>
-        </div>
-      </div>
-    </div>
-  </div>
+<div class="page-header">
+  <h1>Mindful Weekly Reflection Analyzer <span class="version-badge">v11</span></h1>
+  <p>AI-assisted emotional, cognitive, and personal growth review — powered by Claude</p>
 </div>
 
-<div class="footer">
-  <div><span class="pulse-dot"></span><span id="footerMsg">Ready. Load your Excel file to begin.</span></div>
-  <div style="font-size:10px;opacity:.6;">© 2026 Dr. Wen-Ming Yang · Horizon System v2</div>
+<div class="layout">
+
+  <!-- Input Panel -->
+  <div class="input-panel">
+    <div class="card">
+      <h2>Reflection Input</h2>
+
+      <div class="ai-badge">
+        <div class="dot"></div>
+        <span>Claude AI — No API key required</span>
+      </div>
+
+      <label>Week Title</label>
+      <input id="weekTitle" type="text" placeholder="e.g. May 11 – May 17, 2026" />
+
+      <label>Paste Weekly Reflection Records</label>
+      <textarea id="reflectionInput" rows="20" placeholder="Paste your weekly reflection records here..."></textarea>
+
+      <button id="analyzeBtn" class="btn btn-primary" onclick="analyzeReflection()">
+        ✦ Analyze Week
+      </button>
+
+      <hr class="divider">
+
+      <div class="btn-grid">
+        <button class="btn btn-save" onclick="saveReport()">💾 Save Report</button>
+        <button class="btn btn-load" onclick="loadReport()">📂 Load Report</button>
+        <button class="btn btn-pdf" onclick="exportPDF()" style="grid-column: 1 / -1;">🖨 Print / Export PDF</button>
+      </div>
+
+      <hr class="divider">
+
+      <div class="tip-box green">
+        <strong>✦ How to use</strong>
+        <ul>
+          <li>Paste your daily reflections</li>
+          <li>Click "Analyze Week"</li>
+          <li>Review and edit the analysis</li>
+          <li>Save for long-term review</li>
+        </ul>
+      </div>
+
+      <div class="tip-box amber">
+        <strong>⚠ Privacy note</strong>
+        Your reflection text is sent to Claude AI for analysis. Do not include sensitive personal identifiers if privacy is a concern.
+      </div>
+    </div>
+  </div>
+
+  <!-- Analysis Panel -->
+  <div>
+
+    <!-- KPI Dashboard -->
+    <div class="card" style="margin-bottom: 1.2rem;">
+      <h2>Weekly Dashboard</h2>
+      <div class="kpi-grid">
+        <div class="kpi kpi-emotion">
+          <div class="kpi-label">Emotional Tone</div>
+          <div id="emotionScore" class="kpi-value">—</div>
+        </div>
+        <div class="kpi kpi-clarity">
+          <div class="kpi-label">Mental Clarity</div>
+          <div id="clarityScore" class="kpi-value">—</div>
+        </div>
+        <div class="kpi kpi-energy">
+          <div class="kpi-label">Physical Energy</div>
+          <div id="energyScore" class="kpi-value">—</div>
+        </div>
+        <div class="kpi kpi-growth">
+          <div class="kpi-label">Growth Index</div>
+          <div id="growthScore" class="kpi-value">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analysis Output -->
+    <div class="card">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1.2rem;">
+        <h2 style="margin-bottom:0;">AI Weekly Analysis</h2>
+        <div id="statusText" class="status-bar"></div>
+      </div>
+
+      <div id="analysisOutput">
+        <div class="placeholder-msg">
+          Your weekly analysis will appear here after you click "Analyze Week".
+        </div>
+      </div>
+    </div>
+
+  </div>
 </div>
 
 <script>
-// ═══════════════════════════════════════════════
-// STATE
-// ═══════════════════════════════════════════════
-let allEvents = [], weekGroups = {}, selectedWeek = null;
-let generatedFields = null, chart = null;
+async function analyzeReflection() {
+  const text = document.getElementById('reflectionInput').value.trim();
+  const weekTitle = document.getElementById('weekTitle').value.trim();
 
-// v10 field map: id → { label, hint, type }
-const FIELDS = {
-  t1: { label:'Research Hours', hint:'Time on research this week', type:'number' },
-  t2: { label:'Teaching Hours', hint:'Time on teaching this week', type:'number' },
-  t3: { label:'Service Hours', hint:'Time on service/admin this week', type:'number' },
-  t4: { label:'Personal Hours', hint:'Time on personal projects this week', type:'number' },
-  c1: { label:'Research Notes', hint:'Coach reflection on research work', type:'textarea' },
-  c2: { label:'Teaching Notes', hint:'Coach reflection on teaching moments', type:'textarea' },
-  c3: { label:'Service Notes', hint:'Coach reflection on service/admin work', type:'textarea' },
-  c4: { label:'Personal Notes', hint:'Coach reflection on personal projects & growth', type:'textarea' },
-  m1: { label:'Key Moments', hint:'The 2–3 specific events that define this week', type:'textarea' },
-  i1: { label:'New Insights', hint:'Something you now understand that you didn\'t before', type:'textarea' },
-  e1: { label:'Expression / Creation Log', hint:'What you built, wrote, or articulated this week', type:'textarea' },
-  l1: { label:'Flow Moments (felt like myself when...)', hint:'When you were most alive and joyful', type:'textarea' },
-  l2: { label:'Drain Moments (felt drained when...)', hint:'What felt like a tax on your time', type:'textarea' },
-  n1: { label:'Next Shift (Homeostasis)', hint:'ONE adjustment to make next week', type:'textarea' },
-  mentor: { label:'Mentorship Log', hint:'Student interactions, seeds planted, futures shaped', type:'textarea' },
-  energy: { label:'Energy Score (1-10)', hint:'Overall vitality rating for the week', type:'number' },
-};
+  if (!text) {
+    alert('Please paste your reflection records first.');
+    return;
+  }
 
-// ═══════════════════════════════════════════════
-// CATEGORY DETECTION
-// ═══════════════════════════════════════════════
-const CAT_RULES = [
-  { cat:'teaching',  re:/teaching|teach|lecture|EMI|MS-writing|MS-Writing|General Edu|epigenetics class|seminar.*student|PhD seminar|flipping|iLearning/i },
-  { cat:'research',  re:/research|learning:|NSTC|grant|WIG|paper|lab|epigenetics|chromatin|H1|EZH2|PRC2|lymphoma|biology|novelty|review.*comment|grant review/i },
-  { cat:'service',   re:/social:|service|meeting|committee|導師|聯合|faculty|college|weekly report|dean|admin/i },
-  { cat:'personal',  re:/system:|webapp|app|Q-PM|Q-project|Weekreview|weekreview|family|visit mom|ride to|修理|買|眼科|declutter|office.*organ|relaxing|music|iPhone|Hao:|Ching-Yi|declutter/i },
-];
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = true;
+  btn.textContent = 'Analyzing…';
 
-function classify(title) {
-  for (const r of CAT_RULES) if (r.re.test(title)) return r.cat;
-  return 'other';
-}
+  document.getElementById('statusText').innerHTML = '<span class="spinner"></span> Claude is reading your reflection…';
+  document.getElementById('analysisOutput').innerHTML = '<div class="placeholder-msg" style="animation: pulse 1.5s infinite;">Analyzing your week with Claude AI…</div>';
 
-function durationHrs(s, e) {
-  const parse = t => {
-    if (!t) return 0;
-    const m = String(t).match(/(\d+):(\d+)\s*(AM|PM)?/i);
-    if (!m) return 0;
-    let h = parseInt(m[1]), mn = parseInt(m[2]);
-    if (m[3]?.toUpperCase()==='PM' && h<12) h+=12;
-    if (m[3]?.toUpperCase()==='AM' && h===12) h=0;
-    return h + mn/60;
-  };
-  const d = parse(e) - parse(s);
-  return d > 0 ? d : 0;
-}
+  // --- Keyword scoring (instant) ---
+  const lower = text.toLowerCase();
 
-function getMonday(d) {
-  const day = d.getDay(), diff = d.getDate()-day+(day===0?-6:1);
-  return new Date(new Date(d).setDate(diff));
-}
+  const positiveWords = ['感恩','成長','快樂','很好','順利','專注','學習','愛','希望','平靜','成功','improve','good','growth','peaceful'];
+  const fatigueWords = ['累','疲倦','睡','感冒','沒精神','疲勞','tired','fatigue','sleepy'];
+  const emotionalWords = ['想念','情感','內心','思念','緣分','愛','emotion','feeling','missing'];
+  const teachingWords = ['學生','上課','教學','課程','指導','teaching','student','lecture'];
+  const spiritualWords = ['音樂','靈魂','生命','世界','目的','spiritual','meaning','purpose'];
 
-// ═══════════════════════════════════════════════
-// FILE LOADING
-// ═══════════════════════════════════════════════
-function loadFile(input) {
-  const file = input.files[0]; if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    try {
-      const wb = XLSX.read(e.target.result, {type:'array'});
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, {defval:''});
-      allEvents = rows.map(r => ({
-        date: r['Date']||'', type: r['Type']||'',
-        title: String(r['Title']||'').trim(),
-        start: r['Start Time']||'', end: r['End Time']||'',
-        notes: String(r['Notes']||'').trim(),
-        category: classify(String(r['Title']||'')),
-        hours: durationHrs(r['Start Time'], r['End Time'])
-      })).filter(e => e.title);
+  function countWords(arr) {
+    return arr.reduce((sum, w) => {
+      const m = text.match(new RegExp(w, 'gi'));
+      return sum + (m ? m.length : 0);
+    }, 0);
+  }
 
-      weekGroups = {};
-      allEvents.forEach(ev => {
-        const d = new Date(ev.date);
-        if (isNaN(d)) return;
-        const mon = getMonday(d).toISOString().slice(0,10);
-        if (!weekGroups[mon]) weekGroups[mon]=[];
-        weekGroups[mon].push(ev);
-      });
+  const positiveScore = countWords(positiveWords);
+  const fatigueScore  = countWords(fatigueWords);
+  const emotionalScore = countWords(emotionalWords);
+  const teachingScore  = countWords(teachingWords);
+  const spiritualScore = countWords(spiritualWords);
 
-      const weeks = Object.keys(weekGroups).sort().reverse();
-      selectedWeek = weeks[0]||null;
+  const emotionTone = emotionalScore > 15 ? 'Deep' : emotionalScore > 8 ? 'Reflective' : 'Stable';
+  const clarityTone = positiveScore > fatigueScore ? 'High' : 'Moderate';
+  const energyTone  = fatigueScore > 12 ? 'Low' : fatigueScore > 5 ? 'Variable' : 'Good';
+  const growthTone  = teachingScore + spiritualScore > 20 ? 'Strong' : 'Moderate';
 
-      // Sidebar update
-      const uz=document.getElementById('uploadZone');
-      uz.classList.add('success');
-      document.getElementById('uploadIcon').textContent='✅';
-      document.getElementById('uploadTitle').textContent=file.name.replace(/\.(xlsx|xls)$/,'').slice(0,28);
-      document.getElementById('uploadSub').textContent=`${allEvents.length} events · ${weeks.length} week(s)`;
+  document.getElementById('emotionScore').innerText = emotionTone;
+  document.getElementById('clarityScore').innerText = clarityTone;
+  document.getElementById('energyScore').innerText  = energyTone;
+  document.getElementById('growthScore').innerText  = growthTone;
 
-      const navWrap=document.getElementById('weekNavWrap');
-      const navBtns=document.getElementById('weekNavBtns');
-      navBtns.innerHTML='';
-      weeks.forEach(w=>{
-        const b=document.createElement('button');
-        b.className='week-btn'+(w===selectedWeek?' active':'');
-        b.textContent=w; b.onclick=()=>selectWeek(w);
-        navBtns.appendChild(b);
-      });
-      navWrap.style.display='block';
-
-      document.getElementById('generateBtn').disabled=false;
-      document.getElementById('preGenEmpty').style.display='none';
-      document.getElementById('preGenReady').style.display='block';
-
-      selectWeek(selectedWeek);
-      setFooter(`✓ Loaded ${allEvents.length} events · ${weeks.length} week(s)`);
-    } catch(err) { alert('Error reading file: '+err.message); }
-  };
-  reader.readAsArrayBuffer(file);
-}
-
-function selectWeek(week) {
-  selectedWeek=week;
-  document.querySelectorAll('.week-btn').forEach(b=>b.classList.toggle('active',b.textContent===week));
-  document.getElementById('weekLabel').textContent='Week of '+week;
-  renderSidebarEvents();
-  renderAllocPreview();
-}
-
-function renderSidebarEvents() {
-  const evs=(weekGroups[selectedWeek]||[]).sort((a,b)=>new Date(a.date)-new Date(b.date));
-  document.getElementById('eventList').innerHTML = evs.length
-    ? evs.map(ev=>`<div class="event-item"><div class="ev-title">${ev.title.slice(0,46)}${ev.title.length>46?'…':''}</div><div class="ev-meta"><span class="ev-tag tag-${ev.category}">${ev.category.slice(0,3)}</span> ${ev.date.split(',')[0]} · ${ev.start}${ev.hours>0?' · '+ev.hours.toFixed(1)+'h':''}</div></div>`).join('')
-    : '<div style="font-size:12px;color:var(--ink3);text-align:center;padding:16px;">No events</div>';
-}
-
-function renderAllocPreview() {
-  const evs=weekGroups[selectedWeek]||[];
-  if (!evs.length) return;
-  const t={research:0,teaching:0,service:0,personal:0};
-  evs.forEach(e=>{if(t[e.category]!==undefined) t[e.category]+=e.hours;});
-  const total=Object.values(t).reduce((a,b)=>a+b,0);
-
-  document.getElementById('allocPreview').style.display='block';
-  document.getElementById('allocSubtitle').textContent=`${evs.length} events · ${total.toFixed(1)}h total tracked · Week of ${selectedWeek}`;
-  document.getElementById('allocGrid').innerHTML=`
-    <div class="alloc-cell research"><div class="alloc-num" style="color:#2d5be3">${t.research.toFixed(1)}h</div><div class="alloc-label">Research</div><div style="font-size:10px;color:var(--ink3)">${total>0?Math.round(t.research/total*100):0}%</div></div>
-    <div class="alloc-cell teaching"><div class="alloc-num" style="color:#0d9488">${t.teaching.toFixed(1)}h</div><div class="alloc-label">Teaching</div><div style="font-size:10px;color:var(--ink3)">${total>0?Math.round(t.teaching/total*100):0}%</div></div>
-    <div class="alloc-cell service"><div class="alloc-num" style="color:#f43f5e">${t.service.toFixed(1)}h</div><div class="alloc-label">Service</div><div style="font-size:10px;color:var(--ink3)">${total>0?Math.round(t.service/total*100):0}%</div></div>
-    <div class="alloc-cell personal"><div class="alloc-num" style="color:#7c3aed">${t.personal.toFixed(1)}h</div><div class="alloc-label">Personal</div><div style="font-size:10px;color:var(--ink3)">${total>0?Math.round(t.personal/total*100):0}%</div></div>`;
-
-  setTimeout(()=>{
-    const ctx=document.getElementById('allocChart');
-    if (!ctx) return;
-    if (chart) chart.destroy();
-    chart=new Chart(ctx.getContext('2d'),{
-      type:'doughnut',
-      data:{labels:['Research','Teaching','Service','Personal'],datasets:[{data:[t.research,t.teaching,t.service,t.personal],backgroundColor:['#2d5be3','#0d9488','#f43f5e','#7c3aed'],borderWidth:0}]},
-      options:{cutout:'72%',plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:11}}},tooltip:{callbacks:{label:c=>` ${c.raw.toFixed(1)}h (${total>0?Math.round(c.raw/total*100):0}%)`}}}}
-    });
-  },50);
-}
-
-// ═══════════════════════════════════════════════
-// CONTEXT BUILDER
-// ═══════════════════════════════════════════════
-function buildContext() {
-  const evs=weekGroups[selectedWeek]||[];
-  const t={research:0,teaching:0,service:0,personal:0};
-  evs.forEach(e=>{if(t[e.category]!==undefined) t[e.category]+=e.hours;});
-  const total=Object.values(t).reduce((a,b)=>a+b,0);
-
-  const byDay={};
-  evs.forEach(e=>{if(!byDay[e.date])byDay[e.date]=[];byDay[e.date].push(e);});
-
-  const dayLines=Object.entries(byDay).sort((a,b)=>new Date(a[0])-new Date(b[0])).map(([day,evList])=>
-    `${day}:\n`+evList.map(e=>`  • [${e.category.toUpperCase()}] ${e.title} (${e.start||''}${e.hours>0?' '+e.hours.toFixed(1)+'h':''})\n    Notes: ${e.notes && e.notes.trim().length>10 ? e.notes.slice(0,500).replace(/\\n/g,' ') : '(none)'}`).join('\n')
-  ).join('\n\n');
-
-  return { totals:t, total, dayLines };
-}
-
-// ═══════════════════════════════════════════════
-// GENERATION PIPELINE
-// ═══════════════════════════════════════════════
-async function startGeneration() {
-  if (!selectedWeek||!weekGroups[selectedWeek]) { alert('Load an Excel file first.'); return; }
-
-  switchTab('generate');
-  setStep(2);
-
-  document.getElementById('preGenState').style.display='none';
-  document.getElementById('genProgress').style.display='block';
-  document.getElementById('genDone').style.display='none';
-  document.getElementById('generateBtn').disabled=true;
-
-  const {totals,total,dayLines}=buildContext();
-  const log=document.getElementById('streamLog');
-
-  const addLog = msg => { log.innerHTML+=`<div>→ ${msg}</div>`; log.scrollTop=log.scrollHeight; };
-  const setProgress = (pct,msg) => {
-    document.getElementById('progressFill').style.width=pct+'%';
-    document.getElementById('progressText').textContent=msg;
-  };
-
-  addLog('Calculating time allocation from events...');
-  setProgress(10,'Calculating time allocation...');
-  await delay(300);
-
-  // The master prompt that asks Claude to fill ALL v10 fields in JSON
-  const systemPrompt=`You are the personal coach and AI assistant for Dr. Wen-Ming Yang, a full professor at National Chung Hsing University (NCHU) in Taiwan. He is free from promotion pressure, joyful and warm, loves helping students discover their futures, builds web apps as a passion project, and is exploring uncovered talents for his 30-year arc.
-
-Your task: analyze the week's calendar events and generate content for ALL fields in his Horizon Week Review system. Return ONLY a JSON object (no markdown, no code fences, no explanation) with these exact keys:
-
-{
-  "t1": <research hours as number>,
-  "t2": <teaching hours as number>,
-  "t3": <service hours as number>,
-  "t4": <personal hours as number>,
-  "c1": "<research coach notes — reference specific events, ask what was Deep Work vs logistics, what idea excited him>",
-  "c2": "<teaching coach notes — reference specific teaching events, note what sparked curiosity or clicked>",
-  "c3": "<service coach notes — reference specific service events, note what could be delegated or eliminated>",
-  "c4": "<personal notes — reference app/system/family/health events, connect to 30-year vision>",
-  "m1": "<key moments — 2-3 specific events that will define how he remembers this week>",
-  "i1": "<new insights — something he now understands about people, teaching, research, or himself>",
-  "e1": "<expression/creation log — what he built, wrote, or articulated: app features, frameworks, new ways to explain complexity>",
-  "l1": "<flow moments — when he felt most alive and like himself, referencing specific events>",
-  "l2": "<drain moments — what felt like a tax, referencing specific events>",
-  "n1": "<next shift — ONE specific adjustment for next week that moves him toward his 30-year vision>",
-  "mentor": "<mentorship log — specific student interactions, seeds planted, futures shaped, student mood observations>",
-  "energy": <energy score 1-10 as number, based on the week's events>,
-  "mood-tags": "<comma-separated active tags from: 1=Energized, 2=Struggling, 3=Breakthrough, 4=NeedsDirection>"
-}
-
-Rules:
-- Reference SPECIFIC events and notes from the calendar — not generic platitudes
-- Be honest and push back where needed (e.g. if service is dominating, flag it)
-- Connect observations to his 30-year vision (mentorship, creation, joy, legacy)
-- Keep each text field 2-5 sentences, actionable and personal
-- Return ONLY the JSON object, nothing else`;
-
-  const userMsg=`WEEK: ${selectedWeek}
-TIME ALLOCATION (calculated): Research ${totals.research.toFixed(1)}h | Teaching ${totals.teaching.toFixed(1)}h | Service ${totals.service.toFixed(1)}h | Personal ${totals.personal.toFixed(1)}h | Total: ${total.toFixed(1)}h
-
-FULL CALENDAR EVENTS WITH NOTES:
-${dayLines}`;
-
-  addLog('Sending to Claude AI for analysis...');
-  setProgress(30,'Sending calendar data to Claude AI...');
+  // --- Claude AI analysis ---
+  let aiResult = null;
 
   try {
-    const resp=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:1000,
-        system:systemPrompt,
-        messages:[{role:'user',content:userMsg}]
+    const prompt = `You are a compassionate and insightful mindful reflection analyst. Analyze the following weekly reflection deeply.
+
+Return a JSON object with exactly these keys (no markdown, pure JSON):
+{
+  "overview": "...",
+  "emotional_patterns": "...",
+  "mental_clarity": "...",
+  "physical_wellness": "...",
+  "teaching_leadership": "...",
+  "spiritual_themes": "...",
+  "hidden_risks": "...",
+  "next_week_focus": ["suggestion 1", "suggestion 2", "suggestion 3", "suggestion 4", "suggestion 5"],
+  "integrated_insight": "..."
+}
+
+Weekly Reflection${weekTitle ? ' — ' + weekTitle : ''}:
+
+${text}`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
       })
     });
 
-    setProgress(70,'Receiving AI response...');
-    addLog('Response received — parsing fields...');
+    const data = await response.json();
+    const raw = data.content?.map(b => b.text || '').join('') || '';
+    const clean = raw.replace(/```json|```/g, '').trim();
+    aiResult = JSON.parse(clean);
 
-    const data=await resp.json();
-    const raw=data.content?.map(b=>b.text||'').join('')||'';
+  } catch (err) {
+    console.error('Claude API error:', err);
+  }
 
-    // Parse JSON — strip any accidental fences
-    let parsed;
-    try {
-      const clean=raw.replace(/```json|```/g,'').trim();
-      parsed=JSON.parse(clean);
-    } catch(e) {
-      // Try to extract JSON object
-      const m=raw.match(/\{[\s\S]*\}/);
-      if (m) parsed=JSON.parse(m[0]);
-      else throw new Error('Could not parse AI response as JSON');
+  // --- Render output ---
+  const titleHtml = weekTitle ? `<h3 style="font-family:'Playfair Display',serif; font-size:1.3rem; margin-bottom:1.2rem; color:var(--ink-muted);">Week: ${weekTitle}</h3>` : '';
+
+  let aiHtml = '';
+
+  if (aiResult) {
+    const sections = [
+      { icon: '🌐', title: 'Weekly Overview', content: aiResult.overview, style: 'section-accent' },
+      { icon: '💙', title: 'Emotional Patterns', content: aiResult.emotional_patterns, style: '' },
+      { icon: '🧠', title: 'Mental Clarity', content: aiResult.mental_clarity, style: 'section-blue' },
+      { icon: '⚡', title: 'Physical Wellness', content: aiResult.physical_wellness, style: '' },
+      { icon: '🎓', title: 'Teaching & Leadership', content: aiResult.teaching_leadership, style: 'section-green' },
+      { icon: '✨', title: 'Spiritual & Existential Themes', content: aiResult.spiritual_themes, style: 'section-gold' },
+      { icon: '⚠️', title: 'Hidden Risks', content: aiResult.hidden_risks, style: '' },
+    ];
+
+    for (const s of sections) {
+      if (!s.content) continue;
+      aiHtml += `
+        <div class="analysis-section ${s.style}">
+          <h3><span class="icon">${s.icon}</span> ${s.title}</h3>
+          <p>${s.content}</p>
+        </div>`;
     }
 
-    // Override numeric hours with our calculated values (more accurate)
-    parsed.t1=Math.round(totals.research*10)/10;
-    parsed.t2=Math.round(totals.teaching*10)/10;
-    parsed.t3=Math.round(totals.service*10)/10;
-    parsed.t4=Math.round(totals.personal*10)/10;
+    if (aiResult.next_week_focus?.length) {
+      const items = aiResult.next_week_focus.map(f => `<li>${f}</li>`).join('');
+      aiHtml += `
+        <div class="analysis-section section-accent">
+          <h3><span class="icon">🎯</span> Focus for Next Week</h3>
+          <ul>${items}</ul>
+        </div>`;
+    }
 
-    generatedFields=parsed;
+    if (aiResult.integrated_insight) {
+      aiHtml += `
+        <div class="ai-analysis-block">
+          <h3>✦ Integrated Weekly Insight</h3>
+          <div class="content">${aiResult.integrated_insight}</div>
+        </div>`;
+    }
 
-    setProgress(90,'Building review fields...');
-    addLog('Populating all Weekreview-v10 fields...');
-    await delay(400);
-
-    setProgress(100,'Done!');
-    setStep(3);
-
-    document.getElementById('genProgress').style.display='none';
-    document.getElementById('genDone').style.display='block';
-    document.getElementById('genSummary').innerHTML=`
-      Generated ${Object.keys(parsed).length} fields for week of <strong>${selectedWeek}</strong>.<br>
-      Time: Research ${totals.research.toFixed(1)}h · Teaching ${totals.teaching.toFixed(1)}h · Service ${totals.service.toFixed(1)}h · Personal ${totals.personal.toFixed(1)}h · Energy: ${parsed.energy||'?'}/10
-    `;
-
-    renderReviewFields();
-    renderExportTab();
-    setFooter(`✓ Review generated for ${selectedWeek}`);
-    document.getElementById('generateBtn').disabled=false;
-
-  } catch(err) {
-    document.getElementById('genProgress').style.display='none';
-    document.getElementById('preGenState').style.display='block';
-    document.getElementById('preGenReady').style.display='none';
-    document.getElementById('preGenEmpty').style.display='block';
-    document.getElementById('preGenEmpty').style.background='#fef2f2';
-    document.getElementById('preGenEmpty').style.borderColor='#fecaca';
-    document.getElementById('preGenEmpty').style.color='#dc2626';
-    document.getElementById('preGenEmpty').innerHTML=`⚠ AI error: ${err.message}. <a href="#" onclick="copyFallback();return false;">Copy prompt → Claude.ai</a>`;
-    document.getElementById('generateBtn').disabled=false;
-    setStep(1);
-    setFooter('⚠ AI request failed — see generate tab');
+  } else {
+    // Fallback to keyword-based static analysis if Claude fails
+    aiHtml = `
+      <div class="analysis-section section-accent">
+        <h3><span class="icon">🌐</span> Weekly Overview (Local Analysis)</h3>
+        <p>This week reflected integration between emotional awareness, teaching motivation, personal reflection, and life meaning.</p>
+      </div>
+      <div class="analysis-section">
+        <h3><span class="icon">💙</span> Mental & Emotional State</h3>
+        <p>Emotional tone was <strong>${emotionTone}</strong>. Cognitive clarity appeared <strong>${clarityTone}</strong>.</p>
+      </div>
+      <div class="analysis-section">
+        <h3><span class="icon">⚡</span> Physical Condition</h3>
+        <p>Physical energy was <strong>${energyTone}</strong>.</p>
+      </div>
+      <div class="analysis-section section-green">
+        <h3><span class="icon">🎓</span> Teaching & Growth</h3>
+        <p>Growth index was <strong>${growthTone}</strong>.</p>
+      </div>
+      <div style="background:#fff4e8;border:1px solid #f0c080;border-radius:10px;padding:0.9rem 1rem;font-size:0.82rem;color:#7a5020;margin-top:0.5rem;">
+        ⚠ Claude AI analysis was unavailable. Showing keyword-based local analysis instead.
+      </div>`;
   }
+
+  document.getElementById('analysisOutput').innerHTML = titleHtml + aiHtml;
+  document.getElementById('statusText').innerHTML = aiResult
+    ? '✓ Claude AI analysis complete'
+    : '✓ Local analysis complete (Claude unavailable)';
+
+  btn.disabled = false;
+  btn.textContent = '✦ Analyze Week';
 }
 
-// ═══════════════════════════════════════════════
-// REVIEW FIELDS TAB
-// ═══════════════════════════════════════════════
-function renderReviewFields() {
-  if (!generatedFields) return;
-  const f=generatedFields;
-  document.getElementById('reviewFieldsContent').innerHTML=`
-
-    <div style="margin-bottom:18px;">
-      <div class="field-label">⏱ Time Allocation (hours)</div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
-        ${['t1','t2','t3','t4'].map((id,i)=>`
-          <div>
-            <div style="font-size:11px;color:var(--ink3);margin-bottom:4px;">${['Research','Teaching','Service','Personal'][i]}</div>
-            <input class="num-field ai-filled" id="rf-${id}" type="number" value="${f[id]||0}" min="0" step="0.5">
-          </div>`).join('')}
-      </div>
-    </div>
-
-    <div class="review-grid">
-      ${renderField('c1','🔬 Research Notes','Coach reflection on research — what was deep work vs logistics?',f.c1)}
-      ${renderField('c2','📚 Teaching Notes','What moment sparked curiosity? What clicked?',f.c2)}
-    </div>
-    <div class="review-grid">
-      ${renderField('c3','🏛 Service Notes','What could be delegated or eliminated next time?',f.c3)}
-      ${renderField('c4','✦ Personal Notes','App progress, passions, future identity work',f.c4)}
-    </div>
-
-    <div style="margin-bottom:18px;">
-      <div class="field-label">⚡ Energy Score</div>
-      <div style="display:flex;align-items:center;gap:12px;">
-        <input type="range" id="rf-energy" min="1" max="10" value="${f.energy||5}" style="flex:1;" oninput="document.getElementById('rf-energy-val').textContent=this.value">
-        <span id="rf-energy-val" style="font-size:22px;font-weight:600;color:var(--accent);min-width:28px;">${f.energy||5}</span>
-        <input type="hidden" id="rf-energy-h" value="${f.energy||5}">
-      </div>
-    </div>
-
-    <div class="review-grid">
-      ${renderField('m1','✨ Key Moments','The 2–3 specific events that define this week',f.m1)}
-      ${renderField('i1','💡 New Insights','Something you now understand that you didn\'t before',f.i1)}
-    </div>
-
-    ${renderField('e1','🛠 Expression / Creation Log','What you built, wrote, or articulated this week',f.e1)}
-
-    <div class="review-grid" style="margin-top:14px;">
-      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px;">
-        <div class="field-label" style="color:#065f46;">▲ Flow Moments</div>
-        <textarea class="review-field ai-filled" id="rf-l1" style="background:white;">${f.l1||''}</textarea>
-      </div>
-      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:14px;">
-        <div class="field-label" style="color:#dc2626;">▼ Drain Moments</div>
-        <textarea class="review-field ai-filled" id="rf-l2" style="background:white;">${f.l2||''}</textarea>
-      </div>
-    </div>
-
-    <div style="margin-top:14px;background:#f0f7ff;border:1.5px solid #bfdbfe;border-radius:10px;padding:16px;">
-      <div class="field-label" style="color:#1e3a8a;">→ Next Shift (Homeostasis)</div>
-      <div class="field-hint" style="color:#1e40af;">ONE adjustment. Not a to-do list. One signal change.</div>
-      <textarea class="review-field ai-filled" id="rf-n1" style="border-color:#bfdbfe;">${f.n1||''}</textarea>
-    </div>
-
-    <div style="margin-top:14px;">
-      ${renderField('mentor','◈ Mentorship Log','Student interactions, seeds planted, futures shaped',f.mentor)}
-    </div>
-
-    <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;">
-      <button class="btn btn-success" onclick="collectAndExport()">📤 Save & Export to v10</button>
-      <button class="btn btn-ghost" onclick="switchTab('export')">View export options</button>
-    </div>
-  `;
-}
-
-function renderField(id, label, hint, value) {
-  return `<div class="field-block">
-    <span class="field-label">${label}</span>
-    <span class="field-hint">${hint}</span>
-    <textarea class="review-field ai-filled" id="rf-${id}">${value||''}</textarea>
-  </div>`;
-}
-
-// Collect edited fields back into generatedFields
-function collectFields() {
-  if (!generatedFields) return;
-  ['t1','t2','t3','t4'].forEach(id=>{
-    const el=document.getElementById('rf-'+id);
-    if (el) generatedFields[id]=parseFloat(el.value)||0;
-  });
-  const energyEl=document.getElementById('rf-energy');
-  if (energyEl) generatedFields.energy=parseInt(energyEl.value)||5;
-  ['c1','c2','c3','c4','m1','i1','e1','l1','l2','n1','mentor'].forEach(id=>{
-    const el=document.getElementById('rf-'+id);
-    if (el) generatedFields[id]=el.value;
-  });
-}
-
-// ═══════════════════════════════════════════════
-// EXPORT TAB
-// ═══════════════════════════════════════════════
-function renderExportTab() {
-  if (!generatedFields||!selectedWeek) return;
-  document.getElementById('exportContent').innerHTML=`
-    <div class="import-box">
-      <div class="import-title">✓ Ready to import into Weekreview-v10</div>
-      <div class="import-instructions">
-        <ol>
-          <li>Click <strong>Download JSON File</strong> below</li>
-          <li>Open your <strong>Weekreview-v10.html</strong> in the browser</li>
-          <li>Click <strong>📂 Restore from file</strong> in the left sidebar</li>
-          <li>Select the downloaded file → <strong>Confirm import</strong></li>
-          <li>Click the week in the sidebar to load it — all fields are filled!</li>
-        </ol>
-      </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <button class="btn btn-success" onclick="collectAndExport()" style="font-size:15px;padding:11px 26px;">📥 Download JSON for v10</button>
-        <button class="btn btn-ghost" onclick="previewJSON()">Preview JSON</button>
-      </div>
-    </div>
-
-    <div style="margin-top:16px;background:white;border:1px solid var(--border);border-radius:10px;padding:16px;">
-      <div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:10px;">What will be filled in v10:</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;color:var(--ink2);">
-        <div>✓ Research hours (t1) + coach notes (c1)</div>
-        <div>✓ Teaching hours (t2) + coach notes (c2)</div>
-        <div>✓ Service hours (t3) + coach notes (c3)</div>
-        <div>✓ Personal hours (t4) + coach notes (c4)</div>
-        <div>✓ Key moments + New insights</div>
-        <div>✓ Expression/Creation log</div>
-        <div>✓ Flow moments + Drain moments</div>
-        <div>✓ Next Shift recommendation</div>
-        <div>✓ Mentorship log</div>
-        <div>✓ Energy score (1-10)</div>
-      </div>
-    </div>
-
-    <div id="jsonPreview" style="display:none;margin-top:14px;">
-      <div style="font-size:12px;font-weight:600;color:var(--ink3);margin-bottom:6px;">JSON Preview (Weekreview-v10 format):</div>
-      <pre id="jsonPreviewCode" style="font-size:11px;background:#1a1a2e;color:#e2e8f0;border-radius:8px;padding:14px;overflow-x:auto;max-height:300px;overflow-y:auto;white-space:pre-wrap;"></pre>
-    </div>
-  `;
-}
-
-function collectAndExport() {
-  collectFields();
-  if (!generatedFields||!selectedWeek) { alert('Generate a review first.'); return; }
-
-  // Build the exact JSON format Weekreview-v10 expects
-  const weekKey='HORIZON_'+selectedWeek;
-  const weekData={};
-  Object.keys(FIELDS).forEach(id=>{
-    weekData[id]=generatedFields[id]!==undefined?generatedFields[id]:'';
-  });
-  // energy as string (v10 stores form values as strings)
-  weekData.energy=String(generatedFields.energy||5);
-  weekData['mood-tags']=String(generatedFields['mood-tags']||'');
-
-  const exportObj={
-    weeks: { [weekKey]: weekData },
-    vision: null,
-    exportedAt: Date.now(),
-    version: 'horizon-v12'
+function saveReport() {
+  const data = {
+    weekTitle: document.getElementById('weekTitle').value,
+    reflection: document.getElementById('reflectionInput').value,
+    analysis: document.getElementById('analysisOutput').innerHTML,
+    emotion: document.getElementById('emotionScore').innerText,
+    clarity: document.getElementById('clarityScore').innerText,
+    energy: document.getElementById('energyScore').innerText,
+    growth: document.getElementById('growthScore').innerText,
+    date: new Date().toISOString(),
+    version: 'v11'
   };
 
-  const blob=new Blob([JSON.stringify(exportObj,null,2)],{type:'application/json'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  const d=new Date(selectedWeek);
-  const stamp=selectedWeek.replace(/-/g,'');
-  const startOfYear=new Date(d.getFullYear(),0,1);
-  const wkNum=Math.ceil(((d-startOfYear)/86400000+startOfYear.getDay()+1)/7);
-  a.download=`Weekreview-${stamp}-wk${String(wkNum).padStart(2,'0')}.json`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
-
-  setStep(4);
-  setFooter(`✓ Downloaded ${a.download} — import it into Weekreview-v10`);
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `weekly_reflection_${Date.now()}.json`;
+  link.click();
 }
 
-function previewJSON() {
-  collectFields();
-  const weekKey='HORIZON_'+selectedWeek;
-  const weekData={};
-  Object.keys(FIELDS).forEach(id=>{ weekData[id]=generatedFields[id]!==undefined?String(generatedFields[id]):''; });
-  weekData['mood-tags']=String(generatedFields['mood-tags']||'');
-  const exportObj={weeks:{[weekKey]:weekData},vision:null,exportedAt:Date.now(),version:'horizon-v12'};
-
-  const preview=document.getElementById('jsonPreview');
-  document.getElementById('jsonPreviewCode').textContent=JSON.stringify(exportObj,null,2);
-  preview.style.display=preview.style.display==='none'?'block':'none';
+function loadReport() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const data = JSON.parse(e.target.result);
+      document.getElementById('weekTitle').value = data.weekTitle || '';
+      document.getElementById('reflectionInput').value = data.reflection || '';
+      document.getElementById('analysisOutput').innerHTML = data.analysis || '';
+      document.getElementById('emotionScore').innerText = data.emotion || '—';
+      document.getElementById('clarityScore').innerText = data.clarity || '—';
+      document.getElementById('energyScore').innerText  = data.energy  || '—';
+      document.getElementById('growthScore').innerText  = data.growth  || '—';
+      document.getElementById('statusText').innerText = 'Loaded saved report';
+    };
+    reader.readAsText(file);
+  };
+  input.click();
 }
 
-// Fallback: copy prompt to clipboard → Claude.ai
-function copyFallback() {
-  const {dayLines,totals,total}=buildContext();
-  const prompt=`You are the personal coach for Dr. Wen-Ming Yang. Analyze this week's calendar and return ONLY a JSON object filling all Weekreview-v10 fields (t1,t2,t3,t4,c1,c2,c3,c4,m1,i1,e1,l1,l2,n1,mentor,energy,mood-tags).
-
-WEEK: ${selectedWeek}
-TIME: Research ${totals.research.toFixed(1)}h | Teaching ${totals.teaching.toFixed(1)}h | Service ${totals.service.toFixed(1)}h | Personal ${totals.personal.toFixed(1)}h
-
-${dayLines}
-
-Return ONLY valid JSON. No markdown, no explanation.`;
-
-  navigator.clipboard.writeText(prompt).then(()=>{
-    setFooter('✓ Prompt copied — paste into Claude.ai');
-    window.open('https://claude.ai','_blank');
-  });
+function exportPDF() {
+  window.print();
 }
-
-// ═══════════════════════════════════════════════
-// UTILS
-// ═══════════════════════════════════════════════
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.getAttribute('onclick').includes("'"+name+"'")));
-  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-  document.getElementById('tab-'+name).classList.add('active');
-}
-
-function setStep(n) {
-  [1,2,3,4].forEach(i=>{
-    const el=document.getElementById('step'+i);
-    if (!el) return;
-    el.className='step'+(i<n?' done':i===n?' active':'');
-  });
-}
-
-function setFooter(msg,ms) {
-  document.getElementById('footerMsg').textContent=msg;
-  if (ms) setTimeout(()=>document.getElementById('footerMsg').textContent='Ready.',ms);
-}
-
-function delay(ms) { return new Promise(r=>setTimeout(r,ms)); }
-
-document.addEventListener('dragover',e=>e.preventDefault());
-document.addEventListener('drop',e=>{
-  e.preventDefault();
-  const f=e.dataTransfer.files[0];
-  if (f&&(f.name.endsWith('.xlsx')||f.name.endsWith('.xls'))) loadFile({files:e.dataTransfer.files});
-});
 </script>
+
 </body>
 </html>
