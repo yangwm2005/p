@@ -472,15 +472,24 @@
   /* ─── CLOUD / AUTH UI ─── */
   .cloud-bar {
     display: flex; align-items: center; gap: 8px;
-    padding: 8px 32px;
+    padding: 6px 32px;
     background: var(--navy);
     border-bottom: 1px solid rgba(255,255,255,0.08);
     font-size: 12.5px;
     color: rgba(255,255,255,0.65);
     position: relative;
+    min-height: 42px;
   }
-  .cloud-bar-left  { display: flex; align-items: center; gap: 8px; }
-  .cloud-bar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .cloud-bar-left  { display: flex; align-items: center; gap: 10px; flex: 1; }
+  .cloud-bar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .cloud-status-text { color: rgba(255,255,255,0.85); font-weight: 500; line-height: 1.3; }
+  .cloud-ts-line {
+    font-size: 10.5px;
+    color: rgba(255,255,255,0.45);
+    margin-top: 1px;
+    font-family: 'DM Mono', 'Courier New', monospace;
+    letter-spacing: 0.01em;
+  }
 
   .cloud-dot {
     width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
@@ -716,7 +725,10 @@
 <div class="cloud-bar" id="cloudBar">
   <div class="cloud-bar-left">
     <span class="cloud-dot off" id="cloudDot"></span>
-    <span class="cloud-status-text" id="cloudStatusText">Not signed in — data saved locally</span>
+    <div>
+      <div class="cloud-status-text" id="cloudStatusText">Not signed in — data saved locally only</div>
+      <div class="cloud-ts-line" id="cloudTsLine"></div>
+    </div>
   </div>
   <div class="cloud-bar-right" id="cloudBarRight">
     <!-- Not signed in -->
@@ -1551,6 +1563,8 @@ function saveProject() {
   a.download = `${titleKey}-storymaking-${getTodayDate()}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
+  _lastLocalSave = Date.now();
+  if (typeof updateCloudBar === 'function') updateCloudBar();
 }
 
 document.getElementById('loadFile').addEventListener('change', function(e) {
@@ -1599,6 +1613,7 @@ let autoSyncEnabled   = false;
 let _syncTimer        = null;
 let _syncing          = false;
 let _lastCloudSave    = 0;
+let _lastLocalSave    = 0;
 let _pollInterval     = null;
 // Share state
 let _shareToken       = null;   // token for the current manuscript
@@ -1615,7 +1630,17 @@ function toast(msg, type='info') {
   t.className = 'toast ' + type;
   t.textContent = msg;
   c.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
+  setTimeout(() => t.remove(), 3500);
+}
+
+// ── Format timestamp ───────────────────────────────────
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const pad = n => String(n).padStart(2,'0');
+  const date = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${date} ${time}`;
 }
 
 // ── Snapshot helpers ───────────────────────────────────
@@ -1647,15 +1672,17 @@ function applySnapshot(snap) {
 
 // ── Cloud status bar ───────────────────────────────────
 function updateCloudBar() {
-  const dot        = document.getElementById('cloudDot');
-  const statusText = document.getElementById('cloudStatusText');
+  const dot         = document.getElementById('cloudDot');
+  const statusText  = document.getElementById('cloudStatusText');
   const notSignedIn = document.getElementById('cloudNotSignedIn');
   const signedInDiv = document.getElementById('cloudSignedIn');
-  const track      = document.getElementById('autoSyncTrack');
+  const track       = document.getElementById('autoSyncTrack');
+  const tsLine      = document.getElementById('cloudTsLine');
 
   if (!fbUser) {
     dot.className = 'cloud-dot off';
-    statusText.textContent = 'Not signed in — data saved locally';
+    statusText.textContent = 'Not signed in — data saved locally only';
+    if (tsLine) tsLine.textContent = _lastLocalSave ? `💾 Local: ${fmtTime(_lastLocalSave)}` : '';
     notSignedIn.style.display = 'block';
     signedInDiv.style.display = 'none';
     return;
@@ -1669,14 +1696,17 @@ function updateCloudBar() {
   document.getElementById('udEmail').textContent    = fbUser.email || '';
   if (track) track.classList.toggle('on', autoSyncEnabled);
 
+  // Timestamp line — always shown
+  const localPart = _lastLocalSave ? `💾 Local: ${fmtTime(_lastLocalSave)}` : '💾 Local: not yet saved';
+  const cloudPart = _lastCloudSave ? `☁ Cloud: ${fmtTime(_lastCloudSave)}` : '☁ Cloud: not yet saved';
+  if (tsLine) tsLine.textContent = `${localPart}   ·   ${cloudPart}`;
+
   if (_syncing) {
     dot.className = 'cloud-dot syncing';
     statusText.textContent = 'Syncing to cloud…';
   } else if (autoSyncEnabled) {
     dot.className = 'cloud-dot on';
-    statusText.textContent = _lastCloudSave
-      ? `Auto-sync on · last saved ${new Date(_lastCloudSave).toLocaleTimeString()}`
-      : 'Auto-sync on';
+    statusText.textContent = 'Auto-sync on';
   } else {
     dot.className = 'cloud-dot off';
     statusText.textContent = 'Signed in · auto-sync off';
@@ -1760,16 +1790,21 @@ async function cloudSignOut() {
 }
 
 // ── Save to cloud ──────────────────────────────────────
+// Uses the same 'users/{uid}' collection as Q·PM so existing Firestore
+// security rules (allow read/write: if request.auth.uid == userId) apply.
+// Data is stored under the 'smb_data' / 'smb_updatedAt' fields so it never
+// conflicts with Q·PM's 'qpm_data' field in the same document.
 async function fbSaveAll(silent = false) {
   if (!fbUser || !fbDb) { if (!silent) toast('Please sign in first', 'error'); return; }
   if (_syncing) return;
   _syncing = true; updateCloudBar();
   try {
     const snap = getSnapshot();
-    await fbDb.collection('smb_users').doc(fbUser.uid).set(
+    await fbDb.collection('users').doc(fbUser.uid).set(
       { smb_data: snap, smb_updatedAt: Date.now() }, { merge: true }
     );
     _lastCloudSave = Date.now();
+    _lastLocalSave = Date.now();
     if (!silent) toast('Saved to cloud ✓', 'success');
     // if sharing is on, push to shared doc too
     if (_shareToken) await pushToShare();
@@ -1785,15 +1820,12 @@ async function fbLoadAll(silent = false) {
   if (_syncing) return;
   _syncing = true; updateCloudBar();
   try {
-    const doc = await fbDb.collection('smb_users').doc(fbUser.uid).get();
-    if (doc.exists) {
-      const saved = doc.data().smb_data;
-      if (saved) {
-        applySnapshot(saved);
-        _lastCloudSave = doc.data().smb_updatedAt || Date.now();
-        if (!silent) toast('Loaded from cloud ✓', 'success');
-      } else { if (!silent) toast('No cloud data found', 'info'); }
-    } else { if (!silent) toast('No cloud data found', 'info'); }
+    const doc = await fbDb.collection('users').doc(fbUser.uid).get();
+    if (doc.exists && doc.data().smb_data) {
+      applySnapshot(doc.data().smb_data);
+      _lastCloudSave = doc.data().smb_updatedAt || Date.now();
+      if (!silent) toast('Loaded from cloud ✓', 'success');
+    } else { if (!silent) toast('No cloud data found yet', 'info'); }
   } catch(e) {
     console.error(e);
     if (!silent) toast('Load failed: ' + e.message, 'error');
@@ -1802,6 +1834,9 @@ async function fbLoadAll(silent = false) {
 
 // ── Auto-sync ──────────────────────────────────────────
 function scheduleAutoSync() {
+  // Track that content changed locally
+  _lastLocalSave = Date.now();
+  updateCloudBar();
   if (!autoSyncEnabled || !fbUser) return;
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(() => fbSaveAll(true), 2500);
@@ -1820,7 +1855,7 @@ function startPoll() {
   _pollInterval = setInterval(async () => {
     if (!autoSyncEnabled || !fbUser || _syncing || !fbDb) return;
     try {
-      const doc = await fbDb.collection('smb_users').doc(fbUser.uid).get();
+      const doc = await fbDb.collection('users').doc(fbUser.uid).get();
       if (!doc.exists) return;
       const remote = doc.data().smb_updatedAt || 0;
       if (remote > _lastCloudSave + 5000) await fbLoadAll(true);
@@ -1837,7 +1872,9 @@ function stopPoll() {
 // ══════════════════════════════════════════════════════
 
 function sharedRef(token) {
-  return fbDb.collection('smb_shared').doc(token);
+  // Reuse the same 'shared_projects' collection as Q·PM —
+  // Firestore rules already allow authenticated reads/writes there.
+  return fbDb.collection('shared_projects').doc('smb_' + token);
 }
 
 // Push current state to the shared document
@@ -2079,7 +2116,7 @@ async function checkJoinToken() {
   if (!fbUser) { toast('Sign in to join the shared manuscript', 'error'); return; }
 
   try {
-    const snap = await fbDb.collection('smb_shared').doc(token).get();
+    const snap = await fbDb.collection('shared_projects').doc('smb_' + token).get();
     if (!snap.exists || !snap.data().linkSharing) {
       toast('Invalid or expired share link', 'error'); return;
     }
