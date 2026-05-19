@@ -1,0 +1,2592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Biomedical Manuscript Story Builder</title>
+<link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root {
+    --navy: #1a3a5c;
+    --navy-mid: #1f4e79;
+    --blue-light: #e8f1fa;
+    --blue-mid: #bdd4ec;
+    --accent: #c0392b;
+    --accent-soft: #fdf0ee;
+    --gold: #d4a017;
+    --text: #1a1a2e;
+    --text-muted: #5a6a7a;
+    --bg: #f2f5f9;
+    --white: #ffffff;
+    --border: #d0dbe8;
+    --shadow: 0 2px 12px rgba(26,58,92,0.10);
+    --radius: 10px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html {
+    font-size: 12px; /* default — adjusted by slider (range: 11–20px) */
+    transition: font-size 0.15s ease;
+  }
+  body {
+    font-family: 'Source Sans 3', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.6;
+  }
+
+  /* ─── HEADER ─── */
+  header {
+    background: var(--navy);
+    color: white;
+    padding: 22px 32px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    border-bottom: 3px solid var(--gold);
+  }
+  header .logo {
+    font-family: 'Merriweather', Georgia, serif;
+    font-size: 1.857em;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    line-height: 1.2;
+  }
+  header .logo span { color: var(--gold); }
+  header .subtitle {
+    font-size: 1.429em;
+    color: var(--blue-mid);
+    margin-top: 3px;
+  }
+
+  /* ─── MAIN TABS ─── */
+  .main-tabs {
+    display: flex;
+    gap: 0;
+    background: var(--navy-mid);
+    padding: 0 32px;
+    border-bottom: 1px solid #163b61;
+  }
+  .main-tab {
+    padding: 9px 16px;
+    color: var(--blue-mid);
+    font-size: 1.429em;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    transition: all 0.18s;
+    letter-spacing: 0.2px;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .main-tab:hover { color: white; }
+  .main-tab.active { color: white; border-bottom-color: var(--gold); }
+
+  /* ─── TAB CONTENT ─── */
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ─── BUILDER LAYOUT ─── */
+  .builder-layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    padding: 24px;
+  }
+  .panel {
+    background: var(--white);
+    border-radius: var(--radius);
+    padding: 28px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+  }
+  .panel-left { flex: 1; min-width: 360px; }
+  .panel-right { flex: 1; min-width: 360px; }
+
+  h2 {
+    font-family: 'Merriweather', Georgia, serif;
+    font-size: 1.429em;
+    color: var(--navy);
+    margin-bottom: 18px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--blue-light);
+  }
+
+  label {
+    display: block;
+    font-size: 1.429em;
+    font-weight: 600;
+    color: var(--navy-mid);
+    margin-bottom: 4px;
+    margin-top: 14px;
+  }
+  label:first-child { margin-top: 0; }
+
+  textarea, input[type="text"], select {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 1.143em;
+    font-family: inherit;
+    color: var(--text);
+    background: #fafdff;
+    transition: border 0.15s, box-shadow 0.15s;
+    resize: vertical;
+  }
+  textarea:focus, input[type="text"]:focus, select:focus {
+    outline: none;
+    border-color: var(--navy-mid);
+    box-shadow: 0 0 0 3px rgba(31,78,121,0.10);
+  }
+
+  .rules-box {
+    background: var(--blue-light);
+    border-left: 4px solid var(--navy-mid);
+    padding: 14px 16px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    font-size: 1.429em;
+    line-height: 1.75;
+  }
+  .rules-box strong { color: var(--navy); display: block; margin-bottom: 6px; }
+
+  /* ─── FIGURE BLOCKS ─── */
+  .figure-block {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--navy-mid);
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    background: #f8fbff;
+  }
+  .figure-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    gap: 8px;
+  }
+  .figure-block-header h3 {
+    font-family: 'Merriweather', Georgia, serif;
+    font-size: 1.857em;
+    color: var(--navy);
+    flex: 1;
+  }
+  .fig-controls {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .fig-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 3px 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1.429em;
+    line-height: 1;
+    transition: all 0.15s;
+    transform: none !important;
+  }
+  .fig-btn:hover { background: var(--blue-light); color: var(--navy); border-color: var(--blue-mid); }
+  .fig-btn.del { border-color: #f0c0bc; color: #c0392b; }
+  .fig-btn.del:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .figure-type-badge {
+    font-size: 1.429em;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 20px;
+    background: var(--blue-light);
+    color: var(--navy-mid);
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+  }
+  .figure-type-badge.obs { background: #e0f0ff; color: #1a6a9a; }
+  .figure-type-badge.func { background: #e5f5e8; color: #1a7a3a; }
+  .figure-type-badge.mech { background: #fef3e0; color: #9a6a00; }
+  .figure-type-badge.val { background: #fde8e8; color: #9a1a1a; }
+
+  .btn-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+  button {
+    background: var(--navy-mid);
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 1.143em;
+    font-family: inherit;
+    font-weight: 600;
+    transition: background 0.15s, transform 0.1s;
+  }
+  button:hover { background: var(--navy); transform: translateY(-1px); }
+  button.btn-accent { background: var(--accent); }
+  button.btn-accent:hover { background: #a93226; }
+  button.btn-outline {
+    background: transparent;
+    border: 1.5px solid var(--navy-mid);
+    color: var(--navy-mid);
+  }
+  button.btn-outline:hover { background: var(--blue-light); transform: none; }
+
+  /* ─── PREVIEW ─── */
+  .preview {
+    white-space: pre-wrap;
+    background: #fcfcfc;
+    border: 1px solid var(--border);
+    padding: 20px;
+    border-radius: 8px;
+    min-height: 420px;
+    font-size: 1.143em;
+    line-height: 1.7;
+    font-family: 'Source Sans 3', sans-serif;
+    color: var(--text);
+  }
+
+  /* ─── HELP / GUIDELINES PAGES ─── */
+  .help-layout {
+    padding: 28px 32px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  .help-layout h1 {
+    font-family: 'Merriweather', Georgia, serif;
+    font-size: 2.286em;
+    color: var(--navy);
+    margin-bottom: 6px;
+  }
+  .help-layout .page-desc {
+    color: var(--text-muted);
+    font-size: 1.214em;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 18px;
+  }
+
+  /* Sub-tabs inside help */
+  .sub-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+  .sub-tab {
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 1.429em;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1.5px solid var(--border);
+    background: var(--white);
+    color: var(--text-muted);
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .sub-tab.active {
+    background: var(--navy-mid);
+    color: white;
+    border-color: var(--navy-mid);
+  }
+  .sub-tab:hover:not(.active) { border-color: var(--navy-mid); color: var(--navy-mid); }
+
+  .sub-content { display: none; }
+  .sub-content.active { display: block; }
+
+  /* Help cards */
+  .help-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; margin-bottom: 28px; }
+  .help-card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: var(--shadow);
+  }
+  .help-card .card-icon {
+    font-size: 2.286em;
+    margin-bottom: 10px;
+  }
+  .help-card h3 {
+    font-family: 'Merriweather', serif;
+    font-size: 1.214em;
+    color: var(--navy);
+    margin-bottom: 8px;
+  }
+  .help-card p, .help-card li {
+    font-size: 1.143em;
+    line-height: 1.7;
+    color: var(--text-muted);
+  }
+  .help-card ul { padding-left: 18px; }
+  .help-card li { margin-bottom: 4px; }
+
+  /* Callout boxes */
+  .callout {
+    padding: 14px 18px;
+    border-radius: 8px;
+    margin-bottom: 18px;
+    font-size: 1.143em;
+    line-height: 1.7;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .callout-icon { font-size: 1.857em; flex-shrink: 0; }
+  .callout.info { background: var(--blue-light); border-left: 4px solid var(--navy-mid); }
+  .callout.tip { background: #e9f7ef; border-left: 4px solid #27ae60; }
+  .callout.warning { background: #fef9e7; border-left: 4px solid var(--gold); }
+  .callout.danger { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .callout strong { color: var(--navy); display: block; margin-bottom: 3px; }
+
+  /* Full-width help sections */
+  .help-section {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    box-shadow: var(--shadow);
+    margin-bottom: 20px;
+  }
+  .help-section h3 {
+    font-family: 'Merriweather', serif;
+    font-size: 1.857em;
+    color: var(--navy);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .help-section h3 .tag {
+    font-family: 'Source Sans 3', sans-serif;
+    font-size: 1.429em;
+    font-weight: 700;
+    text-transform: uppercase;
+    background: var(--navy);
+    color: white;
+    padding: 2px 9px;
+    border-radius: 20px;
+  }
+  .help-section p, .help-section li {
+    font-size: 1.143em;
+    line-height: 1.8;
+    color: #3a4a5a;
+  }
+  .help-section ul, .help-section ol { padding-left: 20px; }
+  .help-section li { margin-bottom: 6px; }
+
+  /* Story arc diagram */
+  .arc-diagram {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin: 20px 0;
+    overflow-x: auto;
+  }
+  .arc-step {
+    flex: 1;
+    min-width: 120px;
+    background: var(--blue-light);
+    border: 1px solid var(--blue-mid);
+    padding: 14px 12px;
+    text-align: center;
+    position: relative;
+    font-size: 1.214em;
+  }
+  .arc-step:not(:last-child)::after {
+    content: '→';
+    position: absolute;
+    right: -14px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 1.857em;
+    color: var(--navy-mid);
+    z-index: 1;
+    background: var(--bg);
+    padding: 0 2px;
+  }
+  .arc-step .step-num {
+    font-weight: 700;
+    font-size: 1.857em;
+    color: var(--navy-mid);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .arc-step .step-label {
+    font-weight: 700;
+    color: var(--navy);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .arc-step .step-desc { color: var(--text-muted); }
+  .arc-step.obs { background: #e0f0ff; border-color: #90c0e8; }
+  .arc-step.func { background: #e5f5e8; border-color: #90cca0; }
+  .arc-step.mech { background: #fef3e0; border-color: #e0c060; }
+  .arc-step.val { background: #fde8e8; border-color: #e09090; }
+
+  /* Example text boxes */
+  .example-box {
+    background: #f8fbff;
+    border: 1px dashed var(--blue-mid);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 1.429em;
+    line-height: 1.75;
+    color: var(--text-muted);
+    margin: 10px 0 16px;
+    font-style: italic;
+  }
+  .example-box strong { color: var(--navy-mid); font-style: normal; display: block; margin-bottom: 4px; }
+
+  /* Checklist */
+  .checklist { list-style: none; padding: 0; }
+  .checklist li {
+    padding: 8px 0 8px 32px;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    font-size: 1.143em;
+    color: #3a4a5a;
+  }
+  .checklist li::before {
+    content: '☐';
+    position: absolute;
+    left: 6px;
+    color: var(--navy-mid);
+    font-size: 1.857em;
+  }
+  .checklist li strong { color: var(--navy); }
+
+  /* Comparison table */
+  .comp-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 1.143em; }
+  .comp-table th {
+    background: var(--navy);
+    color: white;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+  }
+  .comp-table td { padding: 9px 14px; border-bottom: 1px solid var(--border); color: #3a4a5a; }
+  .comp-table tr:nth-child(even) td { background: var(--blue-light); }
+  .comp-table .bad { color: var(--accent); font-weight: 600; }
+  .comp-table .good { color: #1a7a3a; font-weight: 600; }
+
+  /* ─── CLOUD / AUTH UI ─── */
+  .cloud-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 32px;
+    background: var(--navy);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    font-size: 1.214em;
+    color: rgba(255,255,255,0.65);
+    position: relative;
+    min-height: 42px;
+  }
+  .cloud-bar-left  { display: flex; align-items: center; gap: 10px; flex: 1; }
+  .cloud-bar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .cloud-status-text { color: rgba(255,255,255,0.85); font-weight: 500; line-height: 1.3; }
+  .cloud-ts-line {
+    font-size: 1.214em;
+    color: rgba(255,255,255,0.45);
+    margin-top: 1px;
+    font-family: 'DM Mono', 'Courier New', monospace;
+    letter-spacing: 0.01em;
+  }
+
+  .cloud-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: #6b7a8d; transition: background 0.3s;
+  }
+  .cloud-dot.on      { background: #34d399; }
+  .cloud-dot.syncing { background: #fbbf24; animation: pulse 1s infinite; }
+  .cloud-dot.off     { background: #6b7a8d; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .cloud-status-text { color: rgba(255,255,255,0.7); }
+
+  .cloud-btn {
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.18);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 5px;
+    font-size: 1.857em;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s;
+  }
+  .cloud-btn:hover { background: rgba(255,255,255,0.20); }
+  .cloud-btn.primary {
+    background: #d4a017;
+    border-color: #d4a017;
+    color: #1a1a1a;
+  }
+  .cloud-btn.primary:hover { background: #e0b020; }
+  .cloud-btn.danger-btn { background: rgba(192,57,43,0.5); border-color: rgba(192,57,43,0.6); }
+  .cloud-btn.danger-btn:hover { background: rgba(192,57,43,0.75); }
+
+  /* user chip */
+  .user-chip {
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 20px;
+    padding: 3px 10px 3px 5px;
+    cursor: pointer;
+    transition: background 0.15s;
+    position: relative;
+  }
+  .user-chip:hover { background: rgba(255,255,255,0.18); }
+  .user-avatar {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--gold);
+    color: #1a1a1a;
+    font-size: 1.429em; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .user-name { font-size: 1.857em; font-weight: 600; color: white; }
+
+  /* user dropdown */
+  .user-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: #1e2d42;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px;
+    min-width: 220px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    z-index: 500;
+    overflow: hidden;
+  }
+  .user-dropdown.open { display: block; }
+  .ud-header {
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.10);
+  }
+  .ud-name  { font-size: 1.429em; font-weight: 700; color: white; }
+  .ud-email { font-size: 1.429em; color: rgba(255,255,255,0.5); margin-top: 2px; }
+  .ud-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 9px 14px;
+    font-size: 1.214em; color: rgba(255,255,255,0.75);
+    cursor: pointer;
+    border: none; background: transparent;
+    width: 100%; text-align: left; font-family: inherit;
+    transition: background 0.12s;
+  }
+  .ud-item:hover { background: rgba(255,255,255,0.08); color: white; }
+  .ud-item.danger { color: #fca5a5; }
+  .ud-item.danger:hover { background: rgba(192,57,43,0.25); }
+  .ud-sep { height: 1px; background: rgba(255,255,255,0.08); margin: 2px 0; }
+
+  /* auto-sync toggle */
+  .toggle-track {
+    width: 30px; height: 16px; border-radius: 8px;
+    background: #4b5a6a; display: inline-block;
+    position: relative; cursor: pointer; flex-shrink: 0;
+    transition: background 0.2s;
+  }
+  .toggle-track.on { background: #34d399; }
+  .toggle-track::after {
+    content:''; position: absolute;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: white; top: 2px; left: 2px;
+    transition: transform 0.2s;
+  }
+  .toggle-track.on::after { transform: translateX(14px); }
+
+  /* ─── SHARE DIALOG ─── */
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .share-dialog {
+    background: white;
+    border-radius: 12px;
+    padding: 28px;
+    width: 100%; max-width: 480px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.25);
+    max-height: 90vh; overflow-y: auto;
+  }
+  .share-dialog h2 {
+    font-family: 'Merriweather', serif;
+    font-size: 1.857em; color: var(--navy);
+    margin-bottom: 20px;
+    border: none; padding: 0;
+  }
+  .share-section { margin-bottom: 20px; }
+  .share-section-title {
+    font-size: 1.857em; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-muted);
+    margin-bottom: 10px; display: flex; align-items: center; gap: 8px;
+  }
+  .share-badge {
+    font-size: 1.214em; font-weight: 700; padding: 2px 8px;
+    border-radius: 20px; background: var(--blue-light); color: var(--navy-mid);
+    text-transform: none; letter-spacing: 0;
+  }
+  .share-badge.on { background: #d1fae5; color: #065f46; }
+  .share-link-row {
+    display: flex; gap: 6px; align-items: center; margin-bottom: 6px;
+  }
+  .share-link-input {
+    flex: 1; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: 6px;
+    font-size: 1.857em; color: var(--text-muted);
+    background: #f8fbff; font-family: monospace;
+  }
+  .share-note { font-size: 1.143em; color: var(--text-muted); line-height: 1.5; }
+  .collab-list { display: flex; flex-direction: column; gap: 8px; }
+  .collab-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: 6px; background: #f8fbff;
+    border: 1px solid var(--border);
+  }
+  .collab-avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--navy-mid); color: white;
+    font-size: 1.857em; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .collab-info { flex: 1; min-width: 0; }
+  .collab-name { font-size: 1.429em; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
+  .collab-email { font-size: 1.429em; color: var(--text-muted); }
+  .share-invite-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+  .share-invite-row input[type="email"] {
+    flex: 1; min-width: 160px;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 1.429em; font-family: inherit;
+  }
+  .share-invite-row select {
+    width: auto; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: 6px;
+    font-size: 1.429em; font-family: inherit;
+  }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .btn { padding: 8px 16px; border-radius: 6px; font-size: 1.429em; font-weight: 600; cursor: pointer; font-family: inherit; border: none; }
+  .btn-primary { background: var(--navy-mid); color: white; }
+  .btn-primary:hover { background: var(--navy); }
+  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+  .btn-ghost:hover { background: var(--blue-light); }
+  .btn-sm { padding: 6px 12px; font-size: 1.857em; }
+  .collab-role-select {
+    font-size: 1.143em; padding: 3px 6px; border-radius: 4px;
+    border: 1px solid var(--border); background: white; cursor: pointer;
+  }
+  .collab-remove-btn {
+    background: transparent; border: none; color: var(--accent);
+    cursor: pointer; font-size: 1.429em; padding: 2px 6px;
+    border-radius: 4px; transition: background 0.12s;
+  }
+  .collab-remove-btn:hover { background: var(--accent-soft); }
+
+
+  /* ─── PROJECTS TAB ─── */
+  .projects-layout { padding: 28px 32px; max-width: 960px; margin: 0 auto; }
+  .projects-topbar {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    margin-bottom: 24px; gap: 12px; flex-wrap: wrap;
+  }
+  .projects-topbar h1 { font-family:'Merriweather',serif; font-size:1.857em; color:var(--navy); }
+  .projects-topbar .sub { font-size:1.429em; color:var(--text-muted); margin-top:3px; }
+  .project-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(255px, 1fr));
+    gap: 16px;
+  }
+  .project-card {
+    background: var(--white); border: 1.5px solid var(--border);
+    border-radius: var(--radius); padding: 18px 18px 50px;
+    box-shadow: var(--shadow); cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s;
+    position: relative;
+  }
+  .project-card:hover { border-color:var(--navy-mid); box-shadow:0 4px 20px rgba(26,58,92,0.15); transform:translateY(-2px); }
+  .project-card.active-project { border-color:var(--gold); box-shadow:0 0 0 3px rgba(212,160,23,0.18),var(--shadow); }
+  .project-card.active-project::after {
+    content:'OPEN'; position:absolute; top:10px; right:10px;
+    font-size:1.429em; font-weight:800; letter-spacing:0.08em;
+    background:var(--gold); color:#1a1a1a; padding:2px 7px; border-radius:10px;
+  }
+  .pc-title {
+    font-family:'Merriweather',serif; font-size:1.857em; font-weight:700; color:var(--navy);
+    margin-bottom:6px; padding-right:44px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .pc-claim {
+    font-size:1.857em; color:var(--text-muted); line-height:1.5; margin-bottom:8px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .pc-meta { font-size:1.429em; color:#8a9aaa; display:flex; align-items:center; gap:8px; margin-top:4px; }
+  .pc-figs {
+    background:var(--blue-light); color:var(--navy-mid);
+    padding:1px 7px; border-radius:10px; font-size:1.214em; font-weight:700;
+  }
+  .pc-actions { display:flex; gap:4px; position:absolute; bottom:10px; left:18px; right:18px; justify-content:flex-end; }
+  .pc-btn {
+    background:transparent; border:1px solid var(--border); border-radius:5px;
+    padding:4px 9px; font-size:1.143em; color:var(--text-muted);
+    cursor:pointer; transition:all 0.12s; font-family:inherit; font-weight:600;
+  }
+  .pc-btn:hover { background:var(--blue-light); color:var(--navy); border-color:var(--blue-mid); }
+  .pc-btn.open-btn { background:var(--navy-mid); color:white; border-color:var(--navy-mid); }
+  .pc-btn.open-btn:hover { background:var(--navy); }
+  .pc-btn.del:hover { background:var(--accent-soft); color:var(--accent); border-color:#f0b8b8; }
+  .project-card.new-card {
+    border-style:dashed; border-color:var(--blue-mid); background:var(--blue-light);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    min-height:140px; color:var(--navy-mid); font-weight:600; font-size:1.857em;
+    gap:6px; padding-bottom:18px;
+  }
+  .project-card.new-card:hover { border-color:var(--navy-mid); background:#dbeaf8; }
+  .new-card-icon { font-size:2.286em; }
+  /* active project name shown in header */
+  .header-proj-row {
+    display:flex; align-items:center; gap:8px; margin-top:3px;
+  }
+  .header-proj-label { font-size:1.429em; color:rgba(255,255,255,0.42); }
+  .proj-chip {
+    background:rgba(212,160,23,0.22); border:1px solid rgba(212,160,23,0.4);
+    color:var(--gold); padding:1px 10px; border-radius:10px;
+    font-size:1.143em; font-weight:700; cursor:pointer; transition:background 0.15s;
+  }
+  .proj-chip:hover { background:rgba(212,160,23,0.38); }
+  .projects-signin-prompt {
+    text-align:center; padding:60px 20px; color:var(--text-muted);
+  }
+  .projects-signin-prompt .big-icon { font-size:52px; margin-bottom:16px; }
+  .projects-signin-prompt h2 {
+    font-family:'Merriweather',serif; font-size:1.857em; color:var(--navy);
+    margin-bottom:8px; border:none; padding:0;
+  }
+  .projects-signin-prompt p { font-size:1.857em; margin-bottom:20px; }
+
+  /* toast */
+  .toast-container {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    z-index: 2000; display: flex; flex-direction: column; gap: 8px; align-items: center;
+  }
+  .toast {
+    background: #1e2d42; color: white;
+    padding: 9px 18px; border-radius: 20px;
+    font-size: 1.429em; font-weight: 600;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    animation: toastIn 0.2s ease;
+  }
+  .toast.success { background: #065f46; }
+  .toast.error   { background: #7f1d1d; }
+  .toast.info    { background: #1e3a5f; }
+  @keyframes toastIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: none; } }
+
+  /* ─── FONT SIZE SLIDER ─── */
+  .font-size-ctrl {
+    display: flex; align-items: center; gap: 6px;
+    color: rgba(255,255,255,0.65); font-size: 0.82em;
+    border-left: 1px solid rgba(255,255,255,0.15);
+    padding-left: 10px;
+    user-select: none;
+  }
+  .font-size-ctrl label { white-space: nowrap; }
+  .font-slider {
+    -webkit-appearance: none; appearance: none;
+    width: 80px; height: 4px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.25);
+    outline: none; cursor: pointer;
+  }
+  .font-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--gold); cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+  }
+  .font-slider::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--gold); cursor: pointer; border: none;
+  }
+  .font-size-val {
+    min-width: 28px; text-align: center;
+    font-weight: 700; color: var(--gold); font-size: 0.82em;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">Biomedical Manuscript <span>Story Builder</span></div>
+    <div class="subtitle">Organize figures · Identify the biological story · Preview your narrative</div>
+    <div class="header-proj-row">
+      <span class="header-proj-label">Project:</span>
+      <span class="proj-chip" id="headerProjChip" onclick="switchTab('projects')" title="Switch project">Untitled Manuscript</span>
+    </div>
+  </div>
+</header>
+
+<!-- MAIN TABS -->
+<nav class="main-tabs">
+  <div class="main-tab" onclick="switchTab('projects')">📁 Projects</div>
+  <div class="main-tab active" onclick="switchTab('builder')">📝 Story Builder</div>
+  <div class="main-tab" onclick="switchTab('help-guide')">📖 Writing Guidelines</div>
+  <div class="main-tab" onclick="switchTab('help-figures')">🔬 Figure Types</div>
+  <div class="main-tab" onclick="switchTab('help-narrative')">🧬 Narrative Craft</div>
+  <div class="main-tab" onclick="switchTab('help-checklist')">✅ Final Checklist</div>
+</nav>
+
+<!-- ─── CLOUD STATUS BAR ─── -->
+<div class="cloud-bar" id="cloudBar">
+  <div class="cloud-bar-left">
+    <span class="cloud-dot off" id="cloudDot"></span>
+    <div>
+      <div class="cloud-status-text" id="cloudStatusText">Not signed in — data saved locally only</div>
+      <div class="cloud-ts-line" id="cloudTsLine"></div>
+    </div>
+  </div>
+  <!-- Font size control — always visible -->
+  <div class="font-size-ctrl">
+    <label>𝐀</label>
+    <input type="range" class="font-slider" id="fontSlider"
+      min="11" max="20" step="1" value="12"
+      oninput="applyFontSize(this.value)"
+      title="Adjust text size">
+    <label>𝐀</label>
+    <span class="font-size-val" id="fontSizeVal">14</span>
+  </div>
+  <div class="cloud-bar-right" id="cloudBarRight">
+    <!-- Not signed in -->
+    <div id="cloudNotSignedIn">
+      <button class="cloud-btn primary" id="signInBtn" onclick="cloudSignIn()" style="font-size:0.82em;padding:5px 12px;">☁ Sign in with Google</button>
+    </div>
+    <!-- Signed in -->
+    <div id="cloudSignedIn" style="display:none; align-items:center; gap:8px;">
+      <button class="cloud-btn" id="saveCloudBtn" onclick="fbSaveAll(false)" title="Save to cloud now">💾 Save</button>
+      <button class="cloud-btn" id="loadCloudBtn" onclick="fbLoadAll(false)" title="Load from cloud">⬇ Load</button>
+      <button class="cloud-btn" id="shareBtn" onclick="showShareDialog()" title="Share this manuscript with collaborators">🔗 Share</button>
+      <!-- auto-sync -->
+      <div class="ud-item" style="padding:0;gap:6px;color:rgba(255,255,255,0.7);font-size:26px;cursor:pointer;" onclick="setAutoSync(!autoSyncEnabled)" title="Toggle auto-sync">
+        <span class="toggle-track" id="autoSyncTrack"></span> Auto-sync
+      </div>
+      <!-- User chip + dropdown -->
+      <div class="user-chip" id="userChip" onclick="toggleUserDropdown()">
+        <div class="user-avatar" id="userAvatar">?</div>
+        <span class="user-name" id="userName">User</span>
+        <div class="user-dropdown" id="userDropdown">
+          <div class="ud-header">
+            <div class="ud-name"  id="udName">—</div>
+            <div class="ud-email" id="udEmail">—</div>
+          </div>
+          <button class="ud-item" onclick="fbSaveAll(false)">💾 Save to cloud</button>
+          <button class="ud-item" onclick="fbLoadAll(false)">⬇ Load from cloud</button>
+          <div class="ud-sep"></div>
+          <button class="ud-item danger" onclick="cloudSignOut()">⎋ Sign out</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- toast container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ═══════════════════════════════════════
+     TAB 0 — PROJECTS
+════════════════════════════════════════ -->
+<div class="tab-content" id="tab-projects">
+  <div class="projects-layout">
+    <div class="projects-topbar">
+      <div>
+        <h1>📁 My Manuscripts</h1>
+        <div class="sub">Each project is a separate manuscript storyline saved to the cloud.</div>
+      </div>
+      <button class="btn-accent" onclick="createNewProject()" style="padding:10px 18px;font-size:16px;">+ New Manuscript</button>
+    </div>
+    <div id="projectsSigninPrompt" class="projects-signin-prompt" style="display:none">
+      <div class="big-icon">☁</div>
+      <h2>Sign in to manage projects</h2>
+      <p>Use your Google account to save multiple manuscript storylines to the cloud and access them from anywhere.</p>
+      <button class="btn-primary btn" onclick="cloudSignIn()" style="padding:10px 24px;">Sign in with Google</button>
+    </div>
+    <div id="projectGrid" class="project-grid"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     TAB 1 — BUILDER
+════════════════════════════════════════ -->
+<div class="tab-content active" id="tab-builder">
+  <div class="builder-layout">
+    <div class="panel panel-left">
+      <h2>Story Input</h2>
+      <div class="rules-box">
+        <strong>Scientific Storytelling Quick Rules</strong>
+        1. Start with the biological problem, not your first experiment.<br>
+        2. Arrange figures logically, not chronologically.<br>
+        3. Build progression: Observation → Function → Mechanism → Validation.<br>
+        4. Every figure answers exactly one biological question.<br>
+        5. Each result section ends with a biological interpretation.<br>
+        6. Define one clear central claim for the whole manuscript.
+      </div>
+
+      <label>Central Biological Question</label>
+      <textarea id="bioQuestion" rows="3" placeholder="e.g., Does protein X regulate inflammatory signaling in macrophages?"></textarea>
+
+      <label>Main Claim (your central thesis)</label>
+      <textarea id="mainClaim" rows="3" placeholder="This study demonstrates that..."></textarea>
+
+      <div id="figuresContainer"></div>
+
+      <div class="btn-row">
+        <button onclick="addFigure()">+ Add Figure</button>
+        <button class="btn-accent" onclick="generateStory()">▶ Generate Preview</button>
+        <button class="btn-outline" onclick="saveProject()">💾 Save Project</button>
+        <input type="file" id="loadFile" style="display:none" accept=".json">
+        <button class="btn-outline" onclick="document.getElementById('loadFile').click()">📂 Load Project</button>
+      </div>
+    </div>
+
+    <div class="panel panel-right">
+      <h2>Story Preview</h2>
+      <div class="preview" id="preview">Your manuscript story preview will appear here after clicking "Generate Preview"...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     TAB 2 — WRITING GUIDELINES
+════════════════════════════════════════ -->
+<div class="tab-content" id="tab-help-guide">
+  <div class="help-layout">
+    <h1>Writing Guidelines</h1>
+    <p class="page-desc">Core principles for constructing a compelling biomedical manuscript story — from framing the problem to presenting your claim.</p>
+
+    <div class="sub-tabs">
+      <div class="sub-tab active" onclick="switchSub('guide', 'story-structure')">Story Structure</div>
+      <div class="sub-tab" onclick="switchSub('guide', 'central-question')">Central Question</div>
+      <div class="sub-tab" onclick="switchSub('guide', 'main-claim')">Main Claim</div>
+      <div class="sub-tab" onclick="switchSub('guide', 'result-titles')">Result Section Titles</div>
+    </div>
+
+    <!-- Story Structure -->
+    <div class="sub-content active" id="guide-story-structure">
+      <div class="callout info"><span class="callout-icon">💡</span><div><strong>The Core Principle</strong>A biomedical manuscript tells a coherent story. Readers should be able to follow your logical progression from problem to solution without reading every Methods section.</div></div>
+
+      <div class="arc-diagram">
+        <div class="arc-step obs"><span class="step-num">1</span><span class="step-label">Observation</span><span class="step-desc">Establish the phenomenon</span></div>
+        <div class="arc-step func"><span class="step-num">2</span><span class="step-label">Function</span><span class="step-desc">Prove biological relevance</span></div>
+        <div class="arc-step mech"><span class="step-num">3</span><span class="step-label">Mechanism</span><span class="step-desc">Explain the how and why</span></div>
+        <div class="arc-step val"><span class="step-num">4</span><span class="step-label">Validation</span><span class="step-desc">Confirm clinical/in vivo significance</span></div>
+      </div>
+
+      <div class="help-section">
+        <h3>Why logical order matters <span class="tag">Key principle</span></h3>
+        <p>Figures should be ordered to answer questions in the reader's mind, not in the order you performed experiments. Ask yourself: <em>"What does the reader need to believe before I can show them the next result?"</em></p>
+        <ul>
+          <li>First, convince the reader the phenomenon <strong>exists</strong> (Observation).</li>
+          <li>Then, convince them it <strong>matters</strong> (Functional Relevance).</li>
+          <li>Then, explain <strong>how</strong> it happens (Mechanism).</li>
+          <li>Finally, show it holds in a <strong>real-world context</strong> (Validation).</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>Common structural mistakes</h3>
+        <table class="comp-table">
+          <tr><th>❌ Weak approach</th><th>✅ Strong approach</th></tr>
+          <tr><td class="bad">Figures ordered by experiment date</td><td class="good">Figures ordered by logical narrative</td></tr>
+          <tr><td class="bad">Jumping straight to mechanism without establishing phenomenon</td><td class="good">Establishing the "what" before explaining the "how"</td></tr>
+          <tr><td class="bad">Presenting data without biological interpretation</td><td class="good">Each figure ends with a take-home message</td></tr>
+          <tr><td class="bad">Multiple unrelated claims across figures</td><td class="good">All figures converge on one central claim</td></tr>
+          <tr><td class="bad">Validation figure appearing in the middle of the paper</td><td class="good">Validation anchors the end of the story</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- Central Question -->
+    <div class="sub-content" id="guide-central-question">
+      <div class="callout tip"><span class="callout-icon">🎯</span><div><strong>One question to rule them all</strong>Every experiment in your manuscript should trace back to a single central biological question. If you have two unrelated questions, you may need two manuscripts.</div></div>
+
+      <div class="help-section">
+        <h3>What makes a strong central biological question?</h3>
+        <ul>
+          <li>Addresses a <strong>gap in current knowledge</strong>, not just a gap in your data.</li>
+          <li>Is <strong>specific enough</strong> to be answered experimentally, but broad enough to be significant.</li>
+          <li>Uses precise biological language: name the molecule, pathway, cell type, or disease context.</li>
+          <li>Implies a <strong>measurable outcome</strong>.</li>
+          <li>Is interesting to your field — the answer should change how someone thinks or acts.</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>Examples: Weak vs. strong questions</h3>
+        <div class="example-box"><strong>❌ Too vague:</strong> What does protein X do?</div>
+        <div class="example-box"><strong>❌ Too narrow:</strong> Does X increase in cell line Y under condition Z?</div>
+        <div class="example-box"><strong>✅ Strong:</strong> Does protein X regulate NF-κB–driven inflammatory gene expression in primary macrophages during bacterial infection?</div>
+        <div class="example-box"><strong>❌ Too vague:</strong> Is gene Y important in cancer?</div>
+        <div class="example-box"><strong>✅ Strong:</strong> Does gene Y promote tumor cell survival through the PI3K/AKT pathway in KRAS-mutant colorectal cancer?</div>
+      </div>
+
+      <div class="callout warning"><span class="callout-icon">⚠️</span><div><strong>Common pitfall</strong>Don't confuse a biological question with a technical question. "Can we detect X by immunofluorescence?" is a technical question. "Does X localize to the nucleus during hypoxia?" is a biological question.</div></div>
+    </div>
+
+    <!-- Main Claim -->
+    <div class="sub-content" id="guide-main-claim">
+      <div class="callout info"><span class="callout-icon">🔬</span><div><strong>Your main claim is your manuscript's thesis</strong>It should synthesize all your figures into one declarative sentence. A reviewer should be able to read it and understand exactly what your paper proves.</div></div>
+
+      <div class="help-section">
+        <h3>Anatomy of a strong main claim</h3>
+        <p>A strong main claim typically has these components:</p>
+        <ul>
+          <li><strong>The molecule/gene/pathway</strong> you studied</li>
+          <li><strong>The biological action</strong> (promotes, inhibits, regulates, activates, suppresses...)</li>
+          <li><strong>The downstream outcome</strong> (inflammation, apoptosis, tumor growth...)</li>
+          <li><strong>The mechanistic basis</strong> (by activating, by binding, by phosphorylating...)</li>
+          <li><strong>The biological context</strong> (in macrophages, in vivo, in colorectal cancer...)</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>Examples</h3>
+        <div class="example-box"><strong>❌ Weak:</strong> "Protein X is involved in inflammation."</div>
+        <div class="example-box"><strong>❌ Weak:</strong> "We found that gene Y is upregulated in cancer."</div>
+        <div class="example-box"><strong>✅ Strong:</strong> "Protein X promotes macrophage inflammatory activation by stabilizing NF-κB in the nucleus through direct interaction with IKKβ, and its deletion in myeloid cells protects mice from LPS-induced septic shock."</div>
+        <div class="example-box"><strong>✅ Strong:</strong> "MicroRNA-21 drives colorectal cancer proliferation and chemoresistance by repressing the PTEN/PI3K/AKT axis, and its inhibition restores oxaliplatin sensitivity in patient-derived organoids."</div>
+      </div>
+
+      <div class="callout warning"><span class="callout-icon">⚠️</span><div><strong>Test your claim</strong>Can every figure in your paper be described as "evidence for" your main claim? If a figure doesn't support the claim, either the figure doesn't belong or your claim needs to be rewritten.</div></div>
+    </div>
+
+    <!-- Result Section Titles -->
+    <div class="sub-content" id="guide-result-titles">
+      <div class="callout tip"><span class="callout-icon">✍️</span><div><strong>Result section titles should tell the story</strong>Titles like "Figure 2" or "Results of experiment 3" are useless. Every result section title should be a declarative sentence that states the biological conclusion.</div></div>
+
+      <div class="help-section">
+        <h3>Rules for result section titles</h3>
+        <ul>
+          <li>Write as a <strong>complete declarative sentence</strong>, not a question or topic label.</li>
+          <li>State the <strong>biological conclusion</strong>, not the technique used.</li>
+          <li>Include the <strong>molecule, effect, and context</strong> where possible.</li>
+          <li>Keep them to <strong>one sentence</strong>, around 10–20 words.</li>
+          <li>Titles should flow logically — reading them top to bottom should tell your whole story.</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>Examples: weak vs. strong titles</h3>
+        <table class="comp-table">
+          <tr><th>❌ Weak title</th><th>✅ Strong title</th></tr>
+          <tr><td class="bad">Protein X expression analysis</td><td class="good">Protein X is upregulated in LPS-stimulated macrophages</td></tr>
+          <tr><td class="bad">Loss-of-function experiments</td><td class="good">Silencing protein X attenuates TNF-α and IL-6 secretion</td></tr>
+          <tr><td class="bad">Mechanism studies</td><td class="good">Protein X stabilizes IKKβ to sustain NF-κB nuclear retention</td></tr>
+          <tr><td class="bad">In vivo data</td><td class="good">Myeloid-specific deletion of protein X protects mice from endotoxemia</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     TAB 3 — FIGURE TYPES
+════════════════════════════════════════ -->
+<div class="tab-content" id="tab-help-figures">
+  <div class="help-layout">
+    <h1>Figure Types</h1>
+    <p class="page-desc">Each figure in your manuscript plays a distinct narrative role. Use these guidelines to decide what belongs in each type and what to write for each field.</p>
+
+    <div class="sub-tabs">
+      <div class="sub-tab active" onclick="switchSub('figures', 'obs')">🔵 Observation</div>
+      <div class="sub-tab" onclick="switchSub('figures', 'func')">🟢 Functional Relevance</div>
+      <div class="sub-tab" onclick="switchSub('figures', 'mech')">🟡 Mechanism</div>
+      <div class="sub-tab" onclick="switchSub('figures', 'val')">🔴 Validation</div>
+    </div>
+
+    <!-- Observation -->
+    <div class="sub-content active" id="figures-obs">
+      <div class="callout info"><span class="callout-icon">🔵</span><div><strong>Observation figures establish "the what"</strong>These figures introduce the biological phenomenon that your whole story is about. Without a compelling observation, readers have no reason to care about the rest of the manuscript.</div></div>
+
+      <div class="help-grid">
+        <div class="help-card">
+          <div class="card-icon">🎯</div>
+          <h3>Purpose</h3>
+          <ul>
+            <li>Show that a gene, protein, or pathway is altered in your condition of interest.</li>
+            <li>Establish correlation between your molecule and a disease or biological state.</li>
+            <li>Demonstrate that the phenomenon is real, reproducible, and specific.</li>
+          </ul>
+        </div>
+        <div class="help-card">
+          <div class="card-icon">🧪</div>
+          <h3>Typical experiments</h3>
+          <ul>
+            <li>qPCR / Western blot comparing control vs. treated</li>
+            <li>IHC / IF showing expression in tissue</li>
+            <li>TCGA / GEO database correlation analysis</li>
+            <li>Patient sample expression data</li>
+            <li>Single-cell or bulk RNA-seq differential expression</li>
+          </ul>
+        </div>
+        <div class="help-card">
+          <div class="card-icon">✍️</div>
+          <h3>What to write in each field</h3>
+          <ul>
+            <li><strong>Biological question:</strong> "Is X dysregulated in [disease/condition]?"</li>
+            <li><strong>Main finding:</strong> "X is significantly elevated in Y compared to Z (p&lt;0.01, n=5)"</li>
+            <li><strong>Take-home message:</strong> "X is a condition-specific marker that warrants functional investigation."</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Common pitfalls in Observation figures</h3>
+        <ul>
+          <li>Showing expression in only one cell line — always include primary cells or patient samples.</li>
+          <li>Reporting only fold-change without statistical analysis.</li>
+          <li>Not justifying why the change is biologically meaningful (e.g., what threshold matters?).</li>
+          <li>Including too many molecules — one observation figure should focus on one molecule/pathway.</li>
+        </ul>
+        <div class="example-box"><strong>Strong take-home message example:</strong> "Protein X is consistently upregulated (3–5 fold) in inflamed synovial tissue from RA patients compared to healthy donors, suggesting a disease-associated role in joint inflammation."</div>
+      </div>
+    </div>
+
+    <!-- Functional Relevance -->
+    <div class="sub-content" id="figures-func">
+      <div class="callout tip"><span class="callout-icon">🟢</span><div><strong>Functional relevance figures establish "the why it matters"</strong>You've shown the phenomenon exists. Now prove it is <em>causally</em> important — not just correlated. This is where gain- and loss-of-function experiments live.</div></div>
+
+      <div class="help-grid">
+        <div class="help-card">
+          <div class="card-icon">🎯</div>
+          <h3>Purpose</h3>
+          <ul>
+            <li>Demonstrate that your molecule drives (or suppresses) a biological outcome.</li>
+            <li>Establish causality — not just correlation.</li>
+            <li>Show that gain or loss of function has measurable biological consequences.</li>
+          </ul>
+        </div>
+        <div class="help-card">
+          <div class="card-icon">🧪</div>
+          <h3>Typical experiments</h3>
+          <ul>
+            <li>siRNA / shRNA knockdown phenotype assays</li>
+            <li>CRISPR knockout cell lines</li>
+            <li>Overexpression rescue experiments</li>
+            <li>Proliferation, apoptosis, migration, invasion assays</li>
+            <li>Colony formation, sphere formation assays</li>
+            <li>Mouse knockout or transgenic phenotypes</li>
+          </ul>
+        </div>
+        <div class="help-card">
+          <div class="card-icon">✍️</div>
+          <h3>What to write in each field</h3>
+          <ul>
+            <li><strong>Biological question:</strong> "Does X regulate [specific phenotype]?"</li>
+            <li><strong>Main finding:</strong> "Knockdown of X reduces apoptosis by 60%; overexpression increases it 2-fold."</li>
+            <li><strong>Take-home message:</strong> "X is required for [phenotype] and its loss is sufficient to abrogate the effect."</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>The importance of rescue experiments</h3>
+        <p>The gold standard in functional figures is the <strong>rescue experiment</strong>: knock out X, observe phenotype change, then re-express X and show the phenotype returns to baseline. This rigorously proves causality and rules out off-target effects.</p>
+        <div class="callout warning"><span class="callout-icon">⚠️</span><div>Reviewers will ask: "Could the siRNA effect be off-target?" Always include at least two independent siRNA sequences, or a rescue experiment.</div></div>
+      </div>
+    </div>
+
+    <!-- Mechanism -->
+    <div class="sub-content" id="figures-mech">
+      <div class="callout warning"><span class="callout-icon">🟡</span><div><strong>Mechanism figures explain "the how"</strong>These are the most intellectually demanding figures. You must explain the molecular pathway through which your protein exerts its effects. This is what separates a descriptive paper from a mechanistic one.</div></div>
+
+      <div class="help-grid">
+        <div class="help-card">
+          <div class="card-icon">🎯</div>
+          <h3>Purpose</h3>
+          <ul>
+            <li>Identify the molecular partner, pathway, or regulatory event.</li>
+            <li>Show direct physical or biochemical interaction.</li>
+            <li>Demonstrate that the mechanism is required for the observed function.</li>
+          </ul>
+        </div>
+        <div class="help-card">
+          <div class="card-icon">🧪</div>
+          <h3>Typical experiments</h3>
+          <ul>
+            <li>Co-immunoprecipitation (Co-IP)</li>
+            <li>Proximity ligation assay (PLA)</li>
+            <li>ChIP-seq / ChIP-qPCR</li>
+            <li>Reporter gene assays (luciferase)</li>
+            <li>In vitro binding / pull-down assays</li>
+            <li>Phosphorylation / ubiquitination site mutagenesis</li>
+            <li>Structural biology (cryo-EM, crystallography)</li>
+          </ul>
+        </div>
+        <div class="help-card">
+          <div class="card-icon">✍️</div>
+          <h3>What to write in each field</h3>
+          <ul>
+            <li><strong>Biological question:</strong> "By what molecular mechanism does X regulate [phenotype]?"</li>
+            <li><strong>Main finding:</strong> "X directly binds IKKβ and prevents its ubiquitination-mediated degradation."</li>
+            <li><strong>Take-home message:</strong> "X stabilizes IKKβ to sustain NF-κB signaling; disrupting this interaction abolishes the inflammatory phenotype."</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Mechanistic depth: what reviewers expect</h3>
+        <ul>
+          <li>Correlation is not mechanism. Show the <strong>direct biochemical event</strong>.</li>
+          <li>Use <strong>domain/mutant analysis</strong> to pinpoint the interaction interface.</li>
+          <li>Confirm that disrupting the mechanism <strong>phenocopies</strong> loss of function.</li>
+          <li>Ideally, place your molecule within an existing, known pathway.</li>
+        </ul>
+        <div class="example-box"><strong>Strong mechanism take-home:</strong> "Protein X interacts with the kinase domain of IKKβ through its C-terminal coiled-coil domain, preventing K48-linked ubiquitination and proteasomal degradation. An X-ΔCCD mutant that cannot bind IKKβ fails to sustain NF-κB activity and inflammatory gene expression."</div>
+      </div>
+    </div>
+
+    <!-- Validation -->
+    <div class="sub-content" id="figures-val">
+      <div class="callout danger"><span class="callout-icon">🔴</span><div><strong>Validation figures establish "the real-world significance"</strong>All the prior in vitro work means little without in vivo or clinical validation. These figures answer: "Does this matter in a living organism or in patients?"</div></div>
+
+      <div class="help-grid">
+        <div class="help-card">
+          <div class="card-icon">🎯</div>
+          <h3>Purpose</h3>
+          <ul>
+            <li>Confirm that your in vitro findings hold in vivo or in patient samples.</li>
+            <li>Establish translational or clinical relevance.</li>
+            <li>Provide proof-of-concept for therapeutic targeting.</li>
+          </ul>
+        </div>
+        <div class="help-card">
+          <div class="card-icon">🧪</div>
+          <h3>Typical experiments</h3>
+          <ul>
+            <li>Mouse disease models (KO, transgenic, xenograft, allograft)</li>
+            <li>Patient-derived organoids or PDX models</li>
+            <li>Clinical sample IHC with outcome correlation</li>
+            <li>Kaplan-Meier survival analysis (TCGA)</li>
+            <li>Drug/inhibitor treatment in animal models</li>
+            <li>Human biomarker cohort studies</li>
+          </ul>
+        </div>
+        <div class="help-card">
+          <div class="card-icon">✍️</div>
+          <h3>What to write in each field</h3>
+          <ul>
+            <li><strong>Biological question:</strong> "Does X regulate [phenotype] in vivo / in patients?"</li>
+            <li><strong>Main finding:</strong> "Myeloid-specific X-KO mice show reduced tumor burden and improved survival."</li>
+            <li><strong>Take-home message:</strong> "X is a clinically relevant target whose loss confers therapeutic benefit in vivo."</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Making a strong validation argument</h3>
+        <ul>
+          <li>Use <strong>conditional/tissue-specific knockouts</strong> rather than global KO when possible to isolate the relevant cell type.</li>
+          <li>Include <strong>sample size justification</strong> and power calculations for animal studies.</li>
+          <li>For patient data: clearly define cohort, match for confounders, and use multivariate analysis.</li>
+          <li>If using pharmacological inhibitors, show <strong>target engagement</strong> (e.g., reduced phosphorylation of substrate) alongside phenotypic outcome.</li>
+        </ul>
+        <div class="example-box"><strong>Strong validation take-home:</strong> "LysM-Cre × X-flox/flox mice are protected from LPS-induced cytokine storm and display 60% improved survival compared to controls, establishing X as a myeloid-intrinsic driver of endotoxemia."</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     TAB 4 — NARRATIVE CRAFT
+════════════════════════════════════════ -->
+<div class="tab-content" id="tab-help-narrative">
+  <div class="help-layout">
+    <h1>Narrative Craft</h1>
+    <p class="page-desc">Advanced techniques for writing Results sections, connecting figures, and making your biological argument persuasive and clear.</p>
+
+    <div class="sub-tabs">
+      <div class="sub-tab active" onclick="switchSub('narrative', 'transitions')">Transitions</div>
+      <div class="sub-tab" onclick="switchSub('narrative', 'results-writing')">Results Writing</div>
+      <div class="sub-tab" onclick="switchSub('narrative', 'intro-conclusion')">Intro &amp; Discussion</div>
+      <div class="sub-tab" onclick="switchSub('narrative', 'reviewer')">Reviewer Logic</div>
+    </div>
+
+    <!-- Transitions -->
+    <div class="sub-content active" id="narrative-transitions">
+      <div class="callout info"><span class="callout-icon">🔗</span><div><strong>Transitions are the invisible backbone of your story</strong>The last sentence of each result section should raise the question that the next section answers. This creates narrative momentum and a sense of inevitability.</div></div>
+
+      <div class="help-section">
+        <h3>The "bridge sentence" technique</h3>
+        <p>End each result section with a sentence that:</p>
+        <ol>
+          <li>Summarizes the take-home conclusion of the current figure.</li>
+          <li>Raises the next logical question.</li>
+        </ol>
+        <div class="example-box"><strong>After an Observation figure:</strong> "Together, these data establish that protein X is selectively upregulated during inflammatory macrophage activation. We next investigated whether X is required for the inflammatory response or merely a byproduct of it."</div>
+        <div class="example-box"><strong>After a Functional Relevance figure:</strong> "These results demonstrate that X is causally required for NF-κB target gene induction. To understand how X mediates this effect, we sought to identify its direct molecular effector."</div>
+        <div class="example-box"><strong>After a Mechanism figure:</strong> "Collectively, these findings indicate that X stabilizes IKKβ to sustain NF-κB signaling. We therefore examined whether this pathway operates in vivo in a model of systemic inflammation."</div>
+      </div>
+
+      <div class="help-section">
+        <h3>Linking language to use</h3>
+        <ul>
+          <li>"Having established that X… we next sought to determine whether…"</li>
+          <li>"These findings prompted us to ask whether…"</li>
+          <li>"To investigate the mechanism underlying this phenotype, we…"</li>
+          <li>"To determine whether these in vitro observations translate to a physiological context, we…"</li>
+          <li>"Given that X regulates Y, we asked whether this pathway operates in vivo."</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Results Writing -->
+    <div class="sub-content" id="narrative-results-writing">
+      <div class="callout tip"><span class="callout-icon">✍️</span><div><strong>Results sections describe, then interpret</strong>First present what you observed (data summary), then tell the reader what it means (biological interpretation). Never leave data uninterpreted.</div></div>
+
+      <div class="help-section">
+        <h3>The 3-part results paragraph structure</h3>
+        <ol>
+          <li><strong>Setup</strong> — State the rationale: what you wanted to know and why.</li>
+          <li><strong>Data</strong> — Report what you observed, with statistics.</li>
+          <li><strong>Interpretation</strong> — State the biological conclusion that follows.</li>
+        </ol>
+        <div class="example-box">
+          <strong>Setup:</strong> "To determine whether protein X drives macrophage inflammatory activation, we silenced X expression using two independent siRNAs in bone marrow–derived macrophages (BMDMs) and stimulated them with LPS.<br>
+          <strong>Data:</strong> X knockdown reduced TNF-α mRNA by 70% and IL-6 secretion by 65% compared to scramble controls (p&lt;0.001; Figure 2A–C).<br>
+          <strong>Interpretation:</strong> These data indicate that X is required for full NF-κB–dependent inflammatory gene expression in macrophages."
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Language precision tips</h3>
+        <table class="comp-table">
+          <tr><th>❌ Imprecise</th><th>✅ Precise</th></tr>
+          <tr><td class="bad">X was increased</td><td class="good">X mRNA was upregulated 3.2-fold (p=0.002, n=5)</td></tr>
+          <tr><td class="bad">X seems to regulate Y</td><td class="good">X is required for Y, as its loss abrogated the response</td></tr>
+          <tr><td class="bad">We found that X interacts with Y</td><td class="good">Co-IP confirmed that endogenous X and Y interact in macrophages</td></tr>
+          <tr><td class="bad">Treatment had an effect on cells</td><td class="good">LPS treatment increased X expression 4-fold within 2 hours</td></tr>
+          <tr><td class="bad">The data show interesting results</td><td class="good">These results demonstrate that X is required for NF-κB activation</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- Intro & Discussion -->
+    <div class="sub-content" id="narrative-intro-conclusion">
+      <div class="help-section">
+        <h3>Introduction structure <span class="tag">3-part funnel</span></h3>
+        <ol>
+          <li><strong>Broad context</strong> — Why does the field care about this biological problem? (2–3 sentences)</li>
+          <li><strong>Gap in knowledge</strong> — What is unknown, and why does it matter? (2–3 sentences)</li>
+          <li><strong>Your approach and claim</strong> — What you did, and what you found. (2–3 sentences)</li>
+        </ol>
+        <div class="example-box"><strong>Example funnel:</strong> "Macrophage-mediated inflammation drives the pathogenesis of sepsis, a life-threatening condition affecting millions annually. While NF-κB signaling is central to inflammatory gene induction, the upstream regulators that fine-tune its activity in macrophages remain incompletely characterized. Here we identify protein X as a novel stabilizer of IKKβ that is required for full inflammatory activation, and demonstrate that its myeloid-specific deletion protects mice from endotoxin-induced lethality."</div>
+      </div>
+
+      <div class="help-section">
+        <h3>Discussion structure</h3>
+        <ol>
+          <li><strong>Restate the main finding</strong> — One concise paragraph summarizing your central claim.</li>
+          <li><strong>Place it in context</strong> — How does it fit with existing literature? Does it support, extend, or contradict prior work?</li>
+          <li><strong>Mechanistic insight</strong> — Highlight the novel mechanistic contribution.</li>
+          <li><strong>Limitations</strong> — Be honest and preempt reviewer criticism.</li>
+          <li><strong>Translational implications</strong> — What does this mean for disease biology or therapy?</li>
+          <li><strong>Future directions</strong> — What questions remain open?</li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- Reviewer Logic -->
+    <div class="sub-content" id="narrative-reviewer">
+      <div class="callout danger"><span class="callout-icon">🔍</span><div><strong>Think like a reviewer before you submit</strong>Reviewers are experts who will probe the weakest links in your logic. Anticipating their questions is one of the most effective ways to strengthen your manuscript.</div></div>
+
+      <div class="help-section">
+        <h3>Questions reviewers always ask</h3>
+        <ul>
+          <li>"Is the knockdown efficient and specific? Show me efficiency data."</li>
+          <li>"Could the effect be due to off-target knockdown? Where is your rescue experiment?"</li>
+          <li>"What cell lines did you use? Are they representative of the biology?"</li>
+          <li>"Is there a human disease context? Why should clinicians care?"</li>
+          <li>"What is the endogenous expression level? Is the overexpression physiological?"</li>
+          <li>"How does this fit with [competing paper]? Have you compared your findings?"</li>
+          <li>"What is the sample size? Was the study powered sufficiently?"</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>The "so what?" test</h3>
+        <p>After every figure, ask yourself: <strong>"So what does this mean biologically?"</strong> If you cannot answer this in one clear sentence, you need either more data or a clearer interpretation. Reviewers will reject papers where the biological significance is unclear, even if the data quality is excellent.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     TAB 5 — FINAL CHECKLIST
+════════════════════════════════════════ -->
+<div class="tab-content" id="tab-help-checklist">
+  <div class="help-layout">
+    <h1>Final Checklist</h1>
+    <p class="page-desc">Use these checklists before submission to ensure your manuscript tells a complete, rigorous, and compelling story.</p>
+
+    <div class="help-grid" style="margin-bottom: 24px;">
+      <div class="help-card">
+        <div class="card-icon">🏗️</div>
+        <h3>Overall Story Logic</h3>
+        <ul class="checklist">
+          <li>One clear central biological question</li>
+          <li>One declarative main claim</li>
+          <li>Figures in logical, not chronological, order</li>
+          <li>Each figure supports the main claim</li>
+          <li>All four narrative stages represented (Obs → Func → Mech → Val)</li>
+        </ul>
+      </div>
+      <div class="help-card">
+        <div class="card-icon">📊</div>
+        <h3>Each Result Section</h3>
+        <ul class="checklist">
+          <li>Declarative title stating the conclusion</li>
+          <li>Rationale stated at the beginning</li>
+          <li>Data presented with statistics (n, p-value)</li>
+          <li>Biological interpretation at the end</li>
+          <li>Bridge sentence leading to the next figure</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="help-section">
+      <h3>Observation figures ✅</h3>
+      <ul class="checklist">
+        <li><strong>Specificity:</strong> Shown in multiple cell types or conditions, not just one.</li>
+        <li><strong>Quantification:</strong> Band intensities or transcript levels quantified and graphed.</li>
+        <li><strong>Statistics:</strong> Appropriate test used; p-value and sample size reported.</li>
+        <li><strong>Relevance:</strong> Includes at least one patient sample or primary cell data point.</li>
+        <li><strong>Interpretation:</strong> Explains why this observation is biologically noteworthy.</li>
+      </ul>
+    </div>
+
+    <div class="help-section">
+      <h3>Functional Relevance figures ✅</h3>
+      <ul class="checklist">
+        <li><strong>Two independent knockdown reagents</strong> or a rescue experiment included.</li>
+        <li><strong>Knockdown efficiency shown</strong> (qPCR + Western) in the same figure or supplement.</li>
+        <li><strong>Both gain- and loss-of-function</strong> shown (or clearly justified why only one).</li>
+        <li><strong>Phenotype is biologically meaningful</strong> (magnitude and context discussed).</li>
+        <li><strong>Appropriate controls:</strong> Scramble siRNA, empty vector, vehicle treatment.</li>
+      </ul>
+    </div>
+
+    <div class="help-section">
+      <h3>Mechanism figures ✅</h3>
+      <ul class="checklist">
+        <li><strong>Direct biochemical interaction demonstrated</strong> (Co-IP, PLA, pull-down).</li>
+        <li><strong>Domain mapping or mutagenesis</strong> identifies the critical interface.</li>
+        <li><strong>Mutant phenocopies loss of function</strong> — disrupting the interaction abolishes the phenotype.</li>
+        <li><strong>Endogenous proteins used</strong> where possible (not only overexpressed tagged versions).</li>
+        <li><strong>Placed within a known pathway</strong> with upstream/downstream context.</li>
+      </ul>
+    </div>
+
+    <div class="help-section">
+      <h3>Validation figures ✅</h3>
+      <ul class="checklist">
+        <li><strong>In vivo model is appropriate</strong> for the biology being studied.</li>
+        <li><strong>Sample size and power calculation</strong> stated.</li>
+        <li><strong>Animal experiment blinding and randomization</strong> described.</li>
+        <li><strong>Patient data:</strong> Cohort defined, confounders addressed, multivariate analysis where needed.</li>
+        <li><strong>Phenotype recapitulates in vitro findings</strong> — tells the same story in a living system.</li>
+      </ul>
+    </div>
+
+    <div class="callout tip" style="margin-top:10px;"><span class="callout-icon">🚀</span><div><strong>Final story test</strong>Read only your result section titles in order. If they tell a coherent story from problem to solution without reading the rest of the text — your manuscript is well-structured and ready for submission.</div></div>
+  </div>
+</div>
+
+<script>
+// ── Tab switching ──────────────────────────────────
+function switchTab(id) {
+  const ids = ['projects','builder','help-guide','help-figures','help-narrative','help-checklist'];
+  document.querySelectorAll('.main-tab').forEach((t, i) => {
+    t.classList.toggle('active', ids[i] === id);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  if (id === 'projects') renderProjectGrid();
+}
+
+// ── Sub-tab switching ──────────────────────────────
+function switchSub(group, id) {
+  const parent = document.getElementById('tab-help-' + group) ||
+                 document.getElementById('tab-help-figures') ||
+                 document.getElementById('tab-help-narrative') ||
+                 document.getElementById('tab-help-checklist');
+
+  // find the right tab panel
+  const panels = {
+    'guide': 'tab-help-guide',
+    'figures': 'tab-help-figures',
+    'narrative': 'tab-help-narrative'
+  };
+  const panelEl = document.getElementById(panels[group]);
+  if (!panelEl) return;
+
+  panelEl.querySelectorAll('.sub-tab').forEach(t => {
+    t.classList.toggle('active', t.getAttribute('onclick').includes("'" + id + "'"));
+  });
+  panelEl.querySelectorAll('.sub-content').forEach(c => {
+    c.classList.toggle('active', c.id === group + '-' + id);
+  });
+}
+
+// ── Data-driven figure store ───────────────────────
+// Each figure is a plain object; the DOM is always rendered from this array.
+let figures = []; // [{type, question, finding, message, title}, ...]
+let _uid = 0;     // unique key per figure (survives reorder/delete)
+
+const TYPE_MAP = {
+  'Observation': 'obs',
+  'Functional Relevance': 'func',
+  'Mechanism': 'mech',
+  'Validation': 'val'
+};
+
+// Snapshot current DOM values back into figures[]
+function syncFromDOM() {
+  figures.forEach((fig, i) => {
+    const k = fig._uid;
+    fig.type     = (document.getElementById(`type_${k}`)     || {}).value   || fig.type;
+    fig.question = (document.getElementById(`question_${k}`) || {}).value   || fig.question;
+    fig.finding  = (document.getElementById(`finding_${k}`)  || {}).value   || fig.finding;
+    fig.message  = (document.getElementById(`message_${k}`)  || {}).value   || fig.message;
+    fig.title    = (document.getElementById(`title_${k}`)    || {}).value   || fig.title;
+  });
+}
+
+// Render all figure blocks from figures[]
+function renderFigures() {
+  const container = document.getElementById("figuresContainer");
+  container.innerHTML = "";
+  figures.forEach((fig, i) => {
+    const k = fig._uid;
+    const num = i + 1;
+    const isFirst = i === 0;
+    const isLast  = i === figures.length - 1;
+    const badgeCls = TYPE_MAP[fig.type] || 'obs';
+
+    const div = document.createElement("div");
+    div.className = "figure-block";
+    div.dataset.uid = k;
+
+    div.innerHTML = `
+      <div class="figure-block-header">
+        <h3>Figure ${num}</h3>
+        <div class="fig-controls">
+          <button class="fig-btn" title="Move up"    onclick="moveFigure(${k}, -1)" ${isFirst ? 'disabled style="opacity:0.3;cursor:default"' : ''}>▲</button>
+          <button class="fig-btn" title="Move down"  onclick="moveFigure(${k},  1)" ${isLast  ? 'disabled style="opacity:0.3;cursor:default"' : ''}>▼</button>
+          <span class="figure-type-badge ${badgeCls}" id="badge_${k}">${fig.type}</span>
+          <button class="fig-btn del" title="Delete figure" onclick="deleteFigure(${k})">✕</button>
+        </div>
+      </div>
+      <label>Figure Type</label>
+      <select id="type_${k}" onchange="onTypeChange(${k})">
+        ${['Observation','Functional Relevance','Mechanism','Validation'].map(t =>
+          `<option${fig.type === t ? ' selected' : ''}>${t}</option>`).join('')}
+      </select>
+      <label>Biological Question this figure answers</label>
+      <textarea id="question_${k}" rows="3" placeholder="e.g., Is protein X upregulated in inflamed macrophages?">${fig.question}</textarea>
+      <label>Main Finding (with key statistics)</label>
+      <textarea id="finding_${k}" rows="3" placeholder="e.g., X mRNA is 4-fold elevated in LPS-treated cells (p&lt;0.001, n=5)">${fig.finding}</textarea>
+      <label>Take-home Message (biological interpretation)</label>
+      <textarea id="message_${k}" rows="3" placeholder="e.g., X is induced during macrophage activation and may play a role in inflammatory signaling">${fig.message}</textarea>
+      <label>Result Section Title (declarative sentence)</label>
+      <input type="text" id="title_${k}" placeholder="e.g., Protein X is selectively upregulated in activated macrophages" value="${fig.title.replace(/"/g,'&quot;')}">
+    `;
+    container.appendChild(div);
+  });
+}
+
+function onTypeChange(uid) {
+  const sel   = document.getElementById(`type_${uid}`);
+  const badge = document.getElementById(`badge_${uid}`);
+  badge.className = 'figure-type-badge ' + (TYPE_MAP[sel.value] || '');
+  badge.textContent = sel.value;
+  const fig = figures.find(f => f._uid === uid);
+  if (fig) fig.type = sel.value;
+}
+
+function addFigure() {
+  syncFromDOM();
+  figures.push({ _uid: ++_uid, type:'Observation', question:'', finding:'', message:'', title:'' });
+  renderFigures();
+  // Scroll to bottom of container
+  document.getElementById("figuresContainer").lastElementChild.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function deleteFigure(uid) {
+  if (figures.length <= 1) { alert("You need at least one figure."); return; }
+  syncFromDOM();
+  figures = figures.filter(f => f._uid !== uid);
+  renderFigures();
+}
+
+function moveFigure(uid, dir) {
+  syncFromDOM();
+  const idx = figures.findIndex(f => f._uid === uid);
+  const target = idx + dir;
+  if (target < 0 || target >= figures.length) return;
+  [figures[idx], figures[target]] = [figures[target], figures[idx]];
+  renderFigures();
+  // Highlight the moved card briefly
+  setTimeout(() => {
+    const moved = document.querySelector(`[data-uid="${uid}"]`);
+    if (moved) {
+      moved.style.transition = 'box-shadow 0.3s';
+      moved.style.boxShadow = '0 0 0 3px rgba(31,78,121,0.35)';
+      setTimeout(() => { moved.style.boxShadow = ''; }, 700);
+    }
+  }, 30);
+}
+
+// ── Generate story preview ─────────────────────────
+function generateStory() {
+  syncFromDOM();
+  let preview = "";
+  const bioQuestion = document.getElementById("bioQuestion").value;
+  const mainClaim   = document.getElementById("mainClaim").value;
+
+  preview += "============================\n";
+  preview += "MANUSCRIPT STORY OVERVIEW\n";
+  preview += "============================\n\n";
+  preview += "Central Biological Question:\n" + bioQuestion + "\n\n";
+  preview += "Main Claim:\n" + mainClaim + "\n\n";
+  preview += "--------------------------------------\n";
+  preview += "Narrative Flow\n";
+  preview += "--------------------------------------\n\n";
+
+  figures.forEach((fig, i) => {
+    const num = i + 1;
+    preview += `Figure ${num} (${fig.type})\n`;
+    preview += `Result Section Title: ${fig.title}\n\n`;
+    preview += `Biological Question:\n${fig.question}\n\n`;
+    preview += `Main Finding:\n${fig.finding}\n\n`;
+    preview += `Interpretation / Take-home Message:\n${fig.message}\n\n`;
+    preview += "Suggested Narrative:\n";
+    const msg = fig.message.toLowerCase();
+    const templates = {
+      "Observation":          `This section establishes the biological phenomenon and explains why the question is important. The data suggest that ${msg}.`,
+      "Functional Relevance": `This section demonstrates biological importance and causality. The experiments indicate that ${msg}.`,
+      "Mechanism":            `This section explains the mechanistic basis underlying the observed phenotype. The findings support that ${msg}.`,
+      "Validation":           `This section validates translational or clinical significance. The results indicate that ${msg}.`
+    };
+    preview += (templates[fig.type] || "") + "\n\n";
+    preview += "--------------------------------------\n\n";
+  });
+
+  preview += "Final Manuscript Logic:\n";
+  preview += "The manuscript progresses from biological observation to functional relevance, mechanistic insight, and translational validation. Together, the figures support the central claim that:\n\n";
+  preview += `"${mainClaim}"\n`;
+
+  document.getElementById("preview").innerText = preview;
+}
+
+// ── Save / Load ───────────────────────────────────
+function getTodayDate() {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function saveProject() {
+  syncFromDOM();
+  const titleKey = prompt("Enter project key/title (example: M33):", "M33");
+  if (!titleKey) { alert("Project key required."); return; }
+  const data = {
+    bioQuestion: document.getElementById("bioQuestion").value,
+    mainClaim:   document.getElementById("mainClaim").value,
+    figures: figures.map(f => ({
+      type: f.type, question: f.question,
+      finding: f.finding, message: f.message, title: f.title
+    }))
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${titleKey}-storymaking-${getTodayDate()}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  _lastLocalSave = Date.now();
+  if (typeof updateCloudBar === 'function') updateCloudBar();
+}
+
+document.getElementById('loadFile').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev) {
+    const data = JSON.parse(ev.target.result);
+    document.getElementById("bioQuestion").value = data.bioQuestion || "";
+    document.getElementById("mainClaim").value   = data.mainClaim   || "";
+    figures = (data.figures || []).map(f => ({
+      _uid: ++_uid,
+      type:     f.type     || 'Observation',
+      question: f.question || '',
+      finding:  f.finding  || '',
+      message:  f.message  || '',
+      title:    f.title    || ''
+    }));
+    renderFigures();
+    generateStory();
+    alert("Project loaded successfully.");
+  };
+  reader.readAsText(file);
+});
+
+// Start with 3 figures
+addFigure(); addFigure(); addFigure();
+</script>
+
+<!-- ══════════════════════════════════════════════════════
+     FIREBASE — Cloud Sync + Google Auth + Sharing
+══════════════════════════════════════════════════════ -->
+<script>
+// ── Firebase config (same project as Q·PM) ────────────
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
+  authDomain:        "qtodo-syn.firebaseapp.com",
+  projectId:         "qtodo-syn",
+  storageBucket:     "qtodo-syn.firebasestorage.app",
+  messagingSenderId: "663058774385",
+  appId:             "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
+};
+
+let fbApp = null, fbAuth = null, fbDb = null, fbUser = null;
+let autoSyncEnabled   = false;
+let _syncTimer        = null;
+let _syncing          = false;
+let _lastCloudSave    = 0;
+let _lastLocalSave    = 0;
+let _pollInterval     = null;
+// Share state
+let _shareToken       = null;   // token for the current manuscript
+let _shareListener    = null;   // Firestore onSnapshot unsubscribe fn
+let _shareData        = null;   // latest share doc data
+
+// ── Unique ID helper ───────────────────────────────────
+function _genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+
+// ── Toast ──────────────────────────────────────────────
+function toast(msg, type='info') {
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+// ── Format timestamp ───────────────────────────────────
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const pad = n => String(n).padStart(2,'0');
+  const date = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${date} ${time}`;
+}
+
+// ── Snapshot helpers ───────────────────────────────────
+function getSnapshot() {
+  syncFromDOM();
+  return {
+    bioQuestion: document.getElementById('bioQuestion').value,
+    mainClaim:   document.getElementById('mainClaim').value,
+    figures: figures.map(f => ({
+      type: f.type, question: f.question,
+      finding: f.finding, message: f.message, title: f.title
+    })),
+    updatedAt: Date.now()
+  };
+}
+
+function applySnapshot(snap) {
+  if (!snap) return;
+  document.getElementById('bioQuestion').value = snap.bioQuestion || '';
+  document.getElementById('mainClaim').value   = snap.mainClaim   || '';
+  figures = (snap.figures || []).map(f => ({
+    _uid: ++_uid,
+    type: f.type || 'Observation', question: f.question || '',
+    finding: f.finding || '', message: f.message || '', title: f.title || ''
+  }));
+  renderFigures();
+  generateStory();
+}
+
+// ── Cloud status bar ───────────────────────────────────
+function updateCloudBar() {
+  const dot         = document.getElementById('cloudDot');
+  const statusText  = document.getElementById('cloudStatusText');
+  const notSignedIn = document.getElementById('cloudNotSignedIn');
+  const signedInDiv = document.getElementById('cloudSignedIn');
+  const track       = document.getElementById('autoSyncTrack');
+  const tsLine      = document.getElementById('cloudTsLine');
+
+  if (!fbUser) {
+    dot.className = 'cloud-dot off';
+    statusText.textContent = 'Not signed in — data saved locally only';
+    if (tsLine) tsLine.textContent = _lastLocalSave ? `💾 Local: ${fmtTime(_lastLocalSave)}` : '';
+    notSignedIn.style.display = 'block';
+    signedInDiv.style.display = 'none';
+    return;
+  }
+  // signed in
+  notSignedIn.style.display = 'none';
+  signedInDiv.style.display = 'flex';
+  document.getElementById('userAvatar').textContent = (fbUser.displayName || fbUser.email)[0].toUpperCase();
+  document.getElementById('userName').textContent   = fbUser.displayName?.split(' ')[0] || fbUser.email?.split('@')[0];
+  document.getElementById('udName').textContent     = fbUser.displayName || '';
+  document.getElementById('udEmail').textContent    = fbUser.email || '';
+  if (track) track.classList.toggle('on', autoSyncEnabled);
+
+  // Timestamp line — always shown
+  const localPart = _lastLocalSave ? `💾 Local: ${fmtTime(_lastLocalSave)}` : '💾 Local: not yet saved';
+  const cloudPart = _lastCloudSave ? `☁ Cloud: ${fmtTime(_lastCloudSave)}` : '☁ Cloud: not yet saved';
+  if (tsLine) tsLine.textContent = `${localPart}   ·   ${cloudPart}`;
+
+  if (_syncing) {
+    dot.className = 'cloud-dot syncing';
+    statusText.textContent = 'Syncing to cloud…';
+  } else if (autoSyncEnabled) {
+    dot.className = 'cloud-dot on';
+    statusText.textContent = 'Auto-sync on';
+  } else {
+    dot.className = 'cloud-dot off';
+    statusText.textContent = 'Signed in · auto-sync off';
+  }
+}
+
+function toggleUserDropdown() {
+  document.getElementById('userDropdown').classList.toggle('open');
+}
+
+// Close dropdown on outside click
+document.addEventListener('click', e => {
+  const chip = document.getElementById('userChip');
+  const dd   = document.getElementById('userDropdown');
+  if (chip && !chip.contains(e.target)) dd?.classList.remove('open');
+});
+
+// ── Firebase init ──────────────────────────────────────
+function initFirebase() {
+  if (!FIREBASE_CONFIG.apiKey) return;
+  try {
+    fbApp  = firebase.initializeApp(FIREBASE_CONFIG);
+    fbAuth = firebase.auth();
+    fbDb   = firebase.firestore();
+    fbAuth.onAuthStateChanged(async user => {
+      fbUser = user || null;
+      if (user) {
+        const saved = localStorage.getItem('smb_autoSync_' + user.uid);
+        autoSyncEnabled = saved === 'true';
+        updateCloudBar();
+        // Load projects first (replaces the old single-doc load)
+        await loadProjects(true);
+        renderProjectGrid();
+        if (autoSyncEnabled) startPoll();
+        // re-subscribe share listener if we have a token stored
+        const st = localStorage.getItem('smb_shareToken');
+        if (st) { _shareToken = st; subscribeShare(); }
+        // check join URL
+        checkJoinToken();
+      } else {
+        autoSyncEnabled = false;
+        _projectsLoaded = false;
+        _projects = [];
+        _activeProjectId = null;
+        stopPoll();
+        if (_shareListener) { _shareListener(); _shareListener = null; }
+        updateCloudBar();
+        renderProjectGrid();
+        updateHeaderChip();
+      }
+    });
+  } catch(e) { console.error('Firebase init error:', e); }
+}
+
+// ── Google Sign-in ─────────────────────────────────────
+let _signingIn = false;
+async function cloudSignIn() {
+  if (!fbAuth || _signingIn) return;
+  _signingIn = true;
+  const btn = document.getElementById('signInBtn');
+  if (btn) { btn.textContent = '⏳ Signing in…'; btn.style.opacity = '0.7'; }
+  try {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    await fbAuth.signInWithPopup(provider);
+  } catch(err) {
+    const silent = ['auth/popup-closed-by-user','auth/cancelled-popup-request','auth/user-cancelled'];
+    if (!silent.includes(err.code)) {
+      if (err.code === 'auth/popup-blocked')
+        alert('Popup blocked. Please allow popups for this page and try again.');
+      else
+        alert('Sign-in failed: ' + err.message);
+    }
+  } finally {
+    _signingIn = false;
+    if (btn) { btn.textContent = '☁ Sign in with Google'; btn.style.opacity = ''; }
+  }
+}
+
+async function cloudSignOut() {
+  autoSyncEnabled = false;
+  stopPoll();
+  if (_shareListener) { _shareListener(); _shareListener = null; }
+  if (fbAuth) await fbAuth.signOut();
+  fbUser = null;
+  updateCloudBar();
+  document.getElementById('userDropdown')?.classList.remove('open');
+  toast('Signed out', 'info');
+}
+
+// ── Save to cloud ──────────────────────────────────────
+// Uses the same 'users/{uid}' collection as Q·PM so existing Firestore
+// security rules (allow read/write: if request.auth.uid == userId) apply.
+// Data is stored under the 'smb_data' / 'smb_updatedAt' fields so it never
+// conflicts with Q·PM's 'qpm_data' field in the same document.
+async function fbSaveAll(silent = false) {
+  if (!fbUser || !fbDb) { if (!silent) toast('Please sign in first', 'error'); return; }
+  if (_syncing) return;
+  _syncing = true; updateCloudBar();
+  try {
+    flushActiveProject();          // update active project data from editor
+    await saveProjects(silent);    // persist all projects
+    if (!silent) toast('Saved to cloud ✓', 'success');
+    if (_shareToken) await pushToShare();
+  } catch(e) {
+    console.error(e);
+    if (!silent) toast('Save failed: ' + e.message, 'error');
+  } finally { _syncing = false; updateCloudBar(); }
+}
+
+// ── Load from cloud ────────────────────────────────────
+async function fbLoadAll(silent = false) {
+  if (!fbUser || !fbDb) { if (!silent) toast('Please sign in first', 'error'); return; }
+  if (_syncing) return;
+  _syncing = true; updateCloudBar();
+  try {
+    await loadProjects(silent);
+    const p = _projects.find(p => p.id === _activeProjectId);
+    if (p && p.data) {
+      applySnapshot(p.data);
+      if (!silent) toast('Loaded from cloud ✓', 'success');
+    } else { if (!silent) toast('No cloud data found yet', 'info'); }
+  } catch(e) {
+    console.error(e);
+    if (!silent) toast('Load failed: ' + e.message, 'error');
+  } finally { _syncing = false; updateCloudBar(); }
+}
+
+// ── Auto-sync ──────────────────────────────────────────
+function scheduleAutoSync() {
+  // Track that content changed locally
+  _lastLocalSave = Date.now();
+  updateCloudBar();
+  if (!autoSyncEnabled || !fbUser) return;
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => fbSaveAll(true), 2500);
+}
+
+function setAutoSync(val) {
+  autoSyncEnabled = !!val;
+  if (fbUser) localStorage.setItem('smb_autoSync_' + fbUser.uid, String(autoSyncEnabled));
+  if (autoSyncEnabled) { fbLoadAll(true).then(startPoll); }
+  else stopPoll();
+  updateCloudBar();
+}
+
+function startPoll() {
+  stopPoll();
+  _pollInterval = setInterval(async () => {
+    if (!autoSyncEnabled || !fbUser || _syncing || !fbDb) return;
+    try {
+      flushActiveProject();
+      await saveProjects(true);
+    } catch(e) {}
+  }, 30000);
+}
+function stopPoll() {
+  if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null; }
+  if (_syncTimer)    { clearTimeout(_syncTimer);     _syncTimer    = null; }
+}
+
+// ══════════════════════════════════════════════════════
+//  SHARING — real-time Firestore collaboration
+// ══════════════════════════════════════════════════════
+
+function sharedRef(token) {
+  // Reuse the same 'shared_projects' collection as Q·PM —
+  // Firestore rules already allow authenticated reads/writes there.
+  return fbDb.collection('shared_projects').doc('smb_' + token);
+}
+
+// Push current state to the shared document
+async function pushToShare() {
+  if (!fbDb || !fbUser || !_shareToken) return;
+  try {
+    await sharedRef(_shareToken).set({
+      data: getSnapshot(),
+      updatedAt: Date.now(),
+      updatedBy: fbUser.uid,
+    }, { merge: true });
+  } catch(e) { console.error('Share push error:', e); }
+}
+
+// Listen for remote changes to the shared doc and merge them in
+function subscribeShare() {
+  if (!fbDb || !_shareToken) return;
+  if (_shareListener) return; // already listening
+  _shareListener = sharedRef(_shareToken).onSnapshot(snap => {
+    if (!snap.exists) return;
+    const d = snap.data();
+    _shareData = d;
+    // Only apply remote changes if they're newer and not from us
+    if (d.updatedBy && d.updatedBy !== fbUser?.uid && d.data) {
+      applySnapshot(d.data);
+      toast('📡 Manuscript updated by a collaborator', 'info');
+    }
+  }, err => console.error('Share listener error:', err));
+}
+
+// Show the share dialog
+async function showShareDialog() {
+  if (!fbUser) { toast('Sign in to share manuscripts', 'error'); return; }
+
+  const ov = document.createElement('div');
+  ov.className = 'overlay';
+  ov.innerHTML = `
+    <div class="share-dialog">
+      <h2>🔗 Share Manuscript</h2>
+      <div id="_shareBody"><div style="text-align:center;padding:20px;color:var(--text-muted)">Loading…</div></div>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost btn-sm" id="_shareClose">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#_shareClose').onclick = () => ov.remove();
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+
+  await rebuildShareBody(ov);
+}
+
+async function rebuildShareBody(ov) {
+  const body = ov.querySelector('#_shareBody');
+  if (!body) return;
+
+  // Fetch current share doc if we have a token
+  let shareDoc = null;
+  if (_shareToken) {
+    try {
+      const s = await sharedRef(_shareToken).get();
+      if (s.exists) { shareDoc = s.data(); _shareData = shareDoc; }
+    } catch(e) {}
+  }
+
+  const isShared  = !!_shareToken && !!shareDoc;
+  const linkOn    = isShared && !!shareDoc?.linkSharing;
+  const collabs   = isShared ? (shareDoc?.collaborators || []) : [];
+  const shareLink = isShared ? `${location.href.split('#')[0]}#join=${_shareToken}` : '';
+
+  if (!isShared) {
+    body.innerHTML = `
+      <div class="share-section">
+        <p style="font-size:20px;color:var(--text-muted);margin-bottom:16px;line-height:1.6">
+          Enable sharing to let collaborators view or edit this manuscript in real-time. Anyone with the link can join.
+        </p>
+        <button class="btn btn-primary btn-sm" id="_enableShare">Enable Sharing</button>
+      </div>`;
+    body.querySelector('#_enableShare').onclick = async () => {
+      await enableSharing();
+      await rebuildShareBody(ov);
+    };
+    return;
+  }
+
+  body.innerHTML = `
+    <!-- Link sharing -->
+    <div class="share-section">
+      <div class="share-section-title">Share link
+        <span class="share-badge ${linkOn ? 'on' : ''}">${linkOn ? '● On' : '○ Off'}</span>
+      </div>
+      <div class="share-link-row">
+        <input class="share-link-input" readonly id="_shareLink"
+          value="${linkOn ? escHtml(shareLink) : 'Link sharing is off'}">
+        ${linkOn ? `<button class="btn btn-ghost btn-sm" id="_copyLink">Copy</button>` : ''}
+        <button class="btn btn-ghost btn-sm" id="_toggleLink">${linkOn ? 'Turn off' : 'Turn on'}</button>
+      </div>
+      <div class="share-note">Anyone with the link can join as an editor. They must be signed in with Google.</div>
+    </div>
+
+    <!-- People with access -->
+    <div class="share-section">
+      <div class="share-section-title">People with access</div>
+      <div class="collab-list">
+        <div class="collab-row">
+          <div class="collab-avatar" style="background:var(--navy-mid)">${(fbUser.displayName || fbUser.email)[0].toUpperCase()}</div>
+          <div class="collab-info">
+            <div class="collab-name">${escHtml(fbUser.displayName || fbUser.email)}
+              <span class="share-badge">Owner</span>
+            </div>
+            <div class="collab-email">${escHtml(fbUser.email)}</div>
+          </div>
+        </div>
+        ${collabs.map(c => `
+        <div class="collab-row" data-email="${escHtml(c.email)}">
+          <div class="collab-avatar" style="background:#5b21b6">${(c.name||c.email||'?')[0].toUpperCase()}</div>
+          <div class="collab-info">
+            <div class="collab-name">${escHtml(c.name || c.email)}</div>
+            <div class="collab-email">${escHtml(c.email)}</div>
+          </div>
+          <select class="collab-role-select" data-email="${escHtml(c.email)}">
+            <option value="editor" ${c.role==='editor'?'selected':''}>Can edit</option>
+            <option value="viewer" ${c.role==='viewer'?'selected':''}>Can view</option>
+          </select>
+          <button class="collab-remove-btn" data-email="${escHtml(c.email)}" title="Remove">✕</button>
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <!-- Invite by email -->
+    <div class="share-section">
+      <div class="share-section-title">Invite by email</div>
+      <div class="share-invite-row">
+        <input type="email" id="_inviteEmail" placeholder="colleague@institution.edu">
+        <select id="_inviteRole">
+          <option value="editor">Can edit</option>
+          <option value="viewer">Can view</option>
+        </select>
+        <button class="btn btn-primary btn-sm" id="_sendInvite">Invite</button>
+      </div>
+      <div class="share-note">They'll get access as soon as they sign in and open the share link.</div>
+    </div>
+
+    <!-- Danger zone -->
+    <div class="share-section">
+      <button class="btn btn-ghost btn-sm" id="_stopShare" style="color:var(--accent);border-color:var(--accent)">
+        🗑 Stop sharing &amp; delete link
+      </button>
+    </div>`;
+
+  // Wire events
+  body.querySelector('#_copyLink')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(shareLink).then(() => toast('Link copied!', 'success'));
+  });
+  body.querySelector('#_toggleLink')?.addEventListener('click', async () => {
+    await sharedRef(_shareToken).update({ linkSharing: !linkOn });
+    await rebuildShareBody(ov);
+  });
+  body.querySelectorAll('.collab-role-select').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const snap = await sharedRef(_shareToken).get();
+      const collabs = (snap.data().collaborators || []).map(c =>
+        c.email === sel.dataset.email ? { ...c, role: sel.value } : c
+      );
+      await sharedRef(_shareToken).update({ collaborators: collabs });
+      toast('Role updated', 'success');
+    });
+  });
+  body.querySelectorAll('.collab-remove-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const snap = await sharedRef(_shareToken).get();
+      const collabs = (snap.data().collaborators || []).filter(c => c.email !== btn.dataset.email);
+      await sharedRef(_shareToken).update({ collaborators: collabs });
+      toast('Removed', 'info');
+      await rebuildShareBody(ov);
+    });
+  });
+  body.querySelector('#_sendInvite')?.addEventListener('click', async () => {
+    const email = body.querySelector('#_inviteEmail')?.value.trim();
+    const role  = body.querySelector('#_inviteRole')?.value || 'editor';
+    if (!email || !email.includes('@')) { toast('Enter a valid email', 'error'); return; }
+    const snap = await sharedRef(_shareToken).get();
+    const collabs = snap.data().collaborators || [];
+    if (collabs.find(c => c.email === email)) { toast('Already invited', 'info'); return; }
+    collabs.push({ email, role, name: email.split('@')[0], invitedAt: Date.now(), invitedBy: fbUser.uid });
+    await sharedRef(_shareToken).update({ collaborators: collabs });
+    toast('Invited ' + email, 'success');
+    await rebuildShareBody(ov);
+  });
+  body.querySelector('#_stopShare')?.addEventListener('click', async () => {
+    if (!confirm('Stop sharing? The link will stop working for collaborators.')) return;
+    await sharedRef(_shareToken).delete();
+    _shareToken = null;
+    if (_shareListener) { _shareListener(); _shareListener = null; }
+    localStorage.removeItem('smb_shareToken');
+    toast('Sharing disabled', 'info');
+    await rebuildShareBody(ov);
+  });
+}
+
+async function enableSharing() {
+  if (!fbDb || !fbUser) return;
+  const token = _genId() + _genId();
+  await sharedRef(token).set({
+    shareToken:   token,
+    ownerUid:     fbUser.uid,
+    ownerEmail:   fbUser.email,
+    ownerName:    fbUser.displayName || fbUser.email,
+    linkSharing:  true,
+    collaborators: [],
+    data:         getSnapshot(),
+    createdAt:    Date.now(),
+    updatedAt:    Date.now(),
+    updatedBy:    fbUser.uid,
+  });
+  _shareToken = token;
+  localStorage.setItem('smb_shareToken', token);
+  subscribeShare();
+  toast('Sharing enabled!', 'success');
+}
+
+// ── Join via share link ────────────────────────────────
+async function checkJoinToken() {
+  const hash = location.hash;
+  if (!hash.startsWith('#join=')) return;
+  const token = hash.slice(6).trim();
+  if (!token) return;
+  history.replaceState(null, '', location.pathname);
+
+  // Wait briefly for auth if needed
+  if (!fbUser) {
+    await new Promise(res => {
+      let waited = 0;
+      const iv = setInterval(() => {
+        waited += 200;
+        if (fbUser || waited > 6000) { clearInterval(iv); res(); }
+      }, 200);
+    });
+  }
+  if (!fbUser) { toast('Sign in to join the shared manuscript', 'error'); return; }
+
+  try {
+    const snap = await fbDb.collection('shared_projects').doc('smb_' + token).get();
+    if (!snap.exists || !snap.data().linkSharing) {
+      toast('Invalid or expired share link', 'error'); return;
+    }
+    const d = snap.data();
+
+    // Register as collaborator
+    if (d.ownerUid !== fbUser.uid) {
+      const collabs = d.collaborators || [];
+      if (!collabs.find(c => c.email === fbUser.email)) {
+        collabs.push({ email: fbUser.email, uid: fbUser.uid, name: fbUser.displayName || fbUser.email, role: 'editor', joinedAt: Date.now() });
+        await snap.ref.update({ collaborators: collabs });
+      }
+    }
+
+    // Load the manuscript
+    if (d.data) applySnapshot(d.data);
+    _shareToken = token;
+    localStorage.setItem('smb_shareToken', token);
+    subscribeShare();
+    toast(`Joined shared manuscript by ${d.ownerName || d.ownerEmail}!`, 'success');
+  } catch(e) { toast('Could not join: ' + e.message, 'error'); }
+}
+
+// ── HTML escape helper ─────────────────────────────────
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Hook auto-sync into figure interactions ────────────
+// Wrap addFigure, moveFigure, deleteFigure to trigger auto-sync
+const _origAdd = addFigure, _origMove = moveFigure, _origDel = deleteFigure;
+window.addFigure    = function()      { _origAdd();        scheduleAutoSync(); };
+window.moveFigure   = function(u, d)  { _origMove(u, d);   scheduleAutoSync(); };
+window.deleteFigure = function(u)     { _origDel(u);       scheduleAutoSync(); };
+
+// Also trigger on textarea/input changes inside the builder
+document.addEventListener('input', e => {
+  if (e.target.closest('#tab-builder')) scheduleAutoSync();
+});
+
+// ══════════════════════════════════════════════════════
+//  PROJECTS — multi-manuscript management
+// ══════════════════════════════════════════════════════
+
+// Projects are stored in Firestore at users/{uid}.smb_projects
+// Each project: { id, name, data (snapshot), createdAt, updatedAt }
+// The currently open project id is in _activeProjectId.
+
+let _projects          = [];    // array of project metadata + data
+let _activeProjectId   = null;  // id of currently open project
+let _projectsLoaded    = false;
+
+const DEFAULT_PROJECT_ID = '__default__';
+
+// ── Ensure a default project exists ───────────────────
+function ensureDefaultProject() {
+  if (_projects.find(p => p.id === DEFAULT_PROJECT_ID)) return;
+  _projects.unshift({
+    id: DEFAULT_PROJECT_ID,
+    name: 'Untitled Manuscript',
+    data: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+}
+
+// ── Load all projects from Firestore ──────────────────
+async function loadProjects(silent = false) {
+  if (!fbUser || !fbDb) return;
+  try {
+    const doc = await fbDb.collection('users').doc(fbUser.uid).get();
+    if (doc.exists && doc.data().smb_projects) {
+      _projects = doc.data().smb_projects;
+    }
+    ensureDefaultProject();
+    // If no active project yet, activate the first one
+    if (!_activeProjectId) {
+      _activeProjectId = _projects[0].id;
+      const p = _projects[0];
+      if (p.data) applySnapshot(p.data);
+      updateHeaderChip();
+    }
+    _projectsLoaded = true;
+  } catch(e) { if (!silent) toast('Could not load projects: ' + e.message, 'error'); }
+}
+
+// ── Save all projects to Firestore ────────────────────
+async function saveProjects(silent = true) {
+  if (!fbUser || !fbDb) return;
+  try {
+    await fbDb.collection('users').doc(fbUser.uid).set(
+      { smb_projects: _projects, smb_updatedAt: Date.now() }, { merge: true }
+    );
+    _lastCloudSave = Date.now();
+    _lastLocalSave = Date.now();
+    updateCloudBar();
+  } catch(e) { if (!silent) toast('Save failed: ' + e.message, 'error'); }
+}
+
+// ── Get snapshot of current editor state ──────────────
+function getCurrentProjectSnapshot() {
+  syncFromDOM();
+  return {
+    bioQuestion: document.getElementById('bioQuestion').value,
+    mainClaim:   document.getElementById('mainClaim').value,
+    figures: figures.map(f => ({
+      type: f.type, question: f.question,
+      finding: f.finding, message: f.message, title: f.title
+    })),
+    updatedAt: Date.now()
+  };
+}
+
+// ── Save active project data into _projects[] ─────────
+function flushActiveProject() {
+  if (!_activeProjectId) return;
+  const p = _projects.find(p => p.id === _activeProjectId);
+  if (!p) return;
+  p.data      = getCurrentProjectSnapshot();
+  p.updatedAt = Date.now();
+}
+
+// ── Open a project (switch to it) ─────────────────────
+function openProject(id) {
+  // Save current before switching
+  flushActiveProject();
+  _activeProjectId = id;
+  const p = _projects.find(p => p.id === id);
+  if (!p) return;
+  if (p.data) {
+    applySnapshot(p.data);
+  } else {
+    // Fresh project — blank the editor
+    document.getElementById('bioQuestion').value = '';
+    document.getElementById('mainClaim').value   = '';
+    figures = [];
+    renderFigures();
+    addFigure(); addFigure(); addFigure();
+    generateStory();
+  }
+  updateHeaderChip();
+  saveProjects();
+  switchTab('builder');
+  toast(`Opened: ${p.name}`, 'success');
+}
+
+// ── Create a new project ──────────────────────────────
+async function createNewProject() {
+  const name = prompt('New manuscript name:', 'Manuscript ' + (_projects.length + 1));
+  if (!name) return;
+  flushActiveProject();
+  const id = _genId();
+  _projects.push({ id, name: name.trim(), data: null, createdAt: Date.now(), updatedAt: Date.now() });
+  _activeProjectId = id;
+  // Blank the editor
+  document.getElementById('bioQuestion').value = '';
+  document.getElementById('mainClaim').value   = '';
+  figures = [];
+  renderFigures();
+  addFigure(); addFigure(); addFigure();
+  generateStory();
+  updateHeaderChip();
+  await saveProjects(false);
+  switchTab('builder');
+  toast(`Created: ${name}`, 'success');
+}
+
+// ── Rename a project ──────────────────────────────────
+async function renameProject(id, e) {
+  e.stopPropagation();
+  const p = _projects.find(p => p.id === id);
+  if (!p) return;
+  const name = prompt('Rename manuscript:', p.name);
+  if (!name || name === p.name) return;
+  p.name = name.trim();
+  if (id === _activeProjectId) updateHeaderChip();
+  await saveProjects(false);
+  renderProjectGrid();
+  toast('Renamed ✓', 'success');
+}
+
+// ── Delete a project ──────────────────────────────────
+async function deleteProject(id, e) {
+  e.stopPropagation();
+  const p = _projects.find(p => p.id === id);
+  if (!p) return;
+  if (_projects.length <= 1) { toast('Cannot delete the only project', 'error'); return; }
+  if (!confirm(`Delete "${p.name}"? This cannot be undone.`)) return;
+  _projects = _projects.filter(p => p.id !== id);
+  if (_activeProjectId === id) {
+    _activeProjectId = _projects[0].id;
+    const first = _projects[0];
+    if (first.data) applySnapshot(first.data);
+    else { figures = []; renderFigures(); addFigure(); addFigure(); addFigure(); generateStory(); }
+    updateHeaderChip();
+  }
+  await saveProjects(false);
+  renderProjectGrid();
+  toast('Deleted', 'info');
+}
+
+// ── Update the header project chip ───────────────────
+function updateHeaderChip() {
+  const chip = document.getElementById('headerProjChip');
+  if (!chip) return;
+  const p = _projects.find(p => p.id === _activeProjectId);
+  chip.textContent = p ? p.name : 'Untitled Manuscript';
+}
+
+// ── Render the project grid ───────────────────────────
+function renderProjectGrid() {
+  const grid   = document.getElementById('projectGrid');
+  const prompt = document.getElementById('projectsSigninPrompt');
+  if (!grid) return;
+
+  if (!fbUser) {
+    grid.style.display = 'none';
+    if (prompt) prompt.style.display = 'block';
+    return;
+  }
+  if (prompt) prompt.style.display = 'none';
+  grid.style.display = 'grid';
+
+  if (!_projectsLoaded) {
+    grid.innerHTML = '<div style="color:var(--text-muted);font-size:20px;padding:20px;">Loading projects…</div>';
+    loadProjects().then(() => renderProjectGrid());
+    return;
+  }
+
+  grid.innerHTML = '';
+
+  // Sort: most recently updated first
+  const sorted = [..._projects].sort((a, b) => (b.updatedAt||0) - (a.updatedAt||0));
+
+  sorted.forEach(p => {
+    const isActive = p.id === _activeProjectId;
+    const figCount = p.data?.figures?.length ?? 0;
+    const claim    = p.data?.mainClaim || 'No main claim yet.';
+    const updated  = p.updatedAt ? fmtTime(p.updatedAt) : '—';
+
+    const card = document.createElement('div');
+    card.className = 'project-card' + (isActive ? ' active-project' : '');
+    card.onclick   = () => openProject(p.id);
+    card.innerHTML = `
+      <div class="pc-title" title="${escHtml(p.name)}">${escHtml(p.name)}</div>
+      <div class="pc-claim">${escHtml(claim)}</div>
+      <div class="pc-meta">
+        <span class="pc-figs">${figCount} figure${figCount !== 1 ? 's' : ''}</span>
+        <span>Updated: ${updated}</span>
+      </div>
+      <div class="pc-actions">
+        <button class="pc-btn open-btn" onclick="openProject('${p.id}');event.stopPropagation()">Open</button>
+        <button class="pc-btn" onclick="renameProject('${p.id}',event)" title="Rename">✏ Rename</button>
+        <button class="pc-btn del" onclick="deleteProject('${p.id}',event)" title="Delete">🗑</button>
+      </div>`;
+    grid.appendChild(card);
+  });
+
+  // "+ New" card at the end
+  const newCard = document.createElement('div');
+  newCard.className = 'project-card new-card';
+  newCard.onclick   = createNewProject;
+  newCard.innerHTML = `<div class="new-card-icon">＋</div><div>New Manuscript</div>`;
+  grid.appendChild(newCard);
+}
+
+// ── Font size control ─────────────────────────────────
+const FONT_KEY = 'smb_fontSize';
+const FONT_MIN = 11, FONT_MAX = 20, FONT_DEFAULT = 12;
+
+function applyFontSize(size) {
+  size = Math.min(FONT_MAX, Math.max(FONT_MIN, parseInt(size)));
+  document.documentElement.style.fontSize = size + 'px';
+  const slider = document.getElementById('fontSlider');
+  const label  = document.getElementById('fontSizeVal');
+  if (slider) slider.value = size;
+  if (label)  label.textContent = size;
+  localStorage.setItem(FONT_KEY, size);
+}
+
+function loadFontSize() {
+  const saved = localStorage.getItem(FONT_KEY);
+  applyFontSize(saved ? parseInt(saved) : FONT_DEFAULT);
+}
+
+// ── Boot ───────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadFontSize();
+  initFirebase();
+  updateCloudBar();
+  // Always start at the very top of the page
+  window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+});
+
+// Also scroll on any history navigation (back/forward)
+window.addEventListener('pageshow', () => {
+  window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+});
+</script>
+
+<!-- ── Footer ─────────────────────────────────────────── -->
+<footer style="
+  background: var(--navy);
+  color: rgba(255,255,255,0.40);
+  text-align: center;
+  padding: 14px 24px;
+  font-size: 26px;
+  letter-spacing: 0.03em;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-family: 'Source Sans 3', Arial, sans-serif;
+">
+  Copyright &copy; 2026 Dr. Wen-Ming Yang. All Rights Reserved.
+</footer>
+
+</body>
+</html>
