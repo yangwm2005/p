@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Q·Project — Cloud Sync PM System v15</title>
+    <title>Q·Project — Cloud Sync PM System v15.1</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -160,6 +160,9 @@
         .summary-subtask-text.completed { text-decoration: line-through; color: var(--text-muted); }
         .summary-note { margin-left: 32px; margin-top: 10px; background: var(--purple-soft); border-left: 3px solid var(--purple); padding: 8px 12px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-size: 0.8rem; }
         .summary-note ul { margin: 4px 0 4px 20px; }
+
+        .kanban-task.kb-dragging { opacity: 0.45; }
+        .kanban-task.kb-drag-over { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }
 
         .focus-mode { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: var(--bg); z-index: 2000; overflow-y: auto; padding: 24px 16px 48px; }
         .focus-mode .focus-header { max-width: 820px; margin: 0 auto 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding-bottom: 16px; border-bottom: 2px solid var(--accent); }
@@ -1181,15 +1184,67 @@ function renderKanban() {
   notesColEl.appendChild(noteTasksDiv);
   board.appendChild(notesColEl);
 
-  // Drag events
+  // Drag events — support both cross-column status change and within-column reorder
   board.querySelectorAll('.kanban-task').forEach(el => {
-    el.addEventListener('dragstart', e => { draggedTaskId = e.target.closest('.kanban-task')?.dataset.taskId; });
-    el.addEventListener('dragend', () => { draggedTaskId = null; });
+    el.addEventListener('dragstart', e => {
+      draggedTaskId = e.target.closest('.kanban-task')?.dataset.taskId;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', draggedTaskId || '');
+      setTimeout(() => el.classList.add('kb-dragging'), 0);
+    });
+    el.addEventListener('dragend', () => {
+      draggedTaskId = null;
+      board.querySelectorAll('.kanban-task.kb-dragging').forEach(c => c.classList.remove('kb-dragging'));
+      board.querySelectorAll('.kanban-task.kb-drag-over').forEach(c => c.classList.remove('kb-drag-over'));
+    });
+    el.addEventListener('dragover', e => {
+      e.preventDefault(); e.stopPropagation();
+      board.querySelectorAll('.kanban-task.kb-drag-over').forEach(c => c.classList.remove('kb-drag-over'));
+      if (draggedTaskId && el.dataset.taskId !== draggedTaskId) el.classList.add('kb-drag-over');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('kb-drag-over'));
+    el.addEventListener('drop', e => {
+      e.preventDefault(); e.stopPropagation();
+      el.classList.remove('kb-drag-over');
+      const fromId = e.dataTransfer.getData('text/plain');
+      const toId = el.dataset.taskId;
+      if (!fromId || fromId === toId) return;
+      const fromTask = tasks.find(t => t.id === fromId);
+      const toTask   = tasks.find(t => t.id === toId);
+      if (!fromTask || !toTask) return;
+      // Move fromTask to toTask's position; set same status if different column
+      fromTask.status = toTask.status;
+      const colTasks = tasks.filter(t => t.projectId === currentProjectId && t.status === toTask.status && t.type !== 'note');
+      const fromIdx = colTasks.findIndex(t => t.id === fromId);
+      const toIdx   = colTasks.findIndex(t => t.id === toId);
+      if (fromIdx !== -1 && toIdx !== -1) {
+        colTasks.splice(fromIdx, 1);
+        const newToIdx = colTasks.findIndex(t => t.id === toId);
+        colTasks.splice(newToIdx, 0, fromTask);
+      } else if (fromIdx === -1 && toIdx !== -1) {
+        // cross-column drop onto a card — insert before target
+        colTasks.splice(toIdx, 0, fromTask);
+      }
+      // Rebuild tasks array preserving other statuses/projects
+      const others = tasks.filter(t => !(t.projectId === currentProjectId && t.status === toTask.status && t.type !== 'note'));
+      tasks = [...others, ...colTasks];
+      saveData(); renderKanban(); renderListView(); renderSummary(); renderReports();
+      if (document.getElementById('focusModeOverlay')) renderFocusMode();
+    });
   });
 }
 function quickAddTask(status) { showTaskModalWithPreset(status); }
 function showTaskModalWithPreset(status) { showTaskModal(); if (status) document.getElementById('taskStatus').value = status; }
-function dropTask(e, newStatus) { e.preventDefault(); if (draggedTaskId) { const task = tasks.find(t => t.id === draggedTaskId); if (task && task.status !== newStatus) { task.status = newStatus; saveData(); renderKanban(); renderListView(); renderSummary(); renderReports(); if (document.getElementById('focusModeOverlay')) renderFocusMode(); } } }
+function dropTask(e, newStatus) {
+  e.preventDefault();
+  if (!draggedTaskId) return;
+  const task = tasks.find(t => t.id === draggedTaskId);
+  if (task && task.status !== newStatus) {
+    task.status = newStatus;
+    saveData(); renderKanban(); renderListView(); renderSummary(); renderReports();
+    if (document.getElementById('focusModeOverlay')) renderFocusMode();
+  }
+}
 // ── Sort helpers ──────────────────────────────────────────────────
 const PRIORITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
 const STATUS_ORDER   = { 'in-progress': 0, todo: 1, review: 2, done: 3 };
@@ -1872,7 +1927,6 @@ function renderFocusMode() {
     const subtasksHtml = item.subtasks && item.subtasks.length
       ? `<div class="subtask-list">${item.subtasks.map(st => `<div class="subtask-item"><input type="checkbox" class="subtask-check" ${st.completed ? 'checked' : ''} onchange="window.toggleSubtask('${item.id}','${st.id}')"><span class="subtask-text ${st.completed ? 'completed' : ''}" data-subtask-id="${st.id}" title="Double-click to edit" ondblclick="window.editSubtask('${item.id}','${st.id}')">${escapeHtml(st.text)}</span><button class="act-btn" style="width:22px;" onclick="window.deleteSubtask('${item.id}','${st.id}')">✕</button></div>`).join('')}</div>`
       : `<div style="margin:4px 0 6px 0; color:var(--text-muted); font-size:0.82rem;">No subtasks yet</div>`;
-    const notesHtml = `<div class="task-note-wrapper"><div class="task-note"><div class="task-note-text">📌 ${item.notes ? formatNoteWithBullets(item.notes) : '<span style="color:var(--text-muted);">No notes yet.</span>'}</div><div class="note-actions"><button class="btn btn-ghost btn-xs" onclick="window.showNoteEditor('${item.id}','${(item.notes||'').replace(/'/g,"\\'").replace(/\n/g,'\\n')}')">Edit</button>${item.notes ? `<button class="btn btn-ghost btn-xs" style="color:var(--danger)" onclick="window.deleteNote('${item.id}')">✕</button>` : ''}</div></div></div>`;
     const thinkLogHtml = renderThinkLogBlock(item, 'foc', true);
     container.innerHTML = `<div class="focus-task-card" data-task-id="${item.id}">
       <div class="focus-task-row">
@@ -1894,11 +1948,43 @@ function renderFocusMode() {
         ${subtasksHtml}
         <div class="subtask-input-row"><input type="text" class="new-subtask-input" data-task-id="${item.id}" placeholder="Add a subtask… (Enter to add)" onkeypress="if(event.key==='Enter'){event.preventDefault();window.addSubtask('${item.id}')}" onkeydown="if(event.key==='Escape'){event.target.value='';event.target.blur()}"><button class="btn btn-primary btn-sm" onclick="window.addSubtask('${item.id}')">+ Add</button></div>
         <div style="margin:10px 0 6px; font-size:0.72rem; font-weight:700; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.05em;">📝 Notes</div>
-        ${notesHtml}
+        <div id="focTaskNotesDisp_${item.id}" style="font-size:0.87rem;color:var(--text);line-height:1.6;white-space:pre-wrap;background:var(--purple-soft);border-left:3px solid var(--purple);padding:8px 12px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;margin-bottom:4px;cursor:text;min-height:32px;" title="Click to edit notes">${item.notes ? formatNoteWithBullets(item.notes) : '<span style="color:var(--text-muted);font-style:italic;">Click to add notes…</span>'}</div>
+        <textarea id="focTaskNotesEdit_${item.id}" style="display:none;width:100%;padding:10px 12px;border:1px solid var(--purple);border-radius:var(--radius-sm);font-family:'DM Mono',monospace;resize:vertical;min-height:100px;background:var(--surface);font-size:0.85rem;line-height:1.6;box-sizing:border-box;" placeholder="Add notes (each line becomes a bullet)…">${item.notes ? escapeHtml(item.notes) : ''}</textarea>
+        <div id="focTaskNotesBtns_${item.id}" style="display:none;flex-direction:row;gap:6px;margin-bottom:10px;">
+          <button class="btn btn-primary btn-sm" onclick="window.saveFocTaskNotes('${item.id}')">💾 Save</button>
+          <button class="btn btn-ghost btn-sm" onclick="window.cancelFocTaskNotes('${item.id}')">Cancel</button>
+        </div>
         <div style="margin:10px 0 4px; font-size:0.72rem; font-weight:700; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.05em;">💬 Think Log</div>
         ${thinkLogHtml}
       </div>
     </div>`;
+
+    // Wire up click-to-edit for task notes
+    const tNotesDisp = document.getElementById('focTaskNotesDisp_' + item.id);
+    const tNotesEdit = document.getElementById('focTaskNotesEdit_' + item.id);
+    const tNotesBtns = document.getElementById('focTaskNotesBtns_' + item.id);
+    if (tNotesDisp && tNotesEdit) {
+      tNotesDisp.addEventListener('click', () => {
+        tNotesDisp.style.display = 'none';
+        tNotesEdit.style.display = 'block';
+        if (tNotesBtns) tNotesBtns.style.display = 'flex';
+        tNotesEdit.focus();
+      });
+    }
+    window.saveFocTaskNotes = function(taskId) {
+      const t = tasks.find(x => x.id === taskId); if (!t) return;
+      const ed = document.getElementById('focTaskNotesEdit_' + taskId);
+      if (ed) { t.notes = ed.value; saveData(); }
+      renderFocusMode();
+    };
+    window.cancelFocTaskNotes = function(taskId) {
+      const disp = document.getElementById('focTaskNotesDisp_' + taskId);
+      const ed   = document.getElementById('focTaskNotesEdit_' + taskId);
+      const btns = document.getElementById('focTaskNotesBtns_' + taskId);
+      if (ed)   ed.style.display = 'none';
+      if (btns) btns.style.display = 'none';
+      if (disp) disp.style.display = '';
+    };
   }
 }
 window.addNoteSubtaskFocus = function(noteId, inputEl) {
