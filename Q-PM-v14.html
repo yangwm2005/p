@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-  <title>Q·PM — Project Manager v12</title>
+  <title>Q·PM — Project Manager v15</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -541,6 +541,7 @@ body {
 }
 .kanban-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
 .kanban-card.dragging { opacity: 0.4; box-shadow: none; transform: none; }
+.kanban-card.kb-drag-over { outline: 2px solid var(--accent); outline-offset: 2px; transform: none !important; }
 .kanban-card-title {
   font-size: 0.875rem;
   color: var(--text);
@@ -1625,6 +1626,36 @@ const DB = (() => {
     saveTasks(tasks);
   }
 
+  function reorderTask(fromId, toId) {
+    // Match the status of the drop target (handles cross-column too)
+    const tasks = loadTasks();
+    const fromTask = tasks.find(t => t.id === fromId);
+    const toTask   = tasks.find(t => t.id === toId);
+    if (!fromTask || !toTask) return;
+    fromTask.status = toTask.status;
+    if (fromTask.status === 'done') fromTask.completedAt = fromTask.completedAt || Date.now();
+    saveTasks(tasks); // persist status change first
+
+    // Now reassign order values for the column, same as list-view drag does
+    // Get all tasks in this column in their current rendered order (by order field)
+    const colTasks = loadTasks()
+      .filter(t => t.projectId === toTask.projectId && t.status === toTask.status && t.type !== 'note')
+      .sort((a, b) => (a.order ?? 9999) - (b.order ?? 9999));
+    const ids = colTasks.map(t => t.id);
+    const fromIdx = ids.indexOf(fromId);
+    const toIdx   = ids.indexOf(toId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    ids.splice(fromIdx, 1);
+    ids.splice(toIdx, 0, fromId);
+    // Write back the new order numbers
+    const allTasks = loadTasks();
+    ids.forEach((id, i) => {
+      const t = allTasks.find(x => x.id === id);
+      if (t) t.order = i;
+    });
+    saveTasks(allTasks);
+  }
+
   // Subtasks
   function addSubtask(taskId, text) {
     const tasks = loadTasks();
@@ -1696,7 +1727,7 @@ const DB = (() => {
 
   return {
     getProjects, createProject, updateProject, deleteProject, getProject,
-    getTasks, createTask, createNoteItem, updateTask, deleteTask, getTask, moveTask,
+    getTasks, createTask, createNoteItem, updateTask, deleteTask, getTask, moveTask, reorderTask,
     addSubtask, toggleSubtask, deleteSubtask, editSubtask,
     exportAll, importAll, getStats,
   };
@@ -2160,6 +2191,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
       el.innerHTML = `<div style="padding:16px 24px 8px">${buildFilterBar()}</div><div class="kanban-wrap">${buildKanban(filterTasks(rawTasks))}</div>`;
       el.querySelectorAll('[data-action="kanban-add"]').forEach(btn =>
         btn.addEventListener('click', () => showNewTaskDialog(btn.dataset.status)));
+      wireKanbanEvents();
       return;
     }
 
@@ -3997,9 +4029,7 @@ function colorSwatchPicker(selectedIdx, onChange) {
           <div class="kanban-col-name">${m.label}</div>
           <div class="kanban-col-count">${ct.length}</div>
         </div>
-        <div class="kanban-cards" id="kc_${status}" data-status="${status}"
-          ondragover="APP.kanbanDragOver(event)" ondrop="APP.kanbanDrop(event,'${status}')"
-          ondragenter="APP.kanbanDragEnter(event)" ondragleave="APP.kanbanDragLeave(event)">
+        <div class="kanban-cards" id="kc_${status}" data-status="${status}">
           ${ct.map(t => buildKanbanCard(t)).join('')}
         </div>
         <button class="kanban-add-btn" data-action="kanban-add" data-status="${status}">+ Add task</button>
@@ -4089,12 +4119,72 @@ function colorSwatchPicker(selectedIdx, onChange) {
     }, 80);
   }
 
-  function kanbanDragStart(e,id){ _dragId=id; setTimeout(()=>e.target.classList.add('dragging'),0); e.dataTransfer.effectAllowed='move'; }
-  function kanbanDragEnd(e)     { e.target.classList.remove('dragging'); }
-  function kanbanDragOver(e)    { e.preventDefault(); e.dataTransfer.dropEffect='move'; }
-  function kanbanDragEnter(e)   { e.currentTarget.classList.add('drag-over'); }
-  function kanbanDragLeave(e)   { e.currentTarget.classList.remove('drag-over'); }
-  function kanbanDrop(e,status) { e.preventDefault(); e.currentTarget.classList.remove('drag-over'); if(_dragId){ DB.moveTask(_dragId,status); _dragId=null; render(); } }
+  function kanbanDragStart(e, id) {
+    if (taskSort !== 'manual') { e.preventDefault(); return; }
+    _dragId = id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+    setTimeout(() => e.target.classList.add('dragging'), 0);
+  }
+  function kanbanDragEnd(e) {
+    e.target.classList.remove('dragging');
+    document.querySelectorAll('.kanban-card.kb-drag-over, .kanban-cards.drag-over')
+      .forEach(el => el.classList.remove('kb-drag-over', 'drag-over'));
+    _dragId = null;
+  }
+  // Kept for backward compat (no longer wired via inline HTML, but kept in case)
+  function kanbanDragOver(e)  { e.preventDefault(); }
+  function kanbanDragEnter(e) { e.currentTarget.classList.add('drag-over'); }
+  function kanbanDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+  function kanbanDrop(e, status) {
+    e.preventDefault();
+    e.currentTarget.classList.remove('drag-over');
+    // If dropped onto a card, ignore — card handler deals with it
+    if (e.target.closest('.kanban-card')) return;
+    if (_dragId) { DB.moveTask(_dragId, status); _dragId = null; render(); }
+  }
+
+  function wireKanbanEvents() {
+    // Wire card-level events (reorder within or across columns)
+    document.querySelectorAll('.kanban-card[data-id]').forEach(card => {
+      const toId = card.dataset.id;
+      card.addEventListener('dragover', e => {
+        e.preventDefault(); e.stopPropagation();
+        document.querySelectorAll('.kanban-card.kb-drag-over').forEach(c => c.classList.remove('kb-drag-over'));
+        if (_dragId && _dragId !== toId) card.classList.add('kb-drag-over');
+      });
+      card.addEventListener('dragleave', () => card.classList.remove('kb-drag-over'));
+      card.addEventListener('drop', e => {
+        e.preventDefault(); e.stopPropagation();
+        card.classList.remove('kb-drag-over');
+        if (taskSort !== 'manual') return;
+        const fromId = e.dataTransfer.getData('text/plain') || _dragId;
+        if (!fromId || fromId === toId) return;
+        DB.reorderTask(fromId, toId);
+        _dragId = null; render();
+      });
+    });
+
+    // Wire column-level events (drop onto empty space = move to that status)
+    document.querySelectorAll('.kanban-cards[data-status]').forEach(col => {
+      const status = col.dataset.status;
+      col.addEventListener('dragover', e => {
+        if (e.target.closest('.kanban-card')) return; // card handles it
+        e.preventDefault();
+        col.classList.add('drag-over');
+      });
+      col.addEventListener('dragleave', e => {
+        if (!col.contains(e.relatedTarget)) col.classList.remove('drag-over');
+      });
+      col.addEventListener('drop', e => {
+        col.classList.remove('drag-over');
+        if (e.target.closest('.kanban-card')) return; // card handles it
+        e.preventDefault();
+        const fromId = e.dataTransfer.getData('text/plain') || _dragId;
+        if (fromId) { DB.moveTask(fromId, status); _dragId = null; render(); }
+      });
+    });
+  }
 
   document.addEventListener('mouseover', e => { const c=e.target.closest('.kanban-card'); if(c){const a=c.querySelector('.kcard-actions');if(a)a.style.opacity='1';}});
   document.addEventListener('mouseout',  e => { const c=e.target.closest('.kanban-card'); if(c){const a=c.querySelector('.kcard-actions');if(a)a.style.opacity='0';}});
