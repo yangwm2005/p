@@ -4731,12 +4731,13 @@ const COLLAB = (() => {
         const others = allTasks.filter(t => t.projectId !== projectId);
         localStorage.setItem('qpm_tasks', JSON.stringify([...others, ...data.tasks]));
       }
-      // Update share cache
+      // Update share cache (include collaboratorEmails so _triggerCollabPush can find editors)
       _shareCache.set(projectId, {
         shareToken: data.shareToken || null,
         ownerUid: data.ownerUid,
         ownerEmail: data.ownerEmail,
         collaborators: data.collaborators || [],
+        collaboratorEmails: data.collaboratorEmails || [],
         linkSharing: !!data.linkSharing,
       });
       // Re-render in place — never navigate away from the current page
@@ -4769,7 +4770,25 @@ const COLLAB = (() => {
         // Owner: use set+merge (safe to touch all fields)
         await sharedRef(projectId).set(payload, { merge: true });
       } else {
-        // Collaborator: use update (only touches allowed fields, avoids permission error)
+        // Collaborator: ensure collaboratorEmails field exists and contains our email
+        // (older docs created before this fix may be missing the field, causing rule `in` to throw)
+        const emails = info?.collaboratorEmails || [];
+        if (!emails.includes(fbUser.email)) {
+          // Re-fetch to get latest collaborators and repair the field
+          try {
+            const snap = await sharedRef(projectId).get();
+            if (snap.exists) {
+              const d = snap.data();
+              const collabs = d.collaborators || [];
+              const repairedEmails = _emailList(collabs);
+              if (!repairedEmails.includes(fbUser.email)) {
+                collabs.push({ email: fbUser.email, uid: fbUser.uid, name: fbUser.displayName || fbUser.email, role: 'editor', joinedAt: Date.now() });
+              }
+              await snap.ref.update({ collaborators: collabs, collaboratorEmails: _emailList(collabs) });
+              _shareCache.set(projectId, { ...info, collaborators: collabs, collaboratorEmails: _emailList(collabs) });
+            }
+          } catch(repairErr) { console.warn('COLLAB repair failed:', repairErr); }
+        }
         await sharedRef(projectId).update(payload);
       }
     } catch(e) { console.error('COLLAB push error:', e); toast('Sync error: ' + e.message, 'error'); }
@@ -4791,13 +4810,14 @@ const COLLAB = (() => {
       ownerName: fbUser.displayName || fbUser.email,
       linkSharing: true,
       collaborators: [],
+      collaboratorEmails: [],
       projectMeta: project,
       tasks,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       updatedBy: fbUser.uid,
     });
-    _shareCache.set(projectId, { shareToken: token, ownerUid: fbUser.uid, ownerEmail: fbUser.email, collaborators: [], linkSharing: true });
+    _shareCache.set(projectId, { shareToken: token, ownerUid: fbUser.uid, ownerEmail: fbUser.email, collaborators: [], collaboratorEmails: [], linkSharing: true });
     subscribe(projectId);
     return token;
   }
@@ -4859,11 +4879,20 @@ const COLLAB = (() => {
 
     // Check already a member
     if (data.ownerUid === fbUser.uid) { toast('You own this project', 'info'); return; }
-    const collabs = data.collaborators || [];
+    let collabs = data.collaborators || [];
     if (!collabs.find(c => c.email === fbUser.email)) {
       collabs.push({ email: fbUser.email, uid: fbUser.uid, name: fbUser.displayName || fbUser.email, role: 'editor', joinedAt: Date.now() });
       await snap.ref.update({ collaborators: collabs, collaboratorEmails: _emailList(collabs) });
     }
+    // Immediately seed _shareCache so _triggerCollabPush knows we are an editor
+    _shareCache.set(projectId, {
+      shareToken: data.shareToken || null,
+      ownerUid: data.ownerUid,
+      ownerEmail: data.ownerEmail || null,
+      collaborators: collabs,
+      collaboratorEmails: _emailList(collabs),
+      linkSharing: !!data.linkSharing,
+    });
 
     // Pull project into local DB
     if (data.projectMeta) {
@@ -4905,7 +4934,7 @@ const COLLAB = (() => {
       const isOwner = info.ownerUid === fbUser.uid;
       const isEditor = (info.collaborators || []).some(
         c => (c.uid === fbUser.uid || c.email === fbUser.email) && c.role !== 'viewer'
-      );
+      ) || (!isOwner && (info.collaboratorEmails || []).includes(fbUser.email));
       if (isOwner || isEditor) {
         clearTimeout(_pushTimers.get(projectId));
         _pushTimers.set(projectId, setTimeout(() => pushProject(projectId), 1500));
@@ -5151,12 +5180,18 @@ const COLLAB = (() => {
   return { init, showShareDialog, joinByToken, subscribe, unsubscribe, pushProject, _triggerCollabPush };
 })();
 
-// Boot the sync system after DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
+// Boot the sync system — wait for Firebase SDK to be ready before initialising
+function _bootSync() {
+  if (typeof firebase === 'undefined') {
+    // SDK not yet loaded — retry in 100 ms
+    setTimeout(_bootSync, 100);
+    return;
+  }
   initFirebase();
   setupCloudUI();
   COLLAB.init();
-});
+}
+document.addEventListener('DOMContentLoaded', _bootSync);
 
 
 </script>
