@@ -1557,7 +1557,7 @@ const DB = (() => {
   function loadTasks()     { return JSON.parse(localStorage.getItem(TASKS_KEY)) || []; }
   function saveProjects(p) { localStorage.setItem(PROJ_KEY,  JSON.stringify(p)); _onDBWrite(); }
   function saveTasks(t)    { localStorage.setItem(TASKS_KEY, JSON.stringify(t)); _onDBWrite(); }
-  function _onDBWrite()    { if (typeof scheduleAutoSync === 'function') scheduleAutoSync(); }
+  function _onDBWrite()    { if (typeof scheduleAutoSync === 'function') scheduleAutoSync(); if (typeof COLLAB !== 'undefined' && COLLAB._triggerCollabPush) COLLAB._triggerCollabPush(); }
 
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -4731,12 +4731,13 @@ const COLLAB = (() => {
         const others = allTasks.filter(t => t.projectId !== projectId);
         localStorage.setItem('qpm_tasks', JSON.stringify([...others, ...data.tasks]));
       }
-      // Update share cache
+      // Update share cache (include collaboratorEmails so _triggerCollabPush can find editors)
       _shareCache.set(projectId, {
         shareToken: data.shareToken || null,
         ownerUid: data.ownerUid,
         ownerEmail: data.ownerEmail,
         collaborators: data.collaborators || [],
+        collaboratorEmails: data.collaboratorEmails || [],
         linkSharing: !!data.linkSharing,
       });
       // Re-render in place — never navigate away from the current page
@@ -4761,13 +4762,48 @@ const COLLAB = (() => {
     const project = DB.getProject(projectId);
     const tasks   = DB.getTasks(projectId);
     if (!project) return;
+    const info = _shareCache.get(projectId);
+    if (!info) return; // not a shared project, skip
+    const isOwner = info.ownerUid === fbUser.uid;
+
     try {
-      await sharedRef(projectId).set({
-        projectMeta: project,
-        tasks,
-        updatedAt: Date.now(),
-        updatedBy: fbUser.uid,
-      }, { merge: true });
+      if (isOwner) {
+        // Owner: full set+merge, can touch any field
+        await sharedRef(projectId).set(
+          { projectMeta: project, tasks, updatedAt: Date.now(), updatedBy: fbUser.uid },
+          { merge: true }
+        );
+      } else {
+        // Collaborator path — only send the data fields, never touch collaborators/emails.
+        // Step 1: ensure our email is in collaboratorEmails (joining rule allows this).
+        const snap = await sharedRef(projectId).get();
+        if (!snap.exists) return;
+        const live = snap.data();
+        const emails = live.collaboratorEmails || [];
+
+        if (!emails.includes(fbUser.email)) {
+          let collabs = live.collaborators || [];
+          if (!collabs.find(c => c.email === fbUser.email)) {
+            collabs.push({ email: fbUser.email, uid: fbUser.uid,
+                           name: fbUser.displayName || fbUser.email,
+                           role: 'editor', joinedAt: Date.now() });
+          }
+          const newEmails = _emailList(collabs);
+          // Only write collaborators+collaboratorEmails (matches the "joining" rule)
+          await snap.ref.update({ collaborators: collabs, collaboratorEmails: newEmails });
+          _shareCache.set(projectId, { ...info, collaborators: collabs, collaboratorEmails: newEmails });
+          await new Promise(r => setTimeout(r, 800));
+        }
+
+        // Step 2: push ONLY data fields — do NOT include collaborators or collaboratorEmails.
+        // The Firestore rule for editors is updated to only check ownerUid+shareToken+linkSharing.
+        await sharedRef(projectId).update({
+          projectMeta: project,
+          tasks,
+          updatedAt: Date.now(),
+          updatedBy: fbUser.uid,
+        });
+      }
     } catch(e) { console.error('COLLAB push error:', e); toast('Sync error: ' + e.message, 'error'); }
   }
 
@@ -4787,13 +4823,14 @@ const COLLAB = (() => {
       ownerName: fbUser.displayName || fbUser.email,
       linkSharing: true,
       collaborators: [],
+      collaboratorEmails: [],
       projectMeta: project,
       tasks,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       updatedBy: fbUser.uid,
     });
-    _shareCache.set(projectId, { shareToken: token, ownerUid: fbUser.uid, ownerEmail: fbUser.email, collaborators: [], linkSharing: true });
+    _shareCache.set(projectId, { shareToken: token, ownerUid: fbUser.uid, ownerEmail: fbUser.email, collaborators: [], collaboratorEmails: [], linkSharing: true });
     subscribe(projectId);
     return token;
   }
@@ -4820,7 +4857,7 @@ const COLLAB = (() => {
     const collabs = snap.data().collaborators || [];
     if (collabs.find(c => c.email === email)) { toast('Already invited', 'info'); return; }
     collabs.push({ email, role, uid: null, name: email.split('@')[0], invitedAt: Date.now(), invitedBy: fbUser.uid });
-    await sharedRef(projectId).update({ collaborators: collabs });
+    await sharedRef(projectId).update({ collaborators: collabs, collaboratorEmails: _emailList(collabs) });
     _shareCache.set(projectId, { ...(_shareCache.get(projectId)||{}), collaborators: collabs });
     toast(`Invite sent to ${email}`, 'success');
   }
@@ -4831,7 +4868,7 @@ const COLLAB = (() => {
     const snap = await sharedRef(projectId).get();
     if (!snap.exists) return;
     const collabs = (snap.data().collaborators || []).map(c => c.email === email ? { ...c, role } : c);
-    await sharedRef(projectId).update({ collaborators: collabs });
+    await sharedRef(projectId).update({ collaborators: collabs, collaboratorEmails: _emailList(collabs) });
   }
 
   // ── Remove collaborator ───────────────────────────────────────────────────
@@ -4840,7 +4877,7 @@ const COLLAB = (() => {
     const snap = await sharedRef(projectId).get();
     if (!snap.exists) return;
     const collabs = (snap.data().collaborators || []).filter(c => c.email !== email);
-    await sharedRef(projectId).update({ collaborators: collabs });
+    await sharedRef(projectId).update({ collaborators: collabs, collaboratorEmails: _emailList(collabs) });
   }
 
   // ── Join via share link ───────────────────────────────────────────────────
@@ -4855,11 +4892,20 @@ const COLLAB = (() => {
 
     // Check already a member
     if (data.ownerUid === fbUser.uid) { toast('You own this project', 'info'); return; }
-    const collabs = data.collaborators || [];
+    let collabs = data.collaborators || [];
     if (!collabs.find(c => c.email === fbUser.email)) {
       collabs.push({ email: fbUser.email, uid: fbUser.uid, name: fbUser.displayName || fbUser.email, role: 'editor', joinedAt: Date.now() });
-      await snap.ref.update({ collaborators: collabs });
+      await snap.ref.update({ collaborators: collabs, collaboratorEmails: _emailList(collabs) });
     }
+    // Immediately seed _shareCache so _triggerCollabPush knows we are an editor
+    _shareCache.set(projectId, {
+      shareToken: data.shareToken || null,
+      ownerUid: data.ownerUid,
+      ownerEmail: data.ownerEmail || null,
+      collaborators: collabs,
+      collaboratorEmails: _emailList(collabs),
+      linkSharing: !!data.linkSharing,
+    });
 
     // Pull project into local DB
     if (data.projectMeta) {
@@ -4889,16 +4935,29 @@ const COLLAB = (() => {
     const _origSchedule = window.scheduleAutoSync;
     window.scheduleAutoSync = function() {
       if (typeof _origSchedule === 'function') _origSchedule();
-      // Push all currently-shared projects that we own
-      _shareCache.forEach((info, projectId) => {
-        if (fbUser && info.ownerUid === fbUser.uid) {
-          clearTimeout(_pushTimers.get(projectId));
-          _pushTimers.set(projectId, setTimeout(() => pushProject(projectId), 1500));
-        }
-      });
+      _triggerCollabPush();
     };
   }
+
+  // Push for any shared project where the current user is owner OR an editor.
+  // Called both from the scheduleAutoSync hook and directly after every DB write.
+  function _triggerCollabPush() {
+    if (!fbUser) return;
+    _shareCache.forEach((info, projectId) => {
+      const isOwner = info.ownerUid === fbUser.uid;
+      const isEditor = (info.collaborators || []).some(
+        c => (c.uid === fbUser.uid || c.email === fbUser.email) && c.role !== 'viewer'
+      ) || (!isOwner && (info.collaboratorEmails || []).includes(fbUser.email));
+      if (isOwner || isEditor) {
+        clearTimeout(_pushTimers.get(projectId));
+        _pushTimers.set(projectId, setTimeout(() => pushProject(projectId), 1500));
+      }
+    });
+  }
   const _pushTimers = new Map();
+
+  // Extract flat email array for Firestore array-contains queries
+  function _emailList(collabs) { return (collabs || []).map(c => c.email).filter(Boolean); }
 
   // ── Share dialog ──────────────────────────────────────────────────────────
   async function showShareDialog(projectId) {
@@ -5086,7 +5145,7 @@ const COLLAB = (() => {
     } catch(e) {}
     // Projects I'm a collaborator on
     try {
-      const collab = await fbDb.collection('shared_projects').where('collaborators', 'array-contains', { email: fbUser.email }).get();
+      const collab = await fbDb.collection('shared_projects').where('collaboratorEmails', 'array-contains', fbUser.email).get();
       collab.forEach(doc => { _shareCache.set(doc.id, doc.data()); subscribe(doc.id); });
     } catch(e) {}
     // Simpler fallback: scan local projects and subscribe to any that exist in Firestore
@@ -5131,15 +5190,21 @@ const COLLAB = (() => {
     }, 1500);
   }
 
-  return { init, showShareDialog, joinByToken, subscribe, unsubscribe, pushProject };
+  return { init, showShareDialog, joinByToken, subscribe, unsubscribe, pushProject, _triggerCollabPush };
 })();
 
-// Boot the sync system after DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
+// Boot the sync system — wait for Firebase SDK to be ready before initialising
+function _bootSync() {
+  if (typeof firebase === 'undefined') {
+    // SDK not yet loaded — retry in 100 ms
+    setTimeout(_bootSync, 100);
+    return;
+  }
   initFirebase();
   setupCloudUI();
   COLLAB.init();
-});
+}
+document.addEventListener('DOMContentLoaded', _bootSync);
 
 
 </script>
