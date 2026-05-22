@@ -4774,39 +4774,34 @@ const COLLAB = (() => {
           { merge: true }
         );
       } else {
-        // Collaborator path
-        // Always re-fetch the live doc so we have the real collaborators/emails arrays
+        // Collaborator path — only send the data fields, never touch collaborators/emails.
+        // Step 1: ensure our email is in collaboratorEmails (joining rule allows this).
         const snap = await sharedRef(projectId).get();
         if (!snap.exists) return;
         const live = snap.data();
-        let collabs = live.collaborators || [];
-        let emails  = live.collaboratorEmails || [];
+        const emails = live.collaboratorEmails || [];
 
-        // If our email is missing from collaboratorEmails, add ourselves first.
-        // This uses the "joining" update rule (linkSharing==true, only touches
-        // collaborators + collaboratorEmails, leaves everything else unchanged).
         if (!emails.includes(fbUser.email)) {
+          let collabs = live.collaborators || [];
           if (!collabs.find(c => c.email === fbUser.email)) {
             collabs.push({ email: fbUser.email, uid: fbUser.uid,
                            name: fbUser.displayName || fbUser.email,
                            role: 'editor', joinedAt: Date.now() });
           }
-          emails = _emailList(collabs);
-          await snap.ref.update({ collaborators: collabs, collaboratorEmails: emails });
-          _shareCache.set(projectId, { ...info, collaborators: collabs, collaboratorEmails: emails });
-          // Brief pause so Firestore rules see the updated doc before the next write
-          await new Promise(r => setTimeout(r, 600));
+          const newEmails = _emailList(collabs);
+          // Only write collaborators+collaboratorEmails (matches the "joining" rule)
+          await snap.ref.update({ collaborators: collabs, collaboratorEmails: newEmails });
+          _shareCache.set(projectId, { ...info, collaborators: collabs, collaboratorEmails: newEmails });
+          await new Promise(r => setTimeout(r, 800));
         }
 
-        // Now push the data. Must include collaborators + collaboratorEmails unchanged
-        // so the "existing editor" Firestore rule passes (it checks those fields are unmodified).
+        // Step 2: push ONLY data fields — do NOT include collaborators or collaboratorEmails.
+        // The Firestore rule for editors is updated to only check ownerUid+shareToken+linkSharing.
         await sharedRef(projectId).update({
           projectMeta: project,
           tasks,
           updatedAt: Date.now(),
           updatedBy: fbUser.uid,
-          collaborators: collabs,
-          collaboratorEmails: emails,
         });
       }
     } catch(e) { console.error('COLLAB push error:', e); toast('Sync error: ' + e.message, 'error'); }
