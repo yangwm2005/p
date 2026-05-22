@@ -4761,13 +4761,17 @@ const COLLAB = (() => {
     const project = DB.getProject(projectId);
     const tasks   = DB.getTasks(projectId);
     if (!project) return;
+    const info = _shareCache.get(projectId);
+    const isOwner = info && info.ownerUid === fbUser.uid;
+    const payload = { projectMeta: project, tasks, updatedAt: Date.now(), updatedBy: fbUser.uid };
     try {
-      await sharedRef(projectId).set({
-        projectMeta: project,
-        tasks,
-        updatedAt: Date.now(),
-        updatedBy: fbUser.uid,
-      }, { merge: true });
+      if (isOwner) {
+        // Owner: use set+merge (safe to touch all fields)
+        await sharedRef(projectId).set(payload, { merge: true });
+      } else {
+        // Collaborator: use update (only touches allowed fields, avoids permission error)
+        await sharedRef(projectId).update(payload);
+      }
     } catch(e) { console.error('COLLAB push error:', e); toast('Sync error: ' + e.message, 'error'); }
   }
 
