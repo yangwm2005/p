@@ -3693,6 +3693,10 @@ body.force-desktop .section{border-radius:12px!important;box-shadow:0 2px 10px r
         let todosData = {};
         let goalsData = {};
         let recentNotesData = [];
+        // Tombstone log: records deleted item IDs so other devices remove them on sync.
+        // Key format: "type:date:id"  (e.g. "note:2026-05-23:42")
+        // Value: timestamp of deletion (used for pruning entries older than 30 days).
+        let deletedIds = {};
 
         // Global variables
         let currentDate = new Date();
@@ -6688,6 +6692,8 @@ function toggleAutoSave() {
                 const index = data[itemDate].findIndex(item => item.id === itemId);
                 if (index !== -1) {
                     deletedIndex = index;
+                    // Record tombstone so other devices remove this item on next sync
+                    deletedIds[`${itemType}:${itemDate}:${itemId}`] = Date.now();
                     data[itemDate].splice(index, 1);
                     loadDailyView();
                     updateStats();
@@ -6733,6 +6739,8 @@ function toggleAutoSave() {
             if (goalsData[dateString]) {
                 const index = goalsData[dateString].findIndex(g => g.id === goalId);
                 if (index !== -1) {
+                    // Record tombstone so other devices remove this goal on next sync
+                    deletedIds[`goal:${dateString}:${goalId}`] = Date.now();
                     goalsData[dateString].splice(index, 1);
                     loadDailyView();
                     updateStats();
@@ -6767,6 +6775,11 @@ function toggleAutoSave() {
         function confirmDeleteDay() {
             const dateString = formatDate(selectedDate);
             
+            // Tombstone every item in the day being deleted
+            const _now = Date.now();
+            (notesData[dateString] || []).forEach(i => { deletedIds[`note:${dateString}:${i.id}`] = _now; });
+            (todosData[dateString] || []).forEach(i => { deletedIds[`todo:${dateString}:${i.id}`] = _now; });
+            (goalsData[dateString] || []).forEach(i => { deletedIds[`goal:${dateString}:${i.id}`] = _now; });
             delete notesData[dateString];
             delete todosData[dateString];
             delete goalsData[dateString];
@@ -7615,6 +7628,7 @@ function toggleAutoSave() {
                 todos: todosData,
                 goals: goalsData,
                 recentNotes: recentNotesData,
+                deletedIds: deletedIds,
                 lastSave: new Date().toISOString()
             };
             
@@ -7637,6 +7651,7 @@ function toggleAutoSave() {
                         todosData = data.todos;
                         goalsData = data.goals;
                         recentNotesData = data.recentNotes || recentNotesData;
+                        deletedIds = data.deletedIds || {};
                         
                         loadDailyView();
                         loadRecentNotes();
@@ -7661,6 +7676,7 @@ function toggleAutoSave() {
                         todosData = data.todos;
                         goalsData = data.goals;
                         recentNotesData = data.recentNotes || recentNotesData;
+                        deletedIds = data.deletedIds || {};
                         
                         loadDailyView();
                         loadRecentNotes();
@@ -8479,6 +8495,10 @@ function toggleAutoSave() {
             configurable: true
         });
         let _fbSyncTimer = null, _fbSyncing = false, _fbLastSavedAt = 0, _fbPollInterval = null;
+        // _fbLastCloudTs: the cloud's own updatedAt value the last time we fetched.
+        // The poll fires only when cloud has a NEWER updatedAt than this.
+        // Stored in localStorage so it survives page reloads — no more "need to refresh".
+        let _fbLastCloudTs = parseInt(localStorage.getItem('rn_lastCloudTs') || '0');
 
         function isFirebaseConfigured(){
             return FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId;
@@ -8506,7 +8526,31 @@ function toggleAutoSave() {
                             `✓ Signed in as <strong>${user.displayName||''}</strong> (${user.email||''})`;
                         fbBadge(fbIsAutoSyncEnabled()?'ok':'off');
                         if(fbIsAutoSyncEnabled()){
-                            fbLoadAll(true).then(()=>fbStartPoll());
+                            // Smart startup: only pull from cloud if cloud is newer
+                            // than last local sync, or if there is no local data yet.
+                            (async () => {
+                                try {
+                                    const snap = await fbDb.collection('users').doc(fbUser.uid).get();
+                                    if (snap.exists) {
+                                        const cloudTs = snap.data().updatedAt || 0;
+                                        const localTs = new Date(localStorage.getItem('cgm_lastLocalSave') || 0).getTime();
+                                        const hasLocal = Object.keys(notesData || {}).length > 0 ||
+                                                         Object.keys(todosData || {}).length > 0;
+                                        if (cloudTs > localTs + 3000 || !hasLocal) {
+                                            await fbLoadAll(true);
+                                            if (cloudTs > localTs + 3000)
+                                                fbStatus('🔄 Updated from cloud (newer data found)', true);
+                                        } else {
+                                            fbBadge('ok');
+                                        }
+                                    } else {
+                                        // Nothing in cloud yet — push local data up
+                                        if (Object.keys(notesData || {}).length > 0)
+                                            await fbSaveAll(true);
+                                    }
+                                } catch(_) { fbBadge('ok'); }
+                                fbStartPoll();
+                            })();
                         }
                     } else {
                         fbUser = null;
@@ -8653,18 +8697,24 @@ function toggleAutoSave() {
             if(_fbSyncing) return;
             _fbSyncing = true; fbBadge('syncing');
             try {
+                _pruneTombstones();
                 const payload = {
                     remnoteData: {
                         notes:       notesData,
                         todos:       todosData,
                         goals:       goalsData,
-                        recentNotes: recentNotesData
+                        recentNotes: recentNotesData,
+                        deletedIds:  deletedIds
                     },
                     updatedAt: Date.now()
                 };
                 const docRef = fbDb.collection('users').doc(fbUser.uid);
                 await docRef.set(payload, { merge: true });
-                fbBadge('ok'); _fbLastSavedAt = Date.now();
+                const savedTs = Date.now();
+                _fbLastSavedAt = savedTs;
+                _fbLastCloudTs = savedTs;
+                localStorage.setItem('rn_lastCloudTs', String(savedTs));
+                fbBadge('ok');
                 if(!silent) fbStatus('✓ Saved to cloud', true);
             } catch(e){
                 fbBadge('error');
@@ -8672,28 +8722,131 @@ function toggleAutoSave() {
             } finally { _fbSyncing = false; }
         }
 
+        // Prune tombstones older than 30 days to keep the log small.
+        function _pruneTombstones() {
+            const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+            for (const key of Object.keys(deletedIds)) {
+                if (deletedIds[key] < cutoff) delete deletedIds[key];
+            }
+        }
+
+        // Merge two date-keyed data stores (notes/todos/goals).
+        // Cloud entries win per date — but any date that ONLY exists locally is kept.
+        // Items present in the combined tombstone log are stripped out regardless.
+        // The currently-focused (in-progress) item's text is always preserved.
+        function _mergeStore(local, cloud, combinedTombstones, typePrefix, focusItemId, focusText, isGoal) {
+            const merged = { ...local };           // start with all local dates
+            for (const dateKey of Object.keys(cloud)) {
+                const cloudItems = cloud[dateKey];
+                const localItems = local[dateKey];
+                if (!localItems || localItems.length === 0) {
+                    merged[dateKey] = cloudItems;
+                } else {
+                    // Cloud wins, but preserve in-progress edit
+                    merged[dateKey] = cloudItems.map(cloudItem => {
+                        const id = cloudItem.id;
+                        if (focusItemId && parseInt(focusItemId) === id && focusText !== null) {
+                            return isGoal
+                                ? { ...cloudItem, text: focusText }
+                                : { ...cloudItem, content: focusText };
+                        }
+                        return cloudItem;
+                    });
+                    // Keep local-only items (not yet pushed to cloud) unless tombstoned
+                    const cloudIds = new Set(cloudItems.map(i => i.id));
+                    const localOnly = localItems.filter(i => {
+                        if (cloudIds.has(i.id)) return false;          // already in cloud
+                        const tk = `${typePrefix}:${dateKey}:${i.id}`;
+                        return !combinedTombstones[tk];                 // not deleted elsewhere
+                    });
+                    if (localOnly.length > 0) {
+                        merged[dateKey] = [...merged[dateKey], ...localOnly];
+                    }
+                }
+            }
+            // Also apply tombstones to dates that only exist locally
+            // (cloud doesn't have the date at all, but items were deleted on another device)
+            for (const dateKey of Object.keys(local)) {
+                if (cloud[dateKey]) continue;   // already handled above
+                if (!merged[dateKey]) continue;
+                merged[dateKey] = merged[dateKey].filter(i => {
+                    const tk = `${typePrefix}:${dateKey}:${i.id}`;
+                    return !combinedTombstones[tk];
+                });
+            }
+            return merged;
+        }
+
         async function fbLoadAll(silent=false){
             if(!fbUser || !fbDb){ fbStatus('Not signed in.', false); return; }
             if(!silent) fbStatus('⬇ Loading from cloud…', true, true);
             fbBadge('syncing');
+            _fbLoadInProgress = true;
             try {
                 const docRef = fbDb.collection('users').doc(fbUser.uid);
                 const snap   = await docRef.get();
                 if(!snap.exists){ fbBadge('ok'); if(!silent) fbStatus('⚠ No cloud data found yet.', false, true); return; }
                 const data = snap.data();
                 if(!data.remnoteData){ fbBadge('error'); fbStatus('✗ Unrecognised data format.', false, true); return; }
+
+                // ── Snapshot any in-progress edit before touching the DOM ──────
+                const activeEl = document.activeElement;
+                let _focusItemId = null, _focusType = null, _focusText = null, _focusIsGoal = false;
+                if (activeEl && (activeEl.classList.contains('bullet-content') || activeEl.classList.contains('goal-text'))) {
+                    const itemEl = activeEl.closest('[data-id]');
+                    if (itemEl) {
+                        _focusItemId = itemEl.dataset.id;
+                        _focusType   = itemEl.dataset.type || (activeEl.classList.contains('goal-text') ? 'goal' : null);
+                        _focusText   = activeEl.textContent;
+                        _focusIsGoal = activeEl.classList.contains('goal-text');
+                    }
+                }
+
+                // ── Merge: cloud wins per date, local-only dates are preserved ─
+                // Combine local + cloud tombstones so deletions from either device are honoured.
                 const d = data.remnoteData;
-                if(d.notes)       notesData       = {...notesData,       ...d.notes};
-                if(d.todos)       todosData       = {...todosData,       ...d.todos};
-                if(d.goals)       goalsData       = {...goalsData,       ...d.goals};
-                if(d.recentNotes) recentNotesData = d.recentNotes;
-                saveToLocalStorage();
+                const cloudTombstones = d.deletedIds || {};
+                deletedIds = { ...deletedIds, ...cloudTombstones };  // union of both sets
+                _pruneTombstones();
+
+                if (d.notes) notesData = _mergeStore(notesData, d.notes, deletedIds, 'note', _focusItemId, _focusText, false);
+                if (d.todos) todosData = _mergeStore(todosData, d.todos, deletedIds, 'todo', _focusItemId, _focusText, false);
+                if (d.goals) goalsData = _mergeStore(goalsData, d.goals, deletedIds, 'goal', _focusItemId, _focusText, true);
+                if (d.recentNotes) recentNotesData = d.recentNotes;
+
+                saveToLocalStorage();   // _fbLoadInProgress=true suppresses the auto-push here
                 loadDailyView(); loadRecentNotes(); updateStats();
+
+                // ── Restore focus to the item the user was editing ────────────
+                if (_focusItemId) {
+                    const sel = _focusIsGoal
+                        ? `.goal-item[data-id="${_focusItemId}"] .goal-text`
+                        : `.bullet-item[data-id="${_focusItemId}"] .bullet-content`;
+                    const restored = document.querySelector(sel);
+                    if (restored) {
+                        restored.focus();
+                        const range = document.createRange();
+                        const sel2  = window.getSelection();
+                        range.selectNodeContents(restored);
+                        range.collapse(false);
+                        sel2.removeAllRanges();
+                        sel2.addRange(range);
+                    }
+                }
+
+                // Record the cloud's own timestamp as our baseline for future polls.
+                // Using the cloud's updatedAt (not Date.now()) means polls will correctly
+                // detect any change that happened after this load, even across page reloads.
+                const cloudTs = data.updatedAt || Date.now();
+                _fbLastCloudTs = cloudTs;
+                localStorage.setItem('rn_lastCloudTs', String(cloudTs));
                 _fbLastSavedAt = Date.now(); fbBadge('ok');
                 if(!silent) fbStatus('✓ Loaded from cloud', true);
             } catch(e){
                 fbBadge('error');
                 if(!silent) fbStatus('✗ Load failed: '+e.message, false, true);
+            } finally {
+                _fbLoadInProgress = false;
             }
         }
 
@@ -8705,11 +8858,15 @@ function toggleAutoSave() {
 
         async function fbPollChanges(){
             if(!fbIsAutoSyncEnabled()||!fbUser||_fbSyncing||!fbDb) return;
+            // Never interrupt the user mid-typing — skip if typed in last 3 s
+            if(typeof _isTyping === 'function' && _isTyping()) return;
             try {
                 const snap = await fbDb.collection('users').doc(fbUser.uid).get();
                 if(!snap.exists) return;
                 const remoteUpdatedAt = snap.data().updatedAt || 0;
-                if(remoteUpdatedAt > _fbLastSavedAt + 5000){
+                // Compare against the cloud timestamp we last saw, not our local clock.
+                // This correctly detects changes from another device even after a page reload.
+                if(remoteUpdatedAt > _fbLastCloudTs + 2000){
                     fbBadge('syncing');
                     await fbLoadAll(true);
                     fbStatus('🔄 Updated from another device', true);
@@ -8717,19 +8874,37 @@ function toggleAutoSave() {
             } catch(_){}
         }
 
-        function fbStartPoll(){ fbStopPoll(); _fbPollInterval = setInterval(fbPollChanges, 30000); }
+        function fbStartPoll(){ fbStopPoll(); _fbPollInterval = setInterval(fbPollChanges, 15000); }
         function fbStopPoll(){ if(_fbPollInterval){ clearInterval(_fbPollInterval); _fbPollInterval=null; } }
 
         // Patch saveToLocalStorage to trigger auto-sync on every write + record timestamp
+        let _fbLoadInProgress = false;  // suppress auto-push during cloud load
         const _origSave = saveToLocalStorage;
         window.saveToLocalStorage = function(){
             _origSave();
-            fbScheduleSync();
+            if (!_fbLoadInProgress) fbScheduleSync();
             // Update local-save timestamp
             const now = new Date();
             localStorage.setItem('cgm_lastLocalSave', now.toISOString());
             cgmUpdateTimestamps();
         };
+
+        // ── Typing guard: track last keystroke in any editable element ──────
+        // Prevents cloud poll from wiping text the user is actively writing.
+        let _lastTypingAt = 0;
+        document.addEventListener('input', e => {
+            if (e.target.isContentEditable ||
+                e.target.tagName === 'TEXTAREA' ||
+                e.target.tagName === 'INPUT') {
+                _lastTypingAt = Date.now();
+            }
+        }, true);
+        function _isTyping() { return Date.now() - _lastTypingAt < 3000; }
+
+        // Poll immediately when user switches back to the tab / unlocks device.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') fbPollChanges();
+        });
 
         // ── Inline ctrl-bar Google Cloud Sync dropdown ────────────────
         let _cgmOpen = false;
