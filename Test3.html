@@ -2803,23 +2803,65 @@ function importProjectsFromJson() {
 function handleProjectJsonImport(e) {
   const file = e.target.files[0];
   if (!file) return;
+  // Derive project name from filename — strip extension and date suffix,
+  // same rule as the Story Builder load button.
+  const fileName = file.name.replace(/\.[^/.]+$/, '')
+                            .replace(/-storymaking-\d+$/, '')
+                            .trim() || 'Loaded Manuscript';
   const reader = new FileReader();
   reader.onload = ev => {
     try {
       const parsed = JSON.parse(ev.target.result);
-      // Accept both { projects: [...] } wrapper and bare array
+
+      // ── Single-project format: { bioQuestion, mainClaim, figures, … } ──
+      // This is what "Save Project" downloads and what the Story Builder
+      // load button expects — handle it the same way.
+      if (parsed.bioQuestion !== undefined || parsed.figures !== undefined) {
+        const snap = {
+          bioQuestion: parsed.bioQuestion || '',
+          mainClaim:   parsed.mainClaim   || '',
+          figures: (parsed.figures || []).map(f => ({
+            type:     f.type     || 'Observation',
+            question: f.question || '',
+            finding:  f.finding  || '',
+            message:  f.message  || '',
+            title:    f.title    || ''
+          })),
+          updatedAt: Date.now()
+        };
+        flushActiveProject();
+        let existing = _projects.find(p => p.name === fileName);
+        if (existing) {
+          existing.data      = snap;
+          existing.updatedAt = Date.now();
+          _activeProjectId   = existing.id;
+        } else {
+          const newId = _genId();
+          _projects.push({ id: newId, name: fileName, data: snap,
+                           createdAt: Date.now(), updatedAt: Date.now() });
+          _activeProjectId = newId;
+        }
+        applySnapshot(snap);
+        generateStory();
+        updateHeaderChip();
+        renderProjectGrid();
+        if (fbUser && fbDb) saveProjects(true);
+        toast('Project loaded: ' + fileName, 'success');
+        e.target.value = '';
+        return;
+      }
+
+      // ── Multi-project format: { projects: […] } or bare array ──
       const incoming = Array.isArray(parsed) ? parsed
                      : Array.isArray(parsed.projects) ? parsed.projects
                      : null;
       if (!incoming || incoming.length === 0) {
         toast('No valid projects found in file', 'error'); return;
       }
-      // Validate each project has at minimum id and name
       const valid = incoming.filter(p => p && p.id && p.name);
       if (valid.length === 0) {
         toast('File contains no valid project entries', 'error'); return;
       }
-      // Merge: imported projects win by id; local-only projects are kept
       flushActiveProject();
       const localMap = new Map(_projects.map(p => [p.id, p]));
       for (const ip of valid) {
@@ -2828,12 +2870,12 @@ function handleProjectJsonImport(e) {
       _projects = [...localMap.values()];
       ensureDefaultProject();
       renderProjectGrid();
-      // Auto-save merged result to cloud if signed in
       if (fbUser && fbDb) saveProjects(true);
       toast(`Imported ${valid.length} project(s) ✓`, 'success');
     } catch(err) {
       toast('Could not read file: ' + err.message, 'error');
     }
+    e.target.value = '';
   };
   reader.readAsText(file);
 }
