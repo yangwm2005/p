@@ -8696,10 +8696,46 @@ function toggleAutoSave() {
             } finally { _fbSyncing = false; }
         }
 
+        // Merge two date-keyed data stores (notes/todos/goals).
+        // Cloud entries win per date — but any date that ONLY exists locally is kept.
+        // Within today's date, any in-progress local item (matched by id) is preserved.
+        function _mergeStore(local, cloud, focusItemId, focusText, focusType, isGoal) {
+            const merged = { ...local };           // start with all local dates
+            for (const dateKey of Object.keys(cloud)) {
+                const cloudItems = cloud[dateKey];
+                const localItems = local[dateKey];
+                if (!localItems || localItems.length === 0) {
+                    // Cloud has entries for this date, local has none — take cloud
+                    merged[dateKey] = cloudItems;
+                } else {
+                    // Both have entries: cloud wins, but re-apply any in-progress edit
+                    merged[dateKey] = cloudItems.map(cloudItem => {
+                        const id = cloudItem.id;
+                        if (focusItemId && parseInt(focusItemId) === id && focusText !== null) {
+                            // This is the item being actively edited — keep the local text
+                            return isGoal
+                                ? { ...cloudItem, text: focusText }
+                                : { ...cloudItem, content: focusText };
+                        }
+                        return cloudItem;
+                    });
+                    // Also keep any local items that don't exist in cloud yet
+                    // (created on this device but not yet synced to cloud)
+                    const cloudIds = new Set(cloudItems.map(i => i.id));
+                    const localOnly = localItems.filter(i => !cloudIds.has(i.id));
+                    if (localOnly.length > 0) {
+                        merged[dateKey] = [...merged[dateKey], ...localOnly];
+                    }
+                }
+            }
+            return merged;
+        }
+
         async function fbLoadAll(silent=false){
             if(!fbUser || !fbDb){ fbStatus('Not signed in.', false); return; }
             if(!silent) fbStatus('⬇ Loading from cloud…', true, true);
             fbBadge('syncing');
+            _fbLoadInProgress = true;
             try {
                 const docRef = fbDb.collection('users').doc(fbUser.uid);
                 const snap   = await docRef.get();
@@ -8707,15 +8743,9 @@ function toggleAutoSave() {
                 const data = snap.data();
                 if(!data.remnoteData){ fbBadge('error'); fbStatus('✗ Unrecognised data format.', false, true); return; }
 
-                // ── Snapshot any in-progress edit before touching the DOM ─────
-                // The user may be mid-sentence in a contenteditable bullet.
-                // We record which item is focused and its current text so we can
-                // restore it after the DOM rebuild that loadDailyView() does.
+                // ── Snapshot any in-progress edit before touching the DOM ──────
                 const activeEl = document.activeElement;
-                let _focusItemId   = null;
-                let _focusType     = null;  // 'note' | 'todo' | 'goal'
-                let _focusText     = null;
-                let _focusIsGoal   = false;
+                let _focusItemId = null, _focusType = null, _focusText = null, _focusIsGoal = false;
                 if (activeEl && (activeEl.classList.contains('bullet-content') || activeEl.classList.contains('goal-text'))) {
                     const itemEl = activeEl.closest('[data-id]');
                     if (itemEl) {
@@ -8726,50 +8756,18 @@ function toggleAutoSave() {
                     }
                 }
 
-                // If user is mid-typing on today, flush their in-progress text into
-                // the data store before merging, so it survives the merge.
-                if (_focusItemId && _focusText !== null) {
-                    const todayKey = formatDate(selectedDate);
-                    const id = parseInt(_focusItemId);
-                    if (_focusType === 'note' && notesData[todayKey]) {
-                        const idx = notesData[todayKey].findIndex(i => i.id === id);
-                        if (idx !== -1) notesData[todayKey][idx].content = _focusText;
-                    } else if (_focusType === 'todo' && todosData[todayKey]) {
-                        const idx = todosData[todayKey].findIndex(i => i.id === id);
-                        if (idx !== -1) todosData[todayKey][idx].content = _focusText;
-                    } else if (_focusIsGoal && goalsData[todayKey]) {
-                        const idx = goalsData[todayKey].findIndex(i => i.id === id);
-                        if (idx !== -1) goalsData[todayKey][idx].text = _focusText;
-                    }
-                }
-
+                // ── Merge: cloud wins per date, local-only dates are preserved ─
+                // Local items being actively edited are kept as-is.
                 const d = data.remnoteData;
-                if(d.notes)       notesData       = {...notesData,       ...d.notes};
-                if(d.todos)       todosData       = {...todosData,       ...d.todos};
-                if(d.goals)       goalsData       = {...goalsData,       ...d.goals};
-                if(d.recentNotes) recentNotesData = d.recentNotes;
+                if (d.notes) notesData = _mergeStore(notesData, d.notes, _focusItemId, _focusText, _focusType, false);
+                if (d.todos) todosData = _mergeStore(todosData, d.todos, _focusItemId, _focusText, _focusType, false);
+                if (d.goals) goalsData = _mergeStore(goalsData, d.goals, _focusItemId, _focusText, _focusType, true);
+                if (d.recentNotes) recentNotesData = d.recentNotes;
 
-                // Re-apply the in-progress text on top of what came from cloud,
-                // so the user never loses what they were typing.
-                if (_focusItemId && _focusText !== null) {
-                    const todayKey = formatDate(selectedDate);
-                    const id = parseInt(_focusItemId);
-                    if (_focusType === 'note' && notesData[todayKey]) {
-                        const idx = notesData[todayKey].findIndex(i => i.id === id);
-                        if (idx !== -1) notesData[todayKey][idx].content = _focusText;
-                    } else if (_focusType === 'todo' && todosData[todayKey]) {
-                        const idx = todosData[todayKey].findIndex(i => i.id === id);
-                        if (idx !== -1) todosData[todayKey][idx].content = _focusText;
-                    } else if (_focusIsGoal && goalsData[todayKey]) {
-                        const idx = goalsData[todayKey].findIndex(i => i.id === id);
-                        if (idx !== -1) goalsData[todayKey][idx].text = _focusText;
-                    }
-                }
-
-                saveToLocalStorage();
+                saveToLocalStorage();   // _fbLoadInProgress=true suppresses the auto-push here
                 loadDailyView(); loadRecentNotes(); updateStats();
 
-                // ── Restore focus to the item the user was editing ───────────
+                // ── Restore focus to the item the user was editing ────────────
                 if (_focusItemId) {
                     const sel = _focusIsGoal
                         ? `.goal-item[data-id="${_focusItemId}"] .goal-text`
@@ -8777,7 +8775,6 @@ function toggleAutoSave() {
                     const restored = document.querySelector(sel);
                     if (restored) {
                         restored.focus();
-                        // Place caret at end
                         const range = document.createRange();
                         const sel2  = window.getSelection();
                         range.selectNodeContents(restored);
@@ -8792,6 +8789,8 @@ function toggleAutoSave() {
             } catch(e){
                 fbBadge('error');
                 if(!silent) fbStatus('✗ Load failed: '+e.message, false, true);
+            } finally {
+                _fbLoadInProgress = false;
             }
         }
 
@@ -8821,10 +8820,11 @@ function toggleAutoSave() {
         function fbStopPoll(){ if(_fbPollInterval){ clearInterval(_fbPollInterval); _fbPollInterval=null; } }
 
         // Patch saveToLocalStorage to trigger auto-sync on every write + record timestamp
+        let _fbLoadInProgress = false;  // suppress auto-push during cloud load
         const _origSave = saveToLocalStorage;
         window.saveToLocalStorage = function(){
             _origSave();
-            fbScheduleSync();
+            if (!_fbLoadInProgress) fbScheduleSync();
             // Update local-save timestamp
             const now = new Date();
             localStorage.setItem('cgm_lastLocalSave', now.toISOString());
