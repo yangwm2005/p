@@ -8479,6 +8479,10 @@ function toggleAutoSave() {
             configurable: true
         });
         let _fbSyncTimer = null, _fbSyncing = false, _fbLastSavedAt = 0, _fbPollInterval = null;
+        // _fbLastCloudTs: the cloud's own updatedAt value the last time we fetched.
+        // The poll fires only when cloud has a NEWER updatedAt than this.
+        // Stored in localStorage so it survives page reloads — no more "need to refresh".
+        let _fbLastCloudTs = parseInt(localStorage.getItem('rn_lastCloudTs') || '0');
 
         function isFirebaseConfigured(){
             return FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId;
@@ -8688,7 +8692,11 @@ function toggleAutoSave() {
                 };
                 const docRef = fbDb.collection('users').doc(fbUser.uid);
                 await docRef.set(payload, { merge: true });
-                fbBadge('ok'); _fbLastSavedAt = Date.now();
+                const savedTs = Date.now();
+                _fbLastSavedAt = savedTs;
+                _fbLastCloudTs = savedTs;
+                localStorage.setItem('rn_lastCloudTs', String(savedTs));
+                fbBadge('ok');
                 if(!silent) fbStatus('✓ Saved to cloud', true);
             } catch(e){
                 fbBadge('error');
@@ -8784,6 +8792,12 @@ function toggleAutoSave() {
                     }
                 }
 
+                // Record the cloud's own timestamp as our baseline for future polls.
+                // Using the cloud's updatedAt (not Date.now()) means polls will correctly
+                // detect any change that happened after this load, even across page reloads.
+                const cloudTs = data.updatedAt || Date.now();
+                _fbLastCloudTs = cloudTs;
+                localStorage.setItem('rn_lastCloudTs', String(cloudTs));
                 _fbLastSavedAt = Date.now(); fbBadge('ok');
                 if(!silent) fbStatus('✓ Loaded from cloud', true);
             } catch(e){
@@ -8808,7 +8822,9 @@ function toggleAutoSave() {
                 const snap = await fbDb.collection('users').doc(fbUser.uid).get();
                 if(!snap.exists) return;
                 const remoteUpdatedAt = snap.data().updatedAt || 0;
-                if(remoteUpdatedAt > _fbLastSavedAt + 5000){
+                // Compare against the cloud timestamp we last saw, not our local clock.
+                // This correctly detects changes from another device even after a page reload.
+                if(remoteUpdatedAt > _fbLastCloudTs + 2000){
                     fbBadge('syncing');
                     await fbLoadAll(true);
                     fbStatus('🔄 Updated from another device', true);
