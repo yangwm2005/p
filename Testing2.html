@@ -6235,8 +6235,29 @@ if (timestripeBtn) {
                         if(!silent) showGdriveStatus('⚠ No journal data found in cloud yet.', false, true);
                         return;
                     }
+
+                    // Snapshot what the user is currently typing BEFORE we touch anything.
+                    // If the autosave timer hasn't fired yet, these values are ahead of
+                    // reflectionsData and must not be lost.
+                    const todayKey = formatDate(selectedDate);
+                    const inProgressMorning   = morningTextElement   ? morningTextElement.value   : null;
+                    const inProgressSelfaware = selfawareTextElement ? selfawareTextElement.value : null;
+                    const inProgressNight     = nightTextElement     ? nightTextElement.value     : null;
+
                     const data = snap.data();
                     reflectionsData = { ...reflectionsData, ...data.reflectionJournalData };
+
+                    // Restore in-progress text for today if it was longer than what
+                    // just came from the cloud (the user had unsaved edits).
+                    if (!reflectionsData[todayKey]) reflectionsData[todayKey] = {};
+                    const cloudDay = data.reflectionJournalData[todayKey] || {};
+                    if (inProgressMorning   !== null && inProgressMorning.length   > (cloudDay.morning   || '').length)
+                        reflectionsData[todayKey].morning   = inProgressMorning;
+                    if (inProgressSelfaware !== null && inProgressSelfaware.length > (cloudDay.selfaware || '').length)
+                        reflectionsData[todayKey].selfaware = inProgressSelfaware;
+                    if (inProgressNight     !== null && inProgressNight.length     > (cloudDay.night     || '').length)
+                        reflectionsData[todayKey].night     = inProgressNight;
+
                     saveToLocalStorage();
                     updateCalendar();
                     updateReflectionDisplay();
@@ -6260,6 +6281,8 @@ if (timestripeBtn) {
 
             async function pollDriveForChanges(){
                 if(!isAutoSyncEnabled()||!fbUser||gdriveSyncing||!fbDb) return;
+                // Never interrupt the user mid-sentence: if they typed in the last 3 s, skip.
+                if(typeof _isTyping === 'function' && _isTyping()) return;
                 try {
                     const snap = await getUserDocRef().get();
                     if(!snap.exists) return;
@@ -6320,6 +6343,14 @@ if (timestripeBtn) {
                 updateDropdownTimestamps();
                 scheduleAutoSync();
             };
+
+            // Track the last time the user typed in any textarea.
+            // Cloud sync will not overwrite the UI while the user is actively typing.
+            let _lastTypingAt = 0;
+            document.addEventListener('input', e => {
+                if (e.target.tagName === 'TEXTAREA') _lastTypingAt = Date.now();
+            }, true);
+            function _isTyping() { return Date.now() - _lastTypingAt < 3000; }
 
             // dropdown UI wiring
             function setupDropdown(){
