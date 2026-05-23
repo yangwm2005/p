@@ -820,6 +820,20 @@
     min-width: 28px; text-align: center;
     font-weight: 700; color: var(--gold); font-size: 1.1rem;
   }
+  /* ── Export dialog ─────────────────────────────────── */
+  #exportDialog { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:3000; align-items:center; justify-content:center; }
+  #exportDialog.open { display:flex; }
+  .export-box { background:#ffffff; color:var(--text); border-radius:var(--radius); box-shadow:0 8px 40px rgba(0,0,0,0.35); padding:28px 32px; max-width:480px; width:94%; max-height:80vh; display:flex; flex-direction:column; gap:16px; }
+  .export-box h3 { font-family:'Merriweather',serif; font-size:1.571em; color:var(--navy); margin:0; }
+  .export-box .sub { font-size:1.286em; color:var(--text-muted); margin-top:-8px; }
+  .export-list { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px; max-height:320px; border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px; }
+  .export-item { display:flex; align-items:center; gap:10px; padding:7px 4px; border-bottom:1px solid var(--border); font-size:1.286em; cursor:pointer; }
+  .export-item:last-child { border-bottom:none; }
+  .export-item input[type=checkbox] { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; flex-shrink:0; }
+  .export-item label { cursor:pointer; flex:1; }
+  .export-item .ei-meta { font-size:0.85em; color:var(--text-muted); }
+  .export-actions { display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap; }
+  .export-sel-all { font-size:1.143em; color:var(--accent); cursor:pointer; text-decoration:underline; margin-right:auto; align-self:center; }
 </style>
 </head>
 <body>
@@ -837,8 +851,8 @@
 
 <!-- MAIN TABS -->
 <nav class="main-tabs">
-  <div class="main-tab" onclick="switchTab('projects')">📁 Projects</div>
-  <div class="main-tab active" onclick="switchTab('builder')">📝 Story Builder</div>
+  <div class="main-tab active" onclick="switchTab('projects')">📁 Projects</div>
+  <div class="main-tab" onclick="switchTab('builder')">📝 Story Builder</div>
   <div class="main-tab" onclick="switchTab('help-guide')">📖 Writing Guidelines</div>
   <div class="main-tab" onclick="switchTab('help-figures')">🔬 Figure Types</div>
   <div class="main-tab" onclick="switchTab('help-narrative')">🧬 Narrative Craft</div>
@@ -903,14 +917,19 @@
 <!-- ═══════════════════════════════════════
      TAB 0 — PROJECTS
 ════════════════════════════════════════ -->
-<div class="tab-content" id="tab-projects">
+<div class="tab-content active" id="tab-projects">
   <div class="projects-layout">
     <div class="projects-topbar">
       <div>
         <h1>📁 My Manuscripts</h1>
         <div class="sub">Each project is a separate manuscript storyline saved to the cloud.</div>
       </div>
-      <button class="btn-accent" onclick="createNewProject()" style="padding:10px 18px;font-size:16px;">+ New Manuscript</button>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="importProjectsFromJson()" style="padding:10px 18px;font-size:16px;" title="Load a project from a JSON file">⬆ Load Project</button>
+        <button class="btn btn-primary" onclick="showExportDialog()" style="padding:10px 18px;font-size:16px;" title="Save selected projects as JSON files">⬇ Save Project</button>
+        <button class="btn-accent" onclick="createNewProject()" style="padding:10px 18px;font-size:16px;">+ New Manuscript</button>
+      </div>
+      <input type="file" id="projectJsonInput" accept=".json" style="display:none" onchange="handleProjectJsonImport(event)">
     </div>
     <div id="projectsSigninPrompt" class="projects-signin-prompt" style="display:none">
       <div class="big-icon">☁</div>
@@ -925,7 +944,7 @@
 <!-- ═══════════════════════════════════════
      TAB 1 — BUILDER
 ════════════════════════════════════════ -->
-<div class="tab-content active" id="tab-builder">
+<div class="tab-content" id="tab-builder">
   <div class="builder-layout">
     <div class="panel panel-left">
       <h2>Story Input</h2>
@@ -1812,6 +1831,10 @@ let _syncing          = false;
 let _lastCloudSave    = 0;
 let _lastLocalSave    = 0;
 let _pollInterval     = null;
+// _lastCloudTs: the cloud's own smb_updatedAt from last fetch — persisted so poll
+// correctly detects changes from another device even after a page reload.
+let _lastCloudTs = parseInt(localStorage.getItem('smb_lastCloudTs') || '0');
+let _loadInProgress = false;  // suppresses stale auto-push during load
 // Share state
 let _shareToken       = null;   // token for the current manuscript
 let _shareListener    = null;   // Firestore onSnapshot unsubscribe fn
@@ -1935,9 +1958,24 @@ function initFirebase() {
         autoSyncEnabled = saved === 'true';
         updateCloudBar();
         // Load projects first (replaces the old single-doc load)
-        await loadProjects(true);
+        if (autoSyncEnabled) {
+          // Smart startup: only pull from cloud if it's genuinely newer than last fetch
+          try {
+            const doc = await fbDb.collection('users').doc(fbUser.uid).get();
+            const cloudTs = doc.exists ? (doc.data().smb_updatedAt || 0) : 0;
+            const localTs = parseInt(localStorage.getItem('smb_lastCloudTs') || '0');
+            if (cloudTs > localTs + 3000 || _projects.length === 0) {
+              await loadProjects(true);
+              if (cloudTs > localTs + 3000) toast('🔄 Updated from cloud', 'info');
+            } else {
+              _projectsLoaded = true;
+            }
+          } catch(_) { await loadProjects(true); }
+          startPoll();
+        } else {
+          await loadProjects(true);
+        }
         renderProjectGrid();
-        if (autoSyncEnabled) startPoll();
         // re-subscribe share listener if we have a token stored
         const st = localStorage.getItem('smb_shareToken');
         if (st) { _shareToken = st; subscribeShare(); }
@@ -2058,13 +2096,29 @@ function setAutoSync(val) {
 
 function startPoll() {
   stopPoll();
-  _pollInterval = setInterval(async () => {
-    if (!autoSyncEnabled || !fbUser || _syncing || !fbDb) return;
-    try {
+  _pollInterval = setInterval(pollForChanges, 15000);
+}
+
+async function pollForChanges() {
+  if (!autoSyncEnabled || !fbUser || _syncing || !fbDb) return;
+  try {
+    const doc = await fbDb.collection('users').doc(fbUser.uid).get();
+    if (!doc.exists) return;
+    const cloudTs = doc.data().smb_updatedAt || 0;
+    // Only reload when cloud is genuinely newer than last fetch
+    if (cloudTs > _lastCloudTs + 2000) {
+      await loadProjects(true);
+      renderProjectGrid();
+      // If active project changed, apply its snapshot
+      const p = _projects.find(p => p.id === _activeProjectId);
+      if (p && p.data) applySnapshot(p.data);
+      toast('🔄 Updated from another device', 'info');
+    } else {
+      // Nothing new on cloud — push any local changes
       flushActiveProject();
       await saveProjects(true);
-    } catch(e) {}
-  }, 30000);
+    }
+  } catch(e) {}
 }
 function stopPoll() {
   if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null; }
@@ -2426,32 +2480,61 @@ function ensureDefaultProject() {
 // ── Load all projects from Firestore ──────────────────
 async function loadProjects(silent = false) {
   if (!fbUser || !fbDb) return;
+  _loadInProgress = true;
   try {
     const doc = await fbDb.collection('users').doc(fbUser.uid).get();
     if (doc.exists && doc.data().smb_projects) {
-      _projects = doc.data().smb_projects;
+      const cloudProjects = doc.data().smb_projects;
+      // Merge: cloud wins per project id, but keep local-only projects
+      const cloudMap = new Map(cloudProjects.map(p => [p.id, p]));
+      const localMap = new Map(_projects.map(p => [p.id, p]));
+      const merged = [];
+      // Cloud projects first (cloud wins)
+      for (const cp of cloudProjects) {
+        const lp = localMap.get(cp.id);
+        if (lp && (lp.updatedAt||0) > (cp.updatedAt||0)) {
+          // Local is newer for this project — keep local
+          merged.push(lp);
+        } else {
+          merged.push(cp);
+        }
+      }
+      // Local-only projects (not yet in cloud)
+      for (const lp of _projects) {
+        if (!cloudMap.has(lp.id)) merged.push(lp);
+      }
+      _projects = merged;
+      // Record cloud's own timestamp as baseline for poll
+      const cloudTs = doc.data().smb_updatedAt || 0;
+      _lastCloudTs = cloudTs;
+      localStorage.setItem('smb_lastCloudTs', String(cloudTs));
     }
     ensureDefaultProject();
-    // If no active project yet, activate the first one
+    // Open the most recently updated project (not just first in array)
     if (!_activeProjectId) {
-      _activeProjectId = _projects[0].id;
-      const p = _projects[0];
-      if (p.data) applySnapshot(p.data);
+      const newest = [..._projects].sort((a,b) => (b.updatedAt||0) - (a.updatedAt||0))[0];
+      _activeProjectId = newest.id;
+      if (newest.data) applySnapshot(newest.data);
       updateHeaderChip();
     }
     _projectsLoaded = true;
   } catch(e) { if (!silent) toast('Could not load projects: ' + e.message, 'error'); }
+  finally { _loadInProgress = false; }
 }
 
 // ── Save all projects to Firestore ────────────────────
 async function saveProjects(silent = true) {
   if (!fbUser || !fbDb) return;
+  if (_loadInProgress) return;  // never push during a load
   try {
+    const savedTs = Date.now();
     await fbDb.collection('users').doc(fbUser.uid).set(
-      { smb_projects: _projects, smb_updatedAt: Date.now() }, { merge: true }
+      { smb_projects: _projects, smb_updatedAt: savedTs }, { merge: true }
     );
-    _lastCloudSave = Date.now();
-    _lastLocalSave = Date.now();
+    _lastCloudSave = savedTs;
+    _lastLocalSave = savedTs;
+    _lastCloudTs   = savedTs;
+    localStorage.setItem('smb_lastCloudTs', String(savedTs));
     updateCloudBar();
   } catch(e) { if (!silent) toast('Save failed: ' + e.message, 'error'); }
 }
@@ -2643,12 +2726,170 @@ function loadFontSize() {
 }
 
 // ── Boot ───────────────────────────────────────────────
+// ── Export dialog ─────────────────────────────────────
+function showExportDialog() {
+  flushActiveProject();
+  if (!_projects || _projects.length === 0) {
+    toast('No projects to export', 'error'); return;
+  }
+  const list = document.getElementById('exportList');
+  list.innerHTML = '';
+  const sorted = [..._projects].sort((a, b) => (b.updatedAt||0) - (a.updatedAt||0));
+  sorted.forEach(p => {
+    const updated = p.updatedAt ? fmtTime(p.updatedAt) : '—';
+    const id = 'exp_' + p.id;
+    const item = document.createElement('label');
+    item.className = 'export-item';
+    item.innerHTML = `
+      <input type="checkbox" id="${id}" value="${p.id}" checked>
+      <span style="flex:1">
+        <span style="font-weight:600">${escHtml(p.name)}</span>
+        <span class="ei-meta"> · Updated ${updated}</span>
+      </span>`;
+    list.appendChild(item);
+  });
+  document.getElementById('exportDialog').classList.add('open');
+}
+
+function closeExportDialog() {
+  document.getElementById('exportDialog').classList.remove('open');
+}
+
+function toggleExportAll() {
+  const boxes = document.querySelectorAll('#exportList input[type=checkbox]');
+  const allChecked = [...boxes].every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  document.querySelector('.export-sel-all').textContent = allChecked ? 'Select all' : 'Deselect all';
+}
+
+function doExportSelected() {
+  const checked = [...document.querySelectorAll('#exportList input[type=checkbox]:checked')];
+  if (checked.length === 0) { toast('No projects selected', 'error'); return; }
+  const dateStr = getTodayDate();
+  let count = 0;
+  checked.forEach(box => {
+    const p = _projects.find(p => p.id === box.value);
+    if (!p) return;
+    // Follow the existing naming rule: {titleKey}-storymaking-{YYYYMMDD}.json
+    const titleKey = p.name.trim().replace(/[^a-zA-Z0-9\-_一-鿿]/g, '_') || 'project';
+    const payload  = {
+      bioQuestion: p.data?.bioQuestion || '',
+      mainClaim:   p.data?.mainClaim   || '',
+      figures:    (p.data?.figures || []).map(f => ({
+        type: f.type, question: f.question,
+        finding: f.finding, message: f.message, title: f.title
+      })),
+      exportedAt: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `${titleKey}-storymaking-${dateStr}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    count++;
+  });
+  closeExportDialog();
+  toast(`Downloaded ${count} project file${count !== 1 ? 's' : ''} ✓`, 'success');
+}
+
+// ── Import projects from JSON file ────────────────────
+function importProjectsFromJson() {
+  document.getElementById('projectJsonInput').value = '';
+  document.getElementById('projectJsonInput').click();
+}
+
+function handleProjectJsonImport(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  // Derive project name from filename — strip extension and date suffix,
+  // same rule as the Story Builder load button.
+  const fileName = file.name.replace(/\.[^/.]+$/, '')
+                            .replace(/-storymaking-\d+$/, '')
+                            .trim() || 'Loaded Manuscript';
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const parsed = JSON.parse(ev.target.result);
+
+      // ── Single-project format: { bioQuestion, mainClaim, figures, … } ──
+      // This is what "Save Project" downloads and what the Story Builder
+      // load button expects — handle it the same way.
+      if (parsed.bioQuestion !== undefined || parsed.figures !== undefined) {
+        const snap = {
+          bioQuestion: parsed.bioQuestion || '',
+          mainClaim:   parsed.mainClaim   || '',
+          figures: (parsed.figures || []).map(f => ({
+            type:     f.type     || 'Observation',
+            question: f.question || '',
+            finding:  f.finding  || '',
+            message:  f.message  || '',
+            title:    f.title    || ''
+          })),
+          updatedAt: Date.now()
+        };
+        flushActiveProject();
+        let existing = _projects.find(p => p.name === fileName);
+        if (existing) {
+          existing.data      = snap;
+          existing.updatedAt = Date.now();
+          _activeProjectId   = existing.id;
+        } else {
+          const newId = _genId();
+          _projects.push({ id: newId, name: fileName, data: snap,
+                           createdAt: Date.now(), updatedAt: Date.now() });
+          _activeProjectId = newId;
+        }
+        applySnapshot(snap);
+        generateStory();
+        updateHeaderChip();
+        renderProjectGrid();
+        if (fbUser && fbDb) saveProjects(true);
+        toast('Project loaded: ' + fileName, 'success');
+        e.target.value = '';
+        return;
+      }
+
+      // ── Multi-project format: { projects: […] } or bare array ──
+      const incoming = Array.isArray(parsed) ? parsed
+                     : Array.isArray(parsed.projects) ? parsed.projects
+                     : null;
+      if (!incoming || incoming.length === 0) {
+        toast('No valid projects found in file', 'error'); return;
+      }
+      const valid = incoming.filter(p => p && p.id && p.name);
+      if (valid.length === 0) {
+        toast('File contains no valid project entries', 'error'); return;
+      }
+      flushActiveProject();
+      const localMap = new Map(_projects.map(p => [p.id, p]));
+      for (const ip of valid) {
+        localMap.set(ip.id, { ...ip, updatedAt: ip.updatedAt || Date.now() });
+      }
+      _projects = [...localMap.values()];
+      ensureDefaultProject();
+      renderProjectGrid();
+      if (fbUser && fbDb) saveProjects(true);
+      toast(`Imported ${valid.length} project(s) ✓`, 'success');
+    } catch(err) {
+      toast('Could not read file: ' + err.message, 'error');
+    }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadFontSize();
   initFirebase();
   updateCloudBar();
-  // Always start at the very top of the page
   window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+});
+
+// Poll immediately when switching back to this tab or unlocking device
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && autoSyncEnabled && fbUser) pollForChanges();
 });
 
 // Also scroll on any history navigation (back/forward)
@@ -2656,6 +2897,20 @@ window.addEventListener('pageshow', () => {
   window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
 });
 </script>
+
+<!-- ── Export Dialog ──────────────────────────────────────── -->
+<div id="exportDialog" role="dialog" aria-modal="true" onclick="if(event.target===this)closeExportDialog()">
+  <div class="export-box">
+    <h3>⬇ Save Project</h3>
+    <div class="sub">Select which manuscripts to download as JSON files.</div>
+    <div class="export-list" id="exportList"></div>
+    <div class="export-actions">
+      <span class="export-sel-all" onclick="toggleExportAll()">Select all</span>
+      <button class="btn" onclick="closeExportDialog()" style="padding:8px 18px;">Cancel</button>
+      <button class="btn-accent" onclick="doExportSelected()" style="padding:8px 18px;">⬇ Download</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── Footer ─────────────────────────────────────────── -->
 <footer style="
