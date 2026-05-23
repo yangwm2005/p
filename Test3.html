@@ -910,7 +910,12 @@
         <h1>📁 My Manuscripts</h1>
         <div class="sub">Each project is a separate manuscript storyline saved to the cloud.</div>
       </div>
-      <button class="btn-accent" onclick="createNewProject()" style="padding:10px 18px;font-size:16px;">+ New Manuscript</button>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="importProjectsFromJson()" style="padding:10px 18px;font-size:16px;" title="Load projects from a JSON file">⬆ Import JSON</button>
+        <button class="btn btn-primary" onclick="exportProjectsToJson()" style="padding:10px 18px;font-size:16px;" title="Save all projects to a JSON file">⬇ Export JSON</button>
+        <button class="btn-accent" onclick="createNewProject()" style="padding:10px 18px;font-size:16px;">+ New Manuscript</button>
+      </div>
+      <input type="file" id="projectJsonInput" accept=".json" style="display:none" onchange="handleProjectJsonImport(event)">
     </div>
     <div id="projectsSigninPrompt" class="projects-signin-prompt" style="display:none">
       <div class="big-icon">☁</div>
@@ -2707,6 +2712,72 @@ function loadFontSize() {
 }
 
 // ── Boot ───────────────────────────────────────────────
+// ── Export all projects to JSON file ─────────────────
+function exportProjectsToJson() {
+  flushActiveProject();
+  if (!_projects || _projects.length === 0) {
+    toast('No projects to export', 'error'); return;
+  }
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    appVersion: 'Storymaker-v11',
+    projects: _projects
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const date = new Date().toISOString().slice(0, 10);
+  a.href     = url;
+  a.download = `storymaker-projects-${date}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(`Exported ${_projects.length} project(s) ✓`, 'success');
+}
+
+// ── Import projects from JSON file ────────────────────
+function importProjectsFromJson() {
+  document.getElementById('projectJsonInput').value = '';
+  document.getElementById('projectJsonInput').click();
+}
+
+function handleProjectJsonImport(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const parsed = JSON.parse(ev.target.result);
+      // Accept both { projects: [...] } wrapper and bare array
+      const incoming = Array.isArray(parsed) ? parsed
+                     : Array.isArray(parsed.projects) ? parsed.projects
+                     : null;
+      if (!incoming || incoming.length === 0) {
+        toast('No valid projects found in file', 'error'); return;
+      }
+      // Validate each project has at minimum id and name
+      const valid = incoming.filter(p => p && p.id && p.name);
+      if (valid.length === 0) {
+        toast('File contains no valid project entries', 'error'); return;
+      }
+      // Merge: imported projects win by id; local-only projects are kept
+      flushActiveProject();
+      const localMap = new Map(_projects.map(p => [p.id, p]));
+      for (const ip of valid) {
+        localMap.set(ip.id, { ...ip, updatedAt: ip.updatedAt || Date.now() });
+      }
+      _projects = [...localMap.values()];
+      ensureDefaultProject();
+      renderProjectGrid();
+      // Auto-save merged result to cloud if signed in
+      if (fbUser && fbDb) saveProjects(true);
+      toast(`Imported ${valid.length} project(s) ✓`, 'success');
+    } catch(err) {
+      toast('Could not read file: ' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadFontSize();
   initFirebase();
