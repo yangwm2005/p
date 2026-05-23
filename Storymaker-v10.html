@@ -1727,22 +1727,62 @@ function saveProject() {
 document.getElementById('loadFile').addEventListener('change', function(e) {
   const file = e.target.files[0];
   if (!file) return;
+  // Derive a project name from the filename (strip extension)
+  const fileName = file.name.replace(/\.[^/.]+$/, '').replace(/-storymaking-\d+$/, '').trim() || 'Loaded Manuscript';
   const reader = new FileReader();
   reader.onload = function(ev) {
-    const data = JSON.parse(ev.target.result);
-    document.getElementById("bioQuestion").value = data.bioQuestion || "";
-    document.getElementById("mainClaim").value   = data.mainClaim   || "";
-    figures = (data.figures || []).map(f => ({
-      _uid: ++_uid,
-      type:     f.type     || 'Observation',
-      question: f.question || '',
-      finding:  f.finding  || '',
-      message:  f.message  || '',
-      title:    f.title    || ''
-    }));
-    renderFigures();
-    generateStory();
-    alert("Project loaded successfully.");
+    try {
+      const data = JSON.parse(ev.target.result);
+      // Build a snapshot object
+      const snap = {
+        bioQuestion: data.bioQuestion || '',
+        mainClaim:   data.mainClaim   || '',
+        figures: (data.figures || []).map(f => ({
+          type:     f.type     || 'Observation',
+          question: f.question || '',
+          finding:  f.finding  || '',
+          message:  f.message  || '',
+          title:    f.title    || ''
+        })),
+        updatedAt: Date.now()
+      };
+
+      // If projects system is active, create a new project entry for the loaded file
+      if (_projectsLoaded && fbUser) {
+        // Check if a project with the same name already exists
+        let existing = _projects.find(p => p.name === fileName);
+        if (existing) {
+          // Update it in place
+          flushActiveProject();
+          existing.data      = snap;
+          existing.updatedAt = Date.now();
+          _activeProjectId   = existing.id;
+        } else {
+          // Save current editor state first, then create new project
+          flushActiveProject();
+          const newId = _genId();
+          _projects.push({
+            id:        newId,
+            name:      fileName,
+            data:      snap,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+          });
+          _activeProjectId = newId;
+        }
+        updateHeaderChip();
+        saveProjects(true);
+      }
+
+      // Apply to editor
+      applySnapshot(snap);
+      generateStory();
+      toast('Project loaded: ' + fileName, 'success');
+    } catch(err) {
+      toast('Failed to load file: ' + err.message, 'error');
+    }
+    // Reset file input so the same file can be re-loaded if needed
+    e.target.value = '';
   };
   reader.readAsText(file);
 });
