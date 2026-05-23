@@ -3693,6 +3693,10 @@ body.force-desktop .section{border-radius:12px!important;box-shadow:0 2px 10px r
         let todosData = {};
         let goalsData = {};
         let recentNotesData = [];
+        // Tombstone log: records deleted item IDs so other devices remove them on sync.
+        // Key format: "type:date:id"  (e.g. "note:2026-05-23:42")
+        // Value: timestamp of deletion (used for pruning entries older than 30 days).
+        let deletedIds = {};
 
         // Global variables
         let currentDate = new Date();
@@ -6688,6 +6692,8 @@ function toggleAutoSave() {
                 const index = data[itemDate].findIndex(item => item.id === itemId);
                 if (index !== -1) {
                     deletedIndex = index;
+                    // Record tombstone so other devices remove this item on next sync
+                    deletedIds[`${itemType}:${itemDate}:${itemId}`] = Date.now();
                     data[itemDate].splice(index, 1);
                     loadDailyView();
                     updateStats();
@@ -6733,6 +6739,8 @@ function toggleAutoSave() {
             if (goalsData[dateString]) {
                 const index = goalsData[dateString].findIndex(g => g.id === goalId);
                 if (index !== -1) {
+                    // Record tombstone so other devices remove this goal on next sync
+                    deletedIds[`goal:${dateString}:${goalId}`] = Date.now();
                     goalsData[dateString].splice(index, 1);
                     loadDailyView();
                     updateStats();
@@ -6767,6 +6775,11 @@ function toggleAutoSave() {
         function confirmDeleteDay() {
             const dateString = formatDate(selectedDate);
             
+            // Tombstone every item in the day being deleted
+            const _now = Date.now();
+            (notesData[dateString] || []).forEach(i => { deletedIds[`note:${dateString}:${i.id}`] = _now; });
+            (todosData[dateString] || []).forEach(i => { deletedIds[`todo:${dateString}:${i.id}`] = _now; });
+            (goalsData[dateString] || []).forEach(i => { deletedIds[`goal:${dateString}:${i.id}`] = _now; });
             delete notesData[dateString];
             delete todosData[dateString];
             delete goalsData[dateString];
@@ -7615,6 +7628,7 @@ function toggleAutoSave() {
                 todos: todosData,
                 goals: goalsData,
                 recentNotes: recentNotesData,
+                deletedIds: deletedIds,
                 lastSave: new Date().toISOString()
             };
             
@@ -7637,6 +7651,7 @@ function toggleAutoSave() {
                         todosData = data.todos;
                         goalsData = data.goals;
                         recentNotesData = data.recentNotes || recentNotesData;
+                        deletedIds = data.deletedIds || {};
                         
                         loadDailyView();
                         loadRecentNotes();
@@ -7661,6 +7676,7 @@ function toggleAutoSave() {
                         todosData = data.todos;
                         goalsData = data.goals;
                         recentNotesData = data.recentNotes || recentNotesData;
+                        deletedIds = data.deletedIds || {};
                         
                         loadDailyView();
                         loadRecentNotes();
@@ -8681,12 +8697,14 @@ function toggleAutoSave() {
             if(_fbSyncing) return;
             _fbSyncing = true; fbBadge('syncing');
             try {
+                _pruneTombstones();
                 const payload = {
                     remnoteData: {
                         notes:       notesData,
                         todos:       todosData,
                         goals:       goalsData,
-                        recentNotes: recentNotesData
+                        recentNotes: recentNotesData,
+                        deletedIds:  deletedIds
                     },
                     updatedAt: Date.now()
                 };
@@ -8704,37 +8722,57 @@ function toggleAutoSave() {
             } finally { _fbSyncing = false; }
         }
 
+        // Prune tombstones older than 30 days to keep the log small.
+        function _pruneTombstones() {
+            const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+            for (const key of Object.keys(deletedIds)) {
+                if (deletedIds[key] < cutoff) delete deletedIds[key];
+            }
+        }
+
         // Merge two date-keyed data stores (notes/todos/goals).
         // Cloud entries win per date — but any date that ONLY exists locally is kept.
-        // Within today's date, any in-progress local item (matched by id) is preserved.
-        function _mergeStore(local, cloud, focusItemId, focusText, focusType, isGoal) {
+        // Items present in the combined tombstone log are stripped out regardless.
+        // The currently-focused (in-progress) item's text is always preserved.
+        function _mergeStore(local, cloud, combinedTombstones, typePrefix, focusItemId, focusText, isGoal) {
             const merged = { ...local };           // start with all local dates
             for (const dateKey of Object.keys(cloud)) {
                 const cloudItems = cloud[dateKey];
                 const localItems = local[dateKey];
                 if (!localItems || localItems.length === 0) {
-                    // Cloud has entries for this date, local has none — take cloud
                     merged[dateKey] = cloudItems;
                 } else {
-                    // Both have entries: cloud wins, but re-apply any in-progress edit
+                    // Cloud wins, but preserve in-progress edit
                     merged[dateKey] = cloudItems.map(cloudItem => {
                         const id = cloudItem.id;
                         if (focusItemId && parseInt(focusItemId) === id && focusText !== null) {
-                            // This is the item being actively edited — keep the local text
                             return isGoal
                                 ? { ...cloudItem, text: focusText }
                                 : { ...cloudItem, content: focusText };
                         }
                         return cloudItem;
                     });
-                    // Also keep any local items that don't exist in cloud yet
-                    // (created on this device but not yet synced to cloud)
+                    // Keep local-only items (not yet pushed to cloud) unless tombstoned
                     const cloudIds = new Set(cloudItems.map(i => i.id));
-                    const localOnly = localItems.filter(i => !cloudIds.has(i.id));
+                    const localOnly = localItems.filter(i => {
+                        if (cloudIds.has(i.id)) return false;          // already in cloud
+                        const tk = `${typePrefix}:${dateKey}:${i.id}`;
+                        return !combinedTombstones[tk];                 // not deleted elsewhere
+                    });
                     if (localOnly.length > 0) {
                         merged[dateKey] = [...merged[dateKey], ...localOnly];
                     }
                 }
+            }
+            // Also apply tombstones to dates that only exist locally
+            // (cloud doesn't have the date at all, but items were deleted on another device)
+            for (const dateKey of Object.keys(local)) {
+                if (cloud[dateKey]) continue;   // already handled above
+                if (!merged[dateKey]) continue;
+                merged[dateKey] = merged[dateKey].filter(i => {
+                    const tk = `${typePrefix}:${dateKey}:${i.id}`;
+                    return !combinedTombstones[tk];
+                });
             }
             return merged;
         }
@@ -8765,11 +8803,15 @@ function toggleAutoSave() {
                 }
 
                 // ── Merge: cloud wins per date, local-only dates are preserved ─
-                // Local items being actively edited are kept as-is.
+                // Combine local + cloud tombstones so deletions from either device are honoured.
                 const d = data.remnoteData;
-                if (d.notes) notesData = _mergeStore(notesData, d.notes, _focusItemId, _focusText, _focusType, false);
-                if (d.todos) todosData = _mergeStore(todosData, d.todos, _focusItemId, _focusText, _focusType, false);
-                if (d.goals) goalsData = _mergeStore(goalsData, d.goals, _focusItemId, _focusText, _focusType, true);
+                const cloudTombstones = d.deletedIds || {};
+                deletedIds = { ...deletedIds, ...cloudTombstones };  // union of both sets
+                _pruneTombstones();
+
+                if (d.notes) notesData = _mergeStore(notesData, d.notes, deletedIds, 'note', _focusItemId, _focusText, false);
+                if (d.todos) todosData = _mergeStore(todosData, d.todos, deletedIds, 'todo', _focusItemId, _focusText, false);
+                if (d.goals) goalsData = _mergeStore(goalsData, d.goals, deletedIds, 'goal', _focusItemId, _focusText, true);
                 if (d.recentNotes) recentNotesData = d.recentNotes;
 
                 saveToLocalStorage();   // _fbLoadInProgress=true suppresses the auto-push here
