@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Mindful Reflections | Daily Journal v25</title>
+    <title>Mindful Reflections | Daily Journal v25.2</title>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -3677,7 +3677,7 @@ input:checked + .slider:before {
                     <div class="action-group-title">Reflection Actions</div>
                     <div class="actions-section">
                         <button class="btn-success" id="save-btn">
-                            <span class="btn-icon">💾</span> Save
+                            <span class="btn-icon">💾</span> Save & Download
                         </button>
                         
                         <div class="auto-save-container">
@@ -5525,7 +5525,22 @@ if (timestripeBtn) {
             reflectionsData[dateString]._savedAt = Date.now();
             saveToLocalStorage();
             updateCalendar();
-            showStatus('Reflections saved successfully!', 'success');
+            // Also download a JSON file so data is preserved across devices/browsers
+            try {
+                const dataStr = JSON.stringify(reflectionsData, null, 2);
+                const blob = new Blob([dataStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `mindful-reflections-${formatDate(new Date())}.json`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+                showStatus('Saved to browser & downloaded as file!', 'success');
+            } catch(e) {
+                showStatus('Reflections saved to browser!', 'success');
+            }
             if (fullpageOverlay.classList.contains('active')) {
                 fullpageMorningText.value = morningTextElement.value;
                 fullpageSelfawareText.value = selfawareTextElement.value;
@@ -6154,10 +6169,9 @@ if (timestripeBtn) {
                             updateUserUI(user);
                             setSyncIndicator(isAutoSyncEnabled()?'ok':'off');
                             if(isAutoSyncEnabled()){
-                                // On sign-in: check whether cloud has data newer than what
-                                // this device last synced.  We always run fbLoadAll so the
-                                // smart merge logic reconciles both sides — local entries are
-                                // never dropped even when the cloud is newer.
+                                // On sign-in: always run the smart merge so both directions
+                                // are reconciled. Then push merged result back to cloud so
+                                // local-only entries (never yet uploaded) are preserved.
                                 (async ()=>{
                                     try {
                                         const snap = await getUserDocRef().get();
@@ -6165,15 +6179,13 @@ if (timestripeBtn) {
                                             const cloudTs = snap.data().reflectionUpdatedAt || 0;
                                             const lastSync = localStorage.getItem('rf_lastCloudSync');
                                             const localTs  = lastSync ? new Date(lastSync).getTime() : 0;
-                                            // Always merge (load+merge is now safe): picks up
-                                            // changes from other devices without losing local work.
+                                            // Merge cloud into local (safe — never drops local data)
                                             await fbLoadAll(true);
                                             if(cloudTs > localTs + 3000)
                                                 showGdriveStatus('🔄 Updated from cloud (newer data found)', true);
-                                            else
-                                                setSyncIndicator('ok');
-                                            // Push any local-only entries that the cloud might be missing
-                                            await fbSaveAll(true);
+                                            // Push merged result back so cloud has any local-only entries
+                                            // Small delay to avoid write immediately after read
+                                            setTimeout(()=>{ if(fbUser) fbSaveAll(true); }, 1500);
                                         } else {
                                             // Nothing in cloud yet — push local data up
                                             if(Object.keys(reflectionsData||{}).length > 0)
@@ -6214,17 +6226,32 @@ if (timestripeBtn) {
                 gdriveSyncing = true;
                 setSyncIndicator('syncing');
                 try {
-                    // Stamp each entry with the current time so the merge logic
-                    // can tell which device wrote it most recently.
                     const now = Date.now();
+                    // Sanitize: Firestore rejects undefined values — replace with ''
                     const dataToSave = {};
                     for (const [key, val] of Object.entries(reflectionsData)) {
-                        dataToSave[key] = { ...val, _savedAt: val._savedAt || now };
+                        if (!val || typeof val !== 'object') continue;
+                        dataToSave[key] = {
+                            morning:   val.morning   != null ? val.morning   : '',
+                            selfaware: val.selfaware != null ? val.selfaware : '',
+                            night:     val.night     != null ? val.night     : '',
+                            date:      val.date      != null ? val.date      : '',
+                            _savedAt:  val._savedAt  || now,
+                        };
                     }
-                    await getUserDocRef().set(
-                        { reflectionJournalData: dataToSave, reflectionUpdatedAt: now },
-                        { merge: true }
-                    );
+                    const docRef = getUserDocRef();
+                    const snap = await docRef.get();
+                    if (snap.exists) {
+                        await docRef.update({
+                            reflectionJournalData: dataToSave,
+                            reflectionUpdatedAt: now
+                        });
+                    } else {
+                        await docRef.set({
+                            reflectionJournalData: dataToSave,
+                            reflectionUpdatedAt: now
+                        });
+                    }
                     setSyncIndicator('ok');
                     gdriveLastSavedAt = Date.now();
                     localStorage.setItem('rf_lastCloudSync', new Date().toISOString());
@@ -6232,7 +6259,9 @@ if (timestripeBtn) {
                     if(!silent) showGdriveStatus('✓ Saved journal to cloud', true);
                 } catch(e){
                     setSyncIndicator('error');
-                    showGdriveStatus('✗ Save failed: '+e.message, false, true);
+                    // Always show the actual error (even silent saves) so the user knows why
+                    showGdriveStatus('✗ Sync failed: '+e.message, false, true);
+                    console.error('[Reflection sync] fbSaveAll error:', e);
                 } finally { gdriveSyncing = false; }
             }
 
@@ -6309,6 +6338,17 @@ if (timestripeBtn) {
                     }
                     reflectionsData = merged;
 
+                    // Sanitize all entries: replace undefined/null text fields with ''
+                    // so Firestore never rejects a subsequent save.
+                    for (const key of Object.keys(reflectionsData)) {
+                        const e = reflectionsData[key];
+                        if (!e || typeof e !== 'object') { delete reflectionsData[key]; continue; }
+                        e.morning   = e.morning   != null ? e.morning   : '';
+                        e.selfaware = e.selfaware != null ? e.selfaware : '';
+                        e.night     = e.night     != null ? e.night     : '';
+                        e.date      = e.date      != null ? e.date      : '';
+                    }
+
                     // Restore any in-progress text for the currently viewed day
                     // that hasn't been flushed to reflectionsData by autosave yet.
                     if (!reflectionsData[todayKey]) reflectionsData[todayKey] = {};
@@ -6329,7 +6369,9 @@ if (timestripeBtn) {
                     if(!silent) showGdriveStatus('✓ Journal loaded from cloud.', true);
                 } catch(e){
                     setSyncIndicator('error');
+                    console.error('[Reflection sync] fbLoadAll error:', e);
                     if(!silent) showGdriveStatus('✗ Load failed: '+e.message, false, true);
+                    else showGdriveStatus('✗ Sync failed: '+e.message, false, true);
                 }
             }
 
