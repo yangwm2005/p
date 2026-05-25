@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Mindful Reflections | Daily Journal</title>
+    <title>Mindful Reflections | Daily Journal v25</title>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -5043,6 +5043,7 @@ if (timestripeBtn) {
             else if (type === 'selfaware') reflectionsData[dateString].selfaware = fullpageSelfawareText.value;
             else reflectionsData[dateString].night = fullpageNightText.value;
             reflectionsData[dateString].date = selectedDate.toISOString();
+            reflectionsData[dateString]._savedAt = Date.now();
             saveToLocalStorage();
             updateCalendar();
             let indicator;
@@ -5499,6 +5500,7 @@ if (timestripeBtn) {
             else if (type === 'selfaware') reflectionsData[dateString].selfaware = selfawareTextElement.value;
             else reflectionsData[dateString].night = nightTextElement.value;
             reflectionsData[dateString].date = selectedDate.toISOString();
+            reflectionsData[dateString]._savedAt = Date.now();
             saveToLocalStorage();
             updateCalendar();
             let indicator;
@@ -5520,6 +5522,7 @@ if (timestripeBtn) {
             reflectionsData[dateString].selfaware = selfawareTextElement.value;
             reflectionsData[dateString].night = nightTextElement.value;
             reflectionsData[dateString].date = selectedDate.toISOString();
+            reflectionsData[dateString]._savedAt = Date.now();
             saveToLocalStorage();
             updateCalendar();
             showStatus('Reflections saved successfully!', 'success');
@@ -6151,24 +6154,26 @@ if (timestripeBtn) {
                             updateUserUI(user);
                             setSyncIndicator(isAutoSyncEnabled()?'ok':'off');
                             if(isAutoSyncEnabled()){
-                                // On sign-in: silently check if cloud is newer than local,
-                                // and auto-load only when cloud has fresher data.
-                                // This ensures switching devices picks up latest entries
-                                // without overwriting newer local work.
+                                // On sign-in: check whether cloud has data newer than what
+                                // this device last synced.  We always run fbLoadAll so the
+                                // smart merge logic reconciles both sides — local entries are
+                                // never dropped even when the cloud is newer.
                                 (async ()=>{
                                     try {
                                         const snap = await getUserDocRef().get();
                                         if(snap.exists){
                                             const cloudTs = snap.data().reflectionUpdatedAt || 0;
-                                            const localTs  = new Date(localStorage.getItem('rf_lastCloudSync')||0).getTime();
-                                            const hasLocalEntries = Object.keys(reflectionsData||{}).length > 0;
-                                            if(cloudTs > localTs + 3000 || !hasLocalEntries){
-                                                await fbLoadAll(true);
-                                                if(cloudTs > localTs + 3000)
-                                                    showGdriveStatus('🔄 Updated from cloud (newer data found)', true);
-                                            } else {
+                                            const lastSync = localStorage.getItem('rf_lastCloudSync');
+                                            const localTs  = lastSync ? new Date(lastSync).getTime() : 0;
+                                            // Always merge (load+merge is now safe): picks up
+                                            // changes from other devices without losing local work.
+                                            await fbLoadAll(true);
+                                            if(cloudTs > localTs + 3000)
+                                                showGdriveStatus('🔄 Updated from cloud (newer data found)', true);
+                                            else
                                                 setSyncIndicator('ok');
-                                            }
+                                            // Push any local-only entries that the cloud might be missing
+                                            await fbSaveAll(true);
                                         } else {
                                             // Nothing in cloud yet — push local data up
                                             if(Object.keys(reflectionsData||{}).length > 0)
@@ -6209,8 +6214,15 @@ if (timestripeBtn) {
                 gdriveSyncing = true;
                 setSyncIndicator('syncing');
                 try {
+                    // Stamp each entry with the current time so the merge logic
+                    // can tell which device wrote it most recently.
+                    const now = Date.now();
+                    const dataToSave = {};
+                    for (const [key, val] of Object.entries(reflectionsData)) {
+                        dataToSave[key] = { ...val, _savedAt: val._savedAt || now };
+                    }
                     await getUserDocRef().set(
-                        { reflectionJournalData: reflectionsData, reflectionUpdatedAt: Date.now() },
+                        { reflectionJournalData: dataToSave, reflectionUpdatedAt: now },
                         { merge: true }
                     );
                     setSyncIndicator('ok');
@@ -6245,17 +6257,66 @@ if (timestripeBtn) {
                     const inProgressNight     = nightTextElement     ? nightTextElement.value     : null;
 
                     const data = snap.data();
-                    reflectionsData = { ...reflectionsData, ...data.reflectionJournalData };
+                    const cloudData = data.reflectionJournalData;
 
-                    // Restore in-progress text for today if it was longer than what
-                    // just came from the cloud (the user had unsaved edits).
+                    // ── Smart merge: never silently drop local data ──────────────
+                    // Strategy per date key:
+                    //   • Key only in cloud  → take cloud version (new entry from another device)
+                    //   • Key only in local  → keep local version (local-only entry, never uploaded)
+                    //   • Key in both        → pick winner by _savedAt timestamp;
+                    //                          if timestamps are equal or missing, keep the longer text
+                    //                          for each field independently so no content is lost.
+                    const merged = { ...reflectionsData }; // start from local
+                    for (const [key, cloudEntry] of Object.entries(cloudData)) {
+                        const localEntry = merged[key];
+                        if (!localEntry) {
+                            // Cloud-only: take it
+                            merged[key] = cloudEntry;
+                        } else {
+                            // Both exist: merge field-by-field using _savedAt or text length
+                            const cloudTs = cloudEntry._savedAt || 0;
+                            const localTs = localEntry._savedAt || 0;
+                            if (cloudTs > localTs) {
+                                // Cloud is definitively newer — use cloud but keep any
+                                // local field that is longer (user may have typed more locally)
+                                merged[key] = {
+                                    ...cloudEntry,
+                                    morning:   (localEntry.morning   ||'').length > (cloudEntry.morning   ||'').length ? localEntry.morning   : cloudEntry.morning,
+                                    selfaware: (localEntry.selfaware ||'').length > (cloudEntry.selfaware ||'').length ? localEntry.selfaware : cloudEntry.selfaware,
+                                    night:     (localEntry.night     ||'').length > (cloudEntry.night     ||'').length ? localEntry.night     : cloudEntry.night,
+                                    _savedAt: Math.max(cloudTs, localTs),
+                                };
+                            } else if (localTs > cloudTs) {
+                                // Local is newer — keep local but fill in any empty fields from cloud
+                                merged[key] = {
+                                    ...localEntry,
+                                    morning:   (localEntry.morning   ||'').length > 0 ? localEntry.morning   : cloudEntry.morning,
+                                    selfaware: (localEntry.selfaware ||'').length > 0 ? localEntry.selfaware : cloudEntry.selfaware,
+                                    night:     (localEntry.night     ||'').length > 0 ? localEntry.night     : cloudEntry.night,
+                                    _savedAt: Math.max(cloudTs, localTs),
+                                };
+                            } else {
+                                // Timestamps equal or both missing: take whichever field is longer
+                                merged[key] = {
+                                    ...localEntry,
+                                    morning:   (cloudEntry.morning   ||'').length > (localEntry.morning   ||'').length ? cloudEntry.morning   : localEntry.morning,
+                                    selfaware: (cloudEntry.selfaware ||'').length > (localEntry.selfaware ||'').length ? cloudEntry.selfaware : localEntry.selfaware,
+                                    night:     (cloudEntry.night     ||'').length > (localEntry.night     ||'').length ? cloudEntry.night     : localEntry.night,
+                                    _savedAt: Math.max(cloudTs, localTs),
+                                };
+                            }
+                        }
+                    }
+                    reflectionsData = merged;
+
+                    // Restore any in-progress text for the currently viewed day
+                    // that hasn't been flushed to reflectionsData by autosave yet.
                     if (!reflectionsData[todayKey]) reflectionsData[todayKey] = {};
-                    const cloudDay = data.reflectionJournalData[todayKey] || {};
-                    if (inProgressMorning   !== null && inProgressMorning.length   > (cloudDay.morning   || '').length)
+                    if (inProgressMorning   !== null && inProgressMorning.length   > (reflectionsData[todayKey].morning   || '').length)
                         reflectionsData[todayKey].morning   = inProgressMorning;
-                    if (inProgressSelfaware !== null && inProgressSelfaware.length > (cloudDay.selfaware || '').length)
+                    if (inProgressSelfaware !== null && inProgressSelfaware.length > (reflectionsData[todayKey].selfaware || '').length)
                         reflectionsData[todayKey].selfaware = inProgressSelfaware;
-                    if (inProgressNight     !== null && inProgressNight.length     > (cloudDay.night     || '').length)
+                    if (inProgressNight     !== null && inProgressNight.length     > (reflectionsData[todayKey].night     || '').length)
                         reflectionsData[todayKey].night     = inProgressNight;
 
                     saveToLocalStorage();
