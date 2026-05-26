@@ -162,8 +162,51 @@
   }
   .rules-box strong { color: var(--navy); display: block; margin-bottom: 6px; }
 
+  /* ─── FLOATING COLLAPSE BUTTON ─── */
+  #floatCollapseBtn {
+    position: fixed;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1000;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    padding: 14px 7px;
+    background: var(--navy);
+    color: #fff;
+    border: none;
+    border-radius: 0 8px 8px 0;
+    font-size: 1.1em;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.18);
+    transition: background 0.18s, box-shadow 0.18s, left 0.18s;
+    display: none;
+  }
+  #floatCollapseBtn:hover {
+    background: var(--accent, #1565c0);
+    box-shadow: 3px 0 18px rgba(0,0,0,0.28);
+  }
+  .tab-content#tab-builder.active ~ * #floatCollapseBtn,
+  body.builder-active #floatCollapseBtn { display: block; }
+
+  /* ─── SINGLE-FIGURE PREVIEW ─── */
+  .pfig-header { display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
+  .pfig-num { font-family:'Merriweather',serif; font-size:1.429em; font-weight:700; color:var(--navy); }
+  .pfig-back { font-size:1.1em; padding:4px 12px; margin-left:auto; }
+  .pfig-title { font-family:'Merriweather',serif; font-size:1.286em; font-weight:600; color:var(--navy); margin-bottom:16px; line-height:1.5; padding-bottom:12px; border-bottom:2px solid var(--border); }
+  .pfig-row { margin-bottom:14px; }
+  .pfig-label { font-size:1.1em; font-weight:700; color:var(--navy-mid); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px; }
+  .pfig-value { font-size:1.286em; line-height:1.7; color:var(--text); white-space:pre-wrap; }
+  .pfig-narrative { font-style:italic; color:var(--text-muted); }
+  .pfig-legend-row { background:var(--blue-light,#e8f0fe); border-radius:var(--radius-sm,6px); padding:14px 16px; margin-top:6px; }
+  .pfig-legend { font-size:1.286em; line-height:1.8; color:var(--text); white-space:pre-wrap; }
+
   /* ─── AUTO-RESIZE TEXTAREAS ─── */
   textarea { resize: none; overflow: hidden; min-height: 72px; }
+  textarea[id^="title_"] { min-height: 38px; font-weight: 600; color: var(--navy); }
 
   /* ─── FIGURE BLOCKS ─── */
   .figure-block-body {
@@ -1632,6 +1675,8 @@ function switchTab(id) {
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById('tab-' + id).classList.add('active');
   if (id === 'projects') renderProjectGrid();
+  const fb = document.getElementById('floatCollapseBtn');
+  if (fb) fb.style.display = (id === 'builder') ? 'block' : 'none';
 }
 
 // ── Sub-tab switching ──────────────────────────────
@@ -1708,6 +1753,7 @@ function renderFigures() {
           <button class="fig-btn" title="Move down"  onclick="moveFigure(${k},  1)" ${isLast  ? 'disabled style="opacity:0.3;cursor:default"' : ''}>▼</button>
           <span class="figure-type-badge ${badgeCls}" id="badge_${k}">${fig.type}</span>
           <button class="fig-collapse-btn${isCollapsed ? ' collapsed' : ''}" title="${isCollapsed ? 'Expand' : 'Collapse'}" onclick="event.stopPropagation();toggleFigure(${k})">▼</button>
+          <button class="fig-btn" title="Preview this figure" onclick="event.stopPropagation();previewFigure(${k})">👁</button>
           <button class="fig-btn del" title="Delete figure" onclick="deleteFigure(${k})">✕</button>
         </div>
       </div>
@@ -1724,7 +1770,7 @@ function renderFigures() {
         <label>Take-home Message (biological interpretation)</label>
         <textarea id="message_${k}" placeholder="e.g., X is induced during macrophage activation and may play a role in inflammatory signaling">${fig.message}</textarea>
         <label>Result Section Title (declarative sentence)</label>
-        <input type="text" id="title_${k}" placeholder="e.g., Protein X is selectively upregulated in activated macrophages" value="${fig.title.replace(/"/g,'&quot;')}">
+        <textarea id="title_${k}" placeholder="e.g., Protein X is selectively upregulated in activated macrophages">${fig.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
         <label>Figure Legend</label>
         <textarea id="legend_${k}" placeholder="e.g., (A) Representative immunofluorescence images of protein X (green) in LPS-treated vs. control macrophages. Scale bar, 20 µm. (B) Quantification of X fluorescence intensity (n=5 biological replicates; ***p&lt;0.001, Student's t-test). Data are mean ± SEM.">${fig.legend||''}</textarea>
       </div>
@@ -1733,7 +1779,7 @@ function renderFigures() {
   });
   // Auto-resize all textareas after render, then wire input event
   // Sync Collapse All button label to current state
-  ['collapseAllBtn','collapseAllBtnTop'].forEach(id => {
+  ['collapseAllBtn','collapseAllBtnTop','floatCollapseBtn'].forEach(id => {
     const _btn = document.getElementById(id);
     if (_btn) {
       const anyExpanded = figures.some(f => !f._collapsed);
@@ -1757,7 +1803,7 @@ function toggleAllFigures() {
   const anyExpanded = figures.some(f => !f._collapsed);
   figures.forEach(f => { f._collapsed = anyExpanded; });
   renderFigures();
-  ['collapseAllBtn','collapseAllBtnTop'].forEach(id => {
+  ['collapseAllBtn','collapseAllBtnTop','floatCollapseBtn'].forEach(id => {
     const btn = document.getElementById(id);
     if (btn) btn.textContent = anyExpanded ? '⊞ Expand All' : '⊟ Collapse All';
   });
@@ -1823,6 +1869,44 @@ function moveFigure(uid, dir) {
   }, 30);
 }
 
+// ── Preview a single figure ──────────────────────────
+function previewFigure(uid) {
+  syncFromDOM();
+  const fig = figures.find(f => f._uid === uid);
+  if (!fig) return;
+  const num = figures.indexOf(fig) + 1;
+  const templates = {
+    "Observation":          `This section establishes the biological phenomenon and explains why the question is important. The data suggest that ${fig.message.toLowerCase()}.`,
+    "Functional Relevance": `This section demonstrates biological importance and causality. The experiments indicate that ${fig.message.toLowerCase()}.`,
+    "Mechanism":            `This section explains the mechanistic basis underlying the observed phenotype. The findings support that ${fig.message.toLowerCase()}.`,
+    "Validation":           `This section validates translational or clinical significance. The results indicate that ${fig.message.toLowerCase()}.`
+  };
+  const narrative = templates[fig.type] || '';
+
+  const row = (label, value) => value
+    ? `<div class="pfig-row"><div class="pfig-label">${label}</div><div class="pfig-value">${escHtml(value)}</div></div>`
+    : '';
+
+  const html = `
+    <div class="pfig-header">
+      <span class="pfig-num">Figure ${num}</span>
+      <span class="pfig-badge figure-type-badge ${TYPE_MAP[fig.type]||''}">${escHtml(fig.type)}</span>
+      <button class="pfig-back btn-outline" onclick="generateStory()" title="Back to full preview">← Full Preview</button>
+    </div>
+    ${fig.title ? `<div class="pfig-title">${escHtml(fig.title)}</div>` : ''}
+    ${row('Biological Question', fig.question)}
+    ${row('Main Finding', fig.finding)}
+    ${row('Take-home Message', fig.message)}
+    ${narrative ? `<div class="pfig-row"><div class="pfig-label">Suggested Narrative</div><div class="pfig-value pfig-narrative">${escHtml(narrative)}</div></div>` : ''}
+    ${fig.legend ? `<div class="pfig-row pfig-legend-row"><div class="pfig-label">Figure Legend</div><div class="pfig-value pfig-legend">${escHtml(fig.legend)}</div></div>` : ''}
+  `;
+
+  const el = document.getElementById('preview');
+  el.innerHTML = html;
+  // Scroll the right panel back to top so user sees the figure header
+  el.closest('.panel-right')?.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 // ── Generate story preview ─────────────────────────
 function generateStory() {
   syncFromDOM();
@@ -1863,7 +1947,9 @@ function generateStory() {
   preview += "The manuscript progresses from biological observation to functional relevance, mechanistic insight, and translational validation. Together, the figures support the central claim that:\n\n";
   preview += `"${mainClaim}"\n`;
 
-  document.getElementById("preview").innerText = preview;
+  const previewEl = document.getElementById("preview");
+  previewEl.innerHTML = '';           // clear any single-figure HTML view
+  previewEl.innerText = preview;
 }
 
 // ── Save / Load ───────────────────────────────────
@@ -3097,5 +3183,6 @@ window.addEventListener('pageshow', () => {
   Copyright &copy; 2026 Dr. Wen-Ming Yang. All Rights Reserved.
 </footer>
 
+  <button id="floatCollapseBtn" onclick="toggleAllFigures()" title="Collapse / Expand all figures">⊟ Collapse All</button>
 </body>
 </html>
