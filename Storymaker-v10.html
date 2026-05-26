@@ -1747,8 +1747,9 @@ function renderFigures() {
 }
 
 function autoResizeTA(ta) {
-  ta.style.height = 'auto';
-  ta.style.height = ta.scrollHeight + 'px';
+  ta.style.overflow = 'hidden';   // keep while measuring so no scrollbar flash
+  ta.style.height   = 'auto';     // collapse first so scrollHeight reflects content
+  ta.style.height   = ta.scrollHeight + 'px';
 }
 
 function toggleAllFigures() {
@@ -2033,8 +2034,10 @@ function applySnapshot(snap) {
   document.getElementById('bioQuestion').value = snap.bioQuestion || '';
   document.getElementById('mainClaim').value   = snap.mainClaim   || '';
   if (typeof autoResizeTA === 'function') {
-    autoResizeTA(document.getElementById('bioQuestion'));
-    autoResizeTA(document.getElementById('mainClaim'));
+    // Defer so the browser has painted the new values before measuring
+    requestAnimationFrame(() => {
+      document.querySelectorAll('textarea').forEach(ta => autoResizeTA(ta));
+    });
   }
   figures = (snap.figures || []).map(f => ({
     _uid: ++_uid,
@@ -3047,6 +3050,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!ta) return;
     autoResizeTA(ta);
     ta.addEventListener('input', () => autoResizeTA(ta));
+  });
+  // Re-run resize on all textareas after full paint so any that were
+  // rendered before layout settled get their correct height.
+  requestAnimationFrame(() => {
+    document.querySelectorAll('textarea').forEach(ta => autoResizeTA(ta));
   });
 });
 
