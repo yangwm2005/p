@@ -5495,12 +5495,6 @@ if (timestripeBtn) {
         function autosaveReflections(type) {
             if (!autosaveEnabled) return;
             const dateString = formatDate(selectedDate);
-            // Don't create a new entry if all fields are empty — avoids phantom entries
-            // appearing on a new day before the user has typed anything.
-            const newMorning   = type === 'morning'   ? morningTextElement.value   : (reflectionsData[dateString]?.morning   || '');
-            const newSelfaware = type === 'selfaware' ? selfawareTextElement.value : (reflectionsData[dateString]?.selfaware || '');
-            const newNight     = type === 'night'     ? nightTextElement.value     : (reflectionsData[dateString]?.night     || '');
-            if (!reflectionsData[dateString] && !newMorning.trim() && !newSelfaware.trim() && !newNight.trim()) return;
             if (!reflectionsData[dateString]) reflectionsData[dateString] = {};
             if (type === 'morning') reflectionsData[dateString].morning = morningTextElement.value;
             else if (type === 'selfaware') reflectionsData[dateString].selfaware = selfawareTextElement.value;
@@ -5965,7 +5959,12 @@ if (timestripeBtn) {
             }
         }
         
-        document.addEventListener('DOMContentLoaded', init);
+        // DOM already ready when inline script at bottom of <body> runs
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
 
         // ════════════════════════════════════════════════════════════════
         // FIREBASE CLOUD SYNC — ported from Q·Todo v23
@@ -6355,13 +6354,13 @@ if (timestripeBtn) {
                         e.date      = e.date      != null ? e.date      : '';
                     }
 
-                    // Restore any in-progress text for the currently viewed day
-                    // that hasn't been flushed to reflectionsData by autosave yet.
-                    // Only do this when there is genuinely unsaved content (length > 0),
-                    // so opening on a new day never creates a phantom entry for today.
-                    const hasInProgress = (inProgressMorning   !== null && inProgressMorning.length   > 0) ||
-                                          (inProgressSelfaware !== null && inProgressSelfaware.length > 0) ||
-                                          (inProgressNight     !== null && inProgressNight.length     > 0);
+                    // Restore any in-progress text for the currently viewed day that
+                    // hasn't been flushed to reflectionsData by autosave yet.
+                    // Guard: only do this when there is genuinely unsaved content —
+                    // an empty textarea on a new day must never create a phantom entry.
+                    const hasInProgress = (inProgressMorning   !== null && inProgressMorning.trim()   !== '') ||
+                                          (inProgressSelfaware !== null && inProgressSelfaware.trim() !== '') ||
+                                          (inProgressNight     !== null && inProgressNight.trim()     !== '');
                     if (hasInProgress) {
                         if (!reflectionsData[todayKey]) reflectionsData[todayKey] = {};
                         if (inProgressMorning   !== null && inProgressMorning.length   > (reflectionsData[todayKey].morning   || '').length)
@@ -6526,43 +6525,43 @@ if (timestripeBtn) {
                 });
             }
 
+            // DOM is already ready when this inline script runs at bottom of <body>;
+            // DOMContentLoaded has already fired, so wire everything directly.
             initFirebase();
-            document.addEventListener('DOMContentLoaded', setupDropdown);
-            document.addEventListener('DOMContentLoaded', function(){
-                document.getElementById('fbSignInBtn')?.addEventListener('click', async ()=>{
-                    if(!initFirebase()) return;
-                    try {
-                        const provider = new firebase.auth.GoogleAuthProvider();
-                        await fbAuth.signInWithPopup(provider);
-                    } catch(e){ if(e.code !== 'auth/popup-closed-by-user') showGdriveStatus('Sign-in failed', false, true); }
-                });
-                document.getElementById('gdrive-save-now-btn')?.addEventListener('click', ()=> fbSaveAll(false));
-                document.getElementById('gdrive-load-btn')?.addEventListener('click', ()=> fbLoadAll(false));
-                document.getElementById('gdrive-signout-btn')?.addEventListener('click', async ()=>{
-                    if(fbAuth) await fbAuth.signOut();
-                    localStorage.setItem('gdriveAutoSync','0');
-                    updateAutoSyncUI();
-                    showGdriveStatus('Signed out.', true);
-                });
-                const gdriveAutosync = document.getElementById('gdrive-autosync');
-                if(gdriveAutosync){
-                    gdriveAutosync.addEventListener('change', function(){
-                        const on = this.checked;
-                        localStorage.setItem('gdriveAutoSync', on?'1':'0');
-                        updateAutoSyncUI();
-                        if(on){
-                            if(!fbUser){ showGdriveStatus('Please sign in first.', false, true); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncUI(); return; }
-                            fbLoadAll(false).then(()=>{ showGdriveStatus('✓ Auto-sync on — changes will save automatically.', true); startDrivePoll(); });
-                        } else {
-                            stopDrivePoll();
-                            setSyncIndicator('off');
-                            showGdriveStatus('Auto-sync disabled.', true);
-                        }
-                    });
-                }
-                updateAutoSyncUI();
-                updateDropdownTimestamps();
+            setupDropdown();
+            document.getElementById('fbSignInBtn')?.addEventListener('click', async ()=>{
+                if(!initFirebase()) return;
+                try {
+                    const provider = new firebase.auth.GoogleAuthProvider();
+                    await fbAuth.signInWithPopup(provider);
+                } catch(e){ if(e.code !== 'auth/popup-closed-by-user') showGdriveStatus('Sign-in failed', false, true); }
             });
+            document.getElementById('gdrive-save-now-btn')?.addEventListener('click', ()=> fbSaveAll(false));
+            document.getElementById('gdrive-load-btn')?.addEventListener('click', ()=> fbLoadAll(false));
+            document.getElementById('gdrive-signout-btn')?.addEventListener('click', async ()=>{
+                if(fbAuth) await fbAuth.signOut();
+                localStorage.setItem('gdriveAutoSync','0');
+                updateAutoSyncUI();
+                showGdriveStatus('Signed out.', true);
+            });
+            const gdriveAutosync = document.getElementById('gdrive-autosync');
+            if(gdriveAutosync){
+                gdriveAutosync.addEventListener('change', function(){
+                    const on = this.checked;
+                    localStorage.setItem('gdriveAutoSync', on?'1':'0');
+                    updateAutoSyncUI();
+                    if(on){
+                        if(!fbUser){ showGdriveStatus('Please sign in first.', false, true); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncUI(); return; }
+                        fbLoadAll(false).then(()=>{ showGdriveStatus('✓ Auto-sync on — changes will save automatically.', true); startDrivePoll(); });
+                    } else {
+                        stopDrivePoll();
+                        setSyncIndicator('off');
+                        showGdriveStatus('Auto-sync disabled.', true);
+                    }
+                });
+            }
+            updateAutoSyncUI();
+            updateDropdownTimestamps();
         })();
         // ════════════════════════════════════════════════════════════════
         // END FIREBASE CLOUD SYNC
