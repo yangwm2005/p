@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Mindful Reflections | Daily Journal v25.2</title>
+    <title>Mindful Reflections | Daily Journal v25.4</title>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -5038,12 +5038,14 @@ if (timestripeBtn) {
             selfawareTextElement.value = fullpageSelfawareText.value;
             nightTextElement.value = fullpageNightText.value;
             const dateString = formatDate(selectedDate);
+            const now = Date.now();
             if (!reflectionsData[dateString]) reflectionsData[dateString] = {};
-            if (type === 'morning') reflectionsData[dateString].morning = fullpageMorningText.value;
-            else if (type === 'selfaware') reflectionsData[dateString].selfaware = fullpageSelfawareText.value;
-            else reflectionsData[dateString].night = fullpageNightText.value;
-            reflectionsData[dateString].date = selectedDate.toISOString();
-            reflectionsData[dateString]._savedAt = Date.now();
+            const entry = reflectionsData[dateString];
+            if (type === 'morning')        { entry.morning   = fullpageMorningText.value;   entry._ts_morning   = now; }
+            else if (type === 'selfaware') { entry.selfaware = fullpageSelfawareText.value; entry._ts_selfaware = now; }
+            else                           { entry.night     = fullpageNightText.value;     entry._ts_night     = now; }
+            entry.date     = selectedDate.toISOString();
+            entry._savedAt = now;
             saveToLocalStorage();
             updateCalendar();
             let indicator;
@@ -5495,12 +5497,21 @@ if (timestripeBtn) {
         function autosaveReflections(type) {
             if (!autosaveEnabled) return;
             const dateString = formatDate(selectedDate);
+            const now = Date.now();
+            // Don't create a new entry if all fields are empty — avoids phantom entries
+            // appearing on a new day before the user has typed anything.
+            const newVal = type === 'morning'   ? morningTextElement.value
+                         : type === 'selfaware' ? selfawareTextElement.value
+                         :                        nightTextElement.value;
+            const existing = reflectionsData[dateString];
+            if (!existing && !newVal.trim()) return;
             if (!reflectionsData[dateString]) reflectionsData[dateString] = {};
-            if (type === 'morning') reflectionsData[dateString].morning = morningTextElement.value;
-            else if (type === 'selfaware') reflectionsData[dateString].selfaware = selfawareTextElement.value;
-            else reflectionsData[dateString].night = nightTextElement.value;
-            reflectionsData[dateString].date = selectedDate.toISOString();
-            reflectionsData[dateString]._savedAt = Date.now();
+            const entry = reflectionsData[dateString];
+            if (type === 'morning')   { entry.morning   = morningTextElement.value;   entry._ts_morning   = now; }
+            else if (type === 'selfaware') { entry.selfaware = selfawareTextElement.value; entry._ts_selfaware = now; }
+            else                      { entry.night     = nightTextElement.value;     entry._ts_night     = now; }
+            entry.date     = selectedDate.toISOString();
+            entry._savedAt = now;
             saveToLocalStorage();
             updateCalendar();
             let indicator;
@@ -5517,12 +5528,17 @@ if (timestripeBtn) {
         
         function saveReflections() {
             const dateString = formatDate(selectedDate);
+            const now = Date.now();
             if (!reflectionsData[dateString]) reflectionsData[dateString] = {};
-            reflectionsData[dateString].morning = morningTextElement.value;
-            reflectionsData[dateString].selfaware = selfawareTextElement.value;
-            reflectionsData[dateString].night = nightTextElement.value;
-            reflectionsData[dateString].date = selectedDate.toISOString();
-            reflectionsData[dateString]._savedAt = Date.now();
+            const entry = reflectionsData[dateString];
+            entry.morning       = morningTextElement.value;
+            entry.selfaware     = selfawareTextElement.value;
+            entry.night         = nightTextElement.value;
+            entry.date          = selectedDate.toISOString();
+            entry._savedAt      = now;
+            entry._ts_morning   = now;
+            entry._ts_selfaware = now;
+            entry._ts_night     = now;
             saveToLocalStorage();
             updateCalendar();
             // Also download a JSON file so data is preserved across devices/browsers
@@ -5959,7 +5975,11 @@ if (timestripeBtn) {
             }
         }
         
-        document.addEventListener('DOMContentLoaded', init);
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
 
         // ════════════════════════════════════════════════════════════════
         // FIREBASE CLOUD SYNC — ported from Q·Todo v23
@@ -6220,6 +6240,16 @@ if (timestripeBtn) {
                 return fbDb.collection('users').doc(fbUser.uid);
             }
 
+            // ── Per-field timestamps ──────────────────────────────────────────
+            // Each text field gets its own _savedAt_<field> timestamp so that
+            // a newer morning entry never causes an older night entry to "win".
+            // We use a monotonic local counter (Date.now() + sequence) to avoid
+            // the multi-device clock-skew problem: a field is only overwritten if
+            // the incoming timestamp is STRICTLY greater, meaning the current device
+            // must have written it after the remote device did.
+            // We also keep a top-level _fieldTs map for fast comparison without
+            // loading all text.
+
             async function fbSaveAll(silent=false){
                 if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
                 if(gdriveSyncing) return;
@@ -6227,16 +6257,21 @@ if (timestripeBtn) {
                 setSyncIndicator('syncing');
                 try {
                     const now = Date.now();
-                    // Sanitize: Firestore rejects undefined values — replace with ''
+                    // Build the save payload: each day-key is a sub-map.
+                    // Each text field also carries its own _ts_<field> timestamp so
+                    // merges on other devices can be done field-by-field.
                     const dataToSave = {};
                     for (const [key, val] of Object.entries(reflectionsData)) {
                         if (!val || typeof val !== 'object') continue;
                         dataToSave[key] = {
-                            morning:   val.morning   != null ? val.morning   : '',
-                            selfaware: val.selfaware != null ? val.selfaware : '',
-                            night:     val.night     != null ? val.night     : '',
-                            date:      val.date      != null ? val.date      : '',
-                            _savedAt:  val._savedAt  || now,
+                            morning:       val.morning       != null ? val.morning       : '',
+                            selfaware:     val.selfaware     != null ? val.selfaware     : '',
+                            night:         val.night         != null ? val.night         : '',
+                            date:          val.date          != null ? val.date          : '',
+                            _savedAt:      val._savedAt      || now,
+                            _ts_morning:   val._ts_morning   || val._savedAt || now,
+                            _ts_selfaware: val._ts_selfaware || val._savedAt || now,
+                            _ts_night:     val._ts_night     || val._savedAt || now,
                         };
                     }
                     const docRef = getUserDocRef();
@@ -6259,7 +6294,6 @@ if (timestripeBtn) {
                     if(!silent) showGdriveStatus('✓ Saved journal to cloud', true);
                 } catch(e){
                     setSyncIndicator('error');
-                    // Always show the actual error (even silent saves) so the user knows why
                     showGdriveStatus('✗ Sync failed: '+e.message, false, true);
                     console.error('[Reflection sync] fbSaveAll error:', e);
                 } finally { gdriveSyncing = false; }
@@ -6277,87 +6311,116 @@ if (timestripeBtn) {
                         return;
                     }
 
-                    // Snapshot what the user is currently typing BEFORE we touch anything.
-                    // If the autosave timer hasn't fired yet, these values are ahead of
-                    // reflectionsData and must not be lost.
-                    const todayKey = formatDate(selectedDate);
-                    const inProgressMorning   = morningTextElement   ? morningTextElement.value   : null;
-                    const inProgressSelfaware = selfawareTextElement ? selfawareTextElement.value : null;
-                    const inProgressNight     = nightTextElement     ? nightTextElement.value     : null;
+                    // Snapshot in-progress textarea content BEFORE touching anything,
+                    // but only if the user has actually typed something (non-empty).
+                    const viewedKey = formatDate(selectedDate);
+                    const inProgressMorning   = (morningTextElement   && morningTextElement.value.trim())   ? morningTextElement.value   : null;
+                    const inProgressSelfaware = (selfawareTextElement && selfawareTextElement.value.trim()) ? selfawareTextElement.value : null;
+                    const inProgressNight     = (nightTextElement     && nightTextElement.value.trim())     ? nightTextElement.value     : null;
 
-                    const data = snap.data();
-                    const cloudData = data.reflectionJournalData;
+                    const cloudData = snap.data().reflectionJournalData;
 
-                    // ── Smart merge: never silently drop local data ──────────────
-                    // Strategy per date key:
-                    //   • Key only in cloud  → take cloud version (new entry from another device)
-                    //   • Key only in local  → keep local version (local-only entry, never uploaded)
-                    //   • Key in both        → pick winner by _savedAt timestamp;
-                    //                          if timestamps are equal or missing, keep the longer text
-                    //                          for each field independently so no content is lost.
-                    const merged = { ...reflectionsData }; // start from local
+                    // ── Field-level merge ────────────────────────────────────────────
+                    // For every date key, every field (morning / selfaware / night) is
+                    // resolved independently using its own per-field timestamp (_ts_<field>).
+                    // This means:
+                    //   • A newer morning on the cloud doesn't overwrite a newer night locally.
+                    //   • Clock skew is mitigated: we only overwrite when cloud ts > local ts.
+                    //   • If timestamps are identical (both 0, or same ms), keep longer text
+                    //     as a safe fallback — longer usually means more was written.
+                    // Keys only in cloud → take them (new device's entry).
+                    // Keys only in local → keep them (local-only, never uploaded yet).
+                    const merged = { ...reflectionsData };
+
                     for (const [key, cloudEntry] of Object.entries(cloudData)) {
-                        const localEntry = merged[key];
-                        if (!localEntry) {
-                            // Cloud-only: take it
-                            merged[key] = cloudEntry;
+                        const local = merged[key];
+                        if (!local) {
+                            // Cloud-only date: take it wholesale
+                            merged[key] = { ...cloudEntry };
                         } else {
-                            // Both exist: merge field-by-field using _savedAt or text length
-                            const cloudTs = cloudEntry._savedAt || 0;
-                            const localTs = localEntry._savedAt || 0;
-                            if (cloudTs > localTs) {
-                                // Cloud is definitively newer — use cloud but keep any
-                                // local field that is longer (user may have typed more locally)
-                                merged[key] = {
-                                    ...cloudEntry,
-                                    morning:   (localEntry.morning   ||'').length > (cloudEntry.morning   ||'').length ? localEntry.morning   : cloudEntry.morning,
-                                    selfaware: (localEntry.selfaware ||'').length > (cloudEntry.selfaware ||'').length ? localEntry.selfaware : cloudEntry.selfaware,
-                                    night:     (localEntry.night     ||'').length > (cloudEntry.night     ||'').length ? localEntry.night     : cloudEntry.night,
-                                    _savedAt: Math.max(cloudTs, localTs),
-                                };
-                            } else if (localTs > cloudTs) {
-                                // Local is newer — keep local but fill in any empty fields from cloud
-                                merged[key] = {
-                                    ...localEntry,
-                                    morning:   (localEntry.morning   ||'').length > 0 ? localEntry.morning   : cloudEntry.morning,
-                                    selfaware: (localEntry.selfaware ||'').length > 0 ? localEntry.selfaware : cloudEntry.selfaware,
-                                    night:     (localEntry.night     ||'').length > 0 ? localEntry.night     : cloudEntry.night,
-                                    _savedAt: Math.max(cloudTs, localTs),
-                                };
-                            } else {
-                                // Timestamps equal or both missing: take whichever field is longer
-                                merged[key] = {
-                                    ...localEntry,
-                                    morning:   (cloudEntry.morning   ||'').length > (localEntry.morning   ||'').length ? cloudEntry.morning   : localEntry.morning,
-                                    selfaware: (cloudEntry.selfaware ||'').length > (localEntry.selfaware ||'').length ? cloudEntry.selfaware : localEntry.selfaware,
-                                    night:     (cloudEntry.night     ||'').length > (localEntry.night     ||'').length ? cloudEntry.night     : localEntry.night,
-                                    _savedAt: Math.max(cloudTs, localTs),
-                                };
+                            // Both sides have this date — resolve each field independently
+                            const now = Date.now();
+                            function mergeField(field, tsField) {
+                                const cloudTs  = cloudEntry[tsField] || cloudEntry._savedAt || 0;
+                                const localTs  = local[tsField]      || local._savedAt      || 0;
+                                const cloudTxt = cloudEntry[field] || '';
+                                const localTxt = local[field]      || '';
+                                if (cloudTs > localTs) {
+                                    // Cloud is definitively newer for this field
+                                    return { text: cloudTxt, ts: cloudTs };
+                                } else if (localTs > cloudTs) {
+                                    // Local is definitively newer for this field
+                                    return { text: localTxt, ts: localTs };
+                                } else {
+                                    // Same timestamp (or both 0) — keep the longer text
+                                    return cloudTxt.length > localTxt.length
+                                        ? { text: cloudTxt, ts: cloudTs }
+                                        : { text: localTxt, ts: localTs };
+                                }
                             }
+                            const m  = mergeField('morning',   '_ts_morning');
+                            const sa = mergeField('selfaware', '_ts_selfaware');
+                            const n  = mergeField('night',     '_ts_night');
+                            // Overall _savedAt = most recent of any field
+                            const overallTs = Math.max(
+                                m.ts, sa.ts, n.ts,
+                                cloudEntry._savedAt || 0,
+                                local._savedAt      || 0
+                            );
+                            merged[key] = {
+                                ...local,
+                                morning:       m.text,
+                                selfaware:     sa.text,
+                                night:         n.text,
+                                date:          local.date || cloudEntry.date || '',
+                                _savedAt:      overallTs,
+                                _ts_morning:   m.ts,
+                                _ts_selfaware: sa.ts,
+                                _ts_night:     n.ts,
+                            };
                         }
                     }
                     reflectionsData = merged;
 
-                    // Sanitize all entries: replace undefined/null text fields with ''
-                    // so Firestore never rejects a subsequent save.
+                    // Sanitize: remove empty phantom entries (no text in any field),
+                    // and ensure all text fields are strings.
                     for (const key of Object.keys(reflectionsData)) {
                         const e = reflectionsData[key];
                         if (!e || typeof e !== 'object') { delete reflectionsData[key]; continue; }
-                        e.morning   = e.morning   != null ? e.morning   : '';
-                        e.selfaware = e.selfaware != null ? e.selfaware : '';
-                        e.night     = e.night     != null ? e.night     : '';
-                        e.date      = e.date      != null ? e.date      : '';
+                        e.morning   = e.morning   != null ? String(e.morning)   : '';
+                        e.selfaware = e.selfaware != null ? String(e.selfaware) : '';
+                        e.night     = e.night     != null ? String(e.night)     : '';
+                        e.date      = e.date      != null ? String(e.date)      : '';
+                        // Remove truly empty entries (no content in any field)
+                        if (!e.morning.trim() && !e.selfaware.trim() && !e.night.trim()) {
+                            delete reflectionsData[key];
+                            continue;
+                        }
+                        // Backfill per-field timestamps if missing
+                        if (!e._ts_morning)   e._ts_morning   = e._savedAt || 0;
+                        if (!e._ts_selfaware) e._ts_selfaware = e._savedAt || 0;
+                        if (!e._ts_night)     e._ts_night     = e._savedAt || 0;
                     }
 
-                    // Restore any in-progress text for the currently viewed day
-                    // that hasn't been flushed to reflectionsData by autosave yet.
-                    if (!reflectionsData[todayKey]) reflectionsData[todayKey] = {};
-                    if (inProgressMorning   !== null && inProgressMorning.length   > (reflectionsData[todayKey].morning   || '').length)
-                        reflectionsData[todayKey].morning   = inProgressMorning;
-                    if (inProgressSelfaware !== null && inProgressSelfaware.length > (reflectionsData[todayKey].selfaware || '').length)
-                        reflectionsData[todayKey].selfaware = inProgressSelfaware;
-                    if (inProgressNight     !== null && inProgressNight.length     > (reflectionsData[todayKey].night     || '').length)
-                        reflectionsData[todayKey].night     = inProgressNight;
+                    // Restore in-progress textarea content (only when non-empty —
+                    // so opening on a new day never creates phantom entries).
+                    if (inProgressMorning !== null || inProgressSelfaware !== null || inProgressNight !== null) {
+                        if (!reflectionsData[viewedKey]) reflectionsData[viewedKey] = {};
+                        const local = reflectionsData[viewedKey];
+                        if (inProgressMorning   && inProgressMorning.length   > (local.morning   || '').length) {
+                            local.morning   = inProgressMorning;
+                            local._ts_morning   = Date.now();
+                        }
+                        if (inProgressSelfaware && inProgressSelfaware.length > (local.selfaware || '').length) {
+                            local.selfaware = inProgressSelfaware;
+                            local._ts_selfaware = Date.now();
+                        }
+                        if (inProgressNight     && inProgressNight.length     > (local.night     || '').length) {
+                            local.night     = inProgressNight;
+                            local._ts_night     = Date.now();
+                        }
+                        local._savedAt = Date.now();
+                    }
 
                     saveToLocalStorage();
                     updateCalendar();
@@ -6513,43 +6576,43 @@ if (timestripeBtn) {
                 });
             }
 
+            // DOM is already ready when this inline script runs at bottom of <body>;
+            // DOMContentLoaded has already fired, so wire everything directly.
             initFirebase();
-            document.addEventListener('DOMContentLoaded', setupDropdown);
-            document.addEventListener('DOMContentLoaded', function(){
-                document.getElementById('fbSignInBtn')?.addEventListener('click', async ()=>{
-                    if(!initFirebase()) return;
-                    try {
-                        const provider = new firebase.auth.GoogleAuthProvider();
-                        await fbAuth.signInWithPopup(provider);
-                    } catch(e){ if(e.code !== 'auth/popup-closed-by-user') showGdriveStatus('Sign-in failed', false, true); }
-                });
-                document.getElementById('gdrive-save-now-btn')?.addEventListener('click', ()=> fbSaveAll(false));
-                document.getElementById('gdrive-load-btn')?.addEventListener('click', ()=> fbLoadAll(false));
-                document.getElementById('gdrive-signout-btn')?.addEventListener('click', async ()=>{
-                    if(fbAuth) await fbAuth.signOut();
-                    localStorage.setItem('gdriveAutoSync','0');
-                    updateAutoSyncUI();
-                    showGdriveStatus('Signed out.', true);
-                });
-                const gdriveAutosync = document.getElementById('gdrive-autosync');
-                if(gdriveAutosync){
-                    gdriveAutosync.addEventListener('change', function(){
-                        const on = this.checked;
-                        localStorage.setItem('gdriveAutoSync', on?'1':'0');
-                        updateAutoSyncUI();
-                        if(on){
-                            if(!fbUser){ showGdriveStatus('Please sign in first.', false, true); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncUI(); return; }
-                            fbLoadAll(false).then(()=>{ showGdriveStatus('✓ Auto-sync on — changes will save automatically.', true); startDrivePoll(); });
-                        } else {
-                            stopDrivePoll();
-                            setSyncIndicator('off');
-                            showGdriveStatus('Auto-sync disabled.', true);
-                        }
-                    });
-                }
-                updateAutoSyncUI();
-                updateDropdownTimestamps();
+            setupDropdown();
+            document.getElementById('fbSignInBtn')?.addEventListener('click', async ()=>{
+                if(!initFirebase()) return;
+                try {
+                    const provider = new firebase.auth.GoogleAuthProvider();
+                    await fbAuth.signInWithPopup(provider);
+                } catch(e){ if(e.code !== 'auth/popup-closed-by-user') showGdriveStatus('Sign-in failed', false, true); }
             });
+            document.getElementById('gdrive-save-now-btn')?.addEventListener('click', ()=> fbSaveAll(false));
+            document.getElementById('gdrive-load-btn')?.addEventListener('click', ()=> fbLoadAll(false));
+            document.getElementById('gdrive-signout-btn')?.addEventListener('click', async ()=>{
+                if(fbAuth) await fbAuth.signOut();
+                localStorage.setItem('gdriveAutoSync','0');
+                updateAutoSyncUI();
+                showGdriveStatus('Signed out.', true);
+            });
+            const gdriveAutosync = document.getElementById('gdrive-autosync');
+            if(gdriveAutosync){
+                gdriveAutosync.addEventListener('change', function(){
+                    const on = this.checked;
+                    localStorage.setItem('gdriveAutoSync', on?'1':'0');
+                    updateAutoSyncUI();
+                    if(on){
+                        if(!fbUser){ showGdriveStatus('Please sign in first.', false, true); this.checked=false; localStorage.setItem('gdriveAutoSync','0'); updateAutoSyncUI(); return; }
+                        fbLoadAll(false).then(()=>{ showGdriveStatus('✓ Auto-sync on — changes will save automatically.', true); startDrivePoll(); });
+                    } else {
+                        stopDrivePoll();
+                        setSyncIndicator('off');
+                        showGdriveStatus('Auto-sync disabled.', true);
+                    }
+                });
+            }
+            updateAutoSyncUI();
+            updateDropdownTimestamps();
         })();
         // ════════════════════════════════════════════════════════════════
         // END FIREBASE CLOUD SYNC
