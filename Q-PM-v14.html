@@ -1511,6 +1511,8 @@ input:checked + .s-switch-slider:before { transform: translateX(20px); }
       <button class="tl-cbtn" id="tlSubBtn">&#x2795; Section</button>
       <button class="tl-cbtn" id="tlCopyBtn">&#x1F4CB; Copy sel.</button>
       <button class="tl-cbtn" id="tlExportBtn">&#x1F4C4; Export .txt</button>
+      <button class="tl-cbtn" id="tlImportBtn">&#x1F4C2; Import .txt</button>
+      <input type="file" id="tlImportFile" accept=".txt" style="display:none">
       <button class="tl-cbtn tl-red" id="tlClearBtn">&#x1F5D1; Clear all</button>
     </div>
     <div id="tlStatusBar">Auto-saves after each entry &#x2014; or click &#x201C;Save to Task&#x201D; anytime</div>
@@ -1899,6 +1901,11 @@ function colorSwatchPicker(selectedIdx, onChange) {
     document.getElementById('tlSubBtn').addEventListener('click', _tlTogglePicker);
     document.getElementById('tlCopyBtn').addEventListener('click', _tlCopySel);
     document.getElementById('tlExportBtn').addEventListener('click', _tlExport);
+    document.getElementById('tlImportBtn').addEventListener('click', function() {
+      document.getElementById('tlImportFile').value = '';
+      document.getElementById('tlImportFile').click();
+    });
+    document.getElementById('tlImportFile').addEventListener('change', _tlImportFile);
     document.getElementById('tlClearBtn').addEventListener('click', _tlClearAll);
 
     var tlInp = document.getElementById('tlTextInput');
@@ -3854,6 +3861,103 @@ function colorSwatchPicker(selectedIdx, onChange) {
     a.download='think_log_'+title.replace(/[^a-z0-9]/gi,'_').slice(0,40)+'.txt';
     a.click(); URL.revokeObjectURL(a.href);
     _tlStat('Exported',true);
+  }
+
+  function _tlImportFile(e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      var text = ev.target.result || '';
+      var lines = text.split('\n');
+      var imported = [];
+      var bodyStart = 0;
+      for (var i = 0; i < lines.length; i++) {
+        var l = lines[i].trim();
+        if (l.startsWith('•') || l.startsWith('──') || l === '') { bodyStart = i; break; }
+      }
+      for (var i = bodyStart; i < lines.length; i++) {
+        var raw = lines[i];
+        var trimmed = raw.trim();
+        if (!trimmed) continue;
+        if (/^─{2,}/.test(trimmed) || /^={2,}/.test(trimmed)) {
+          imported.push({ id: 'tl_' + Date.now() + '_' + i, isSubtitle: true, text: trimmed, timestamp: '' });
+          continue;
+        }
+        var isSubchat = /^\s{2,}[•\-]/.test(raw);
+        var txt = trimmed.replace(/^[•\-]\s*/, '').replace(/^\s*[•\-]\s*/, '');
+        var isYellow = false, isOrange = false;
+        if (txt.startsWith('[⭐] ')) { isYellow = true; txt = txt.slice(5); }
+        else if (txt.startsWith('[🔥] ')) { isOrange = true; txt = txt.slice(5); }
+        var ts = '';
+        var tsMatch = txt.match(/\s+\(([^)]+)\)\s*$/);
+        if (tsMatch) { ts = tsMatch[1]; txt = txt.slice(0, txt.length - tsMatch[0].length).trim(); }
+        if (!txt) continue;
+        imported.push({ id: 'tl_' + Date.now() + '_' + i, text: txt, timestamp: ts, isSubchat: isSubchat, isYellow: isYellow, isOrange: isOrange });
+      }
+      if (!imported.length) { _tlStat('No entries found in file'); return; }
+      if (!_tlMsgs.length) {
+        _tlMsgs = imported;
+        _tlDirtyMark(); _tlRender();
+        _tlStat('✓ Imported ' + imported.length + ' entries. Click "Save to Task" to keep.', true);
+        return;
+      }
+      _tlShowImportDialog(imported, file.name);
+    };
+    reader.readAsText(file);
+  }
+
+  function _tlShowImportDialog(imported, filename) {
+    var old = document.getElementById('tlImportDialog');
+    if (old) old.remove();
+    var d = document.createElement('div');
+    d.id = 'tlImportDialog';
+    d.style.cssText = [
+      'position:absolute','bottom:60px','left:50%','transform:translateX(-50%)',
+      'background:#faf8ff','border:1px solid #c4b5fd',
+      'border-radius:10px','box-shadow:0 8px 24px rgba(0,0,0,.22)',
+      'padding:16px 20px','z-index:10001','min-width:280px','max-width:340px',
+      'font-family:inherit'
+    ].join(';');
+    d.innerHTML =
+      '<div style="font-size:0.82rem;font-weight:700;margin-bottom:6px;color:#3b1f7a;">📂 Import ' + imported.length + ' entries</div>' +
+      '<div style="font-size:0.75rem;color:#6d28d9;margin-bottom:14px;word-break:break-all;">' + filename + '</div>' +
+      '<div style="font-size:0.78rem;color:#6b7280;margin-bottom:10px;">Add imported entries:</div>' +
+      '<div style="display:flex;flex-direction:column;gap:7px;">' +
+        '<button id="tlImportTop"    style="' + _tlDlgBtnStyle('#7c3aed') + '">⬆ Prepend at Top</button>' +
+        '<button id="tlImportBottom" style="' + _tlDlgBtnStyle('#7c3aed') + '">⬇ Append at Bottom</button>' +
+        '<button id="tlImportReplc"  style="' + _tlDlgBtnStyle('#dc2626') + '">🔄 Replace All</button>' +
+        '<button id="tlImportCancel" style="' + _tlDlgBtnStyle('#888') + '">✕ Cancel</button>' +
+      '</div>';
+    document.getElementById('tlPanel').appendChild(d);
+    function close() { d.remove(); }
+    document.getElementById('tlImportTop').onclick = function() {
+      _tlMsgs = imported.concat(_tlMsgs);
+      _tlDirtyMark(); _tlRender();
+      _tlStat('✓ Prepended ' + imported.length + ' entries at top. Click "Save to Task" to keep.', true);
+      close();
+    };
+    document.getElementById('tlImportBottom').onclick = function() {
+      _tlMsgs = _tlMsgs.concat(imported);
+      _tlDirtyMark(); _tlRender();
+      _tlStat('✓ Appended ' + imported.length + ' entries at bottom. Click "Save to Task" to keep.', true);
+      close();
+    };
+    document.getElementById('tlImportReplc').onclick = function() {
+      _tlMsgs = imported;
+      _tlDirtyMark(); _tlRender();
+      _tlStat('✓ Replaced with ' + imported.length + ' imported entries. Click "Save to Task" to keep.', true);
+      close();
+    };
+    document.getElementById('tlImportCancel').onclick = close;
+  }
+
+  function _tlDlgBtnStyle(color) {
+    return [
+      'padding:8px 12px','border:none','border-radius:6px',
+      'background:' + color,'color:#fff','font-family:inherit',
+      'font-size:0.82rem','font-weight:600','cursor:pointer','text-align:left'
+    ].join(';');
   }
 
   function _tlClearAll() {

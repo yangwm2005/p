@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Q·Project — Cloud Sync PM System v15.1</title>
+    <title>Q·Project — Cloud Sync PM System v15.2</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -654,6 +654,8 @@
       <button class="tl-cbtn" id="tlSubBtn">&#x2795; Section</button>
       <button class="tl-cbtn" id="tlCopyBtn">&#x1F4CB; Copy sel.</button>
       <button class="tl-cbtn" id="tlExportBtn">&#x1F4C4; Export .txt</button>
+      <button class="tl-cbtn" id="tlImportBtn">&#x1F4C2; Import .txt</button>
+      <input type="file" id="tlImportFile" accept=".txt" style="display:none">
       <button class="tl-cbtn tl-red" id="tlClearBtn">&#x1F5D1; Clear all</button>
     </div>
     <div id="tlStatusBar">Ready &#x2014; click &#x201C;Save to Task&#x201D; to persist</div>
@@ -2792,6 +2794,117 @@ window.openThinkLog = openThinkLog;
     _tlStat('Exported',true);
   }
 
+  function _tlImportFile(e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      var text = ev.target.result || '';
+      var lines = text.split('\n');
+      var imported = [];
+      // Skip the header lines (title line and date line) — detect them by absence of bullet prefix
+      var bodyStart = 0;
+      for (var i = 0; i < lines.length; i++) {
+        var l = lines[i].trim();
+        if (l.startsWith('•') || l.startsWith('──') || l === '') { bodyStart = i; break; }
+      }
+      for (var i = bodyStart; i < lines.length; i++) {
+        var raw = lines[i];
+        var trimmed = raw.trim();
+        if (!trimmed) continue;
+        // Section subtitle (── label ──)
+        if (/^─{2,}/.test(trimmed) || /^={2,}/.test(trimmed)) {
+          imported.push({ id: 'tl_' + Date.now() + '_' + i, isSubtitle: true, text: trimmed, timestamp: '' });
+          continue;
+        }
+        // Sub-bullet (indented •  or    •)
+        var isSubchat = /^\s{2,}[•\-]/.test(raw);
+        // Strip bullet prefix and highlight markers
+        var txt = trimmed.replace(/^[•\-]\s*/, '').replace(/^\s*[•\-]\s*/, '');
+        var isYellow = false, isOrange = false;
+        if (txt.startsWith('[⭐] ')) { isYellow = true; txt = txt.slice(5); }
+        else if (txt.startsWith('[🔥] ')) { isOrange = true; txt = txt.slice(5); }
+        // Extract timestamp in trailing parens — e.g. "(5/28/2026, 10:30:00 AM)"
+        var ts = '';
+        var tsMatch = txt.match(/\s+\(([^)]+)\)\s*$/);
+        if (tsMatch) { ts = tsMatch[1]; txt = txt.slice(0, txt.length - tsMatch[0].length).trim(); }
+        if (!txt) continue;
+        imported.push({ id: 'tl_' + Date.now() + '_' + i, text: txt, timestamp: ts, isSubchat: isSubchat, isYellow: isYellow, isOrange: isOrange });
+      }
+      if (!imported.length) { _tlStat('No entries found in file'); return; }
+      // If no existing entries, just load directly
+      if (!_tlMsgs.length) {
+        _tlMsgs = imported;
+        _tlDirtyMark(); _tlRender();
+        _tlStat('✓ Imported ' + imported.length + ' entries. Click "Save to Task" to keep.', true);
+        return;
+      }
+      // Show custom 3-option dialog
+      _tlShowImportDialog(imported, file.name);
+    };
+    reader.readAsText(file);
+  }
+
+  function _tlShowImportDialog(imported, filename) {
+    // Remove any existing dialog
+    var old = document.getElementById('tlImportDialog');
+    if (old) old.remove();
+
+    var d = document.createElement('div');
+    d.id = 'tlImportDialog';
+    d.style.cssText = [
+      'position:absolute','bottom:60px','left:50%','transform:translateX(-50%)',
+      'background:var(--surface)','border:1px solid var(--border)',
+      'border-radius:var(--radius)','box-shadow:var(--shadow-md)',
+      'padding:16px 20px','z-index:10001','min-width:280px','max-width:340px',
+      'font-family:inherit'
+    ].join(';');
+
+    d.innerHTML =
+      '<div style="font-size:0.82rem;font-weight:700;margin-bottom:6px;">📂 Import ' + imported.length + ' entries</div>' +
+      '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:14px;word-break:break-all;">' + filename + '</div>' +
+      '<div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;">Add imported entries:</div>' +
+      '<div style="display:flex;flex-direction:column;gap:7px;">' +
+        '<button id="tlImportTop"    style="' + _tlDlgBtnStyle('var(--accent)') + '">⬆ Prepend at Top</button>' +
+        '<button id="tlImportBottom" style="' + _tlDlgBtnStyle('var(--accent)') + '">⬇ Append at Bottom</button>' +
+        '<button id="tlImportReplc"  style="' + _tlDlgBtnStyle('var(--danger)') + '">🔄 Replace All</button>' +
+        '<button id="tlImportCancel" style="' + _tlDlgBtnStyle('#888') + '">✕ Cancel</button>' +
+      '</div>';
+
+    // Append inside the panel so it scrolls with it
+    document.getElementById('tlPanel').appendChild(d);
+
+    function close() { d.remove(); }
+
+    document.getElementById('tlImportTop').onclick = function() {
+      _tlMsgs = imported.concat(_tlMsgs);
+      _tlDirtyMark(); _tlRender();
+      _tlStat('✓ Prepended ' + imported.length + ' entries at top. Click "Save to Task" to keep.', true);
+      close();
+    };
+    document.getElementById('tlImportBottom').onclick = function() {
+      _tlMsgs = _tlMsgs.concat(imported);
+      _tlDirtyMark(); _tlRender();
+      _tlStat('✓ Appended ' + imported.length + ' entries at bottom. Click "Save to Task" to keep.', true);
+      close();
+    };
+    document.getElementById('tlImportReplc').onclick = function() {
+      _tlMsgs = imported;
+      _tlDirtyMark(); _tlRender();
+      _tlStat('✓ Replaced with ' + imported.length + ' imported entries. Click "Save to Task" to keep.', true);
+      close();
+    };
+    document.getElementById('tlImportCancel').onclick = close;
+  }
+
+  function _tlDlgBtnStyle(color) {
+    return [
+      'padding:8px 12px','border:none','border-radius:var(--radius-sm)',
+      'background:' + color,'color:#fff','font-family:inherit',
+      'font-size:0.82rem','font-weight:600','cursor:pointer','text-align:left'
+    ].join(';');
+  }
+
   function _tlClearAll() {
     if(!_tlMsgs.length) return;
     if(confirm('Clear all '+_tlMsgs.length+' entries?')) {
@@ -2900,6 +3013,11 @@ function initThinkLog() {
   document.getElementById('tlSubBtn').addEventListener('click', _tlTogglePicker);
   document.getElementById('tlCopyBtn').addEventListener('click', _tlCopySel);
   document.getElementById('tlExportBtn').addEventListener('click', _tlExport);
+  document.getElementById('tlImportBtn').addEventListener('click', function() {
+    document.getElementById('tlImportFile').value = '';
+    document.getElementById('tlImportFile').click();
+  });
+  document.getElementById('tlImportFile').addEventListener('change', _tlImportFile);
   document.getElementById('tlClearBtn').addEventListener('click', _tlClearAll);
 
   // Textarea: auto-expand + Enter to send
