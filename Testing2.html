@@ -5449,6 +5449,9 @@ if (timestripeBtn) {
         }
         
         function updateReflectionDisplay() {
+            // Stamp the time so fbLoadAll knows whether textarea content predates
+            // this refresh (loaded from reflectionsData) or was actually typed by user.
+            if (window._stampDisplayRefresh) window._stampDisplayRefresh();
             const dateString = formatDate(selectedDate);
             const formattedDate = selectedDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
             currentDateElement.textContent = formattedDate;
@@ -6312,11 +6315,16 @@ if (timestripeBtn) {
                     }
 
                     // Snapshot in-progress textarea content BEFORE touching anything,
-                    // but only if the user has actually typed something (non-empty).
+                    // but ONLY if the user has actually typed since the last display refresh.
+                    // Without this guard, content loaded from reflectionsData (e.g. yesterday's
+                    // entry displayed before today's data exists) would be mistakenly treated as
+                    // "in-progress" and written into today's key, causing the bug where opening
+                    // the app on a new day shows yesterday's content in Morning / Self-awareness.
+                    const userHasTyped = window._hasUserTypedSinceRefresh ? window._hasUserTypedSinceRefresh() : false;
                     const viewedKey = formatDate(selectedDate);
-                    const inProgressMorning   = (morningTextElement   && morningTextElement.value.trim())   ? morningTextElement.value   : null;
-                    const inProgressSelfaware = (selfawareTextElement && selfawareTextElement.value.trim()) ? selfawareTextElement.value : null;
-                    const inProgressNight     = (nightTextElement     && nightTextElement.value.trim())     ? nightTextElement.value     : null;
+                    const inProgressMorning   = (userHasTyped && morningTextElement   && morningTextElement.value.trim())   ? morningTextElement.value   : null;
+                    const inProgressSelfaware = (userHasTyped && selfawareTextElement && selfawareTextElement.value.trim()) ? selfawareTextElement.value : null;
+                    const inProgressNight     = (userHasTyped && nightTextElement     && nightTextElement.value.trim())     ? nightTextElement.value     : null;
 
                     const cloudData = snap.data().reflectionJournalData;
 
@@ -6513,10 +6521,15 @@ if (timestripeBtn) {
             // Track the last time the user typed in any textarea.
             // Cloud sync will not overwrite the UI while the user is actively typing.
             let _lastTypingAt = 0;
+            let _lastDisplayRefreshAt = 0;
             document.addEventListener('input', e => {
                 if (e.target.tagName === 'TEXTAREA') _lastTypingAt = Date.now();
             }, true);
             function _isTyping() { return Date.now() - _lastTypingAt < 3000; }
+            // Expose so updateReflectionDisplay() can stamp when it last ran
+            window._stampDisplayRefresh = function() { _lastDisplayRefreshAt = Date.now(); };
+            // Only treat textarea content as user-typed if user typed AFTER the last display refresh
+            window._hasUserTypedSinceRefresh = function() { return _lastTypingAt > _lastDisplayRefreshAt; };
 
             // dropdown UI wiring
             function setupDropdown(){
