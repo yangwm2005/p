@@ -4556,7 +4556,37 @@ if (timestripeBtn) {
             updateCalendar();
             updateWeekNavigationBar();
             updateReflectionDisplay();
-            
+
+            // ── Day-rollover guard ────────────────────────────────────────────────
+            // On mobile, the page can stay alive in the background for days.
+            // When the user opens the app on a new day, `selectedDate` still holds
+            // yesterday's date (set at page-load), so the textareas show yesterday's
+            // content.  Fix: whenever the tab becomes visible, check if the calendar
+            // date has changed and reset to today if so.
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState !== 'visible') return;
+                const todayStr = formatDate(new Date());
+                if (formatDate(selectedDate) !== todayStr) {
+                    selectedDate = new Date();
+                    currentDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+                    updateCalendar();
+                    updateWeekNavigationBar();
+                    updateReflectionDisplay();
+                }
+            });
+            // Same check on pageshow (handles iOS Safari back-forward cache restore).
+            window.addEventListener('pageshow', (e) => {
+                const todayStr = formatDate(new Date());
+                if (formatDate(selectedDate) !== todayStr) {
+                    selectedDate = new Date();
+                    currentDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+                    updateCalendar();
+                    updateWeekNavigationBar();
+                    updateReflectionDisplay();
+                }
+            });
+            // ─────────────────────────────────────────────────────────────────────
+
             updateDynalistStatusDisplay();
             
             function insertBulletTimestamp(textarea) {
@@ -5039,6 +5069,13 @@ if (timestripeBtn) {
             nightTextElement.value = fullpageNightText.value;
             const dateString = formatDate(selectedDate);
             const now = Date.now();
+            // Don't create a new entry if all fields are empty — mirrors the guard
+            // in autosaveReflections() to prevent phantom entries on new days.
+            const newVal = type === 'morning'   ? fullpageMorningText.value
+                         : type === 'selfaware' ? fullpageSelfawareText.value
+                         :                        fullpageNightText.value;
+            const existing = reflectionsData[dateString];
+            if (!existing && !newVal.trim()) return;
             if (!reflectionsData[dateString]) reflectionsData[dateString] = {};
             const entry = reflectionsData[dateString];
             if (type === 'morning')        { entry.morning   = fullpageMorningText.value;   entry._ts_morning   = now; }
