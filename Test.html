@@ -2136,13 +2136,25 @@ function rteGet(id) {
 function syncFromDOM() {
   figures.forEach((fig, i) => {
     const k = fig._uid;
+    // Only sync fields that actually exist in the DOM (guard on element presence,
+    // NOT on value truthiness — so cleared fields are correctly saved as empty).
     const typeEl = document.getElementById('type_' + k);
     if (typeEl) fig.type = typeEl.value || fig.type;
-    const q = rteGet('question_' + k); if (q) fig.question = q;
-    const f = rteGet('finding_'  + k); if (f) fig.finding  = f;
-    const m = rteGet('message_'  + k); if (m) fig.message  = m;
-    const t = rteGet('title_'    + k); if (t) fig.title    = t;
-    fig.legend = rteGet('legend_' + k) || (fig.legend || '');
+
+    const qEl = document.getElementById('question_' + k);
+    if (qEl) fig.question = rteGet('question_' + k);
+
+    const fEl = document.getElementById('finding_' + k);
+    if (fEl) fig.finding = rteGet('finding_' + k);
+
+    const mEl = document.getElementById('message_' + k);
+    if (mEl) fig.message = rteGet('message_' + k);
+
+    const tEl = document.getElementById('title_' + k);
+    if (tEl) fig.title = rteGet('title_' + k);
+
+    const lEl = document.getElementById('legend_' + k);
+    if (lEl) fig.legend = rteGet('legend_' + k);
   });
 }
 
@@ -2202,6 +2214,19 @@ function renderFigures() {
     container.appendChild(div);
     // Set Think Log button state via DOM (avoids template-literal escaping issues)
     _tlRefreshBtn(k);
+
+    // Bug fix 1: Live-update the figure header title when the title field changes
+    const titleEl = document.getElementById('title_' + k);
+    if (titleEl) {
+      titleEl.addEventListener('input', () => {
+        const h3 = document.querySelector(`.figure-block[data-uid="${k}"] .figure-block-header h3`);
+        if (h3) {
+          const titleVal = rteText(titleEl);
+          const figNum = figures.indexOf(fig) + 1;
+          h3.innerHTML = `Figure ${figNum}${titleVal ? ' — <span style="font-size:0.88em;font-weight:400;color:var(--text-muted)">' + escHtml(titleVal) + '</span>' : ''}`;
+        }
+      });
+    }
   });
   // Auto-resize all textareas after render, then wire input event
   // Sync Collapse All button label to current state
