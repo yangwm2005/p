@@ -2116,6 +2116,14 @@ function rteHtml(s) {
     .replace(/\*(?!\*)(.+?)(?<!\*)\*/g, '<em>$1</em>');
 }
 
+// rteSet: write a value to either a contenteditable div or legacy textarea.
+function rteSet(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (el.isContentEditable) el.innerHTML = val ? rteHtml(val) : '';
+  else el.value = val || '';
+}
+
 // rteGet: read text from either a contenteditable div or legacy textarea.
 // Always returns a string — never undefined or null (safe for Firestore).
 function rteGet(id) {
@@ -2966,12 +2974,12 @@ function getSnapshot() {
       title:    f.title    || '',
       legend:   f.legend   || '',
       thinkLog: (f.thinkLog || []).map(m => ({
-        text:      m.text      || '',
-        timestamp: m.timestamp || '',
-        isYellow:  m.isYellow  || false,
-        isOrange:  m.isOrange  || false,
-        isSubchat: m.isSubchat || false,
-        isSubtitle:m.isSubtitle|| false
+        text:       m.text       || '',
+        timestamp:  m.timestamp  || '',
+        isYellow:   m.isYellow   || false,
+        isOrange:   m.isOrange   || false,
+        isSubchat:  m.isSubchat  || false,
+        isSubtitle: m.isSubtitle || false
       }))
     })),
     updatedAt: Date.now()
@@ -3211,6 +3219,7 @@ function startPoll() {
 
 async function pollForChanges() {
   if (!autoSyncEnabled || !fbUser || _syncing || !fbDb) return;
+  if (!_projectsLoaded) return;  // never poll before initial load completes
   try {
     const doc = await fbDb.collection('users').doc(fbUser.uid).get();
     if (!doc.exists) return;
@@ -3223,11 +3232,12 @@ async function pollForChanges() {
       const p = _projects.find(p => p.id === _activeProjectId);
       if (p && p.data) applySnapshot(p.data);
       toast('🔄 Updated from another device', 'info');
-    } else {
-      // Nothing new on cloud — push any local changes
+    } else if (_lastLocalSave > _lastCloudSave + 2000) {
+      // Local has unsaved changes — push them up
       flushActiveProject();
       await saveProjects(true);
     }
+    // else: cloud and local are in sync — do nothing
   } catch(e) {}
 }
 function stopPoll() {
@@ -3641,13 +3651,48 @@ async function loadProjects(silent = false) {
 }
 
 // ── Save all projects to Firestore ────────────────────
+// Strip all undefined values from a project before sending to Firestore.
+// Firestore strictly rejects undefined — use null or '' instead.
+function sanitizeProject(p) {
+  const sanitizeFigure = f => ({
+    type:     f.type     || 'Observation',
+    question: f.question || '',
+    finding:  f.finding  || '',
+    message:  f.message  || '',
+    title:    f.title    || '',
+    legend:   f.legend   || '',
+    thinkLog: (f.thinkLog || []).map(m => ({
+      text:       m.text       || '',
+      timestamp:  m.timestamp  || '',
+      isYellow:   m.isYellow   || false,
+      isOrange:   m.isOrange   || false,
+      isSubchat:  m.isSubchat  || false,
+      isSubtitle: m.isSubtitle || false
+    }))
+  });
+  const data = p.data ? {
+    bioQuestion: p.data.bioQuestion || '',
+    mainClaim:   p.data.mainClaim   || '',
+    figures:     (p.data.figures || []).map(sanitizeFigure),
+    updatedAt:   p.data.updatedAt   || 0
+  } : null;
+  return {
+    id:        p.id        || '',
+    name:      p.name      || '',
+    data:      data,
+    createdAt: p.createdAt || 0,
+    updatedAt: p.updatedAt || 0
+  };
+}
+
 async function saveProjects(silent = true) {
   if (!fbUser || !fbDb) return;
   if (_loadInProgress) return;  // never push during a load
   try {
     const savedTs = Date.now();
+    const sanitized = _projects.map(sanitizeProject);
     await fbDb.collection('users').doc(fbUser.uid).set(
-      { smb_projects: _projects, smb_updatedAt: savedTs }, { merge: true }
+      { smb_projects: sanitized, smb_updatedAt: savedTs }, { merge: true }
     );
     _lastCloudSave = savedTs;
     _lastLocalSave = savedTs;
@@ -3671,12 +3716,12 @@ function getCurrentProjectSnapshot() {
       title:    f.title    || '',
       legend:   f.legend   || '',
       thinkLog: (f.thinkLog || []).map(m => ({
-        text:      m.text      || '',
-        timestamp: m.timestamp || '',
-        isYellow:  m.isYellow  || false,
-        isOrange:  m.isOrange  || false,
-        isSubchat: m.isSubchat || false,
-        isSubtitle:m.isSubtitle|| false
+        text:       m.text       || '',
+        timestamp:  m.timestamp  || '',
+        isYellow:   m.isYellow   || false,
+        isOrange:   m.isOrange   || false,
+        isSubchat:  m.isSubchat  || false,
+        isSubtitle: m.isSubtitle || false
       }))
     })),
     updatedAt: Date.now()
@@ -3703,8 +3748,8 @@ function openProject(id) {
     applySnapshot(p.data);
   } else {
     // Fresh project — blank the editor
-    document.getElementById('bioQuestion').value = '';
-    document.getElementById('mainClaim').value   = '';
+    rteSet('bioQuestion', '');
+    rteSet('mainClaim', '');
     figures = [];
     renderFigures();
     addFigure(); addFigure(); addFigure();
@@ -3725,8 +3770,8 @@ async function createNewProject() {
   _projects.push({ id, name: name.trim(), data: null, createdAt: Date.now(), updatedAt: Date.now() });
   _activeProjectId = id;
   // Blank the editor
-  document.getElementById('bioQuestion').value = '';
-  document.getElementById('mainClaim').value   = '';
+  rteSet('bioQuestion', '');
+  rteSet('mainClaim', '');
   figures = [];
   renderFigures();
   addFigure(); addFigure(); addFigure();
