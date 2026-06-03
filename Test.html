@@ -2365,11 +2365,16 @@ function previewFigure(uid) {
       </div>`
     : '';
 
+  const figForCopy = fig;   // captured in closure for copy button
   const html = `
     <div class="pfig-header">
       <span class="pfig-num">Figure ${num}</span>
       <span class="pfig-badge figure-type-badge ${TYPE_MAP[fig.type]||''}">${escHtml(fig.type)}</span>
-      <button class="pfig-back btn-outline" onclick="generateStory()" title="Back to full preview">← Full Preview</button>
+      <div style="display:flex;gap:6px;margin-left:auto;align-items:center;">
+        <button class="legends-copy-btn" id="copyFigBtn"
+          title="Copy this figure to clipboard">⎘ Copy Figure</button>
+        <button class="pfig-back btn-outline" onclick="generateStory()" title="Back to full preview">← Full Preview</button>
+      </div>
     </div>
     ${fig.title ? `<div class="pfig-title">${renderMd(fig.title)}</div>` : ''}
     ${row('Biological Question', fig.question)}
@@ -2382,6 +2387,19 @@ function previewFigure(uid) {
 
   const el = document.getElementById('preview');
   el.innerHTML = html;
+  // Wire the copy button for this figure (needs live DOM reference)
+  const copyFigBtn = el.querySelector('#copyFigBtn');
+  if (copyFigBtn) {
+    copyFigBtn.addEventListener('click', function () {
+      const lines = [];
+      lines.push(`Figure ${num}. ${figForCopy.title || '(No title)'}`);
+      if (figForCopy.question) lines.push('Biological Question: ' + figForCopy.question);
+      if (figForCopy.finding)  lines.push('Main Finding: '        + figForCopy.finding);
+      if (figForCopy.message)  lines.push('Take-home Message: '   + figForCopy.message);
+      if (figForCopy.legend)   lines.push('\nFigure Legend:\n'   + figForCopy.legend.trim());
+      copyToClipboard(lines.join('\n'), copyFigBtn);
+    });
+  }
   // Scroll the right panel back to top so user sees the figure header
   el.closest('.panel-right')?.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -2399,6 +2417,12 @@ function generateStory() {
   let html = `
     <div class="pfig-header" style="margin-bottom:8px;">
       <span class="pfig-num" style="font-size:1.1em;">📋 Manuscript Story Overview</span>
+      <div style="display:flex;gap:6px;margin-left:auto;">
+        <button class="legends-copy-btn" id="copyStoryBtn"
+          onclick="copyFullStory(this)" title="Copy story text to clipboard">⎘ Copy Story</button>
+        <button class="legends-copy-btn" id="copyLegendsBtn"
+          onclick="copyAllLegends()" title="Copy all figure legends">⎘ Copy Legends</button>
+      </div>
     </div>
     ${sectionRow('Central Biological Question', bioQuestion)}
     ${sectionRow('Main Claim', mainClaim)}
@@ -4278,6 +4302,58 @@ function showLegendsPreview() {
 
 function closeLegends() {
   document.getElementById('legendsModal').classList.remove('open');
+}
+
+// ── Copy full story preview as plain text ─────────────────────────────
+function copyFullStory(btnEl) {
+  syncFromDOM();
+  const bioQuestion = rteGet('bioQuestion');
+  const mainClaim   = rteGet('mainClaim');
+  const lines = [];
+  lines.push('MANUSCRIPT STORY OVERVIEW');
+  lines.push('='.repeat(40));
+  if (bioQuestion) lines.push('Central Biological Question:\n' + bioQuestion);
+  if (mainClaim)   lines.push('\nMain Claim:\n' + mainClaim);
+  lines.push('\nNARRATIVE FLOW');
+  lines.push('-'.repeat(40));
+  figures.forEach((fig, i) => {
+    const num = i + 1;
+    lines.push(`\nFigure ${num}. ${fig.title || '(No title)'} [${fig.type}]`);
+    if (fig.question) lines.push('  Biological Question: ' + fig.question);
+    if (fig.finding)  lines.push('  Main Finding: '        + fig.finding);
+    if (fig.message)  lines.push('  Take-home Message: '   + fig.message);
+    if (fig.legend)   lines.push('  Figure Legend: '       + fig.legend.trim());
+  });
+  if (mainClaim) {
+    lines.push('\nFINAL LOGIC');
+    lines.push('-'.repeat(40));
+    lines.push('"' + mainClaim + '"');
+  }
+  copyToClipboard(lines.join('\n'), btnEl);
+}
+
+// ── Shared clipboard helper used by preview copy buttons ──────────────
+function copyToClipboard(text, btnEl) {
+  const succeed = () => {
+    if (!btnEl) return;
+    const orig = btnEl.textContent;
+    btnEl.textContent = '✓ Copied';
+    btnEl.disabled = true;
+    setTimeout(() => { btnEl.textContent = orig; btnEl.disabled = false; }, 2000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(succeed).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      succeed();
+    });
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    succeed();
+  }
 }
 
 function copyAllLegends() {
