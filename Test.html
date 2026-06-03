@@ -4420,32 +4420,39 @@ window.addEventListener('pageshow', () => {
 
   // ── Position toolbar near the selection (not at the field edge) ──────────
   function positionToolbar(el) {
-    const scrollY = window.scrollY || document.documentElement.scrollTop;
-    const scrollX = window.scrollX || document.documentElement.scrollLeft;
-    const tbH = toolbar.offsetHeight || 34;
-    const tbW = toolbar.offsetWidth  || 230;
+    const scrollY  = window.scrollY || document.documentElement.scrollTop;
+    const scrollX  = window.scrollX || document.documentElement.scrollLeft;
+    const tbH      = toolbar.offsetHeight || 34;
+    const tbW      = toolbar.offsetWidth  || 230;
+    const vpBottom = window.innerHeight;   // viewport bottom in client coords
     let top, left;
 
+    // Get the last rect of the selection so the toolbar anchors to the
+    // bottom-right of the highlighted text (end of selection, not start).
     if (el.isContentEditable) {
-      // Use the actual selection range rectangle so the toolbar floats
-      // right above the highlighted text, not the top of the whole field.
       const sel = window.getSelection();
       if (sel && sel.rangeCount > 0) {
         const rects = sel.getRangeAt(0).getClientRects();
-        const r = rects[0] || sel.getRangeAt(0).getBoundingClientRect();
-        top  = r.top  + scrollY - tbH - 8;
+        // Use the LAST rect (bottom line of a multi-line selection)
+        const r = rects.length ? rects[rects.length - 1]
+                               : sel.getRangeAt(0).getBoundingClientRect();
+        // Default: place BELOW the last line of the selection
+        top  = r.bottom + scrollY + 8;
         left = r.left + scrollX + (r.width / 2) - (tbW / 2);
-        // If too close to top, flip below the selection
-        if (top < scrollY + 4) top = r.bottom + scrollY + 6;
+        // If the bottom of the toolbar would be clipped by the viewport,
+        // flip ABOVE the selection instead.
+        if (r.bottom + tbH + 12 > vpBottom) {
+          top = r.top + scrollY - tbH - 8;
+        }
       }
     }
 
-    // Fallback: position above the field (textarea or no rects)
+    // Fallback for textarea (no Range rects available)
     if (top === undefined) {
       const rect = el.getBoundingClientRect();
-      top  = rect.top + scrollY - tbH - 8;
+      top  = rect.bottom + scrollY + 8;
       left = rect.left + scrollX;
-      if (top < scrollY + 4) top = rect.bottom + scrollY + 6;
+      if (rect.bottom + tbH + 12 > vpBottom) top = rect.top + scrollY - tbH - 8;
     }
 
     // Clamp horizontally so it never goes off-screen
