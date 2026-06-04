@@ -195,6 +195,58 @@
   #floatLegendsBtn  { background: #1a7a3a; }
   #floatLegendsBtn:hover  { background: var(--navy); }
 
+  /* ─── STICKY FIGURE MINI-TOOLBAR ─── */
+  #figStickyBar {
+    position: fixed;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    z-index: 900;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--navy);
+    color: #fff;
+    padding: 7px 14px;
+    border-radius: 40px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.28);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    white-space: nowrap;
+  }
+  #figStickyBar.visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+  }
+  #figStickyBar .fsb-label {
+    font-size: 0.82em;
+    font-weight: 600;
+    color: rgba(255,255,255,0.7);
+    margin-right: 4px;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #figStickyBar .fsb-btn {
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #fff;
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 0.88em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  #figStickyBar .fsb-btn:hover { background: rgba(255,255,255,0.25); }
+  #figStickyBar .fsb-tl-btn.has-log { background: rgba(124,58,237,0.35); border-color: rgba(124,58,237,0.6); }
+
   /* ─── LEGENDS MODAL ─── */
   #legendsModal {
     display: none;
@@ -1189,8 +1241,11 @@
   opacity: 0;
   transition: opacity 0.2s ease;
 }
-
 .figure-block-header:hover .fig-controls {
+  opacity: 1;
+}
+/* Always show buttons when the figure body is expanded */
+.figure-block:not(.is-collapsed) .figure-block-header .fig-controls {
   opacity: 1;
 }
 
@@ -2065,6 +2120,90 @@
 </div>
 
 <script>
+// ── Sticky Figure Mini-Toolbar ─────────────────────────────────────────────
+// • Shows immediately when a figure is expanded (via _stickyBarOnToggle)
+// • Dynamically tracks WHICH expanded figure's header is out of view via
+//   IntersectionObserver — so scrolling past multiple open figures always
+//   shows the correct figure label and wires the correct buttons.
+// • Hides when the header scrolls back into view (or figure collapses).
+// All getElementById calls are deferred to call-time so the DOM is ready.
+
+var _stickyCurrentUid = null;  // uid currently shown in the bar
+var _stickyObserver   = null;  // single shared IntersectionObserver
+
+function _stickyGetBar()     { return document.getElementById('figStickyBar'); }
+function _stickyGetLabel()   { return document.getElementById('figStickyLabel'); }
+function _stickyGetCollapse(){ return document.getElementById('fsbCollapseBtn'); }
+function _stickyGetPreview() { return document.getElementById('fsbPreviewBtn'); }
+function _stickyGetThink()   { return document.getElementById('fsbThinkLogBtn'); }
+
+function _stickyShowBar(uid) {
+  var bar = _stickyGetBar(); if (!bar) return;
+  _stickyCurrentUid = uid;
+  var fig = figures.find(function(f){ return f._uid === uid; });
+  var num = fig ? figures.indexOf(fig) + 1 : '?';
+  var lbl = (fig && fig.title) ? 'Fig ' + num + ' — ' + fig.title : 'Figure ' + num;
+  _stickyGetLabel().textContent = lbl;
+  _stickyGetCollapse().onclick  = function(){ toggleFigure(uid); };
+  _stickyGetPreview().onclick   = function(){ previewFigure(uid); };
+  _stickyGetThink().onclick     = function(){ openThinkLog(uid); };
+  // Mirror has-log state from the header button
+  var hdrTl = document.getElementById('tlbtn_' + uid);
+  _stickyGetThink().classList.toggle('has-log', !!(hdrTl && hdrTl.classList.contains('has-log')));
+  bar.classList.add('visible');
+}
+
+function _stickyHideBar(uid) {
+  // If uid supplied, only hide if it matches current (avoids hiding a different fig)
+  if (uid !== undefined && uid !== _stickyCurrentUid) return;
+  var bar = _stickyGetBar(); if (!bar) return;
+  _stickyCurrentUid = null;
+  bar.classList.remove('visible');
+}
+
+// ── Called from renderFigures for each figure header ──────────────────────
+window._stickyBarObserve = function(headerEl, uid) {
+  // Create one shared observer (re-created fresh each renderFigures cycle)
+  if (!_stickyObserver) {
+    _stickyObserver = new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        var entryUid = parseInt(entry.target.dataset.stickyUid, 10);
+        var fig = figures.find(function(f){ return f._uid === entryUid; });
+        if (!fig || fig._collapsed) return;  // only care about expanded figures
+        if (!entry.isIntersecting) {
+          // Header scrolled out of view — show/update bar for this figure
+          _stickyShowBar(entryUid);
+        } else {
+          // Header back in view — hide bar only if it was showing for this figure
+          _stickyHideBar(entryUid);
+        }
+      });
+    }, { threshold: 0, rootMargin: '-56px 0px 0px 0px' });
+  }
+  headerEl.dataset.stickyUid = uid;
+  _stickyObserver.observe(headerEl);
+};
+
+// ── Called from toggleFigure ───────────────────────────────────────────────
+window._stickyBarOnToggle = function(uid, isCollapsed) {
+  if (isCollapsed) {
+    _stickyHideBar(uid);
+  } else {
+    // Figure just expanded — show bar immediately; observer will take over on scroll
+    _stickyShowBar(uid);
+  }
+};
+
+// ── Reset observer between re-renders ─────────────────────────────────────
+window._stickyBarReset = function() {
+  if (_stickyObserver) { _stickyObserver.disconnect(); _stickyObserver = null; }
+  _stickyHideBar();
+  _stickyCurrentUid = null;
+};
+
+window._stickyBarOnCollapse = function(uid) { _stickyHideBar(uid); };
+window._stickyActiveUid     = function()    { return _stickyCurrentUid; };
+
 // ── Tab switching ──────────────────────────────────
 function switchTab(id) {
   const ids = ['projects','builder','help-guide','help-figures','help-narrative','help-checklist'];
@@ -2187,6 +2326,8 @@ function syncFromDOM() {
 function renderFigures() {
   const container = document.getElementById("figuresContainer");
   container.innerHTML = "";
+  // Reset sticky bar observers before re-populating
+  if (window._stickyBarReset) window._stickyBarReset();
   figures.forEach((fig, i) => {
     const k = fig._uid;
     const num = i + 1;
@@ -2239,6 +2380,9 @@ function renderFigures() {
     container.appendChild(div);
     // Set Think Log button state via DOM (avoids template-literal escaping issues)
     _tlRefreshBtn(k);
+    // Register with sticky bar (no-op observer; keeps hook for future use)
+    const headerEl = div.querySelector('.figure-block-header');
+    if (headerEl && window._stickyBarObserve) window._stickyBarObserve(headerEl, k);
 
     // Bug fix 1: Live-update the figure header title when the title field changes
     const titleEl = document.getElementById('title_' + k);
@@ -2301,6 +2445,8 @@ function toggleFigure(uid) {
   const num = figures.indexOf(fig) + 1;
   if (h3) h3.innerHTML = `Figure ${num}${fig.title ? ' — <span style="font-size:0.88em;font-weight:400;color:var(--text-muted)">' + escHtml(fig.title) + '</span>' : ''}`;
   if (btn) btn.title = fig._collapsed ? 'Expand' : 'Collapse';
+  // Hide sticky bar if this figure was just collapsed
+  if (window._stickyBarOnToggle) window._stickyBarOnToggle(uid, fig._collapsed);
 }
 
 function onTypeChange(uid) {
@@ -2635,6 +2781,11 @@ function _tlRefreshBtn(uid) {
   var fig = figures.find(f => f._uid === uid);
   var hasLog = fig && fig.thinkLog && fig.thinkLog.length > 0;
   btn.className = 'fig-btn fig-tl-btn' + (hasLog ? ' has-log' : '');
+  // Mirror has-log state on sticky bar think log button
+  const stickyTl = document.getElementById('fsbThinkLogBtn');
+  if (stickyTl && window._stickyActiveUid && window._stickyActiveUid() === uid) {
+    stickyTl.classList.toggle('has-log', hasLog);
+  }
   btn.innerHTML = hasLog ? '🧠<span class="fig-tl-badge"></span>' : '🧠';
 }
 
@@ -4697,5 +4848,11 @@ window.addEventListener('pageshow', () => {
   };
 })();
 </script>
+<div id="figStickyBar">
+  <span class="fsb-label" id="figStickyLabel"></span>
+  <button class="fsb-btn" id="fsbCollapseBtn" title="Collapse this figure">▼</button>
+  <button class="fsb-btn" id="fsbPreviewBtn"  title="Preview this figure">👁</button>
+  <button class="fsb-btn fsb-tl-btn" id="fsbThinkLogBtn" title="Open Think Log">🧠</button>
+</div>
 </body>
 </html>
