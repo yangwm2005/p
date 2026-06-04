@@ -205,6 +205,43 @@
   #floatProjectsBtn { background: #3a2a5b; }
   #floatProjectsBtn:hover { background: var(--navy); }
 
+  /* ─── PREVIEW RIGHT-EDGE NAV RAIL ─── */
+  #previewNavRail {
+    position: fixed;
+    right: 0;
+    top: calc(50% + 40px);
+    transform: translateY(-50%);
+    display: none;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+    z-index: 800;
+  }
+  .pnr-btn {
+    /* Horizontal text, slides in from the right edge */
+    writing-mode: horizontal-tb;
+    background: var(--navy);
+    color: #fff;
+    border: none;
+    border-radius: 8px 0 0 8px;   /* open on the right, rounded on the left */
+    padding: 6px 10px 6px 12px;
+    font-size: 1em;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    box-shadow: -2px 2px 8px rgba(0,0,0,0.22);
+    transition: background 0.15s, transform 0.15s;
+    white-space: nowrap;
+    min-width: 70px;
+    text-align: left;
+  }
+  .pnr-btn:hover {
+    background: var(--accent, #1565c0);
+    transform: translateX(-4px);   /* slight slide-out on hover */
+  }
+  .pnr-btn.pnr-fig { background: #2a4a5b; font-size: 0.92em; padding: 5px 10px 5px 12px; }
+  .pnr-btn.pnr-fig:hover { background: var(--navy); }
+
   /* ─── STICKY FIGURE MINI-TOOLBAR ─── */
   #figStickyBar {
     position: fixed;
@@ -1532,6 +1569,8 @@
     <div class="panel panel-right">
       <h2>Story Preview</h2>
       <div class="preview" id="preview">Your manuscript story preview will appear here after clicking "Generate Preview"...</div>
+      <!-- Right-edge nav rail — populated by buildPreviewNavRail() after generateStory() -->
+      <div id="previewNavRail"></div>
     </div>
   </div>
 </div>
@@ -2445,20 +2484,29 @@ function navFigure(dir) {
   const blocks = Array.from(document.querySelectorAll('.figure-block'));
   if (!blocks.length) return;
 
-  // Find the figure block whose top is closest to (and just past) the viewport centre
-  const vpMid = window.scrollY + window.innerHeight / 2;
+  // Use a small threshold so a figure whose top is just 1-2px above the
+  // viewport edge (due to rounding / header) is still treated as "above".
+  const THRESHOLD = 8;
 
-  // Pick current: the block whose vertical midpoint is nearest viewport centre
-  let closestIdx = 0, closestDist = Infinity;
-  blocks.forEach(function(b, i) {
-    const r = b.getBoundingClientRect();
-    const mid = window.scrollY + r.top + r.height / 2;
-    const dist = Math.abs(mid - vpMid);
-    if (dist < closestDist) { closestDist = dist; closestIdx = i; }
-  });
-
-  const targetIdx = Math.min(Math.max(closestIdx + dir, 0), blocks.length - 1);
-  blocks[targetIdx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (dir < 0) {
+    // ↑ PREV: find the last block whose top is meaningfully above the viewport top
+    let target = null;
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const top = blocks[i].getBoundingClientRect().top;
+      if (top < -THRESHOLD) { target = blocks[i]; break; }
+    }
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else blocks[0].scrollIntoView({ behavior: 'smooth', block: 'start' }); // already at first
+  } else {
+    // ↓ NEXT: find the first block whose top is meaningfully below the viewport top
+    let target = null;
+    for (let i = 0; i < blocks.length; i++) {
+      const top = blocks[i].getBoundingClientRect().top;
+      if (top > THRESHOLD) { target = blocks[i]; break; }
+    }
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else blocks[blocks.length - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 function toggleAllFigures() {
@@ -2660,7 +2708,7 @@ function generateStory() {
     const narrative = templates[fig.type] || '';
 
     html += `
-      <div style="margin-bottom:18px;padding:12px 14px;background:var(--blue-light);border:1px solid var(--border);border-radius:8px;">
+      <div id="pfig_${num}" style="margin-bottom:18px;padding:12px 14px;background:var(--blue-light);border:1px solid var(--border);border-radius:8px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
           <span class="pfig-num" style="font-size:0.97em; white-space:nowrap;">Figure ${num}</span>
            
@@ -2686,6 +2734,49 @@ function generateStory() {
 
   const previewEl = document.getElementById("preview");
   previewEl.innerHTML = html;
+  buildPreviewNavRail();
+}
+
+// ── Preview right-edge nav rail ───────────────────────────────────────────
+function buildPreviewNavRail() {
+  const rail  = document.getElementById('previewNavRail');
+  const panel = document.querySelector('.panel-right');
+  if (!rail || !panel) return;
+
+  const count = figures.length;
+
+  // Build button HTML: Top, one per figure, Bottom
+  let btnHtml = `<button class="pnr-btn" title="Scroll preview to top"
+      onclick="navPreview('top')">⇈ Top</button>`;
+
+  for (let i = 1; i <= count; i++) {
+    btnHtml += `<button class="pnr-btn pnr-fig" title="Go to Figure ${i}"
+        onclick="navPreview(${i})">Fig ${i}</button>`;
+  }
+
+  btnHtml += `<button class="pnr-btn" title="Scroll preview to bottom"
+      onclick="navPreview('bottom')">⇊ Bot</button>`;
+
+  rail.innerHTML = btnHtml;
+  rail.style.display = 'flex';
+
+  // CSS handles positioning (fixed, right:0, top:50% translateY(-50%))
+}
+
+function navPreview(target) {
+  const panel = document.querySelector('.panel-right');
+  if (!panel) return;
+  if (target === 'top') {
+    panel.scrollTo({ top: 0, behavior: 'smooth' });
+  } else if (target === 'bottom') {
+    panel.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' });
+  } else {
+    // Numeric: scroll to figure anchor
+    const anchor = panel.querySelector('#pfig_' + target);
+    if (anchor) {
+      panel.scrollTo({ top: anchor.offsetTop - 12, behavior: 'smooth' });
+    }
+  }
 }
 
 // ── Save / Load ───────────────────────────────────
