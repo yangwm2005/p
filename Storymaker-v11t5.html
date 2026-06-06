@@ -3508,24 +3508,20 @@ function initFirebase() {
         const saved = localStorage.getItem('smb_autoSync_' + user.uid);
         autoSyncEnabled = saved === 'true';
         updateCloudBar();
-        // Load projects first (replaces the old single-doc load)
-        if (autoSyncEnabled) {
-          // Smart startup: only pull from cloud if it's genuinely newer than last fetch
-          try {
-            const doc = await fbDb.collection('users').doc(fbUser.uid).get();
-            const cloudTs = doc.exists ? (doc.data().smb_updatedAt || 0) : 0;
-            const localTs = parseInt(localStorage.getItem('smb_lastCloudTs') || '0');
-            if (cloudTs > localTs + 3000 || _projects.length === 0) {
-              await loadProjects(true);
-              if (cloudTs > localTs + 3000) toast('🔄 Updated from cloud', 'info');
-            } else {
-              _projectsLoaded = true;
-            }
-          } catch(_) { await loadProjects(true); }
-          startPoll();
-        } else {
+        // Load projects from cloud on every sign-in.
+        // _projects is always empty at page load (in-memory only), so we must
+        // always fetch from Firestore — the old "smart skip" was unsafe because
+        // it compared timestamps to decide whether to skip the load, but the
+        // in-memory array is always empty on a fresh page open regardless of
+        // timestamps.  Incremental sync after startup is handled by the poll loop.
+        try {
+          const doc = await fbDb.collection('users').doc(fbUser.uid).get();
+          const cloudTs = doc.exists ? (doc.data().smb_updatedAt || 0) : 0;
+          const localTs = parseInt(localStorage.getItem('smb_lastCloudTs') || '0');
           await loadProjects(true);
-        }
+          if (cloudTs > localTs + 3000) toast('🔄 Updated from cloud', 'info');
+        } catch(_) { await loadProjects(true); }
+        if (autoSyncEnabled) startPoll();
         renderProjectGrid();
         // re-subscribe share listener if we have a token stored
         const st = _getShareToken(_activeProjectId);
@@ -3537,6 +3533,9 @@ function initFirebase() {
         _projectsLoaded = false;
         _projects = [];
         _activeProjectId = null;
+        // Clear the cached cloud timestamp so the next sign-in always fetches
+        // fresh from Firestore rather than seeing timestamps as "in sync".
+        localStorage.removeItem('smb_lastCloudTs');
         stopPoll();
         if (_shareListener) { _shareListener(); _shareListener = null; }
         updateCloudBar();
