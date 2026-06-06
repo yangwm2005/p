@@ -3643,7 +3643,7 @@ function scheduleAutoSync() {
   }
   if (!autoSyncEnabled || !fbUser) return;
   clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(() => fbSaveAll(true), 2500);
+  _syncTimer = setTimeout(() => fbSaveAll(true), 1500);  // shortened: pagehide catches refreshes but faster debounce reduces the window
 }
 let _sharePushTimer = null;
 
@@ -4255,12 +4255,13 @@ function flushActiveProject() {
   if (!_activeProjectId) return;
   const p = _projects.find(p => p.id === _activeProjectId);
   if (!p) return;
-  const snap    = getCurrentProjectSnapshot();
-  // Use the real-edit timestamp so we never accidentally advance updatedAt
-  // just by switching tabs or opening the app on another device.
-  snap.updatedAt = _localEditTs || snap.updatedAt;
-  p.data         = snap;
-  p.updatedAt    = snap.updatedAt;
+  const snap = getCurrentProjectSnapshot();
+  // Use the real-edit timestamp if we have one; otherwise preserve the existing
+  // updatedAt so we never zero it out (which corrupts the merge comparison).
+  if (_localEditTs) snap.updatedAt = _localEditTs;
+  else if (p.data && p.data.updatedAt) snap.updatedAt = p.data.updatedAt;
+  p.data      = snap;
+  p.updatedAt = snap.updatedAt || p.updatedAt || Date.now();
 }
 
 // ── Open a project (switch to it) ─────────────────────
@@ -4764,6 +4765,21 @@ document.addEventListener('DOMContentLoaded', () => {
 // Poll immediately when switching back to this tab or unlocking device
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && autoSyncEnabled && fbUser) pollForChanges();
+  // Save immediately when the tab becomes hidden (user switches away / minimises).
+  // Best-effort flush before a potential refresh or close.
+  if (document.visibilityState === 'hidden' && autoSyncEnabled && fbUser && _localEditTs) {
+    flushActiveProject();
+    saveProjects(true);
+  }
+});
+
+// Save on refresh / tab-close via pagehide (fires before the page is torn down).
+// Relies on the Firestore SDK internal request queue to complete the write.
+window.addEventListener('pagehide', () => {
+  if (autoSyncEnabled && fbUser && _localEditTs) {
+    flushActiveProject();
+    saveProjects(true);
+  }
 });
 
 // Also scroll on any history navigation (back/forward)
