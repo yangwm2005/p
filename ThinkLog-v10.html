@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧠 ThinkLog</title>
+
+<!-- Firebase compat SDKs (same versions as Storymaker) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<style>
+/* ── Reset & Variables ─────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #f5f5f7;
+  --bg2:       #ffffff;
+  --bg3:       #f0f0f4;
+  --border:    #d8d8e0;
+  --accent:    #6c47ff;
+  --accent2:   #4f35c2;
+  --accent-hl: rgba(108,71,255,0.08);
+  --text:      #1a1a2e;
+  --text2:     #444466;
+  --text-muted:#8888aa;
+  --yellow:    rgba(253,224,71,0.30);
+  --orange:    rgba(251,146,60,0.28);
+  --yellow-b:  #d4a017;
+  --orange-b:  #c96a00;
+  --green:     #16a34a;
+  --red:       #dc2626;
+  --radius:    10px;
+  --shadow:    0 4px 18px rgba(0,0,0,0.10);
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Top Bar ───────────────────────────────────────── */
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+#topbar .logo { font-size: 1.25em; font-weight: 700; color: var(--accent2); letter-spacing: -0.5px; }
+#topbar .logo span { color: var(--text-muted); font-weight: 400; }
+#topbar .spacer { flex: 1; }
+
+/* Cloud dot */
+.cdot { width: 9px; height: 9px; border-radius: 50%; background: #444; flex-shrink: 0; }
+.cdot.on   { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.cdot.off  { background: #555; }
+.cdot.sync { background: var(--accent); animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+#cloudStatus { font-size:0.82em; color:var(--text2); }
+
+/* Auth chip */
+#authChip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px 4px 4px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  cursor: pointer;
+  position: relative;
+  user-select: none;
+}
+#authChip .av {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent);
+  color: #fff; font-weight: 700; font-size: 0.85em;
+  display: flex; align-items: center; justify-content: center;
+}
+#authChip .uname { font-size: 0.85em; color: var(--text2); }
+#authDropdown {
+  display: none; position: absolute; top: calc(100% + 6px); right: 0;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  min-width: 200px; padding: 6px 0; z-index: 200;
+}
+#authDropdown.open { display: block; }
+#authDropdown .dd-info { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+#authDropdown .dd-info .dd-name { font-weight: 600; font-size: 0.95em; }
+#authDropdown .dd-info .dd-email { font-size: 0.78em; color: var(--text-muted); margin-top: 2px; }
+#authDropdown button {
+  display: block; width: 100%; text-align: left;
+  padding: 8px 14px; background: none; border: none;
+  color: var(--text2); font-size: 0.88em; cursor: pointer;
+}
+#authDropdown button:hover { background: var(--accent-hl); color: var(--text); }
+
+#signInBtn {
+  padding: 6px 16px; background: var(--accent); color: #fff;
+  border: none; border-radius: 20px; font-size: 0.88em;
+  cursor: pointer; font-weight: 600;
+}
+#signInBtn:hover { background: var(--accent2); }
+#signInBtn:disabled { opacity: 0.6; cursor: default; }
+
+/* ── Layout ─────────────────────────────────────────── */
+#layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  height: calc(100vh - 49px);
+}
+
+/* ── Sidebar ─────────────────────────────────────────── */
+#sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#sidebar h2 {
+  font-size: 0.78em;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  padding: 14px 14px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Project list */
+#projectList {
+  overflow-y: auto;
+  flex: 1;
+  padding: 6px 0;
+}
+.proj-item {
+  padding: 9px 14px;
+  cursor: pointer;
+  font-size: 0.9em;
+  color: var(--text2);
+  border-left: 3px solid transparent;
+  transition: background 0.12s, color 0.12s;
+}
+.proj-item:hover { background: var(--bg3); color: var(--text); }
+.proj-item.active { border-left-color: var(--accent); background: var(--accent-hl); color: var(--accent2); font-weight: 600; }
+
+/* Figure list */
+#figSidebar { border-top: 1px solid var(--border); }
+#figSidebar h2 { padding: 10px 14px 6px; }
+#figList {
+  overflow-y: auto;
+  max-height: 40vh;
+  padding: 4px 0;
+}
+.fig-item {
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.87em;
+  color: var(--text2);
+  border-left: 3px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.12s;
+}
+.fig-item:hover { background: var(--bg3); color: var(--text); }
+.fig-item.active { border-left-color: var(--accent); background: var(--accent-hl); color: var(--accent2); }
+.fig-badge {
+  font-size: 0.72em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--accent-hl);
+  color: var(--accent2);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.fig-type-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.fig-type-dot.Observation     { background: #60a5fa; }
+.fig-type-dot.Functional      { background: #4ade80; }
+.fig-type-dot.Mechanism       { background: #facc15; }
+.fig-type-dot.Validation      { background: #f87171; }
+
+#sidebarEmpty {
+  padding: 20px 14px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* ── Main panel ──────────────────────────────────────── */
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Think log header */
+#tlHeader {
+  padding: 12px 18px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+#tlHeader .tl-title { font-weight: 700; font-size: 1.1em; color: var(--accent2); flex: 1; min-width: 0; }
+#tlHeader .tl-subtitle { font-size: 0.82em; color: var(--text-muted); }
+#tlHeader .tl-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Toolbar buttons */
+.tbtn {
+  padding: 5px 11px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text2);
+  font-size: 0.82em;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+.tbtn:hover { background: var(--accent-hl); color: var(--text); border-color: var(--accent); }
+.tbtn.save-dirty { background: rgba(251,146,60,0.15); border-color: var(--orange-b); color: var(--orange-b); }
+.tbtn.save-ok { background: rgba(74,222,128,0.12); border-color: var(--green); color: var(--green); }
+
+/* Search bar */
+#searchRow {
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+#tlSearch {
+  width: 100%;
+  padding: 6px 12px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.88em;
+  outline: none;
+}
+#tlSearch:focus { border-color: var(--accent); }
+#tlSearch::placeholder { color: var(--text-muted); }
+
+/* Chat box */
+#tlChatBox {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tl-empty {
+  margin: auto;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.95em;
+  line-height: 2;
+}
+.tl-empty .ei { font-size: 2em; display: block; margin-bottom: 8px; }
+
+/* Messages */
+.tl-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background 0.12s;
+}
+.tl-msg:hover { border-color: var(--accent); }
+.tl-msg.tl-sub { margin-left: 22px; background: var(--bg); border-color: var(--border); }
+.tl-msg.tl-yl  { background: var(--yellow); border-color: var(--yellow-b); }
+.tl-msg.tl-or  { background: var(--orange); border-color: var(--orange-b); }
+.tl-msg.tl-sel { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.tl-drag-handle {
+  cursor: grab; color: var(--text-muted); font-size: 0.9em;
+  flex-shrink: 0; line-height: 1.8; user-select: none; padding: 0 2px;
+}
+.tl-drag-handle:active { cursor: grabbing; }
+.tl-dragging { opacity: 0.4; }
+.tl-drop-before { border-top: 2px solid var(--accent) !important; }
+.tl-drop-after  { border-bottom: 2px solid var(--accent) !important; }
+
+.tl-mtext { flex: 1; font-size: 0.91em; line-height: 1.55; word-break: break-word; }
+.tl-mts   { font-size: 0.73em; color: var(--text-muted); flex-shrink: 0; margin-top: 2px; }
+
+/* Gear menu */
+.tl-mgear {
+  background: none; border: none; cursor: pointer;
+  font-size: 0.9em; opacity: 0; transition: opacity 0.12s;
+  flex-shrink: 0; padding: 0 2px; position: relative;
+}
+.tl-msg:hover .tl-mgear { opacity: 1; }
+.tl-mmenu {
+  display: none; position: absolute; right: 0; top: 100%; z-index: 50;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: var(--shadow); min-width: 180px;
+  padding: 4px 0;
+}
+.tl-mmenu button {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 14px; background: none; border: none;
+  color: var(--text2); font-size: 0.85em; cursor: pointer;
+}
+.tl-mmenu button:hover { background: var(--accent-hl); color: var(--text); }
+.tl-mmenu button.tl-del { color: var(--red); }
+.tl-mmenu button.tl-del:hover { background: rgba(248,113,113,0.1); }
+.tl-msep { border-top: 1px solid var(--border); margin: 4px 0; }
+
+/* Subtitle */
+.tl-subt {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--accent-hl);
+  border: 1px solid var(--accent);
+}
+.tl-subt-text {
+  flex: 1; font-weight: 600; font-size: 0.82em;
+  color: var(--accent2); letter-spacing: 0.5px; text-transform: uppercase;
+}
+.tl-subt-btn {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 0.85em; padding: 0 3px;
+}
+.tl-subt-btn:hover { color: var(--text); }
+.tl-subt-inp {
+  flex: 1; background: var(--bg); border: 1px solid var(--accent);
+  border-radius: 4px; color: var(--text); padding: 3px 8px; font-size: 0.85em;
+}
+.tl-subt-editrow { gap: 6px; }
+
+/* Edit textarea inside message */
+.tl-medit {
+  flex: 1; background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px; color: var(--text);
+  padding: 4px 8px; font-size: 0.9em;
+  resize: none; font-family: inherit; line-height: 1.5;
+}
+
+/* ── Input area ──────────────────────────────────────── */
+#inputArea {
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#inputRow { display: flex; gap: 8px; align-items: flex-end; }
+#tlTextInput {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.92em;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  min-height: 40px;
+  max-height: 120px;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+}
+#tlTextInput:focus { border-color: var(--accent); }
+#tlTextInput::placeholder { color: var(--text-muted); }
+#tlSendBtn {
+  padding: 8px 16px;
+  background: var(--accent);
+  border: none; border-radius: 8px;
+  color: #fff; font-weight: 700;
+  cursor: pointer; font-size: 0.92em;
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+#tlSendBtn:hover { background: var(--accent2); }
+
+#inputToolbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+#statusBar {
+  font-size: 0.78em; color: var(--text-muted); margin-left: auto;
+  transition: color 0.2s;
+}
+#statusBar.ok { color: var(--green); }
+
+/* Sub-section picker */
+#tlSubPicker {
+  display: none;
+  position: fixed;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 10px;
+  z-index: 300;
+  min-width: 220px;
+}
+#tlSubPicker .sopt {
+  display: block; width: 100%;
+  padding: 7px 12px; background: none; border: none;
+  color: var(--text2); font-size: 0.85em;
+  cursor: pointer; text-align: left; border-radius: 6px;
+}
+#tlSubPicker .sopt:hover { background: var(--accent-hl); color: var(--text); }
+#tlSubPicker hr { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
+#tlCustomSub {
+  width: 100%; padding: 6px 10px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text);
+  font-size: 0.85em; outline: none;
+}
+#tlCustomSub:focus { border-color: var(--accent); }
+#tlCustomSub::placeholder { color: var(--text-muted); }
+#tlCustomLabel { font-size: 0.78em; color: var(--text-muted); margin-bottom: 4px; display: block; }
+
+/* ── States ──────────────────────────────────────────── */
+#welcomeScreen, #noFigScreen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 40px;
+  gap: 12px;
+}
+#welcomeScreen .big { font-size: 3em; }
+#welcomeScreen h2 { color: var(--text2); font-size: 1.1em; }
+#welcomeScreen p { font-size: 0.88em; max-width: 360px; line-height: 1.7; }
+
+/* ── Toast ───────────────────────────────────────────── */
+#toastWrap {
+  position: fixed; bottom: 20px; right: 20px;
+  display: flex; flex-direction: column; gap: 8px; z-index: 9999;
+}
+.toast {
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 0.87em;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  animation: toastIn 0.2s ease;
+  box-shadow: var(--shadow);
+}
+.toast.info  { border-color: var(--accent); }
+.toast.ok    { border-color: var(--green); }
+.toast.error { border-color: var(--red); color: var(--red); }
+@keyframes toastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* ── Scrollbar ───────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── No project / loading states ───────────────────── */
+#loadingMsg {
+  color: var(--text-muted); font-size: 0.9em;
+  padding: 16px 14px; text-align: center;
+}
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div id="topbar">
+  <div class="logo">🧠 <span>Think</span>Log</div>
+  <div class="cdot off" id="cdot"></div>
+  <div id="cloudStatus">Not signed in</div>
+  <div class="spacer"></div>
+  <!-- Auth -->
+  <div id="authChip" onclick="toggleDrop()" style="display:none">
+    <div class="av" id="avLetter">?</div>
+    <div class="uname" id="unameEl">User</div>
+    <div id="authDropdown">
+      <div class="dd-info">
+        <div class="dd-name" id="ddName"></div>
+        <div class="dd-email" id="ddEmail"></div>
+      </div>
+      <button onclick="cloudSignOut()">Sign out</button>
+    </div>
+  </div>
+  <button id="signInBtn" onclick="cloudSignIn()">Sign in with Google</button>
+</div>
+
+<!-- Body -->
+<div id="layout">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <h2>Projects</h2>
+    <div id="projectList">
+      <div id="loadingMsg">Sign in to see projects</div>
+    </div>
+    <div id="figSidebar" style="display:none">
+      <h2>Figures</h2>
+      <div id="figList"></div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div id="main">
+
+    <!-- Welcome state (no project selected) -->
+    <div id="welcomeScreen">
+      <div class="big">🧠</div>
+      <h2>ThinkLog — Storymaker Companion</h2>
+      <p>Sign in with your Google account, then select a project and figure from the left panel to view and edit its Think Log.</p>
+    </div>
+
+    <!-- No-figure state -->
+    <div id="noFigScreen" style="display:none">
+      <div style="font-size:2em">📋</div>
+      <h2>Select a figure</h2>
+      <p>Choose a figure from the left panel to open its Think Log.</p>
+    </div>
+
+    <!-- Think Log panel (hidden until figure selected) -->
+    <div id="tlPane" style="display:none; flex: 1; flex-direction: column; overflow: hidden; display: none;">
+
+      <div id="tlHeader">
+        <div>
+          <div class="tl-title" id="tlTitle">—</div>
+          <div class="tl-subtitle" id="tlSubtitle">—</div>
+        </div>
+        <div class="tl-actions">
+          <button class="tbtn" id="tlSaveBtn" onclick="tlSaveToCloud()">💾 Save</button>
+          <button class="tbtn" onclick="tlCopyAll()">📋 Copy all</button>
+          <button class="tbtn" onclick="tlCopySel()">📌 Copy sel.</button>
+          <button class="tbtn" id="tlSubBtn" onclick="tlTogglePicker()">＋ Section</button>
+          <button class="tbtn" onclick="tlExport()">⬇ Export</button>
+          <button class="tbtn" onclick="tlClearAll()">🗑 Clear</button>
+        </div>
+      </div>
+
+      <div id="searchRow">
+        <input type="text" id="tlSearch" placeholder="Search entries…" oninput="tlFilter(this.value)">
+      </div>
+
+      <div id="tlChatBox"></div>
+
+      <div id="inputArea">
+        <div id="inputRow">
+          <textarea id="tlTextInput" rows="1" placeholder="Type a thought… Enter to send, Shift+Enter for new line"></textarea>
+          <button id="tlSendBtn" onclick="tlSend()">Send</button>
+        </div>
+        <div id="inputToolbar">
+          <span style="font-size:0.8em;color:var(--text-muted)">⌘/Ctrl-click to select · Drag to reorder</span>
+          <div id="statusBar">Ready</div>
+        </div>
+      </div>
+
+    </div><!-- #tlPane -->
+
+  </div><!-- #main -->
+</div><!-- #layout -->
+
+<!-- Section picker popup -->
+<div id="tlSubPicker">
+  <button class="sopt" onclick="tlInsertSub('── Hypothesis ──')">💡 Hypothesis</button>
+  <button class="sopt" onclick="tlInsertSub('── Experiment design ──')">🔬 Experiment design</button>
+  <button class="sopt" onclick="tlInsertSub('── Results ──')">📊 Results</button>
+  <button class="sopt" onclick="tlInsertSub('── Interpretation ──')">🧠 Interpretation</button>
+  <button class="sopt" onclick="tlInsertSub('── Next steps ──')">➡ Next steps</button>
+  <button class="sopt" onclick="tlInsertSub('── Concerns ──')">⚠ Concerns</button>
+  <hr>
+  <label class="sopt" id="tlCustomLabel">Custom section name:</label>
+  <input id="tlCustomSub" type="text" placeholder="Section title…">
+</div>
+
+<div id="toastWrap"></div>
+
+<script>
+// ── Firebase config (same as Storymaker) ─────────────
+const FB_CONFIG = {
+  apiKey:            "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
+  authDomain:        "qtodo-syn.firebaseapp.com",
+  projectId:         "qtodo-syn",
+  storageBucket:     "qtodo-syn.firebasestorage.app",
+  messagingSenderId: "663058774385",
+  appId:             "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
+};
+
+let fbApp = null, fbAuth = null, fbDb = null, fbUser = null;
+
+// ── State ─────────────────────────────────────────────
+let _projects = [];
+let _activeProjId = null;
+let _activeFigIdx = null;   // index inside project's figures array
+let _tlMsgs = [];
+let _tlSel = new Set();
+let _tlDirty = false;
+let _autoSaveTimer = null;
+let _tlDragIdx = null;
+
+// ── Toast ─────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const w = document.getElementById('toastWrap');
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  w.appendChild(t);
+  setTimeout(() => t.remove(), 3200);
+}
+
+// ── Status bar ────────────────────────────────────────
+function tlStat(msg, ok) {
+  const b = document.getElementById('statusBar');
+  b.textContent = msg;
+  b.className = ok ? 'ok' : '';
+  if (ok) setTimeout(() => { b.textContent = 'Ready'; b.className = ''; }, 3000);
+}
+
+// ── Timestamp ─────────────────────────────────────────
+function tlTs() {
+  const d = new Date(), h = d.getHours(), m = d.getMinutes(), ap = h >= 12 ? 'PM' : 'AM';
+  return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + ' ' + ap;
+}
+
+// ── Cloud dot ─────────────────────────────────────────
+function setCDot(state) {
+  const dot = document.getElementById('cdot');
+  dot.className = 'cdot ' + state;
+}
+
+// ── Firebase init ─────────────────────────────────────
+function initFirebase() {
+  try {
+    fbApp  = firebase.initializeApp(FB_CONFIG);
+    fbAuth = firebase.auth();
+    fbDb   = firebase.firestore();
+
+    fbAuth.onAuthStateChanged(async user => {
+      fbUser = user || null;
+      updateAuthUI();
+      if (user) {
+        setCDot('sync');
+        document.getElementById('cloudStatus').textContent = 'Loading projects…';
+        await loadProjects();
+        setCDot('on');
+        document.getElementById('cloudStatus').textContent = 'Synced';
+      } else {
+        _projects = [];
+        _activeProjId = null;
+        _activeFigIdx = null;
+        renderProjectList();
+        showWelcome();
+        setCDot('off');
+        document.getElementById('cloudStatus').textContent = 'Not signed in';
+      }
+    });
+  } catch (e) { console.error('Firebase init error:', e); }
+}
+
+// ── Auth UI ───────────────────────────────────────────
+function updateAuthUI() {
+  const chip   = document.getElementById('authChip');
+  const signIn = document.getElementById('signInBtn');
+  if (fbUser) {
+    chip.style.display = 'flex';
+    signIn.style.display = 'none';
+    document.getElementById('avLetter').textContent = (fbUser.displayName || fbUser.email || '?')[0].toUpperCase();
+    document.getElementById('unameEl').textContent  = (fbUser.displayName || '').split(' ')[0] || fbUser.email.split('@')[0];
+    document.getElementById('ddName').textContent   = fbUser.displayName || '';
+    document.getElementById('ddEmail').textContent  = fbUser.email || '';
+  } else {
+    chip.style.display = 'none';
+    signIn.style.display = 'block';
+  }
+}
+
+function toggleDrop() {
+  document.getElementById('authDropdown').classList.toggle('open');
+}
+document.addEventListener('click', e => {
+  const chip = document.getElementById('authChip');
+  if (chip && !chip.contains(e.target)) document.getElementById('authDropdown').classList.remove('open');
+});
+
+let _signingIn = false;
+async function cloudSignIn() {
+  if (!fbAuth || _signingIn) return;
+  _signingIn = true;
+  const btn = document.getElementById('signInBtn');
+  btn.textContent = '⏳ Signing in…'; btn.disabled = true;
+  try {
+    const p = new firebase.auth.GoogleAuthProvider();
+    p.setCustomParameters({ prompt: 'select_account' });
+    await fbAuth.signInWithPopup(p);
+  } catch (e) {
+    toast('Sign-in failed: ' + e.message, 'error');
+  } finally {
+    _signingIn = false;
+    btn.textContent = 'Sign in with Google'; btn.disabled = false;
+  }
+}
+
+async function cloudSignOut() {
+  await fbAuth.signOut();
+  document.getElementById('authDropdown').classList.remove('open');
+}
+
+// ── Load projects from Firestore ──────────────────────
+// Projects stored at users/{uid}.smb_projects (same as Storymaker)
+async function loadProjects() {
+  if (!fbUser || !fbDb) return;
+  try {
+    const doc = await fbDb.collection('users').doc(fbUser.uid).get();
+    if (doc.exists && doc.data().smb_projects) {
+      _projects = doc.data().smb_projects;
+    } else {
+      _projects = [];
+    }
+    renderProjectList();
+    // Auto-open most recent project
+    if (_projects.length > 0) {
+      const newest = [..._projects].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+      openProject(newest.id);
+    }
+  } catch (e) {
+    toast('Could not load projects: ' + e.message, 'error');
+  }
+}
+
+// ── Save think log back to Firestore ──────────────────
+// We patch only the specific project inside smb_projects array
+async function saveThinkLog(silent = false) {
+  if (!fbUser || !fbDb) { toast('Not signed in', 'error'); return; }
+  if (_activeProjId === null || _activeFigIdx === null) return;
+
+  // find project in memory and update the figure's thinkLog
+  const proj = _projects.find(p => p.id === _activeProjId);
+  if (!proj || !proj.data) return;
+  const fig = proj.data.figures[_activeFigIdx];
+  if (!fig) return;
+  fig.thinkLog = JSON.parse(JSON.stringify(_tlMsgs));
+  proj.data.updatedAt = Date.now();
+  proj.updatedAt = Date.now();
+
+  setCDot('sync');
+  try {
+    // Sanitize all projects before writing (same logic as Storymaker)
+    const sanitized = _projects.map(p => sanitizeProject(p));
+    await fbDb.collection('users').doc(fbUser.uid).set({
+      smb_projects: sanitized,
+      smb_updatedAt: Date.now()
+    }, { merge: true });
+    _tlDirty = false;
+    const btn = document.getElementById('tlSaveBtn');
+    btn.textContent = '✓ Saved!'; btn.className = 'tbtn save-ok';
+    setTimeout(() => { btn.textContent = '💾 Save'; btn.className = 'tbtn'; }, 2500);
+    if (!silent) tlStat('✓ Saved to cloud', true);
+    setCDot('on');
+    document.getElementById('cloudStatus').textContent = 'Synced ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    setCDot('off');
+    toast('Save failed: ' + e.message, 'error');
+  }
+}
+
+function sanitizeProject(p) {
+  const sanitizeFig = f => ({
+    type:     f.type     || 'Observation',
+    question: f.question || '',
+    finding:  f.finding  || '',
+    message:  f.message  || '',
+    title:    f.title    || '',
+    legend:   f.legend   || '',
+    thinkLog: (f.thinkLog || []).map(m => ({
+      text:       m.text       || '',
+      timestamp:  m.timestamp  || '',
+      isYellow:   m.isYellow   || false,
+      isOrange:   m.isOrange   || false,
+      isSubchat:  m.isSubchat  || false,
+      isSubtitle: m.isSubtitle || false
+    }))
+  });
+  const data = p.data ? {
+    bioQuestion: p.data.bioQuestion || '',
+    mainClaim:   p.data.mainClaim   || '',
+    figures:     (p.data.figures || []).map(sanitizeFig),
+    updatedAt:   p.data.updatedAt   || 0
+  } : null;
+  return {
+    id:        p.id        || '',
+    name:      p.name      || '',
+    data:      data,
+    createdAt: p.createdAt || 0,
+    updatedAt: p.updatedAt || 0
+  };
+}
+
+// ── Auto-save ─────────────────────────────────────────
+function tlDirtyMark() {
+  _tlDirty = true;
+  const btn = document.getElementById('tlSaveBtn');
+  btn.textContent = '💾 Save ★'; btn.className = 'tbtn save-dirty';
+  clearTimeout(_autoSaveTimer);
+  _autoSaveTimer = setTimeout(() => saveThinkLog(true), 1500);
+}
+
+// ── Project list ──────────────────────────────────────
+function renderProjectList() {
+  const list = document.getElementById('projectList');
+  if (!fbUser) { list.innerHTML = '<div id="loadingMsg">Sign in to see projects</div>'; return; }
+  if (!_projects.length) { list.innerHTML = '<div id="loadingMsg">No projects found</div>'; return; }
+  const sorted = [..._projects].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  list.innerHTML = sorted.map(p => `
+    <div class="proj-item${p.id === _activeProjId ? ' active' : ''}" onclick="openProject('${p.id}')">
+      ${escHtml(p.name || 'Untitled')}
+    </div>
+  `).join('');
+}
+
+function openProject(id) {
+  // flush current think log before switching
+  if (_tlDirty) saveThinkLog(true);
+
+  _activeProjId = id;
+  _activeFigIdx = null;
+  _tlMsgs = [];
+  _tlSel = new Set();
+
+  renderProjectList();
+
+  const proj = _projects.find(p => p.id === id);
+  const figs = proj && proj.data && proj.data.figures ? proj.data.figures : [];
+
+  const figSide = document.getElementById('figSidebar');
+  const figList = document.getElementById('figList');
+
+  if (!figs.length) {
+    figSide.style.display = 'none';
+    showNoFig();
+    return;
+  }
+
+  figSide.style.display = 'block';
+  figList.innerHTML = figs.map((f, i) => {
+    const label = f.title ? `Fig ${i+1} — ${f.title}` : `Figure ${i+1}`;
+    const count = (f.thinkLog || []).length;
+    const typeClass = (f.type || 'Observation').replace(/\s.*/,'');
+    return `<div class="fig-item" id="fi_${i}" onclick="openFig(${i})">
+      <span class="fig-type-dot ${typeClass}"></span>
+      <span>${escHtml(label)}</span>
+      ${count ? `<span class="fig-badge">${count}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  showNoFig();
+}
+
+function openFig(idx) {
+  if (_tlDirty) saveThinkLog(true);
+  _activeFigIdx = idx;
+  _tlSel = new Set();
+
+  const proj = _projects.find(p => p.id === _activeProjId);
+  const figs = proj && proj.data && proj.data.figures ? proj.data.figures : [];
+  const fig  = figs[idx];
+  if (!fig) return;
+
+  _tlMsgs = JSON.parse(JSON.stringify(fig.thinkLog || []));
+  _tlDirty = false;
+
+  // Update sidebar active state
+  document.querySelectorAll('.fig-item').forEach((el, i) => el.classList.toggle('active', i === idx));
+
+  // Update header
+  const label = fig.title ? `Fig ${idx+1} — ${fig.title}` : `Figure ${idx+1}`;
+  document.getElementById('tlTitle').textContent = '🧠 ' + label;
+  const projName = proj ? (proj.name || 'Untitled') : '';
+  document.getElementById('tlSubtitle').textContent = projName + ' · ' + (fig.type || 'Observation');
+
+  // Reset save btn
+  const btn = document.getElementById('tlSaveBtn');
+  btn.textContent = '💾 Save'; btn.className = 'tbtn';
+
+  // Show pane
+  document.getElementById('welcomeScreen').style.display = 'none';
+  document.getElementById('noFigScreen').style.display = 'none';
+  const pane = document.getElementById('tlPane');
+  pane.style.display = 'flex';
+  pane.style.flexDirection = 'column';
+  pane.style.overflow = 'hidden';
+  pane.style.flex = '1';
+
+  document.getElementById('tlSearch').value = '';
+  tlRender();
+  setTimeout(() => { const inp = document.getElementById('tlTextInput'); if (inp) inp.focus(); }, 80);
+}
+
+// ── Display states ────────────────────────────────────
+function showWelcome() {
+  document.getElementById('welcomeScreen').style.display = 'flex';
+  document.getElementById('noFigScreen').style.display   = 'none';
+  document.getElementById('tlPane').style.display        = 'none';
+  document.getElementById('figSidebar').style.display    = 'none';
+}
+function showNoFig() {
+  document.getElementById('welcomeScreen').style.display = 'none';
+  document.getElementById('noFigScreen').style.display   = 'flex';
+  document.getElementById('tlPane').style.display        = 'none';
+}
+
+// ── Think Log render ──────────────────────────────────
+function tlRender() {
+  const box = document.getElementById('tlChatBox');
+  box.innerHTML = '';
+  if (!_tlMsgs.length) {
+    box.innerHTML = '<div class="tl-empty"><span class="ei">💭</span>Start jotting your thoughts about this figure…<br><small>Enter to send · Shift+Enter for new line · ⌘/Ctrl-click to select</small></div>';
+    return;
+  }
+  _tlMsgs.forEach((m, i) => box.appendChild(tlMsgEl(m, i)));
+  box.scrollTop = box.scrollHeight;
+  const s = document.getElementById('tlSearch');
+  if (s && s.value) tlFilter(s.value);
+}
+
+// ── Drag helpers ──────────────────────────────────────
+function tlClearDrop() {
+  document.querySelectorAll('.tl-drop-before,.tl-drop-after').forEach(el => {
+    el.classList.remove('tl-drop-before','tl-drop-after');
+  });
+}
+function tlAddDrag(el, idx) {
+  el.draggable = true;
+  el.addEventListener('dragstart', e => {
+    _tlDragIdx = idx;
+    e.dataTransfer.effectAllowed = 'move';
+    setTimeout(() => el.classList.add('tl-dragging'), 0);
+  });
+  el.addEventListener('dragend', () => { el.classList.remove('tl-dragging'); tlClearDrop(); });
+  el.addEventListener('dragover', e => {
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    if (_tlDragIdx === null || _tlDragIdx === idx) return;
+    tlClearDrop();
+    const mid = el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2;
+    el.classList.toggle('tl-drop-before', e.clientY < mid);
+    el.classList.toggle('tl-drop-after',  e.clientY >= mid);
+  });
+  el.addEventListener('dragleave', e => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove('tl-drop-before','tl-drop-after');
+  });
+  el.addEventListener('drop', e => {
+    e.preventDefault(); tlClearDrop();
+    const fromIdx = _tlDragIdx; _tlDragIdx = null;
+    if (fromIdx === null || fromIdx === idx) return;
+    const rect = el.getBoundingClientRect();
+    const insertBefore = e.clientY < rect.top + rect.height / 2;
+    let toIdx = insertBefore ? idx : idx + 1;
+    if (fromIdx < toIdx) toIdx--;
+    if (fromIdx === toIdx) return;
+    const item = _tlMsgs.splice(fromIdx, 1)[0];
+    _tlMsgs.splice(toIdx, 0, item);
+    tlDirtyMark(); tlRender();
+  });
+}
+
+// ── Message element builder ───────────────────────────
+function tlMsgEl(m, idx) {
+  const d = document.createElement('div');
+  const handle = document.createElement('span');
+  handle.className = 'tl-drag-handle'; handle.textContent = '⋮⋮'; handle.title = 'Drag to reorder';
+
+  if (m.isSubtitle) {
+    d.className = 'tl-subt';
+    const lbl = document.createElement('span'); lbl.className = 'tl-subt-text'; lbl.textContent = m.text;
+    const eBtn = document.createElement('button'); eBtn.className = 'tl-subt-btn'; eBtn.title = 'Rename'; eBtn.textContent = '✏️';
+    const dBtn = document.createElement('button'); dBtn.className = 'tl-subt-btn'; dBtn.title = 'Delete'; dBtn.textContent = '✕'; dBtn.style.color = '#f87171';
+    function startEdit() {
+      d.innerHTML = ''; d.classList.add('tl-subt-editrow');
+      const inp = document.createElement('input'); inp.className = 'tl-subt-inp'; inp.value = _tlMsgs[idx].text;
+      const ok = document.createElement('button'); ok.className = 'tl-subt-btn'; ok.textContent = '✓ Save';
+      const cancel = document.createElement('button'); cancel.className = 'tl-subt-btn'; cancel.textContent = 'Cancel';
+      function commit() { const v = inp.value.trim(); if (v) { _tlMsgs[idx].text = v; tlDirtyMark(); } tlRender(); }
+      ok.onclick = e => { e.stopPropagation(); commit(); };
+      cancel.onclick = e => { e.stopPropagation(); tlRender(); };
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } if (e.key === 'Escape') tlRender(); });
+      d.appendChild(inp); d.appendChild(ok); d.appendChild(cancel); inp.focus(); inp.select();
+    }
+    eBtn.onclick = e => { e.stopPropagation(); startEdit(); };
+    dBtn.onclick = e => { e.stopPropagation(); if (confirm('Delete this section?')) { _tlMsgs.splice(idx,1); tlDirtyMark(); tlRender(); } };
+    lbl.addEventListener('dblclick', e => { e.stopPropagation(); startEdit(); });
+    d.appendChild(handle); d.appendChild(lbl); d.appendChild(eBtn); d.appendChild(dBtn);
+    tlAddDrag(d, idx);
+    return d;
+  }
+
+  let cls = 'tl-msg';
+  if (m.isSubchat) cls += ' tl-sub';
+  if (m.isYellow)  cls += ' tl-yl';
+  if (m.isOrange)  cls += ' tl-or';
+  if (_tlSel.has(idx)) cls += ' tl-sel';
+  d.className = cls;
+
+  const tx = document.createElement('span'); tx.className = 'tl-mtext'; tx.textContent = m.text; tx.title = 'Double-click to edit';
+  const ts = document.createElement('span'); ts.className = 'tl-mts';   ts.textContent = m.timestamp || '';
+  d.appendChild(handle); d.appendChild(tx); d.appendChild(ts);
+
+  function startMsgEdit() {
+    if (d.querySelector('.tl-medit')) return;
+    const ta = document.createElement('textarea');
+    ta.className = 'tl-medit'; ta.value = _tlMsgs[idx].text; ta.rows = 1;
+    function resize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'; }
+    ta.addEventListener('input', resize);
+    tx.replaceWith(ta); ts.style.display = 'none'; resize(); ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    function commit() { const v = ta.value.trim(); if (v && v !== _tlMsgs[idx].text) { _tlMsgs[idx].text = v; tlDirtyMark(); } tlRender(); }
+    ta.addEventListener('blur', () => setTimeout(commit, 80));
+    ta.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { e.preventDefault(); tlRender(); }
+    });
+  }
+  tx.addEventListener('dblclick', e => { e.stopPropagation(); startMsgEdit(); });
+
+  const gear = document.createElement('button'); gear.className = 'tl-mgear'; gear.textContent = '⚙️';
+  const menu = document.createElement('div');   menu.className = 'tl-mmenu';
+  function mk(lbl, fn, isDel) {
+    const b = document.createElement('button'); b.textContent = lbl;
+    if (isDel) b.className = 'tl-del';
+    b.onclick = e => { e.stopPropagation(); fn(); menu.style.display = 'none'; };
+    menu.appendChild(b);
+  }
+  mk('✏ Edit message', () => startMsgEdit());
+  const sep0 = document.createElement('div'); sep0.className = 'tl-msep'; menu.appendChild(sep0);
+  mk(m.isYellow ? '✓ Yellow (off)' : '🟡 Highlight yellow',  () => { _tlMsgs[idx].isYellow = !_tlMsgs[idx].isYellow; _tlMsgs[idx].isOrange = false; tlDirtyMark(); tlRender(); });
+  mk(m.isOrange ? '✓ Orange (off)' : '🟠 Highlight orange',  () => { _tlMsgs[idx].isOrange = !_tlMsgs[idx].isOrange; _tlMsgs[idx].isYellow = false; tlDirtyMark(); tlRender(); });
+  mk(m.isSubchat ? '↩ Promote to main' : '↳ Make sub-thought', () => { _tlMsgs[idx].isSubchat = !_tlMsgs[idx].isSubchat; tlDirtyMark(); tlRender(); });
+  const sep = document.createElement('div'); sep.className = 'tl-msep'; menu.appendChild(sep);
+  mk('✕ Delete', () => { _tlMsgs.splice(idx,1); tlDirtyMark(); tlRender(); }, true);
+  gear.onclick = e => {
+    e.stopPropagation();
+    const vis = menu.style.display === 'block';
+    document.querySelectorAll('.tl-mmenu').forEach(x => x.style.display = 'none');
+    if (!vis) menu.style.display = 'block';
+  };
+  gear.appendChild(menu); d.appendChild(gear);
+
+  d.addEventListener('click', e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    if (_tlSel.has(idx)) { _tlSel.delete(idx); d.classList.remove('tl-sel'); }
+    else { _tlSel.add(idx); d.classList.add('tl-sel'); }
+  });
+
+  tlAddDrag(d, idx);
+  return d;
+}
+
+// ── Actions ───────────────────────────────────────────
+function tlSend() {
+  const inp = document.getElementById('tlTextInput');
+  const t = inp.value.trim();
+  if (!t) return;
+  _tlMsgs.push({ text: t, timestamp: tlTs(), isSubchat: false, isYellow: false, isOrange: false });
+  inp.value = ''; inp.style.height = 'auto';
+  tlDirtyMark(); tlRender();
+}
+
+function tlInsertSub(lbl) {
+  if (!lbl || !lbl.trim()) return;
+  _tlMsgs.push({ text: lbl, timestamp: tlTs(), isSubtitle: true });
+  document.getElementById('tlSubPicker').style.display = 'none';
+  tlDirtyMark(); tlRender();
+}
+
+function tlTogglePicker() {
+  const p = document.getElementById('tlSubPicker');
+  const b = document.getElementById('tlSubBtn');
+  if (p.style.display === 'block') { p.style.display = 'none'; return; }
+  p.style.visibility = 'hidden'; p.style.display = 'block';
+  const ph = p.offsetHeight;
+  p.style.display = 'none'; p.style.visibility = '';
+  const r = b.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - r.bottom - 8;
+  p.style.top  = (spaceBelow >= ph ? r.bottom + 4 : r.top - ph - 4) + 'px';
+  p.style.left = r.left + 'px';
+  p.style.display = 'block';
+  setTimeout(() => { const c = document.getElementById('tlCustomSub'); if (c) c.focus(); }, 60);
+}
+
+function tlCopySel() {
+  if (!_tlSel.size) { tlStat('⌘/Ctrl-click messages to select them first'); return; }
+  const lines = [..._tlSel].sort((a,b)=>a-b).map(i => (_tlMsgs[i].isSubchat ? '  • ' : '• ') + (_tlMsgs[i].text||''));
+  navigator.clipboard.writeText(lines.join('\n'))
+    .then(() => { _tlSel.clear(); tlRender(); tlStat('Copied ' + lines.length + ' message(s)', true); })
+    .catch(() => tlStat('Copy failed'));
+}
+
+function tlCopyAll() {
+  if (!_tlMsgs.length) { tlStat('Nothing to copy yet'); return; }
+  const title = document.getElementById('tlTitle').textContent;
+  const lines = ['🧠 ' + title, ''];
+  _tlMsgs.forEach(m => {
+    if (m.isSubtitle) { lines.push('', '── ' + m.text + ' ──', ''); return; }
+    const pre = m.isSubchat ? '    ' : '';
+    const hi  = m.isYellow ? '[⭐] ' : m.isOrange ? '[🔥] ' : '';
+    const ts  = m.timestamp ? '  (' + m.timestamp + ')' : '';
+    lines.push(pre + hi + (m.text || '') + ts);
+  });
+  navigator.clipboard.writeText(lines.join('\n'))
+    .then(() => tlStat('Copied ' + _tlMsgs.length + ' entries', true))
+    .catch(() => tlStat('Copy failed'));
+}
+
+function tlExport() {
+  if (!_tlMsgs.length) { tlStat('Nothing to export yet'); return; }
+  const title = document.getElementById('tlTitle').textContent.replace(/🧠\s*/,'');
+  const lines = ['🧠 Think Log — ' + title, new Date().toLocaleString(), ''];
+  _tlMsgs.forEach(m => {
+    if (m.isSubtitle) { lines.push('', m.text, ''); return; }
+    const pre = m.isSubchat ? '    • ' : '• ';
+    const hi  = m.isYellow ? '[⭐] ' : m.isOrange ? '[🔥] ' : '';
+    lines.push(pre + hi + (m.text||'') + ' (' + (m.timestamp||'') + ')');
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'think_log_' + title.replace(/[^a-z0-9]/gi,'_').slice(0,40) + '.txt';
+  a.click(); URL.revokeObjectURL(a.href);
+  tlStat('Exported', true);
+}
+
+function tlClearAll() {
+  if (!_tlMsgs.length) return;
+  if (confirm('Clear all ' + _tlMsgs.length + ' entries?')) {
+    _tlMsgs = []; _tlSel.clear(); tlDirtyMark(); tlRender();
+  }
+}
+
+function tlFilter(q) {
+  const ql = (q || '').toLowerCase();
+  document.querySelectorAll('#tlChatBox .tl-msg, #tlChatBox .tl-subt').forEach(el => {
+    el.style.display = (!ql || el.textContent.toLowerCase().includes(ql)) ? '' : 'none';
+  });
+}
+
+function tlSaveToCloud() { saveThinkLog(false); }
+
+// ── Keyboard / input events ───────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('tlTextInput');
+  inp.addEventListener('input', () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 120) + 'px'; });
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); tlSend(); } });
+
+  document.getElementById('tlSearch').addEventListener('input', e => tlFilter(e.target.value));
+  document.getElementById('tlCustomSub').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.value.trim()) {
+      tlInsertSub('── ' + e.target.value.trim() + ' ──');
+      e.target.value = '';
+    }
+  });
+
+  // Close menus on outside click
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.tl-mmenu') && !e.target.classList.contains('tl-mgear'))
+      document.querySelectorAll('.tl-mmenu').forEach(m => m.style.display = 'none');
+    const sp = document.getElementById('tlSubPicker');
+    if (sp && sp.style.display === 'block' && !sp.contains(e.target) && e.target.id !== 'tlSubBtn')
+      sp.style.display = 'none';
+    if (!(e.ctrlKey || e.metaKey) && !e.target.closest('.tl-msg') && e.target.closest('#tlPane'))
+      { _tlSel = new Set(); tlRender(); }
+  });
+
+  // Flush on page unload
+  window.addEventListener('beforeunload', () => { if (_tlDirty) saveThinkLog(true); });
+});
+
+// ── Utility ───────────────────────────────────────────
+function escHtml(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Boot ─────────────────────────────────────────────
+initFirebase();
+</script>
+</body>
+</html>
