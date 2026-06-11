@@ -3354,9 +3354,9 @@ let _loadInProgress = false;  // suppresses stale auto-push during load
 // unsaved local edits with a cloud pull.
 let _localEditTs = 0;
 // Share state
-// _shareTokens: map of { projectId -> shareToken } persisted in localStorage.
-// Each project has its own share link independently.
-let _shareTokens      = JSON.parse(localStorage.getItem('smb_shareTokens') || '{}');
+// _shareTokens: map of { projectId -> shareToken } synced to Firestore (users/{uid})
+// so sharing settings are available across all devices when signed in.
+let _shareTokens      = {}; // populated from Firestore on sign-in (see loadShareTokens)
 let _shareListener    = null;   // Firestore onSnapshot unsubscribe fn
 let _shareData        = null;   // latest share doc data (fetched fresh on load)
 
@@ -3367,7 +3367,29 @@ function _getShareToken(projectId) {
 function _setShareToken(projectId, token) {
   if (token) _shareTokens[projectId] = token;
   else        delete _shareTokens[projectId];
-  localStorage.setItem('smb_shareTokens', JSON.stringify(_shareTokens));
+  // Persist to Firestore so all devices stay in sync
+  saveShareTokens();
+}
+
+// ── Persist share tokens to Firestore (per-user, cross-device) ──────────────
+async function saveShareTokens() {
+  if (!fbUser || !fbDb) return;
+  try {
+    await fbDb.collection('users').doc(fbUser.uid).set(
+      { smb_shareTokens: _shareTokens }, { merge: true }
+    );
+  } catch(e) { console.warn('Could not save share tokens:', e); }
+}
+
+// ── Load share tokens from Firestore on sign-in ───────────────────────────
+async function loadShareTokens() {
+  if (!fbUser || !fbDb) return;
+  try {
+    const doc = await fbDb.collection('users').doc(fbUser.uid).get();
+    if (doc.exists && doc.data().smb_shareTokens) {
+      _shareTokens = doc.data().smb_shareTokens;
+    }
+  } catch(e) { console.warn('Could not load share tokens:', e); }
 }
 
 // ── Unique ID helper ───────────────────────────────────
@@ -3523,6 +3545,8 @@ function initFirebase() {
         } catch(_) { await loadProjects(true); }
         if (autoSyncEnabled) startPoll();
         renderProjectGrid();
+        // load share tokens from Firestore so sharing settings work on every device
+        await loadShareTokens();
         // re-subscribe share listener if we have a token stored
         const st = _getShareToken(_activeProjectId);
         if (st) subscribeShare(_activeProjectId);
@@ -3533,6 +3557,7 @@ function initFirebase() {
         _projectsLoaded = false;
         _projects = [];
         _activeProjectId = null;
+        _shareTokens = {};  // clear per-user share tokens on sign-out
         // Clear the cached cloud timestamp so the next sign-in always fetches
         // fresh from Firestore rather than seeing timestamps as "in sync".
         localStorage.removeItem('smb_lastCloudTs');
