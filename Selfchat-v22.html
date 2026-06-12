@@ -454,6 +454,7 @@
         <option value="v7">V7(No timestamp)</option>
     </select>
     <button onclick="saveChatAsFile()" style="color:white;background-color:purple;" title="Save as a txt file on Disk">💾 Save</button>
+    <button onclick="exportForV209()" style="color:white;background-color:#1565c0;" title="Export messages (no threads) as .txt importable by self-chat v209T10">📤 →v209</button>
     <button onclick="openChatFile()" style="color:white;background-color:orange;" title="Open a saved txt file from Disk">📂 Open</button>
     <button onclick="importIdealog()" style="color:white;background-color:#0891b2;" title="Import exported .txt from Idealog/ThinkLog (entries + threads)">🧠 Idealog</button>
     <button onclick="syncAcrossDevices()" style="color:white;background-color:orange;" title="Sync chat across devices">🔄 Sync</button>
@@ -467,7 +468,7 @@
 </div>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260611: v2.2 <br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260612: v2.3b: "→v209" export folds thread replies inline as [Thread: r1 | r2 | ...] so content is preserved in v209T10.<br>
 <!--             20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
             20260611b: v211b: Fix autosave not triggering — moved hook inside sendMessage; removed broken window.sendMessage monkey-patch.<br>
             20260611c: v211c: Autosave on every keystroke (debounced 800ms) — covers typing in main input, in-place message edits, and thread replies.
@@ -1189,6 +1190,48 @@
         let chatText = chatTitle + "\n\n" + lines.join("\n");
         let blob = new Blob([chatText], { type: "text/plain" });
         let fileName = prompt("Enter file name:", chatTitle || "chat_history");
+        if (!fileName) return;
+        let link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = fileName + ".txt";
+        link.click();
+    }
+
+    // Export for v209T10: thread replies are folded into the message text as [Thread: r1 | r2 | ...]
+    function exportForV209() {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let lines = [];
+        Array.from(document.getElementById("chatBox").children).forEach(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            if (!textSpan || !timestamp) return;
+            let prefix = div.classList.contains("subchat") ? "  •" : "•";
+            let highlightMarker = (div.classList.contains("highlighted-yellow") || div.classList.contains("highlighted-orange")) ? "[H] " : "";
+            let clonedSpan = textSpan.cloneNode(true);
+            clonedSpan.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.parentElement.outerHTML = cb.checked ? '[X]' : '[ ]';
+            });
+            let messageText = clonedSpan.textContent.trim();
+            // Collect thread replies and fold them inline
+            let replies = [];
+            div.querySelectorAll('.thread-reply-row').forEach(row => {
+                let rt = row.querySelector('.thread-reply-text');
+                let rts = row.querySelector('.thread-reply-ts');
+                if (rt && rt.textContent.trim()) {
+                    let entry = rt.textContent.trim();
+                    if (rts && rts.textContent.trim()) entry += " @" + rts.textContent.trim();
+                    replies.push(entry);
+                }
+            });
+            if (replies.length > 0) {
+                messageText += " [Thread: " + replies.join(" == ") + "]";
+            }
+            lines.push(prefix + " " + highlightMarker + messageText + " (" + timestamp.textContent + ")");
+        });
+        if (lines.length === 0) { alert("No chat history to export."); return; }
+        let chatText = chatTitle + "\n\n" + lines.join("\n");
+        let blob = new Blob([chatText], { type: "text/plain" });
+        let fileName = prompt("Enter file name (for v209 import):", (chatTitle || "chat_history") + "_v209");
         if (!fileName) return;
         let link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
