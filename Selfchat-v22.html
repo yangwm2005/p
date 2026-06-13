@@ -454,7 +454,16 @@
         <option value="v7">V7(No timestamp)</option>
     </select>
     <button onclick="saveChatAsFile()" style="color:white;background-color:purple;" title="Save as a txt file on Disk">💾 Save</button>
-    <button onclick="exportForV209()" style="color:white;background-color:#1565c0;" title="Export messages (no threads) as .txt importable by self-chat v209T10">📤 →v209</button>
+    <select onchange="handleExportV209Change(this)" style="width:90px;color:white;background-color:#1565c0;" title="Export for v209T10">
+        <option value="">📤 →v209</option>
+        <option value="eq">== separator</option>
+        <option value="bullet">• bullet points</option>
+    </select>
+    <select onchange="handleParagraphViewChange(this)" style="width:90px;color:white;background-color:#2e7d32;" title="Paragraph view options">
+        <option value="">📄 View</option>
+        <option value="plain">Plain</option>
+        <option value="bullets">Bullets</option>
+    </select>
     <button onclick="openChatFile()" style="color:white;background-color:orange;" title="Open a saved txt file from Disk">📂 Open</button>
     <button onclick="importIdealog()" style="color:white;background-color:#0891b2;" title="Import exported .txt from Idealog/ThinkLog (entries + threads)">🧠 Idealog</button>
     <button onclick="syncAcrossDevices()" style="color:white;background-color:orange;" title="Sync chat across devices">🔄 Sync</button>
@@ -1197,8 +1206,16 @@
         link.click();
     }
 
-    // Export for v209T10: thread replies are folded into the message text as [Thread: r1 | r2 | ...]
-    function exportForV209() {
+    function handleExportV209Change(sel) {
+        let val = sel.value;
+        sel.value = '';
+        if (val === 'eq') exportForV209('==');
+        else if (val === 'bullet') exportForV209('•');
+    }
+
+    // Export for v209T10: thread replies are folded into the message text
+    function exportForV209(separator) {
+        if (!separator) separator = '==';
         let chatTitle = document.getElementById("chatTitle").textContent.trim();
         let lines = [];
         Array.from(document.getElementById("chatBox").children).forEach(div => {
@@ -1224,7 +1241,7 @@
                 }
             });
             if (replies.length > 0) {
-                messageText += " [Thread: " + replies.join(" == ") + "]";
+                messageText += " [Thread: " + replies.join(" " + separator + " ") + "]";
             }
             lines.push(prefix + " " + highlightMarker + messageText + " (" + timestamp.textContent + ")");
         });
@@ -1237,6 +1254,117 @@
         link.href = URL.createObjectURL(blob);
         link.download = fileName + ".txt";
         link.click();
+    }
+
+    function handleParagraphViewChange(sel) {
+        let val = sel.value;
+        sel.value = '';  // reset dropdown to label
+        if (val === 'plain') showParagraphView();
+        else if (val === 'bullets') showParagraphView2();
+    }
+
+    // Paragraph view: all messages + thread replies as flowing text, no timestamps
+    function showParagraphView() {
+        _paragraphViewMode = 'plain';
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let paragraphs = buildParagraphData();
+
+        let html = paragraphs.map(p => {
+            let style = p.isSubchat
+                ? 'margin: 6px 0 6px 24px; color: #555; font-size: 0.95em;'
+                : 'margin: 10px 0; color: #222;';
+            let safeText = p.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            let replyHtml = p.replies.map(r =>
+                '<p style="margin:4px 0 4px 24px;color:#444;font-size:0.95em;">'
+                + r.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                + '</p>'
+            ).join('');
+            return '<p style="' + style + '">' + safeText + '</p>' + replyHtml;
+        }).join('');
+
+        document.getElementById('paragraph-view-title').textContent = chatTitle || 'Chat View';
+        document.getElementById('paragraph-view-body').innerHTML = html || '<p style="color:#999;">No messages.</p>';
+        document.getElementById('paragraph-view-modal').style.display = 'block';
+    }
+
+    function closeParagraphView() {
+        document.getElementById('paragraph-view-modal').style.display = 'none';
+    }
+
+    // Shared data collector for both view modes
+    function buildParagraphData() {
+        let paragraphs = [];
+        Array.from(document.getElementById("chatBox").children).forEach(div => {
+            let textSpan = div.querySelector(".message-text");
+            if (!textSpan) return;
+            let clonedSpan = textSpan.cloneNode(true);
+            clonedSpan.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.parentElement.outerHTML = cb.checked ? '[X]' : '[ ]';
+            });
+            let messageText = clonedSpan.textContent.trim();
+            if (!messageText) return;
+            let isSubchat = div.classList.contains("subchat");
+            let replies = [];
+            div.querySelectorAll('.thread-reply-row').forEach(row => {
+                let rt = row.querySelector('.thread-reply-text');
+                if (rt && rt.textContent.trim()) replies.push(rt.textContent.trim());
+            });
+            paragraphs.push({ text: messageText, isSubchat, replies });
+        });
+        return paragraphs;
+    }
+
+    // _paragraphViewMode tracks which mode is open: 'plain' or 'bullets'
+    let _paragraphViewMode = 'plain';
+
+    function showParagraphView2() {
+        _paragraphViewMode = 'bullets';
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let paragraphs = buildParagraphData();
+        let html = paragraphs.map(p => {
+            let style = p.isSubchat
+                ? 'margin: 6px 0 6px 24px; color: #555; font-size: 0.95em;'
+                : 'margin: 10px 0; color: #222;';
+            let safeText = p.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            let replyHtml = p.replies.length > 0
+                ? '<ul style="margin:4px 0 4px 24px;padding-left:16px;color:#444;font-size:0.95em;">'
+                  + p.replies.map(r => '<li style="margin:2px 0;">' + r.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</li>').join('')
+                  + '</ul>'
+                : '';
+            return '<p style="' + style + '">' + safeText + '</p>' + replyHtml;
+        }).join('');
+        document.getElementById('paragraph-view-title').textContent = (chatTitle || 'Chat View') + ' (Bullets)';
+        document.getElementById('paragraph-view-body').innerHTML = html || '<p style="color:#999;">No messages.</p>';
+        document.getElementById('paragraph-view-modal').style.display = 'block';
+    }
+
+    function copyParagraphView() {
+        let paragraphs = buildParagraphData();
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let lines = [];
+        if (chatTitle) lines.push(chatTitle, '');
+        paragraphs.forEach(p => {
+            let indent = p.isSubchat ? '    ' : '';
+            lines.push(indent + p.text);
+            p.replies.forEach(r => {
+                if (_paragraphViewMode === 'bullets') {
+                    lines.push('    • ' + r);
+                } else {
+                    lines.push('    ' + r);
+                }
+            });
+            lines.push('');  // blank line between paragraphs
+        });
+        // Remove trailing blank line
+        while (lines.length && lines[lines.length - 1] === '') lines.pop();
+        let text = lines.join('\n');
+        navigator.clipboard.writeText(text).then(() => {
+            let btn = document.getElementById('paragraph-copy-btn');
+            btn.textContent = '✅ Copied!';
+            setTimeout(() => { btn.textContent = '📋 Copy'; }, 1800);
+        }).catch(() => {
+            prompt('Copy this text:', text);
+        });
     }
 
     function openChatFile() {
@@ -1409,6 +1537,55 @@
         }
     }
 
+    // Generates the sticky copy bar HTML + script for view windows
+    function viewCopyBarHtml(version) {
+        // Serialize current chat as plain text matching the view's format
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let lines = [];
+        if (chatTitle) lines.push(chatTitle, '');
+        Array.from(document.getElementById("chatBox").children).forEach(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            if (!textSpan) return;
+            let isSubchat = div.classList.contains("subchat");
+            let isHighlighted = div.classList.contains("highlighted-yellow") || div.classList.contains("highlighted-orange");
+            let clonedSpan = textSpan.cloneNode(true);
+            clonedSpan.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.parentElement.outerHTML = cb.checked ? '[X]' : '[ ]';
+            });
+            let text = clonedSpan.textContent.trim();
+            let ts = timestamp ? timestamp.textContent : '';
+            let threadLines = getThreadLines(div, 'txt');
+            let line = '';
+            if (version === 'v1' || version === 'v2') {
+                line = (isSubchat ? '  •' : '•') + ' ' + (isHighlighted ? '[H] ' : '') + text + ' (' + ts + ')';
+            } else if (version === 'v3' || version === 'v4') {
+                line = (isSubchat ? '  •' : '•') + ' ' + (isHighlighted ? '[H] ' : '') + text + ' (' + ts + ')';
+            } else if (version === 'v5' || version === 'v6') {
+                line = (isSubchat ? '  ' : '') + text + ' (' + ts + ')';
+            } else if (version === 'v7') {
+                line = (isSubchat ? '  ' : '') + text;
+            }
+            lines.push(line);
+            threadLines.forEach(tl => {
+                lines.push(version === 'v7' ? tl.replace(/\s+@.+$/, '') : tl);
+            });
+        });
+        let escaped = JSON.stringify(lines.join('\n'));
+        return '<div id="copy-bar" style="position:sticky;top:0;z-index:999;background:rgba(255,255,255,0.95);padding:6px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #ddd;backdrop-filter:blur(4px);">'
+            + '<span style="font-weight:600;color:#333;flex:1;">' + chatTitle + '</span>'
+            + '<button id="copy-btn" onclick="doCopy()" style="background:#2e7d32;color:white;border:none;border-radius:6px;padding:5px 14px;cursor:pointer;font-size:0.9rem;">\uD83D\uDCCB Copy</button>'
+            + '</div>'
+            + '<script>var _text = ' + escaped + ';'
+            + 'function doCopy(){'
+            + 'navigator.clipboard.writeText(_text).then(function(){'
+            + 'var btn=document.getElementById("copy-btn");'
+            + 'btn.textContent="\u2705 Copied!";'
+            + 'setTimeout(function(){btn.textContent="\uD83D\uDCCB Copy";},1800);'
+            + '}).catch(function(){prompt("Copy this text:",_text);});}'
+            + '<\/script>';
+    }
+
 function openChatInNewWindow() {
     let chatTitle = document.getElementById("chatTitle").textContent.trim();
     let container = document.querySelector('.chat-container');
@@ -1441,6 +1618,7 @@ function openChatInNewWindow() {
 
     let newWindow = window.open("", "_blank", `width=${width},height=${height},left=100,top=100,resizable=yes,scrollbars=yes`);
 
+    let copyBar1 = viewCopyBarHtml('v1');
     newWindow.document.write(`
         <!DOCTYPE html>
         <html>
@@ -1462,6 +1640,7 @@ function openChatInNewWindow() {
             </style>
         </head>
         <body>
+            ${copyBar1}
             <h2>${chatTitle}</h2>
             <div class="chat-box">${messages}</div>
         </body>
@@ -1499,6 +1678,7 @@ let width = container.offsetWidth + 40;  // add some margin
 let height = container.offsetHeight + 60;
 let newWindow = window.open("", "_blank", `width=${width},height=${height},left=100,top=100,resizable=yes,scrollbars=yes`);
 
+        let copyBar2 = viewCopyBarHtml('v2');
         newWindow.document.write(`
             <!DOCTYPE html>
             <html lang="en">
@@ -1523,6 +1703,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
                 </style>
             </head>
             <body>
+                ${copyBar2}
                 <h2>${chatTitle}</h2>
                 <div class="chat-box">${messages}</div>
             </body>
@@ -1563,6 +1744,7 @@ let width = container.offsetWidth + 40;
 let height = container.offsetHeight + 60;
 let newWindow = window.open("", "_blank", `width=${width},height=${height},left=100,top=100,resizable=yes,scrollbars=yes`);
 
+        let copyBar3 = viewCopyBarHtml('v3');
         newWindow.document.write(`
             <!DOCTYPE html>
             <html lang="en">
@@ -1577,6 +1759,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
                 </style>
             </head>
             <body>
+                ${copyBar3}
                 <h2>${chatTitle}</h2>
                 <div class="chat-box">${messages}</div>
             </body>
@@ -1611,6 +1794,7 @@ let width = container.offsetWidth + 40;
 let height = container.offsetHeight + 60;
 let newWindow = window.open("", "_blank", `width=${width},height=${height},left=100,top=100,resizable=yes,scrollbars=yes`);
 
+        let copyBar4 = viewCopyBarHtml('v4');
         newWindow.document.write(`
             <!DOCTYPE html>
             <html lang="en">
@@ -1627,6 +1811,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
                 </style>
             </head>
             <body>
+                ${copyBar4}
                 <h2>${chatTitle}</h2>
                 <div class="chat-box">${messages}</div>
             </body>
@@ -1754,6 +1939,7 @@ function openChatInNewWindow5() {
             </style>
         </head>
         <body>
+            ${viewCopyBarHtml('v5')}
             <div class="chat-container">
                 <div class="chat-header">${chatTitle}</div>
                 <div class="chat-body">${messages}</div>
@@ -1823,6 +2009,7 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
 </style>
 </head>
 <body>
+${viewCopyBarHtml('v7')}
 <h1>${chatTitle}</h1>
 <div class="chat-body">${messages}</div>
 </body>
@@ -1900,6 +2087,7 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
 </style>
 </head>
 <body>
+${viewCopyBarHtml('v6')}
 <h1>${chatTitle}</h1>
 <div class="chat-body">${messages}</div>
 </body>
@@ -1920,14 +2108,75 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
         } else if (selectedValue === 'v4') {
             openChatInNewWindow4();
         } else if (selectedValue === 'v5') {
-        	openChatInNewWindow5(); // ✅ This is the new line
+        	openChatInNewWindow5();
     	} else if (selectedValue === 'v6') {
             openChatInNewWindow6();
     	} else if (selectedValue === 'v7') {
             openChatInNewWindow7();
-    	}
+        }
         
         viewSelect.selectedIndex = 0;
+    }
+
+    function copyViewAsText(version) {
+        let chatTitle = document.getElementById("chatTitle").textContent.trim();
+        let lines = [];
+        if (chatTitle) lines.push(chatTitle, '');
+
+        Array.from(document.getElementById("chatBox").children).forEach(div => {
+            let textSpan = div.querySelector(".message-text");
+            let timestamp = div.querySelector(".timestamp");
+            if (!textSpan) return;
+
+            let isSubchat = div.classList.contains("subchat");
+            let isHighlighted = div.classList.contains("highlighted-yellow") || div.classList.contains("highlighted-orange");
+            let clonedSpan = textSpan.cloneNode(true);
+            clonedSpan.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                cb.parentElement.outerHTML = cb.checked ? '[X]' : '[ ]';
+            });
+            let text = clonedSpan.textContent.trim();
+            let ts = timestamp ? timestamp.textContent : '';
+            let threadLines = getThreadLines(div, 'txt'); // ['    ↳ reply @ts', ...]
+
+            let line = '';
+            if (version === 'v1' || version === 'v2') {
+                let prefix = isSubchat ? '  •' : '•';
+                let hmark = isHighlighted ? '[H] ' : '';
+                line = prefix + ' ' + hmark + text + ' (' + ts + ')';
+            } else if (version === 'v3') {
+                let prefix = isSubchat ? '  •' : '•';
+                let hmark = isHighlighted ? '[H] ' : '';
+                line = prefix + ' ' + hmark + text + ' (' + ts + ')';
+            } else if (version === 'v5') {
+                let indent = isSubchat ? '  ' : '';
+                line = indent + text + ' (' + ts + ')';
+            } else if (version === 'v7') {
+                let indent = isSubchat ? '  ' : '';
+                line = indent + text;
+            }
+
+            lines.push(line);
+            // Thread replies: strip timestamp for v7, keep for others
+            threadLines.forEach(tl => {
+                if (version === 'v7') {
+                    // remove @timestamp portion
+                    lines.push(tl.replace(/\s+@.+$/, ''));
+                } else {
+                    lines.push(tl);
+                }
+            });
+        });
+
+        let text = lines.join('\n');
+        navigator.clipboard.writeText(text).then(() => {
+            // Brief visual feedback on the dropdown label
+            let sel = document.getElementById('viewVersion');
+            let orig = sel.options[0].text;
+            sel.options[0].text = '✅ Copied!';
+            setTimeout(() => { sel.options[0].text = orig; }, 1800);
+        }).catch(() => {
+            prompt('Copy this text:', text);
+        });
     }
 
     function toggleSubtitleDropdown() {
@@ -3183,3 +3432,16 @@ document.addEventListener("DOMContentLoaded", function() {
 
 </body>
 </html>
+<!-- Paragraph View Modal -->
+<div id="paragraph-view-modal" style="display:none;position:fixed;z-index:2000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.5);" onclick="if(event.target===this)closeParagraphView()">
+    <div style="background:#fff;margin:4% auto;padding:28px;border-radius:12px;width:92%;max-width:680px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 6px 30px rgba(0,0,0,0.25);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h3 id="paragraph-view-title" style="font-size:1.2rem;color:#2e7d32;font-weight:600;margin:0;"></h3>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button onclick="copyParagraphView()" id="paragraph-copy-btn" style="background:#2e7d32;color:white;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:0.9rem;">📋 Copy</button>
+                <button onclick="closeParagraphView()" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:#666;line-height:1;">&times;</button>
+            </div>
+        </div>
+        <div id="paragraph-view-body" style="overflow-y:auto;flex:1;line-height:1.7;font-size:1rem;padding-right:6px;"></div>
+    </div>
+</div>
