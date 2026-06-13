@@ -3344,10 +3344,17 @@ let _syncing          = false;
 let _lastCloudSave    = 0;
 let _lastLocalSave    = 0;
 let _pollInterval     = null;
-// _lastCloudTs: the cloud's own smb_updatedAt from last fetch — persisted so poll
-// correctly detects changes from another device even after a page reload.
-let _lastCloudTs = parseInt(localStorage.getItem('smb_lastCloudTs') || '0');
-let _loadInProgress = false;  // suppresses stale auto-push during load
+// _lastCloudTs: the cloud's own smb_updatedAt from last fetch.
+// Always starts at 0 on page load — the auth-triggered loadProjects() sets it
+// from the real Firestore value. Restoring from localStorage was unsafe because
+// a stale timestamp could cause the poll to think nothing changed and skip
+// pulling real data (leaving _projects empty on Device A).
+let _lastCloudTs = 0;
+let _loadInProgress   = false;  // suppresses stale auto-push during load
+// _initialLoadDone: set true ONLY after the first successful cloud fetch on sign-in.
+// saveProjects() is a no-op until this is true, preventing a blank editor from
+// overwriting real Firestore data before the initial load has completed.
+let _initialLoadDone  = false;
 // _localEditTs: timestamp of the last REAL user edit (input/add/move/delete).
 // Updated only by scheduleAutoSync() — never by structural operations like
 // openProject or flushActiveProject.  Used to guard against overwriting
@@ -3544,6 +3551,8 @@ function initFirebase() {
           if (cloudTs > localTs + 3000) toast('🔄 Updated from cloud', 'info');
         } catch(_) { await loadProjects(true); }
         if (autoSyncEnabled) startPoll();
+        // IMPORTANT: renderProjectGrid AFTER loadProjects has resolved so the UI
+        // reflects real cloud data, not the blank ensureDefaultProject() placeholder.
         renderProjectGrid();
         // load share tokens from Firestore so sharing settings work on every device
         await loadShareTokens();
@@ -3553,11 +3562,12 @@ function initFirebase() {
         // check join URL
         checkJoinToken();
       } else {
-        autoSyncEnabled = false;
-        _projectsLoaded = false;
-        _projects = [];
+        autoSyncEnabled  = false;
+        _projectsLoaded  = false;
+        _initialLoadDone = false;  // require fresh cloud load on next sign-in
+        _projects        = [];
         _activeProjectId = null;
-        _shareTokens = {};  // clear per-user share tokens on sign-out
+        _shareTokens     = {};  // clear per-user share tokens on sign-out
         // Clear the cached cloud timestamp so the next sign-in always fetches
         // fresh from Firestore rather than seeing timestamps as "in sync".
         localStorage.removeItem('smb_lastCloudTs');
@@ -4191,7 +4201,8 @@ async function loadProjects(silent = false) {
       if (newest.data) applySnapshot(newest.data);
       updateHeaderChip();
     }
-    _projectsLoaded = true;
+    _projectsLoaded  = true;
+    _initialLoadDone = true;  // safe to save now — real data is in memory
   } catch(e) { if (!silent) toast('Could not load projects: ' + e.message, 'error'); }
   finally { _loadInProgress = false; }
 }
@@ -4233,7 +4244,8 @@ function sanitizeProject(p) {
 
 async function saveProjects(silent = true) {
   if (!fbUser || !fbDb) return;
-  if (_loadInProgress) return;  // never push during a load
+  if (_loadInProgress) return;    // never push during a load
+  if (!_initialLoadDone) return;  // never push before the first cloud fetch — would overwrite real data with blank editor
   try {
     const savedTs = Date.now();
     const sanitized = _projects.map(sanitizeProject);
