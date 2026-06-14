@@ -576,7 +576,9 @@
         <button id="newChatBtn" onclick="newChat()" title="New chat">＋</button>
     </div>
     <div id="chatList"></div>
-    <div id="sidebarFooter" id="scUserLabel">Not signed in</div>
+    <div id="sidebarFooter">
+        <div id="scUserLabel" style="color:#607d8b;font-size:11px;">Not signed in</div>
+    </div>
 </div>
 <div class="chat-container">
     <div id="chatTitle" class="editable-title" contenteditable="true">Title</div>
@@ -613,7 +615,7 @@
     </select>
     <button onclick="openChatFile()" style="color:white;background-color:orange;" title="Open a saved txt file from Disk">📂 Open</button>
     <button onclick="importIdealog()" style="color:white;background-color:#0891b2;" title="Import exported .txt from Idealog/ThinkLog (entries + threads)">🧠 Idealog</button>
-    <button id="cloudSyncBtn" onclick="toggleCloudSync()" style="color:white;background-color:#546e7a;" title="Enable Firebase cloud sync for this chat">☁️ Sync: OFF</button>
+    <button id="googleAuthBtn" onclick="scToggleAuth()" style="color:white;background-color:#546e7a;" title="Sign in with Google to sync all chats to cloud">🔑 Sign In</button>
     <button onclick="exportToGmail()" style="color:white;background-color:green;" title="Send the contexts to your gmail account">✉️ Gmail</button>
     <!-- NEW: Dynalist buttons -->
     <button onclick="sendToDynalist()" style="color:white;background-color:#8e44ad;" title="Export to Dynalist">📝 Dynalist</button>
@@ -623,8 +625,8 @@
 </div>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260614: v24b: Fix multi-window autosave — each window now tracks its own chat id in-memory (_windowChatId) so multiple open windows never overwrite each other's data in localStorage.<br>
-            20260614: v24: Chat Manager sidebar — list all chats with ✏️ rename, ⧉ duplicate, 🗑 delete; ☰ toggle; ＋ new chat; sync state per chat shown as ● dot.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260614: v25: Account-level sync — Sign In with Google once → all chats auto-sync to Firestore; sidebar loads from cloud on any device; real-time listeners per chat; merge on sign-in (newer timestamp wins); delete syncs to cloud; offline works via localStorage cache.<br>
+            20260614: v24b: Fix multi-window autosave — each window tracks its own chat id in-memory (_windowChatId).<br>
 <!--             20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
             20260611b: v211b: Fix autosave not triggering — moved hook inside sendMessage; removed broken window.sendMessage monkey-patch.<br>
             20260611c: v211c: Autosave on every keystroke (debounced 800ms) — covers typing in main input, in-place message edits, and thread replies.
@@ -3895,14 +3897,12 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <!-- ══════════════════════════════════════════════
-     Per-chat toggle: each window syncs independently.
-     Keyed by chat title under users/{uid}/selfchat/{chatKey}
+     FIREBASE ACCOUNT-LEVEL SYNC  (Selfchat v25)
+     Sign in once → all chats sync automatically.
+     Firestore path: users/{uid}/selfchat/{chatId}
      ══════════════════════════════════════════════ -->
 <script>
-// ── Firebase config (qtodo-syn project) ──────────────────
-// ⚠️  Paste your qtodo-syn Firebase config here.
-// Copy from any of your existing apps (Reflection, Storymaker, etc.)
-// The values below are placeholders — replace with your actual config.
+// ── Firebase config (qtodo-syn) ───────────────────────────
 const SC_FB_CONFIG = {
     apiKey:            "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
     authDomain:        "qtodo-syn.firebaseapp.com",
@@ -3912,239 +3912,265 @@ const SC_FB_CONFIG = {
     appId:             "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
 };
 
-// Initialize a named Firebase app so it doesn't conflict with other apps
 let scApp, scAuth, scDb;
-try {
-    scApp = firebase.app('selfchat');
-} catch(e) {
-    scApp = firebase.initializeApp(SC_FB_CONFIG, 'selfchat');
-}
+try { scApp = firebase.app('selfchat'); }
+catch(e) { scApp = firebase.initializeApp(SC_FB_CONFIG, 'selfchat'); }
 scAuth = firebase.auth(scApp);
 scDb   = firebase.firestore(scApp);
 
-// ── State ────────────────────────────────────────────────
-let scUser        = null;   // signed-in Google user
-let scSyncOn      = false;  // is sync ON for this window?
-let scUnsubscribe = null;   // Firestore listener unsubscribe fn
-let scLastPushTs  = 0;      // timestamp of last push we sent (to avoid echo)
-let scIgnoreNext  = false;  // suppress one incoming update after we push
+// ── State ─────────────────────────────────────────────────
+let scUser       = null;
+let scListeners  = {};   // chatId → unsubscribe fn
+let scPushing    = {};   // chatId → bool (echo suppression)
+let scLastPushTs = {};   // chatId → timestamp
 
-// ── Auth listener ─────────────────────────────────────────
+// ── Firestore ref helper ──────────────────────────────────
+function scChatRef(chatId) {
+    if (!scUser || !chatId) return null;
+    return scDb.collection('users').doc(scUser.uid)
+               .collection('selfchat').doc(chatId);
+}
+
+// ── Push one chat from localStorage → Firestore ───────────
+function scPushChat(chatId) {
+    if (!scUser) return;
+    var ref = scChatRef(chatId);
+    if (!ref) return;
+    var list = cmLoad();
+    var chat = list.find(function(c) { return c.id === chatId; });
+    if (!chat) return;
+    var data = {
+        id:          chat.id,
+        title:       chat.title,
+        messages:    chat.messages || [],
+        createdAt:   chat.createdAt || Date.now(),
+        _lastEditTs: Date.now()
+    };
+    scLastPushTs[chatId] = data._lastEditTs;
+    scPushing[chatId]    = true;
+    ref.set(data).then(function() {
+        setTimeout(function() { scPushing[chatId] = false; }, 1500);
+    }).catch(function(e) {
+        scPushing[chatId] = false;
+        console.warn('Selfchat push error:', e);
+    });
+}
+
+// ── Load all chats from Firestore, merge with localStorage ─
+function scLoadFromCloud() {
+    if (!scUser) return;
+    scDb.collection('users').doc(scUser.uid)
+        .collection('selfchat').get()
+        .then(function(snapshot) {
+            if (snapshot.empty) {
+                // First sign-in: push local chats up to cloud
+                cmLoad().forEach(function(c) { scPushChat(c.id); });
+                cmLoad().forEach(function(c) { scListenChat(c.id); });
+                scUpdateAuthUI();
+                return;
+            }
+            var cloudChats = [];
+            snapshot.forEach(function(doc) { cloudChats.push(doc.data()); });
+
+            // Merge cloud + local (newer timestamp wins)
+            var merged = {};
+            cmLoad().forEach(function(c) { merged[c.id] = c; });
+            cloudChats.forEach(function(c) {
+                var localTs = merged[c.id] ? (merged[c.id].updatedAt || 0) : 0;
+                if (!merged[c.id] || (c._lastEditTs || 0) >= localTs) {
+                    merged[c.id] = {
+                        id:        c.id,
+                        title:     c.title,
+                        messages:  c.messages || [],
+                        createdAt: c.createdAt || Date.now(),
+                        updatedAt: c._lastEditTs || Date.now()
+                    };
+                }
+            });
+
+            var mergedList = Object.values(merged).sort(function(a,b) {
+                return (b.updatedAt||0) - (a.updatedAt||0);
+            });
+            cmSave(mergedList);
+
+            // Refresh current window's active chat if updated
+            var curChat = mergedList.find(function(c) { return c.id === _windowChatId; });
+            if (curChat) cmRestoreChat(curChat);
+
+            renderSidebar();
+            scUpdateAuthUI();
+
+            // Start listeners for all chats
+            mergedList.forEach(function(c) { scListenChat(c.id); });
+        })
+        .catch(function(e) { console.warn('Selfchat cloud load error:', e); });
+}
+
+// ── Real-time listener for one chat ──────────────────────
+function scListenChat(chatId) {
+    if (scListeners[chatId]) return; // already listening
+    var ref = scChatRef(chatId);
+    if (!ref) return;
+    scListeners[chatId] = ref.onSnapshot(function(snap) {
+        if (!snap.exists || scPushing[chatId]) return;
+        var data    = snap.data();
+        var remoteTs = data._lastEditTs || 0;
+        if (remoteTs <= (scLastPushTs[chatId] || 0)) return;
+
+        var updated = {
+            id:        data.id || chatId,
+            title:     data.title || 'Untitled',
+            messages:  data.messages || [],
+            createdAt: data.createdAt || Date.now(),
+            updatedAt: remoteTs
+        };
+
+        // Update localStorage list
+        var list = cmLoad();
+        var idx  = list.findIndex(function(c) { return c.id === chatId; });
+        if (idx >= 0) list[idx] = updated;
+        else          list.unshift(updated);
+        cmSave(list);
+
+        // Update DOM if this is the active chat in this window
+        if (_windowChatId === chatId) cmRestoreChat(updated);
+
+        renderSidebar();
+    });
+}
+
+// ── Stop all listeners ────────────────────────────────────
+function scStopAllListeners() {
+    Object.values(scListeners).forEach(function(u) { u(); });
+    scListeners  = {};
+    scPushing    = {};
+    scLastPushTs = {};
+}
+
+// ── Delete chat from Firestore too ────────────────────────
+function scDeleteChat(chatId) {
+    if (!scUser) return;
+    var ref = scChatRef(chatId);
+    if (!ref) return;
+    if (scListeners[chatId]) { scListeners[chatId](); delete scListeners[chatId]; }
+    ref.delete().catch(function(e) { console.warn('Selfchat delete error:', e); });
+}
+
+// ── Auth UI ───────────────────────────────────────────────
+function scUpdateAuthUI() {
+    var btn   = document.getElementById('googleAuthBtn');
+    var label = document.getElementById('scUserLabel');
+    var list  = cmLoad();
+    var count = list.length;
+    if (scUser) {
+        var first = scUser.displayName ? scUser.displayName.split(' ')[0] : 'Account';
+        if (btn) {
+            btn.textContent = '☁️ ' + first;
+            btn.style.backgroundColor = '#2e7d32';
+            btn.title = 'Signed in as ' + scUser.email + ' — click to sign out';
+        }
+        if (label) {
+            label.innerHTML =
+                '<span style="color:#66bb6a;font-size:11px;">● ' + escHtml(scUser.displayName || scUser.email) + '</span><br>' +
+                '<span style="color:#546e7a;font-size:10px;">' + escHtml(scUser.email) + '</span><br>' +
+                '<span style="color:#546e7a;font-size:10px;">' + count + ' chat' + (count!==1?'s':'') + ' synced</span><br>' +
+                '<button onclick="scToggleAuth()" style="margin-top:5px;font-size:11px;background:#37474f;color:#90a4ae;border:none;border-radius:4px;padding:2px 10px;cursor:pointer;">Sign Out</button>';
+        }
+    } else {
+        if (btn) {
+            btn.textContent = '🔑 Sign In';
+            btn.style.backgroundColor = '#546e7a';
+            btn.title = 'Sign in with Google to sync all chats across devices';
+        }
+        if (label) {
+            label.innerHTML =
+                '<span style="color:#607d8b;font-size:11px;">Not signed in</span><br>' +
+                '<button onclick="scToggleAuth()" style="margin-top:5px;font-size:11px;background:#2e7d32;color:white;border:none;border-radius:4px;padding:2px 10px;cursor:pointer;">Sign In with Google</button>';
+        }
+    }
+}
+
+// ── Sign in / Sign out ────────────────────────────────────
+window.scToggleAuth = async function() {
+    if (scUser) {
+        scStopAllListeners();
+        await scAuth.signOut();
+    } else {
+        try {
+            var provider = new firebase.auth.GoogleAuthProvider();
+            await scAuth.signInWithPopup(provider);
+        } catch(e) {
+            if (e.code !== 'auth/popup-closed-by-user') alert('Sign-in failed: ' + e.message);
+        }
+    }
+};
+
+// ── Auth state listener ───────────────────────────────────
 scAuth.onAuthStateChanged(function(user) {
     scUser = user;
-    if (!user && scSyncOn) {
-        // signed out externally — turn sync off
-        scSyncOn = false;
-        scUnsubscribeListen();
-        updateSyncBtn();
+    if (user) {
+        scLoadFromCloud(); // merge + start listeners
+    } else {
+        scStopAllListeners();
+        scUpdateAuthUI();
+        renderSidebar();
     }
 });
 
-// ── Helpers ───────────────────────────────────────────────
-function scChatKey() {
-    // Use the stable chat id as the Firestore doc key
-    var id = cmCurrentId();
-    if (id) return id;
-    // Fallback: derive from title
-    var title = document.getElementById('chatTitle').textContent.trim() || 'untitled';
-    return title.replace(/[^a-zA-Z0-9_\-\u4e00-\u9fff\u3000-\u303f]/g, '_').slice(0, 80);
-}
-
-function scDocRef() {
-    if (!scUser) return null;
-    return scDb.collection('users').doc(scUser.uid)
-               .collection('selfchat').doc(scChatKey());
-}
-
-// ── Serialize current chat to JSON ────────────────────────
-function scSerialize() {
-    var title = document.getElementById('chatTitle').textContent.trim();
-    var msgs = [];
-    Array.from(document.getElementById('chatBox').children).forEach(function(div) {
-        var textSpan = div.querySelector('.message-text');
-        var tsSpan   = div.querySelector('.timestamp');
-        if (!textSpan) return;
-        var replies = [];
-        div.querySelectorAll('.thread-reply-row').forEach(function(row) {
-            var rt  = row.querySelector('.thread-reply-text');
-            var rts = row.querySelector('.thread-reply-ts');
-            if (rt) replies.push({ text: rt.textContent, ts: rts ? rts.textContent : '' });
-        });
-        msgs.push({
-            html:      textSpan.innerHTML,
-            ts:        tsSpan ? tsSpan.textContent : '',
-            isSub:     div.classList.contains('subchat'),
-            isYellow:  div.classList.contains('highlighted-yellow'),
-            isOrange:  div.classList.contains('highlighted-orange'),
-            replies:   replies
-        });
-    });
-    return { title: title, messages: msgs, _lastEditTs: Date.now() };
-}
-
-// ── Push current chat to Firestore ────────────────────────
-function scPush() {
-    if (!scSyncOn || !scUser) return;
-    var ref = scDocRef();
-    if (!ref) return;
-    var data = scSerialize();
-    scLastPushTs  = data._lastEditTs;
-    scIgnoreNext  = true;
-    ref.set(data, { merge: false }).catch(function(e) {
-        console.warn('Selfchat sync push error:', e);
-    });
-}
-
-// ── Apply incoming Firestore data to DOM ──────────────────
-function scApply(data) {
-    if (!data || !data.messages) return;
-    // Only apply if remote is newer
-    if (data._lastEditTs && data._lastEditTs <= scLastPushTs) return;
-
-    var chatBox = document.getElementById('chatBox');
-    chatBox.innerHTML = '';
-    document.getElementById('chatTitle').textContent = data.title || 'Untitled';
-
-    data.messages.forEach(function(m) {
-        var msgEl = sendMessage(m.html, m.ts || null, /*isFromFile=*/true);
-        if (!msgEl) return;
-        if (m.isSub) { msgEl.classList.add('subchat'); } else { msgEl.classList.remove('subchat'); }
-        if (m.isYellow) msgEl.classList.add('highlighted-yellow');
-        if (m.isOrange) msgEl.classList.add('highlighted-orange');
-        if (m.replies && m.replies.length) addThreadPanel(msgEl, m.replies);
-    });
-
-    // Also persist to localStorage chat list so offline access is up to date
-    var id = cmCurrentId();
-    if (id) {
-        var list = cmLoad();
-        var idx  = list.findIndex(function(c) { return c.id === id; });
-        if (idx >= 0) {
-            list[idx].title     = data.title || list[idx].title;
-            list[idx].messages  = data.messages;
-            list[idx].updatedAt = data._lastEditTs || Date.now();
-            cmSave(list);
-            renderSidebar();
-        }
-    }
-
-    requestAnimationFrame(function() {
-        scrollToBottom(document.getElementById('chatBox'));
-        if (typeof updateSubchatToggles === 'function') updateSubchatToggles();
-    });
-}
-
-// ── Start listening for remote changes ───────────────────
-function scStartListen() {
-    var ref = scDocRef();
-    if (!ref) return;
-    scUnsubscribeListen();
-    scUnsubscribe = ref.onSnapshot(function(snap) {
-        if (!snap.exists) return;
-        if (scIgnoreNext) { scIgnoreNext = false; return; }
-        scApply(snap.data());
-    });
-}
-
-function scUnsubscribeListen() {
-    if (scUnsubscribe) { scUnsubscribe(); scUnsubscribe = null; }
-}
-
-// ── Update button appearance ──────────────────────────────
-function updateSyncBtn() {
-    var btn = document.getElementById('cloudSyncBtn');
-    if (!btn) return;
-    if (scSyncOn) {
-        var label = scUser ? (scUser.displayName || scUser.email || 'signed in') : '';
-        btn.textContent = '☁️ Sync: ON';
-        btn.style.backgroundColor = '#2e7d32';
-        btn.title = 'Cloud sync ON (' + label + ') — click to turn OFF';
-    } else {
-        btn.textContent = '☁️ Sync: OFF';
-        btn.style.backgroundColor = '#546e7a';
-        btn.title = 'Click to enable Firebase cloud sync for this chat';
-    }
-}
-
-// ── Hook into autosaveTick so every save also pushes ─────
+// ── Hook autosaveTick → push active chat to Firestore ─────
 (function() {
-    var _origTick = window.autosaveTick;
+    var _orig = window.autosaveTick;
     window.autosaveTick = function() {
-        if (typeof _origTick === 'function') _origTick();
-        // debounced cloud push
-        clearTimeout(window._scPushTimer);
-        window._scPushTimer = setTimeout(scPush, 900);
+        if (typeof _orig === 'function') _orig();
+        clearTimeout(window._scAutoTimer);
+        window._scAutoTimer = setTimeout(function() {
+            cmSaveCurrent();
+            if (scUser && _windowChatId) scPushChat(_windowChatId);
+        }, 1000);
     };
 })();
 
-// ── Toggle called by button ───────────────────────────────
-window.toggleCloudSync = async function() {
-    if (scSyncOn) {
-        // Turn OFF
-        scSyncOn = false;
-        scUnsubscribeListen();
-        var key = 'sc_sync_' + scChatKey();
-        localStorage.removeItem(key);
-        updateSyncBtn();
-        if (typeof renderSidebar === 'function') renderSidebar();
-        return;
-    }
-
-    // Turn ON — sign in if needed
-    if (!scUser) {
-        try {
-            var provider = new firebase.auth.GoogleAuthProvider();
-            var result   = await scAuth.signInWithPopup(provider);
-            scUser = result.user;
-        } catch(e) {
-            alert('Sign-in canceled or failed: ' + e.message);
-            return;
+// ── Hook newChat to also create doc in Firestore ──────────
+(function() {
+    var _origNew = window.newChat;
+    window.newChat = function() {
+        _origNew();
+        if (scUser && _windowChatId) {
+            setTimeout(function() {
+                scPushChat(_windowChatId);
+                scListenChat(_windowChatId);
+            }, 300);
         }
-    }
+    };
+})();
 
-    scSyncOn = true;
-    // Remember ON for this chat id
-    var key = 'sc_sync_' + scChatKey();
-    localStorage.setItem(key, '1');
+// ── Hook cmDeleteChat to also remove from Firestore ───────
+(function() {
+    var _origDel = window.cmDeleteChat;
+    window.cmDeleteChat = function(id) {
+        scDeleteChat(id); // remove from cloud first
+        _origDel(id);
+    };
+})();
 
-    // Push current state, then start listening
-    scPush();
-    scStartListen();
-    updateSyncBtn();
-    if (typeof renderSidebar === 'function') renderSidebar();
-};
-
-// ── On page load: restore sync state if previously ON ─────
-// Firebase's onAuthStateChanged fires automatically on page load
-// if the user was already signed in — no redirect needed.
-scAuth.onAuthStateChanged(function(user) {
-    scUser = user;
-    if (!user) { updateSyncBtn(); return; }
-
-    // Wait a tick for chatTitle to be populated by localStorage restore
-    setTimeout(function() {
-        var key = 'sc_sync_' + scChatKey();
-        if (localStorage.getItem(key) === '1' && !scSyncOn) {
-            scSyncOn = true;
-            scStartListen();
-            updateSyncBtn();
-        } else {
-            updateSyncBtn();
+// ── Hook cmSaveCurrent (title rename etc.) ────────────────
+(function() {
+    var _origSave = window.cmSaveCurrent;
+    window.cmSaveCurrent = function() {
+        if (typeof _origSave === 'function') _origSave();
+        if (scUser && _windowChatId) {
+            clearTimeout(window._scSaveTimer);
+            window._scSaveTimer = setTimeout(function() {
+                scPushChat(_windowChatId);
+            }, 800);
         }
-    }, 600);
-});
+    };
+})();
 
-document.addEventListener('DOMContentLoaded', function() {
-    // Re-check sync key if user edits the chat title
-    var titleEl = document.getElementById('chatTitle');
-    if (titleEl) {
-        titleEl.addEventListener('blur', function() {
-            updateSyncBtn(); // refresh button label; key may have changed
-        });
-    }
-    updateSyncBtn();
-});
+// Init UI on load
+document.addEventListener('DOMContentLoaded', function() { scUpdateAuthUI(); });
 </script>
+
 
 <!-- Paragraph View Modal -->
 <div id="paragraph-view-modal" style="display:none;position:fixed;z-index:2000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.5);" onclick="if(event.target===this)closeParagraphView()">
