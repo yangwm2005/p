@@ -625,8 +625,8 @@
 </div>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260614: v25: Account-level sync — Sign In with Google once → all chats auto-sync to Firestore; sidebar loads from cloud on any device; real-time listeners per chat; merge on sign-in (newer timestamp wins); delete syncs to cloud; offline works via localStorage cache.<br>
-            20260614: v24b: Fix multi-window autosave — each window tracks its own chat id in-memory (_windowChatId).<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260614: v25b: Fix thread content lost on chat switch and cloud sync — sendMessage creates empty panel, cmRestoreChat now directly injects reply rows into existing panel instead of calling addThreadPanel again (which was blocked by the guard). Same fix applied to Idealog import.<br>
+            20260614: v25: Account-level sync — Sign In with Google once → all chats auto-sync to Firestore.<br>
 <!--             20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
             20260611b: v211b: Fix autosave not triggering — moved hook inside sendMessage; removed broken window.sendMessage monkey-patch.<br>
             20260611c: v211c: Autosave on every keystroke (debounced 800ms) — covers typing in main input, in-place message edits, and thread replies.
@@ -3524,9 +3524,36 @@ document.addEventListener("DOMContentLoaded", function() {
             if (entry.isYellow) msgEl.classList.add('highlighted-yellow');
             if (entry.isOrange) msgEl.classList.add('highlighted-orange');
 
-            // Attach thread panel if there are replies
+            // Populate thread replies into the panel sendMessage already created
             if (entry.replies && entry.replies.length > 0) {
-                addThreadPanel(msgEl, entry.replies);
+                var inner = msgEl.querySelector('.thread-panel-inner');
+                var toggleBtn = msgEl.querySelector('.thread-toggle-btn');
+                if (inner) {
+                    entry.replies.forEach(function(r) {
+                        var row = document.createElement('div');
+                        row.className = 'thread-reply-row';
+                        var rtSpan = document.createElement('span');
+                        rtSpan.className = 'thread-reply-text';
+                        rtSpan.textContent = r.text || '';
+                        var tsSpan = document.createElement('span');
+                        tsSpan.className = 'thread-reply-ts';
+                        tsSpan.textContent = r.ts || '';
+                        var delBtn = document.createElement('button');
+                        delBtn.className = 'thread-reply-del';
+                        delBtn.textContent = '✕';
+                        delBtn.onclick = function(e) {
+                            e.stopPropagation();
+                            row.parentNode && row.parentNode.removeChild(row);
+                            var cnt2 = inner.querySelectorAll('.thread-reply-row').length;
+                            if (toggleBtn) { toggleBtn.textContent = cnt2 ? '💬 ' + cnt2 : '💬'; toggleBtn.classList.toggle('has-replies', cnt2 > 0); }
+                        };
+                        row.appendChild(rtSpan); row.appendChild(tsSpan); row.appendChild(delBtn);
+                        var inputRow = inner.querySelector('.thread-input-row');
+                        inner.insertBefore(row, inputRow);
+                    });
+                    var cnt = inner.querySelectorAll('.thread-reply-row').length;
+                    if (toggleBtn) { toggleBtn.textContent = cnt ? '💬 ' + cnt : '💬'; toggleBtn.classList.toggle('has-replies', cnt > 0); }
+                }
             }
         });
 
@@ -3652,7 +3679,50 @@ function cmRestoreChat(data) {
         if (m.isSub)    { msgEl.classList.add('subchat'); } else { msgEl.classList.remove('subchat'); }
         if (m.isYellow) msgEl.classList.add('highlighted-yellow');
         if (m.isOrange) msgEl.classList.add('highlighted-orange');
-        if (m.replies && m.replies.length) addThreadPanel(msgEl, m.replies);
+
+        // Populate thread replies into the panel that sendMessage already created
+        if (m.replies && m.replies.length) {
+            var inner = msgEl.querySelector('.thread-panel-inner');
+            var toggleBtn = msgEl.querySelector('.thread-toggle-btn');
+            if (inner) {
+                m.replies.forEach(function(r) {
+                    var row = document.createElement('div');
+                    row.className = 'thread-reply-row';
+                    var rtSpan = document.createElement('span');
+                    rtSpan.className = 'thread-reply-text';
+                    rtSpan.textContent = r.text || '';
+                    var tsSpan = document.createElement('span');
+                    tsSpan.className = 'thread-reply-ts';
+                    tsSpan.textContent = r.ts || '';
+                    var delBtn = document.createElement('button');
+                    delBtn.className = 'thread-reply-del';
+                    delBtn.title = 'Delete reply';
+                    delBtn.textContent = '✕';
+                    delBtn.onclick = function(e) {
+                        e.stopPropagation();
+                        row.parentNode && row.parentNode.removeChild(row);
+                        // update badge
+                        var cnt = inner.querySelectorAll('.thread-reply-row').length;
+                        if (toggleBtn) {
+                            toggleBtn.textContent = cnt ? '💬 ' + cnt : '💬';
+                            toggleBtn.classList.toggle('has-replies', cnt > 0);
+                        }
+                    };
+                    row.appendChild(rtSpan);
+                    row.appendChild(tsSpan);
+                    row.appendChild(delBtn);
+                    // insert before the input row
+                    var inputRow = inner.querySelector('.thread-input-row');
+                    inner.insertBefore(row, inputRow);
+                });
+                // Update badge count
+                var cnt = inner.querySelectorAll('.thread-reply-row').length;
+                if (toggleBtn) {
+                    toggleBtn.textContent = cnt ? '💬 ' + cnt : '💬';
+                    toggleBtn.classList.toggle('has-replies', cnt > 0);
+                }
+            }
+        }
     });
     document.getElementById('chatTitle').textContent = data.title || 'Untitled';
     requestAnimationFrame(function() {
