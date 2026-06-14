@@ -625,8 +625,8 @@
 </div>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260614: v25b: Fix thread content lost on chat switch and cloud sync — sendMessage creates empty panel, cmRestoreChat now directly injects reply rows into existing panel instead of calling addThreadPanel again (which was blocked by the guard). Same fix applied to Idealog import.<br>
-            20260614: v25: Account-level sync — Sign In with Google once → all chats auto-sync to Firestore.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260615: v25c: Fix last-chat-cannot-be-deleted bug — clear _windowChatId before switching away so cmSaveCurrent cannot resurrect the deleted chat; last chat now replaced with a fresh empty one directly without going through newChat().<br>
+            20260614: v25b: Fix thread content lost on chat switch and cloud sync.<br>
 <!--             20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
             20260611b: v211b: Fix autosave not triggering — moved hook inside sendMessage; removed broken window.sendMessage monkey-patch.<br>
             20260611c: v211c: Autosave on every keystroke (debounced 800ms) — covers typing in main input, in-place message edits, and thread replies.
@@ -3838,15 +3838,26 @@ function cmDeleteChat(id) {
     var newList = list.filter(function(c) { return c.id !== id; });
     cmSave(newList);
 
-    // If deleting current, switch to first remaining
+    // If deleting the active chat, clear window id FIRST so nothing
+    // can cmSaveCurrent the deleted chat back into the list
     if (cmCurrentId() === id) {
+        _windowChatId = null;
+        localStorage.removeItem(CM_CUR);
+
         if (newList.length > 0) {
             cmSetCurrent(newList[0].id);
             cmRestoreChat(newList[0]);
         } else {
-            // No chats left — create one
-            localStorage.removeItem(CM_CUR);
-            newChat();
+            // Last chat deleted — create a fresh empty one directly
+            var freshId    = cmGenId();
+            var freshTitle = 'New Chat';
+            var freshList  = [{ id: freshId, title: freshTitle, messages: [], createdAt: Date.now(), updatedAt: Date.now() }];
+            cmSave(freshList);
+            _windowChatId = freshId;
+            localStorage.setItem(CM_CUR, freshId);
+            document.getElementById('chatBox').innerHTML = '';
+            document.getElementById('chatTitle').textContent = freshTitle;
+            renderSidebar();
             return;
         }
     }
