@@ -626,8 +626,8 @@
 </div>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260615: v25d: New chat title uses datestamp "Chat MMDD Dow"; sidebar refreshed with soft lavender-blue tones; auth footer enlarged with full-width Sign In/Out buttons.<br>
-            20260615: v25c: Fix last-chat-cannot-be-deleted bug.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260615: v25e: Fix threads lost across devices — Firestore silently drops nested arrays, so messages now stored as messagesJson string; scParseDoc() handles both formats. Save filename now uses chat title directly (e.g. "Chat 0615 Mon.txt").<br>
+            20260615: v25d: New chat datestamp title; soft lavender sidebar; bigger auth footer.<br>
 <!--             20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
             20260611b: v211b: Fix autosave not triggering — moved hook inside sendMessage; removed broken window.sendMessage monkey-patch.<br>
             20260611c: v211c: Autosave on every keystroke (debounced 800ms) — covers typing in main input, in-place message edits, and thread replies.
@@ -2731,9 +2731,9 @@ async function saveToHardDrive() {
         return false; // Return false to indicate no save occurred
     }
 
-    const chatTitle = document.getElementById("chatTitle").textContent.trim(); // Get current title
-    const baseTitle = getBaseTitle(chatTitle); // Extract title without date
-    const fileName = `${baseTitle} ${getFormattedDate()}.txt`; // e.g., "Test system 20250404 Fri.txt"
+    const chatTitle = document.getElementById("chatTitle").textContent.trim() || 'Chat';
+    // Use title directly as filename — it already contains the datestamp (e.g. "Chat 0615 Mon")
+    const fileName = chatTitle.replace(/[\/\\:*?"<>|]/g, '-') + '.txt';
 
     if (window.showSaveFilePicker) {
         try {
@@ -2775,9 +2775,8 @@ async function saveToHardDrive() {
 
 // Fallback: Trigger a file download
 function fallbackSaveToDownload(chatContent) {
-    const chatTitle = document.getElementById("chatTitle").textContent.trim(); // Get current title
-    const baseTitle = getBaseTitle(chatTitle); // Extract title without date
-    const fileName = `${baseTitle} ${getFormattedDate()}.txt`; // e.g., "Test system 20250404 Fri.txt"
+    const chatTitle = document.getElementById("chatTitle").textContent.trim() || 'Chat';
+    const fileName = chatTitle.replace(/[\/\\:*?"<>|]/g, '-') + '.txt';
     const blob = new Blob([chatContent], { type: "text/plain" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -4030,12 +4029,14 @@ function scPushChat(chatId) {
     var list = cmLoad();
     var chat = list.find(function(c) { return c.id === chatId; });
     if (!chat) return;
+    // Firestore cannot store nested arrays (replies[] inside messages[]).
+    // Serialize messages as a JSON string to preserve thread data perfectly.
     var data = {
-        id:          chat.id,
-        title:       chat.title,
-        messages:    chat.messages || [],
-        createdAt:   chat.createdAt || Date.now(),
-        _lastEditTs: Date.now()
+        id:           chat.id,
+        title:        chat.title,
+        messagesJson: JSON.stringify(chat.messages || []),
+        createdAt:    chat.createdAt || Date.now(),
+        _lastEditTs:  Date.now()
     };
     scLastPushTs[chatId] = data._lastEditTs;
     scPushing[chatId]    = true;
@@ -4045,6 +4046,26 @@ function scPushChat(chatId) {
         scPushing[chatId] = false;
         console.warn('Selfchat push error:', e);
     });
+}
+
+// ── Parse a Firestore doc back to a local chat object ─────
+function scParseDoc(data, chatId) {
+    var messages;
+    if (data.messagesJson) {
+        // New format: JSON string (preserves nested replies arrays)
+        try { messages = JSON.parse(data.messagesJson); }
+        catch(e) { messages = []; }
+    } else {
+        // Legacy format: native array (replies may be lost, best effort)
+        messages = data.messages || [];
+    }
+    return {
+        id:        data.id || chatId,
+        title:     data.title || 'Untitled',
+        messages:  messages,
+        createdAt: data.createdAt || Date.now(),
+        updatedAt: data._lastEditTs || Date.now()
+    };
 }
 
 // ── Load all chats from Firestore, merge with localStorage ─
@@ -4061,21 +4082,15 @@ function scLoadFromCloud() {
                 return;
             }
             var cloudChats = [];
-            snapshot.forEach(function(doc) { cloudChats.push(doc.data()); });
+            snapshot.forEach(function(doc) { cloudChats.push(scParseDoc(doc.data(), doc.id)); });
 
             // Merge cloud + local (newer timestamp wins)
             var merged = {};
             cmLoad().forEach(function(c) { merged[c.id] = c; });
             cloudChats.forEach(function(c) {
                 var localTs = merged[c.id] ? (merged[c.id].updatedAt || 0) : 0;
-                if (!merged[c.id] || (c._lastEditTs || 0) >= localTs) {
-                    merged[c.id] = {
-                        id:        c.id,
-                        title:     c.title,
-                        messages:  c.messages || [],
-                        createdAt: c.createdAt || Date.now(),
-                        updatedAt: c._lastEditTs || Date.now()
-                    };
+                if (!merged[c.id] || (c.updatedAt || 0) >= localTs) {
+                    merged[c.id] = c;
                 }
             });
 
@@ -4104,17 +4119,11 @@ function scListenChat(chatId) {
     if (!ref) return;
     scListeners[chatId] = ref.onSnapshot(function(snap) {
         if (!snap.exists || scPushing[chatId]) return;
-        var data    = snap.data();
+        var data     = snap.data();
         var remoteTs = data._lastEditTs || 0;
         if (remoteTs <= (scLastPushTs[chatId] || 0)) return;
 
-        var updated = {
-            id:        data.id || chatId,
-            title:     data.title || 'Untitled',
-            messages:  data.messages || [],
-            createdAt: data.createdAt || Date.now(),
-            updatedAt: remoteTs
-        };
+        var updated = scParseDoc(data, chatId);
 
         // Update localStorage list
         var list = cmLoad();
