@@ -431,7 +431,70 @@
             border: none;
             min-width: unset;
         }
-        /* ── Chat Manager Sidebar ── */
+        /* ── Thread toggle-all button ── */
+        #toggleAllThreadsBtn {
+            background: none;
+            border: 1px solid #c5cae9;
+            border-radius: 6px;
+            color: #7986cb;
+            font-size: 12px;
+            padding: 3px 10px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        #toggleAllThreadsBtn:hover { background: #e8eaf6; }
+
+        /* ── Mobile layout ── */
+        @media (max-width: 600px) {
+            #app-wrapper {
+                padding: 8px 6px 8px 8px;
+                gap: 0;
+            }
+            /* Sidebar hidden by default on mobile */
+            #chatSidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                height: 100vh;
+                z-index: 200;
+                border-radius: 0 8px 8px 0;
+                box-shadow: 2px 0 16px rgba(0,0,0,0.15);
+                margin-right: 0;
+            }
+            #chatSidebar.collapsed {
+                width: 0;
+                min-width: 0;
+                opacity: 0;
+                pointer-events: none;
+            }
+            /* Overlay behind sidebar on mobile */
+            #sidebarMobileOverlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.3);
+                z-index: 199;
+            }
+            #sidebarMobileOverlay.active { display: block; }
+            /* Chat fills full width on mobile */
+            .chat-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+            }
+            /* Smaller toolbar buttons on mobile */
+            .toolbar button {
+                font-size: 11px !important;
+                padding: 3px 6px !important;
+            }
+            #sidebarToggleBtn {
+                top: 8px;
+                left: 8px;
+                width: 32px;
+                height: 32px;
+                font-size: 16px;
+            }
+        }
         #app-wrapper {
             display: flex;
             align-items: flex-start;
@@ -564,11 +627,42 @@
             padding: 2px 5px;
             outline: none;
         }
+        /* ── Drag-and-drop file load overlay ── */
+        #dropOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 500;
+            background: rgba(121,134,203,0.18);
+            border: 3px dashed #7986cb;
+            border-radius: 12px;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+        #dropOverlay.active {
+            display: flex;
+        }
+        #dropOverlay .drop-msg {
+            background: white;
+            border-radius: 12px;
+            padding: 28px 48px;
+            font-size: 22px;
+            color: #5c6bc0;
+            font-weight: 600;
+            box-shadow: 0 4px 24px rgba(90,100,180,0.18);
+            text-align: center;
+            pointer-events: none;
+        }
     </style>
-</head>
 <body>
 
 <button id="sidebarToggleBtn" onclick="toggleSidebar()" title="Toggle chat list">☰</button>
+
+<div id="dropOverlay">
+    <div class="drop-msg">📄 Drop .txt file to load chat</div>
+</div>
+<div id="sidebarMobileOverlay" onclick="toggleSidebar()"></div>
 
 <div id="app-wrapper">
 <div id="chatSidebar">
@@ -615,6 +709,7 @@
         <option value="bullets">Bullets</option>
     </select>
     <button onclick="openChatFile()" style="color:white;background-color:orange;" title="Open a saved txt file from Disk">📂 Open</button>
+    <button id="toggleAllThreadsBtn" onclick="toggleAllThreads()" title="Open / close all threads">💬 Threads</button>
     <button onclick="importIdealog()" style="color:white;background-color:#0891b2;" title="Import exported .txt from Idealog/ThinkLog (entries + threads)">🧠 Idealog</button>
     <button id="googleAuthBtn" onclick="scToggleAuth()" style="color:white;background-color:#546e7a;" title="Sign in with Google to sync all chats to cloud">🔑 Sign In</button>
     <button onclick="exportToGmail()" style="color:white;background-color:green;" title="Send the contexts to your gmail account">✉️ Gmail</button>
@@ -626,8 +721,8 @@
 </div>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260615: v25e: Fix threads lost across devices — Firestore silently drops nested arrays, so messages now stored as messagesJson string; scParseDoc() handles both formats. Save filename now uses chat title directly (e.g. "Chat 0615 Mon.txt").<br>
-            20260615: v25d: New chat datestamp title; soft lavender sidebar; bigger auth footer.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260615: v25g: Mobile layout — sidebar hidden by default on small screens, tap ☰ to slide in with overlay backdrop; chat fills full width. Added 💬 Threads toggle-all button to open/close all thread panels at once.<br>
+            20260615: v25f: Drag-and-drop file loading — drop any .txt file to load as new chat; flexible format.<br>
 <!--             20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
             20260611b: v211b: Fix autosave not triggering — moved hook inside sendMessage; removed broken window.sendMessage monkey-patch.<br>
             20260611c: v211c: Autosave on every keystroke (debounced 800ms) — covers typing in main input, in-place message edits, and thread replies.
@@ -1518,105 +1613,146 @@
         });
     }
 
+    // ── Shared file parser — called by button AND drag-and-drop ──
+    function parseAndLoadChatFile(text, filename) {
+        var lines = text.split('\n');
+
+        // Determine title: use line 0 if it looks like a title (not a message line),
+        // otherwise use the filename (without extension) — flexible, no format required
+        var firstLine = lines[0] ? lines[0].trim() : '';
+        var isMessageLine = /^(  •|•) /.test(firstLine);
+        var title = (!isMessageLine && firstLine.length > 0)
+            ? firstLine
+            : (filename ? filename.replace(/\.[^.]+$/, '') : 'Imported Chat');
+
+        // Create a new chat entry in the sidebar for this file
+        cmSaveCurrent(); // save whatever is open
+        var newId    = cmGenId();
+        var list     = cmLoad();
+        list.unshift({ id: newId, title: title, messages: [], createdAt: Date.now(), updatedAt: Date.now() });
+        cmSave(list);
+        _windowChatId = newId;
+        localStorage.setItem(CM_CUR, newId);
+
+        document.getElementById('chatTitle').textContent = title;
+        var chatBox = document.getElementById('chatBox');
+        chatBox.innerHTML = '';
+
+        var lastMsg        = null;
+        var pendingReplies = [];
+
+        function flushReplies() {
+            if (lastMsg && pendingReplies.length > 0) {
+                var inner = lastMsg.querySelector('.thread-panel-inner');
+                if (inner) {
+                    pendingReplies.forEach(function(r) {
+                        var row = document.createElement('div');
+                        row.className = 'thread-reply-row';
+                        var rt = document.createElement('span');
+                        rt.className = 'thread-reply-text';
+                        rt.textContent = r.text;
+                        var rts = document.createElement('span');
+                        rts.className = 'thread-reply-ts';
+                        rts.textContent = r.ts || '';
+                        var btn = document.createElement('button');
+                        btn.className = 'thread-reply-del';
+                        btn.textContent = '✕';
+                        (function(capMsg, capInner, capRow) {
+                            btn.onclick = function(e) {
+                                e.stopPropagation();
+                                capRow.parentNode && capRow.parentNode.removeChild(capRow);
+                                var tb = capMsg.querySelector('.thread-toggle-btn');
+                                if (tb) {
+                                    var n = capInner.querySelectorAll('.thread-reply-row').length;
+                                    tb.textContent = n ? '💬 ' + n : '💬';
+                                    tb.classList.toggle('has-replies', n > 0);
+                                }
+                            };
+                        })(lastMsg, inner, row);
+                        row.appendChild(rt);
+                        row.appendChild(rts);
+                        row.appendChild(btn);
+                        var inputRow = inner.querySelector('.thread-input-row');
+                        inner.insertBefore(row, inputRow);
+                    });
+                    var tb = lastMsg.querySelector('.thread-toggle-btn');
+                    if (tb) {
+                        var n = inner.querySelectorAll('.thread-reply-row').length;
+                        tb.textContent = n ? '💬 ' + n : '💬';
+                        tb.classList.toggle('has-replies', n > 0);
+                    }
+                }
+                pendingReplies = [];
+            }
+            lastMsg = null;
+        }
+
+        // Parse from line 2 if title was on line 0 (skip blank line 1), else from line 0
+        var startLine = (!isMessageLine && firstLine.length > 0) ? 2 : 0;
+        lines.slice(startLine).forEach(function(line) {
+            // Thread reply line: "  ↳ text  @timestamp"
+            if (/^  \u21b3 /.test(line)) {
+                var rest  = line.slice(4);
+                var tsm   = rest.match(/\s{2}@(.{1,12})$/);
+                var replyTs   = tsm ? tsm[1].replace(/\r$/, '') : '';
+                var replyText = tsm ? rest.slice(0, rest.length - tsm[0].length).trim() : rest.trim();
+                if (replyText) pendingReplies.push({ text: replyText, ts: replyTs });
+                return;
+            }
+            // Message line — flexible: accepts both timestamped and plain lines
+            // Try format: "• [H] text (HH:MM AM)" first
+            var match = line.match(/^(  •|•) (\[H\]\s)?(.*?) \((\d+:\d+ [APM]{2})\)\s*$/);
+            if (match) {
+                flushReplies();
+                var isSubchat     = match[1] === '  •';
+                var isHighlighted = !!match[2];
+                var text          = match[3];
+                var ts            = match[4];
+                text = text.replace(/\[X\]/g, '<span class="checkbox-wrapper"><input type="checkbox" checked></span>')
+                           .replace(/\[ \]/g, '<span class="checkbox-wrapper"><input type="checkbox"></span>');
+                lastMsg = sendMessage(text, ts, true);
+                if (isSubchat)     lastMsg.classList.add('subchat');
+                if (isHighlighted) lastMsg.classList.add('highlighted-yellow');
+                pendingReplies = [];
+                return;
+            }
+            // Fallback: plain text line — load as-is (no timestamp requirement)
+            var plain = line.replace(/^\r/, '').replace(/\r$/, '');
+            if (plain.trim()) {
+                flushReplies();
+                var plainText = plain.replace(/\[X\]/g, '<span class="checkbox-wrapper"><input type="checkbox" checked></span>')
+                                    .replace(/\[ \]/g, '<span class="checkbox-wrapper"><input type="checkbox"></span>');
+                lastMsg = sendMessage(plainText, null, true);
+                pendingReplies = [];
+            }
+        });
+        flushReplies();
+
+        requestAnimationFrame(function() {
+            scrollToBottom(chatBox);
+            updateSubchatToggles();
+        });
+
+        // Save to chat list and cloud
+        cmSaveCurrent();
+        renderSidebar();
+        if (typeof scUser !== 'undefined' && scUser && typeof scPushChat === 'function') {
+            setTimeout(function() {
+                scPushChat(newId);
+                if (typeof scListenChat === 'function') scListenChat(newId);
+            }, 400);
+        }
+    }
+
     function openChatFile() {
-        let input = document.createElement("input");
-        input.type = "file";
-        input.accept = ".txt";
-        input.onchange = function (event) {
+        let input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.txt';
+        input.onchange = function(event) {
             let file = event.target.files[0];
             if (!file) return;
-
             let reader = new FileReader();
-            reader.onload = function () {
-                let lines = reader.result.split("\n");
-                document.getElementById("chatTitle").textContent = lines[0].trim();
-
-                let chatBox = document.getElementById("chatBox");
-                chatBox.innerHTML = "";
-                let lastMsg = null;
-                let pendingReplies = [];
-
-                function flushReplies() {
-                    if (lastMsg && pendingReplies.length > 0) {
-                        var inner = lastMsg.querySelector('.thread-panel-inner');
-                        if (inner) {
-                            pendingReplies.forEach(function(r) {
-                                var row = document.createElement('div');
-                                row.className = 'thread-reply-row';
-                                var rt = document.createElement('span');
-                                rt.className = 'thread-reply-text';
-                                rt.textContent = r.text;
-                                var rts = document.createElement('span');
-                                rts.className = 'thread-reply-ts';
-                                rts.textContent = r.ts || '';
-                                var btn = document.createElement('button');
-                                btn.className = 'thread-reply-del';
-                                btn.textContent = '✕';
-                                (function(capturedMsg, capturedInner, capturedRow) {
-                                    btn.onclick = function(e) {
-                                        e.stopPropagation();
-                                        capturedRow.parentNode && capturedRow.parentNode.removeChild(capturedRow);
-                                        var tb = capturedMsg.querySelector('.thread-toggle-btn');
-                                        if (tb) {
-                                            var n = capturedInner.querySelectorAll('.thread-reply-row').length;
-                                            tb.textContent = n ? '💬 ' + n : '💬';
-                                            if (n > 0) tb.classList.add('has-replies');
-                                            else tb.classList.remove('has-replies');
-                                        }
-                                    };
-                                })(lastMsg, inner, row);
-                                row.appendChild(rt);
-                                row.appendChild(rts);
-                                row.appendChild(btn);
-                                var inputRow = inner.querySelector('.thread-input-row');
-                                inner.insertBefore(row, inputRow);
-                            });
-                            // update toggle label
-                            var tb = lastMsg.querySelector('.thread-toggle-btn');
-                            if (tb) {
-                                var n = inner.querySelectorAll('.thread-reply-row').length;
-                                tb.textContent = n ? '💬 ' + n : '💬';
-                                if (n > 0) tb.classList.add('has-replies');
-                                else tb.classList.remove('has-replies');
-                            }
-                        }
-                        pendingReplies = [];
-                    }
-                    lastMsg = null;
-                }
-
-                lines.slice(2).forEach(line => {
-                    // Reply line: starts with "  ↳ "
-                    if (/^  \u21b3 /.test(line)) {
-                        let rest = line.slice(4);
-                        let tsm = rest.match(/\s{2}@(.{4,8})$/);
-                        let replyTs = tsm ? tsm[1].replace(/\r$/, '') : '';
-                        let replyText = tsm ? rest.slice(0, rest.length - tsm[0].length).trim() : rest.trim();
-                        if (replyText) pendingReplies.push({ text: replyText, ts: replyTs });
-                        return;
-                    }
-                    let match = line.match(/(  •|•) (\[H\]\s)?(.*?) \((\d+:\d+ [APM]{2})\)/);
-                    if (match) {
-                        flushReplies();
-                        let isSubchat = match[1] === "  •";
-                        let isHighlighted = !!match[2];
-                        let text = match[3];
-                        let timestamp = match[4];
-                        text = text.replace(/\[X\]/g, '<span class="checkbox-wrapper"><input type="checkbox" checked></span>')
-                                   .replace(/\[ \]/g, '<span class="checkbox-wrapper"><input type="checkbox"></span>');
-                        lastMsg = sendMessage(text, timestamp, true);
-                        if (isSubchat) lastMsg.classList.add("subchat");
-                        if (isHighlighted) lastMsg.classList.add("highlighted-yellow");
-                        pendingReplies = [];
-                    }
-                });
-                flushReplies(); // flush last message
-
-                requestAnimationFrame(() => {
-                    scrollToBottom(chatBox);
-                    updateSubchatToggles();
-                });
-            };
+            reader.onload = function() { parseAndLoadChatFile(reader.result, file.name); };
             reader.readAsText(file);
         };
         input.click();
@@ -3933,11 +4069,26 @@ function escHtml(str) {
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── Sidebar toggle ────────────────────────────────────────
+// ── Sidebar toggle (desktop + mobile) ────────────────────
 function toggleSidebar() {
-    var sb = document.getElementById('chatSidebar');
-    sb.classList.toggle('collapsed');
-    localStorage.setItem('sc_sidebar_open', sb.classList.contains('collapsed') ? '0' : '1');
+    var sb      = document.getElementById('chatSidebar');
+    var overlay = document.getElementById('sidebarMobileOverlay');
+    var isNowCollapsed = !sb.classList.contains('collapsed');
+    sb.classList.toggle('collapsed', isNowCollapsed);
+    if (overlay) overlay.classList.toggle('active', !isNowCollapsed);
+    localStorage.setItem('sc_sidebar_open', isNowCollapsed ? '0' : '1');
+}
+
+// ── Toggle all thread panels open / closed ────────────────
+var _allThreadsOpen = false;
+function toggleAllThreads() {
+    var panels  = document.querySelectorAll('.thread-panel');
+    var buttons = document.querySelectorAll('.thread-toggle-btn');
+    _allThreadsOpen = !_allThreadsOpen;
+    panels.forEach(function(p)  { p.classList.toggle('thread-panel-open', _allThreadsOpen); });
+    buttons.forEach(function(b) { b.classList.toggle('panel-open', _allThreadsOpen); });
+    var btn = document.getElementById('toggleAllThreadsBtn');
+    if (btn) btn.textContent = _allThreadsOpen ? '💬 Close All' : '💬 Threads';
 }
 
 // ── Hook autosaveTick to also save to localStorage list ───
@@ -3954,7 +4105,13 @@ function toggleSidebar() {
 document.addEventListener('DOMContentLoaded', function() {
     // Restore sidebar open/closed state
     var sb = document.getElementById('chatSidebar');
-    if (localStorage.getItem('sc_sidebar_open') === '0') sb.classList.add('collapsed');
+    var isMobile = window.innerWidth <= 600;
+    if (isMobile) {
+        // Always start collapsed on mobile
+        sb.classList.add('collapsed');
+    } else if (localStorage.getItem('sc_sidebar_open') === '0') {
+        sb.classList.add('collapsed');
+    }
 
     var titleEl = document.getElementById('chatTitle');
     if (titleEl) {
@@ -4272,6 +4429,61 @@ scAuth.onAuthStateChanged(function(user) {
 
 // Init UI on load
 document.addEventListener('DOMContentLoaded', function() { scUpdateAuthUI(); });
+
+// ── Drag-and-drop file loading ────────────────────────────
+(function() {
+    var overlay = document.getElementById('dropOverlay');
+    var dragCounter = 0; // track enter/leave pairs
+
+    document.addEventListener('dragenter', function(e) {
+        // Only react to file drags
+        if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+        dragCounter++;
+        if (overlay) overlay.classList.add('active');
+        e.preventDefault();
+    });
+
+    document.addEventListener('dragleave', function(e) {
+        dragCounter--;
+        if (dragCounter <= 0) {
+            dragCounter = 0;
+            if (overlay) overlay.classList.remove('active');
+        }
+    });
+
+    document.addEventListener('dragover', function(e) {
+        if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    });
+
+    document.addEventListener('drop', function(e) {
+        dragCounter = 0;
+        if (overlay) overlay.classList.remove('active');
+
+        // Only intercept file drops — let internal message reorder still work
+        var files = e.dataTransfer && e.dataTransfer.files;
+        if (!files || files.length === 0) return;
+
+        var file = files[0];
+        if (!file.name.match(/\.(txt|html|htm)$/i)) {
+            alert('Please drop a .txt file to load a chat.');
+            e.preventDefault();
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        var reader = new FileReader();
+        reader.onload = function() {
+            if (typeof parseAndLoadChatFile === 'function') {
+                parseAndLoadChatFile(reader.result, file.name);
+            }
+        };
+        reader.readAsText(file);
+    });
+})();
 </script>
 
 
