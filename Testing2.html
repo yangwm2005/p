@@ -3057,6 +3057,10 @@ body.force-desktop .section{border-radius:12px!important;box-shadow:0 2px 10px r
             <i class="fas fa-stream"></i>
             <span class="fab-label">Open Workflowy</span>
         </button>
+        <button class="floating-btn notion-mail" id="open-notion-mail">
+            <i class="fas fa-envelope"></i>
+            <span class="fab-label">Open Notion Mail</span>
+        </button>
         <button class="floating-btn notion-calendar" id="open-notion-calendar">
             <i class="fas fa-calendar-alt"></i>
             <span class="fab-label">Open Notion Calendar</span>
@@ -3160,17 +3164,17 @@ body.force-desktop .section{border-radius:12px!important;box-shadow:0 2px 10px r
             <span id="unchecked-count-display" style="font-size: 13px; color: #7f8c8d; margin-left: 8px;">0 unchecked</span>
         </div>
         <div class="move-unchecked-buttons">
-            <button class="move-btn today" id="move-unchecked-today">
+            <button class="move-btn today" id="move-unchecked-today" disabled>
                 <i class="fas fa-calendar-day"></i>
                 Today
                 <span class="move-btn-count" id="unchecked-today-count">0</span>
             </button>
-            <button class="move-btn tomorrow" id="move-unchecked-tomorrow">
+            <button class="move-btn tomorrow" id="move-unchecked-tomorrow" disabled>
                 <i class="fas fa-calendar-plus"></i>
                 Tomorrow
                 <span class="move-btn-count" id="unchecked-tomorrow-count">0</span>
             </button>
-            <button class="move-btn specific" id="move-unchecked-specific">
+            <button class="move-btn specific" id="move-unchecked-specific" disabled>
                 <i class="far fa-calendar-alt"></i>
                 Specific Date
                 <span class="move-btn-count" id="unchecked-specific-count">0</span>
@@ -3697,10 +3701,6 @@ body.force-desktop .section{border-radius:12px!important;box-shadow:0 2px 10px r
         let todosData = {};
         let goalsData = {};
         let recentNotesData = [];
-        // Tombstone log: records deleted item IDs so other devices remove them on sync.
-        // Key format: "type:date:id"  (e.g. "note:2026-05-23:42")
-        // Value: timestamp of deletion (used for pruning entries older than 30 days).
-        let deletedIds = {};
 
         // Global variables
         let currentDate = new Date();
@@ -4064,7 +4064,7 @@ function toggleAutoSave() {
 
         // Setup floating button event listeners for NEW BROWSER WINDOWS
         function setupFloatingButtons() {
-            // Self-chat button2 - opens in new browser window
+            // Self-chat 2.2 button - opens in new browser window
             document.getElementById('open-selfchat2').addEventListener('click', () => {
                 openExternalWindow(
                     'https://yangwm2005.github.io/p/Selfchat-v22.html', 
@@ -4766,7 +4766,7 @@ function toggleAutoSave() {
             return `${year}-${month}-${day}`;
         }
 
-        // Parse a YYYY-MM-DD string as LOCAL midnight (avoids UTC offset day-shift bug)
+        // Parse YYYY-MM-DD as LOCAL midnight (prevents UTC offset shifting date by one day)
         function parseDateLocal(str) {
             const [y, m, d] = str.split('-').map(Number);
             return new Date(y, m - 1, d);
@@ -5821,6 +5821,16 @@ function toggleAutoSave() {
             document.getElementById('unchecked-today-count').textContent = totalUnchecked;
             document.getElementById('unchecked-tomorrow-count').textContent = totalUnchecked;
             document.getElementById('unchecked-specific-count').textContent = totalUnchecked;
+            
+            const moveButtons = [
+                document.getElementById('move-unchecked-today'),
+                document.getElementById('move-unchecked-tomorrow'),
+                document.getElementById('move-unchecked-specific')
+            ];
+            
+            moveButtons.forEach(btn => {
+                btn.disabled = totalUnchecked === 0;
+            });
         }
 
         // NEW: Move all unchecked items to a target date
@@ -5882,9 +5892,6 @@ function toggleAutoSave() {
             }
             
             if (movedCount > 0) {
-                // Navigate to the target date so the user sees the moved items
-                selectedDate = new Date(targetDate);
-                updateDateDisplays();
                 loadDailyView();
                 saveToLocalStorage();
                 triggerAutoSave();
@@ -5893,8 +5900,6 @@ function toggleAutoSave() {
                 updateWeekNavigation();
                 
                 showNotification(`Moved ${movedCount} unchecked item${movedCount !== 1 ? 's' : ''} to ${formatDateDisplay(targetDate)}`);
-            } else {
-                showNotification('No unchecked items to move');
             }
         }
 
@@ -6706,8 +6711,6 @@ function toggleAutoSave() {
                 const index = data[itemDate].findIndex(item => item.id === itemId);
                 if (index !== -1) {
                     deletedIndex = index;
-                    // Record tombstone so other devices remove this item on next sync
-                    deletedIds[`${itemType}:${itemDate}:${itemId}`] = Date.now();
                     data[itemDate].splice(index, 1);
                     loadDailyView();
                     updateStats();
@@ -6753,8 +6756,6 @@ function toggleAutoSave() {
             if (goalsData[dateString]) {
                 const index = goalsData[dateString].findIndex(g => g.id === goalId);
                 if (index !== -1) {
-                    // Record tombstone so other devices remove this goal on next sync
-                    deletedIds[`goal:${dateString}:${goalId}`] = Date.now();
                     goalsData[dateString].splice(index, 1);
                     loadDailyView();
                     updateStats();
@@ -6789,11 +6790,6 @@ function toggleAutoSave() {
         function confirmDeleteDay() {
             const dateString = formatDate(selectedDate);
             
-            // Tombstone every item in the day being deleted
-            const _now = Date.now();
-            (notesData[dateString] || []).forEach(i => { deletedIds[`note:${dateString}:${i.id}`] = _now; });
-            (todosData[dateString] || []).forEach(i => { deletedIds[`todo:${dateString}:${i.id}`] = _now; });
-            (goalsData[dateString] || []).forEach(i => { deletedIds[`goal:${dateString}:${i.id}`] = _now; });
             delete notesData[dateString];
             delete todosData[dateString];
             delete goalsData[dateString];
@@ -6857,11 +6853,6 @@ function toggleAutoSave() {
             const data = itemType === 'note' ? notesData : todosData;
             const toDateString = formatDate(toDate);
             
-            if (fromDate === toDateString) {
-                showNotification('Item is already on this date');
-                return;
-            }
-            
             if (!data[toDateString]) {
                 data[toDateString] = [];
             }
@@ -6877,17 +6868,13 @@ function toggleAutoSave() {
                     
                     data[toDateString].push(item);
                     
-                    // Navigate to target date so user sees the moved item
-                    selectedDate = new Date(toDate);
-                    updateDateDisplays();
-                    updateWeekNavigation();
-                    updateMiniCalendar();
                     loadDailyView();
                     updateStats();
                     saveToLocalStorage();
                     triggerAutoSave();
                     
-                    showNotification(`Moved to ${formatDateDisplay(toDate)}`);
+                    updateMiniCalendar();
+                    updateWeekNavigation();
                 }
             }
         }
@@ -6895,11 +6882,6 @@ function toggleAutoSave() {
         // NEW: Move goal to a different date
         function moveGoalToDate(goalId, fromDate, toDate) {
             const toDateString = formatDate(toDate);
-            
-            if (fromDate === toDateString) {
-                showNotification('Goal is already on this date');
-                return;
-            }
             
             if (!goalsData[toDateString]) {
                 goalsData[toDateString] = [];
@@ -6916,15 +6898,13 @@ function toggleAutoSave() {
                     
                     goalsData[toDateString].push(goal);
                     
-                    // Navigate to target date so user sees the moved goal
-                    selectedDate = new Date(toDate);
-                    updateDateDisplays();
-                    updateWeekNavigation();
-                    updateMiniCalendar();
                     loadDailyView();
                     updateStats();
                     saveToLocalStorage();
                     triggerAutoSave();
+                    
+                    updateMiniCalendar();
+                    updateWeekNavigation();
                     
                     showNotification(`Goal moved to ${formatDateDisplay(toDate)}`);
                 }
@@ -6976,7 +6956,7 @@ function toggleAutoSave() {
             ]);
             
             const recentNotes = Array.from(allDates).map(dateString => {
-                const date = new Date(dateString);
+                const date = parseDateLocal(dateString);
                 
                 let preview = '';
                 let itemCount = 0;
@@ -7047,7 +7027,7 @@ function toggleAutoSave() {
                 const countBadge = dateData.totalCount > 0 ? 
                     `<span class="recent-note-count">${dateData.totalCount}</span>` : '';
                 
-                const shortDate = new Date(note.date).toLocaleDateString('en-US', { 
+                const shortDate = parseDateLocal(note.date).toLocaleDateString('en-US', { 
                     month: 'short', 
                     day: 'numeric' 
                 });
@@ -7055,7 +7035,7 @@ function toggleAutoSave() {
                 let tooltipHTML = `
                     <div class="recent-note-tooltip">
                         <div class="recent-note-tooltip-header">
-                            <div class="recent-note-tooltip-date">${formatDateDisplay(new Date(note.date))}</div>
+                            <div class="recent-note-tooltip-date">${formatDateDisplay(parseDateLocal(note.date))}</div>
                             <div class="recent-note-tooltip-stats">
                 `;
                 
@@ -7658,7 +7638,6 @@ function toggleAutoSave() {
                 todos: todosData,
                 goals: goalsData,
                 recentNotes: recentNotesData,
-                deletedIds: deletedIds,
                 lastSave: new Date().toISOString()
             };
             
@@ -7681,7 +7660,6 @@ function toggleAutoSave() {
                         todosData = data.todos;
                         goalsData = data.goals;
                         recentNotesData = data.recentNotes || recentNotesData;
-                        deletedIds = data.deletedIds || {};
                         
                         loadDailyView();
                         loadRecentNotes();
@@ -7706,7 +7684,6 @@ function toggleAutoSave() {
                         todosData = data.todos;
                         goalsData = data.goals;
                         recentNotesData = data.recentNotes || recentNotesData;
-                        deletedIds = data.deletedIds || {};
                         
                         loadDailyView();
                         loadRecentNotes();
@@ -8525,10 +8502,6 @@ function toggleAutoSave() {
             configurable: true
         });
         let _fbSyncTimer = null, _fbSyncing = false, _fbLastSavedAt = 0, _fbPollInterval = null;
-        // _fbLastCloudTs: the cloud's own updatedAt value the last time we fetched.
-        // The poll fires only when cloud has a NEWER updatedAt than this.
-        // Stored in localStorage so it survives page reloads — no more "need to refresh".
-        let _fbLastCloudTs = parseInt(localStorage.getItem('rn_lastCloudTs') || '0');
 
         function isFirebaseConfigured(){
             return FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId;
@@ -8556,31 +8529,7 @@ function toggleAutoSave() {
                             `✓ Signed in as <strong>${user.displayName||''}</strong> (${user.email||''})`;
                         fbBadge(fbIsAutoSyncEnabled()?'ok':'off');
                         if(fbIsAutoSyncEnabled()){
-                            // Smart startup: only pull from cloud if cloud is newer
-                            // than last local sync, or if there is no local data yet.
-                            (async () => {
-                                try {
-                                    const snap = await fbDb.collection('users').doc(fbUser.uid).get();
-                                    if (snap.exists) {
-                                        const cloudTs = snap.data().updatedAt || 0;
-                                        const localTs = new Date(localStorage.getItem('cgm_lastLocalSave') || 0).getTime();
-                                        const hasLocal = Object.keys(notesData || {}).length > 0 ||
-                                                         Object.keys(todosData || {}).length > 0;
-                                        if (cloudTs > localTs + 3000 || !hasLocal) {
-                                            await fbLoadAll(true);
-                                            if (cloudTs > localTs + 3000)
-                                                fbStatus('🔄 Updated from cloud (newer data found)', true);
-                                        } else {
-                                            fbBadge('ok');
-                                        }
-                                    } else {
-                                        // Nothing in cloud yet — push local data up
-                                        if (Object.keys(notesData || {}).length > 0)
-                                            await fbSaveAll(true);
-                                    }
-                                } catch(_) { fbBadge('ok'); }
-                                fbStartPoll();
-                            })();
+                            fbLoadAll(true).then(()=>fbStartPoll());
                         }
                     } else {
                         fbUser = null;
@@ -8727,24 +8676,18 @@ function toggleAutoSave() {
             if(_fbSyncing) return;
             _fbSyncing = true; fbBadge('syncing');
             try {
-                _pruneTombstones();
                 const payload = {
                     remnoteData: {
                         notes:       notesData,
                         todos:       todosData,
                         goals:       goalsData,
-                        recentNotes: recentNotesData,
-                        deletedIds:  deletedIds
+                        recentNotes: recentNotesData
                     },
                     updatedAt: Date.now()
                 };
                 const docRef = fbDb.collection('users').doc(fbUser.uid);
                 await docRef.set(payload, { merge: true });
-                const savedTs = Date.now();
-                _fbLastSavedAt = savedTs;
-                _fbLastCloudTs = savedTs;
-                localStorage.setItem('rn_lastCloudTs', String(savedTs));
-                fbBadge('ok');
+                fbBadge('ok'); _fbLastSavedAt = Date.now();
                 if(!silent) fbStatus('✓ Saved to cloud', true);
             } catch(e){
                 fbBadge('error');
@@ -8752,131 +8695,28 @@ function toggleAutoSave() {
             } finally { _fbSyncing = false; }
         }
 
-        // Prune tombstones older than 30 days to keep the log small.
-        function _pruneTombstones() {
-            const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-            for (const key of Object.keys(deletedIds)) {
-                if (deletedIds[key] < cutoff) delete deletedIds[key];
-            }
-        }
-
-        // Merge two date-keyed data stores (notes/todos/goals).
-        // Cloud entries win per date — but any date that ONLY exists locally is kept.
-        // Items present in the combined tombstone log are stripped out regardless.
-        // The currently-focused (in-progress) item's text is always preserved.
-        function _mergeStore(local, cloud, combinedTombstones, typePrefix, focusItemId, focusText, isGoal) {
-            const merged = { ...local };           // start with all local dates
-            for (const dateKey of Object.keys(cloud)) {
-                const cloudItems = cloud[dateKey];
-                const localItems = local[dateKey];
-                if (!localItems || localItems.length === 0) {
-                    merged[dateKey] = cloudItems;
-                } else {
-                    // Cloud wins, but preserve in-progress edit
-                    merged[dateKey] = cloudItems.map(cloudItem => {
-                        const id = cloudItem.id;
-                        if (focusItemId && parseInt(focusItemId) === id && focusText !== null) {
-                            return isGoal
-                                ? { ...cloudItem, text: focusText }
-                                : { ...cloudItem, content: focusText };
-                        }
-                        return cloudItem;
-                    });
-                    // Keep local-only items (not yet pushed to cloud) unless tombstoned
-                    const cloudIds = new Set(cloudItems.map(i => i.id));
-                    const localOnly = localItems.filter(i => {
-                        if (cloudIds.has(i.id)) return false;          // already in cloud
-                        const tk = `${typePrefix}:${dateKey}:${i.id}`;
-                        return !combinedTombstones[tk];                 // not deleted elsewhere
-                    });
-                    if (localOnly.length > 0) {
-                        merged[dateKey] = [...merged[dateKey], ...localOnly];
-                    }
-                }
-            }
-            // Also apply tombstones to dates that only exist locally
-            // (cloud doesn't have the date at all, but items were deleted on another device)
-            for (const dateKey of Object.keys(local)) {
-                if (cloud[dateKey]) continue;   // already handled above
-                if (!merged[dateKey]) continue;
-                merged[dateKey] = merged[dateKey].filter(i => {
-                    const tk = `${typePrefix}:${dateKey}:${i.id}`;
-                    return !combinedTombstones[tk];
-                });
-            }
-            return merged;
-        }
-
         async function fbLoadAll(silent=false){
             if(!fbUser || !fbDb){ fbStatus('Not signed in.', false); return; }
             if(!silent) fbStatus('⬇ Loading from cloud…', true, true);
             fbBadge('syncing');
-            _fbLoadInProgress = true;
             try {
                 const docRef = fbDb.collection('users').doc(fbUser.uid);
                 const snap   = await docRef.get();
                 if(!snap.exists){ fbBadge('ok'); if(!silent) fbStatus('⚠ No cloud data found yet.', false, true); return; }
                 const data = snap.data();
                 if(!data.remnoteData){ fbBadge('error'); fbStatus('✗ Unrecognised data format.', false, true); return; }
-
-                // ── Snapshot any in-progress edit before touching the DOM ──────
-                const activeEl = document.activeElement;
-                let _focusItemId = null, _focusType = null, _focusText = null, _focusIsGoal = false;
-                if (activeEl && (activeEl.classList.contains('bullet-content') || activeEl.classList.contains('goal-text'))) {
-                    const itemEl = activeEl.closest('[data-id]');
-                    if (itemEl) {
-                        _focusItemId = itemEl.dataset.id;
-                        _focusType   = itemEl.dataset.type || (activeEl.classList.contains('goal-text') ? 'goal' : null);
-                        _focusText   = activeEl.textContent;
-                        _focusIsGoal = activeEl.classList.contains('goal-text');
-                    }
-                }
-
-                // ── Merge: cloud wins per date, local-only dates are preserved ─
-                // Combine local + cloud tombstones so deletions from either device are honoured.
                 const d = data.remnoteData;
-                const cloudTombstones = d.deletedIds || {};
-                deletedIds = { ...deletedIds, ...cloudTombstones };  // union of both sets
-                _pruneTombstones();
-
-                if (d.notes) notesData = _mergeStore(notesData, d.notes, deletedIds, 'note', _focusItemId, _focusText, false);
-                if (d.todos) todosData = _mergeStore(todosData, d.todos, deletedIds, 'todo', _focusItemId, _focusText, false);
-                if (d.goals) goalsData = _mergeStore(goalsData, d.goals, deletedIds, 'goal', _focusItemId, _focusText, true);
-                if (d.recentNotes) recentNotesData = d.recentNotes;
-
-                saveToLocalStorage();   // _fbLoadInProgress=true suppresses the auto-push here
+                if(d.notes)       notesData       = {...notesData,       ...d.notes};
+                if(d.todos)       todosData       = {...todosData,       ...d.todos};
+                if(d.goals)       goalsData       = {...goalsData,       ...d.goals};
+                if(d.recentNotes) recentNotesData = d.recentNotes;
+                saveToLocalStorage();
                 loadDailyView(); loadRecentNotes(); updateStats();
-
-                // ── Restore focus to the item the user was editing ────────────
-                if (_focusItemId) {
-                    const sel = _focusIsGoal
-                        ? `.goal-item[data-id="${_focusItemId}"] .goal-text`
-                        : `.bullet-item[data-id="${_focusItemId}"] .bullet-content`;
-                    const restored = document.querySelector(sel);
-                    if (restored) {
-                        restored.focus();
-                        const range = document.createRange();
-                        const sel2  = window.getSelection();
-                        range.selectNodeContents(restored);
-                        range.collapse(false);
-                        sel2.removeAllRanges();
-                        sel2.addRange(range);
-                    }
-                }
-
-                // Record the cloud's own timestamp as our baseline for future polls.
-                // Using the cloud's updatedAt (not Date.now()) means polls will correctly
-                // detect any change that happened after this load, even across page reloads.
-                const cloudTs = data.updatedAt || Date.now();
-                _fbLastCloudTs = cloudTs;
-                localStorage.setItem('rn_lastCloudTs', String(cloudTs));
                 _fbLastSavedAt = Date.now(); fbBadge('ok');
                 if(!silent) fbStatus('✓ Loaded from cloud', true);
             } catch(e){
                 fbBadge('error');
                 if(!silent) fbStatus('✗ Load failed: '+e.message, false, true);
-            } finally {
-                _fbLoadInProgress = false;
             }
         }
 
@@ -8888,15 +8728,11 @@ function toggleAutoSave() {
 
         async function fbPollChanges(){
             if(!fbIsAutoSyncEnabled()||!fbUser||_fbSyncing||!fbDb) return;
-            // Never interrupt the user mid-typing — skip if typed in last 3 s
-            if(typeof _isTyping === 'function' && _isTyping()) return;
             try {
                 const snap = await fbDb.collection('users').doc(fbUser.uid).get();
                 if(!snap.exists) return;
                 const remoteUpdatedAt = snap.data().updatedAt || 0;
-                // Compare against the cloud timestamp we last saw, not our local clock.
-                // This correctly detects changes from another device even after a page reload.
-                if(remoteUpdatedAt > _fbLastCloudTs + 2000){
+                if(remoteUpdatedAt > _fbLastSavedAt + 5000){
                     fbBadge('syncing');
                     await fbLoadAll(true);
                     fbStatus('🔄 Updated from another device', true);
@@ -8904,37 +8740,19 @@ function toggleAutoSave() {
             } catch(_){}
         }
 
-        function fbStartPoll(){ fbStopPoll(); _fbPollInterval = setInterval(fbPollChanges, 15000); }
+        function fbStartPoll(){ fbStopPoll(); _fbPollInterval = setInterval(fbPollChanges, 30000); }
         function fbStopPoll(){ if(_fbPollInterval){ clearInterval(_fbPollInterval); _fbPollInterval=null; } }
 
         // Patch saveToLocalStorage to trigger auto-sync on every write + record timestamp
-        let _fbLoadInProgress = false;  // suppress auto-push during cloud load
         const _origSave = saveToLocalStorage;
         window.saveToLocalStorage = function(){
             _origSave();
-            if (!_fbLoadInProgress) fbScheduleSync();
+            fbScheduleSync();
             // Update local-save timestamp
             const now = new Date();
             localStorage.setItem('cgm_lastLocalSave', now.toISOString());
             cgmUpdateTimestamps();
         };
-
-        // ── Typing guard: track last keystroke in any editable element ──────
-        // Prevents cloud poll from wiping text the user is actively writing.
-        let _lastTypingAt = 0;
-        document.addEventListener('input', e => {
-            if (e.target.isContentEditable ||
-                e.target.tagName === 'TEXTAREA' ||
-                e.target.tagName === 'INPUT') {
-                _lastTypingAt = Date.now();
-            }
-        }, true);
-        function _isTyping() { return Date.now() - _lastTypingAt < 3000; }
-
-        // Poll immediately when user switches back to the tab / unlocks device.
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') fbPollChanges();
-        });
 
         // ── Inline ctrl-bar Google Cloud Sync dropdown ────────────────
         let _cgmOpen = false;
