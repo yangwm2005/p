@@ -1500,6 +1500,8 @@
           <button class="ud-item" onclick="fbSaveAll(false)">💾 Save to cloud</button>
           <button class="ud-item" onclick="fbLoadAll(false)">⬇ Load from cloud</button>
           <div class="ud-sep"></div>
+          <button class="ud-item" onclick="showRecoveryDialog()" style="color:#b45309;">🔒 Recover Data</button>
+          <div class="ud-sep"></div>
           <button class="ud-item danger" onclick="cloudSignOut()">⎋ Sign out</button>
         </div>
       </div>
@@ -3374,6 +3376,10 @@ function _getShareToken(projectId) {
 function _setShareToken(projectId, token) {
   if (token) _shareTokens[projectId] = token;
   else        delete _shareTokens[projectId];
+  // Also stamp the token onto the project object itself so it travels with
+  // smb_projects in every saveProjects() call and is never separated.
+  const proj = _projects.find(p => p.id === projectId);
+  if (proj) proj.shareToken = token || null;
   // Persist to Firestore so all devices stay in sync
   saveShareTokens();
 }
@@ -3381,6 +3387,9 @@ function _setShareToken(projectId, token) {
 // ── Persist share tokens to Firestore (per-user, cross-device) ──────────────
 async function saveShareTokens() {
   if (!fbUser || !fbDb) return;
+  // Never write an empty map — that would erase tokens that may already exist
+  // in Firestore from another device session.
+  if (Object.keys(_shareTokens).length === 0) return;
   try {
     await fbDb.collection('users').doc(fbUser.uid).set(
       { smb_shareTokens: _shareTokens }, { merge: true }
@@ -3389,13 +3398,37 @@ async function saveShareTokens() {
 }
 
 // ── Load share tokens from Firestore on sign-in ───────────────────────────
+// Merges from two sources so tokens are never lost:
+//   1. smb_shareTokens field (dedicated map, set by saveShareTokens)
+//   2. shareToken embedded in each project object (set by _setShareToken → sanitizeProject)
+// Source 2 is the durable fallback — it travels with smb_projects in every
+// saveProjects() call and survives even if the dedicated field is erased.
 async function loadShareTokens() {
   if (!fbUser || !fbDb) return;
   try {
     const doc = await fbDb.collection('users').doc(fbUser.uid).get();
-    if (doc.exists && doc.data().smb_shareTokens) {
-      _shareTokens = doc.data().smb_shareTokens;
+    if (!doc.exists) return;
+    const d = doc.data();
+    // Source 1: dedicated map
+    if (d.smb_shareTokens && Object.keys(d.smb_shareTokens).length > 0) {
+      Object.assign(_shareTokens, d.smb_shareTokens);
     }
+    // Source 2: embedded in project objects (the durable fallback)
+    if (Array.isArray(d.smb_projects)) {
+      for (const p of d.smb_projects) {
+        if (p.id && p.shareToken) {
+          _shareTokens[p.id] = _shareTokens[p.id] || p.shareToken;
+        }
+      }
+    }
+    // Also rebuild from in-memory _projects (already loaded by loadProjects)
+    for (const p of _projects) {
+      if (p.id && p.shareToken) {
+        _shareTokens[p.id] = _shareTokens[p.id] || p.shareToken;
+      }
+    }
+    // If we recovered any tokens, persist the merged map back
+    if (Object.keys(_shareTokens).length > 0) saveShareTokens();
   } catch(e) { console.warn('Could not load share tokens:', e); }
 }
 
@@ -3403,13 +3436,13 @@ async function loadShareTokens() {
 function _genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 
 // ── Toast ──────────────────────────────────────────────
-function toast(msg, type='info') {
+function toast(msg, type='info', duration=3500) {
   const c = document.getElementById('toastContainer');
   const t = document.createElement('div');
   t.className = 'toast ' + type;
   t.textContent = msg;
   c.appendChild(t);
-  setTimeout(() => t.remove(), 3500);
+  setTimeout(() => t.remove(), duration);
 }
 
 // ── Format timestamp ───────────────────────────────────
@@ -3556,9 +3589,15 @@ function initFirebase() {
         renderProjectGrid();
         // load share tokens from Firestore so sharing settings work on every device
         await loadShareTokens();
-        // re-subscribe share listener if we have a token stored
+        // re-subscribe share listener for the active project if it is shared
         const st = _getShareToken(_activeProjectId);
         if (st) subscribeShare(_activeProjectId);
+        // Also push any recovered shareTokens back into the project objects
+        // so future saveProjects() calls will embed them correctly
+        for (const [pid, tok] of Object.entries(_shareTokens)) {
+          const proj = _projects.find(p => p.id === pid);
+          if (proj && !proj.shareToken) { proj.shareToken = tok; }
+        }
         // check join URL
         checkJoinToken();
       } else {
@@ -4188,10 +4227,36 @@ async function loadProjects(silent = false) {
         if (!cloudMap.has(lp.id)) merged.push(lp);
       }
       _projects = merged;
+      // Rebuild _shareTokens from shareToken embedded in each project object.
+      // This is the durable source — it never gets separated from the project data.
+      for (const p of _projects) {
+        if (p.id && p.shareToken) {
+          _shareTokens[p.id] = _shareTokens[p.id] || p.shareToken;
+        }
+      }
       // Record cloud's own timestamp as baseline for poll
       const cloudTs = doc.data().smb_updatedAt || 0;
       _lastCloudTs = cloudTs;
       localStorage.setItem('smb_lastCloudTs', String(cloudTs));
+    }
+    // ── Corruption guard ─────────────────────────────────────────────────
+    // If cloud returned nothing (or only the blank default), check whether a
+    // richer local backup exists.  If so, toast a warning so the user can
+    // recover via the Recovery panel instead of silently accepting blank data.
+    const realCloudCount = _projects.filter(
+      p => p.id !== DEFAULT_PROJECT_ID && p.name && p.name !== 'Untitled Manuscript'
+    ).length;
+    if (realCloudCount === 0 && fbUser) {
+      const backups = _readLocalBackups(fbUser.uid);
+      const richBackup = backups.find(b =>
+        b.projects && b.projects.filter(p => p.id !== DEFAULT_PROJECT_ID && p.name !== 'Untitled Manuscript').length > 0
+      );
+      if (richBackup) {
+        // Don't auto-restore — let the user decide.  Show a prominent warning.
+        setTimeout(() => {
+          toast('⚠️ Cloud appears empty but a local backup exists — use ☁ → Recover Data to restore your projects', 'error', 8000);
+        }, 1000);
+      }
     }
     ensureDefaultProject();
     // Open the most recently updated project (not just first in array)
@@ -4234,11 +4299,12 @@ function sanitizeProject(p) {
     updatedAt:   p.data.updatedAt   || 0
   } : null;
   return {
-    id:        p.id        || '',
-    name:      p.name      || '',
-    data:      data,
-    createdAt: p.createdAt || 0,
-    updatedAt: p.updatedAt || 0
+    id:         p.id         || '',
+    name:       p.name       || '',
+    data:       data,
+    createdAt:  p.createdAt  || 0,
+    updatedAt:  p.updatedAt  || 0,
+    shareToken: p.shareToken || null   // stored with project so it survives any Firestore write
   };
 }
 
@@ -4257,8 +4323,28 @@ async function saveProjects(silent = true) {
     _lastCloudTs   = savedTs;
     _localEditTs   = 0;   // local is now clean — matches cloud
     localStorage.setItem('smb_lastCloudTs', String(savedTs));
+    // ── Rolling local backup (3 slots) — last-resort data recovery ──────
+    try { _writeLocalBackup(fbUser.uid, sanitized, savedTs); } catch(_) {}
     updateCloudBar();
   } catch(e) { if (!silent) toast('Save failed: ' + e.message, 'error'); }
+}
+
+// ── Local backup helpers ───────────────────────────────────────────────────
+// Keeps 3 rolling snapshots in localStorage keyed by user uid.
+const BACKUP_KEY = uid => 'smb_backup_' + uid;
+function _writeLocalBackup(uid, projects, ts) {
+  // Never backup a blank-only state — that's the corruption we're guarding against
+  const real = projects.filter(p => p.id !== DEFAULT_PROJECT_ID && p.name && p.name !== 'Untitled Manuscript');
+  if (real.length === 0) return;
+  const key  = BACKUP_KEY(uid);
+  let slots  = [];
+  try { slots = JSON.parse(localStorage.getItem(key) || '[]'); } catch(_) {}
+  slots.unshift({ projects, savedAt: ts });
+  slots = slots.slice(0, 3); // keep newest 3
+  localStorage.setItem(key, JSON.stringify(slots));
+}
+function _readLocalBackups(uid) {
+  try { return JSON.parse(localStorage.getItem(BACKUP_KEY(uid)) || '[]'); } catch(_) { return []; }
 }
 
 // ── Get snapshot of current editor state ──────────────
@@ -4473,6 +4559,186 @@ function loadFontSize() {
 }
 
 // ── Boot ───────────────────────────────────────────────
+
+// ══════════════════════════════════════════════════════
+// DATA RECOVERY DIALOG
+// Lets the owner restore projects from:
+//   1. Local device backups (localStorage, up to 3 slots)
+//   2. Shared Firestore docs (shared_projects/smb_{token})
+// ══════════════════════════════════════════════════════
+async function showRecoveryDialog() {
+  if (!fbUser) { toast('Sign in first', 'error'); return; }
+
+  const ov = document.createElement('div');
+  ov.className = 'overlay';
+  ov.innerHTML = `
+    <div class="share-dialog" style="max-width:560px;">
+      <h2>🔒 Recover Data</h2>
+      <div id="_recBody" style="min-height:80px;"><div style="text-align:center;padding:20px;color:var(--text-muted)">Scanning…</div></div>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost btn-sm" id="_recClose">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#_recClose').onclick = () => ov.remove();
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+
+  const body = ov.querySelector('#_recBody');
+
+  // 1. Local backups
+  const backups = _readLocalBackups(fbUser.uid);
+  const richBackups = backups.filter(b =>
+    b.projects && b.projects.filter(p => p.id !== DEFAULT_PROJECT_ID && p.name !== 'Untitled Manuscript').length > 0
+  );
+
+  // 2. Shared project docs — find all tokens stored for this user
+  const sharedSources = [];
+  const tokens = Object.values(_shareTokens || {});
+  for (const token of tokens) {
+    try {
+      const snap = await sharedRef(token).get();
+      if (snap.exists && snap.data().data) {
+        const d = snap.data();
+        sharedSources.push({ token, name: d.data?.mainClaim || 'Shared Manuscript', updatedAt: d.updatedAt });
+      }
+    } catch(_) {}
+  }
+
+  let html = '';
+
+  if (richBackups.length === 0 && sharedSources.length === 0) {
+    html = `<div style="text-align:center;padding:24px;color:var(--text-muted);">
+      <div style="font-size:2.5rem;margin-bottom:12px;">😔</div>
+      <p>No recovery sources found on this device.<br>
+      Try opening this app on a device where you previously saved your work and use the manual export (⬇ Save Project) to create a backup file you can import here.</p>
+    </div>`;
+  } else {
+    if (richBackups.length > 0) {
+      html += `<div class="share-section">
+        <div class="share-section-title">📦 Local device backups (this browser)</div>
+        <div style="font-size:1.3rem;color:var(--text-muted);margin-bottom:10px;">
+          These snapshots were saved automatically on this device during previous sessions.
+        </div>`;
+      richBackups.forEach((b, i) => {
+        const realProjects = b.projects.filter(p => p.id !== DEFAULT_PROJECT_ID && p.name !== 'Untitled Manuscript');
+        const names = realProjects.map(p => p.name).join(', ');
+        const ts = b.savedAt ? new Date(b.savedAt).toLocaleString() : 'Unknown time';
+        html += `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;">
+          <div style="font-weight:600;margin-bottom:4px;">${escHtml(ts)}</div>
+          <div style="color:var(--text-muted);font-size:1.2rem;margin-bottom:8px;">${realProjects.length} project(s): ${escHtml(names)}</div>
+          <button class="btn btn-primary btn-sm" data-rec-local="${i}">⬆ Restore this backup</button>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+    if (sharedSources.length > 0) {
+      html += `<div class="share-section">
+        <div class="share-section-title">🔗 Shared project copies (Firestore)</div>
+        <div style="font-size:1.3rem;color:var(--text-muted);margin-bottom:10px;">
+          These are live copies stored in shared project documents — your collaborators' data is safe there.
+        </div>`;
+      sharedSources.forEach((s, i) => {
+        const ts = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : 'Unknown';
+        html += `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;">
+          <div style="font-weight:600;margin-bottom:4px;">${escHtml(s.name)}</div>
+          <div style="color:var(--text-muted);font-size:1.2rem;margin-bottom:8px;">Last updated: ${escHtml(ts)}</div>
+          <button class="btn btn-primary btn-sm" data-rec-shared="${i}">⬆ Restore from shared copy</button>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+  }
+
+  body.innerHTML = html;
+
+  // Wire local backup restore buttons
+  body.querySelectorAll('[data-rec-local]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = parseInt(btn.dataset.recLocal);
+      const b = richBackups[i];
+      if (!b) return;
+      if (!confirm(`Restore ${b.projects.filter(p=>p.name!=='Untitled Manuscript').length} project(s) from ${new Date(b.savedAt).toLocaleString()}?
+
+This will MERGE them with any current projects (existing projects with the same ID will keep whichever version is newer).`)) return;
+      // Merge backup into _projects (backup wins if newer)
+      const backupMap = new Map(b.projects.map(p => [p.id, p]));
+      const existingMap = new Map(_projects.map(p => [p.id, p]));
+      const merged = [..._projects];
+      for (const [id, bp] of backupMap) {
+        if (id === DEFAULT_PROJECT_ID) continue;
+        const ep = existingMap.get(id);
+        if (!ep) {
+          merged.push(bp); // new project from backup
+        } else {
+          const bTs = bp.data?.updatedAt || bp.updatedAt || 0;
+          const eTs = ep.data?.updatedAt || ep.updatedAt || 0;
+          if (bTs > eTs) {
+            // Replace with backup version
+            const idx = merged.findIndex(p => p.id === id);
+            if (idx >= 0) merged[idx] = bp;
+          }
+        }
+      }
+      _projects = merged.filter(p => !(p.id === DEFAULT_PROJECT_ID && merged.length > 1));
+      // Rebuild _shareTokens from restored project objects
+      for (const p of _projects) { if (p.id && p.shareToken) _shareTokens[p.id] = p.shareToken; }
+      _initialLoadDone = true;
+      await saveProjects(false);
+      await saveShareTokens();
+      renderProjectGrid();
+      // Re-subscribe active project's share listener if it has a token
+      const rSt = _getShareToken(_activeProjectId);
+      if (rSt) subscribeShare(_activeProjectId);
+      toast(`✅ Restored ${b.projects.filter(p=>p.name!=='Untitled Manuscript').length} project(s) from backup`, 'success', 5000);
+      ov.remove();
+    });
+  });
+
+  // Wire shared doc restore buttons
+  body.querySelectorAll('[data-rec-shared]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = parseInt(btn.dataset.recShared);
+      const s = sharedSources[i];
+      if (!s) return;
+      try {
+        const snap = await sharedRef(s.token).get();
+        if (!snap.exists || !snap.data().data) { toast('Shared doc not accessible', 'error'); return; }
+        const sharedData = snap.data().data;
+        // Build a project from the shared doc data
+        const restoredProject = {
+          id: 'recovered_' + s.token.slice(0, 8),
+          name: sharedData.mainClaim ? sharedData.mainClaim.slice(0,60) + ' (recovered)' : 'Recovered Manuscript',
+          data: sharedData,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        // Check if it already exists (by original token mapping)
+        const tokens = Object.entries(_shareTokens || {});
+        const existing = tokens.find(([pid, tok]) => tok === s.token);
+        if (existing) {
+          const [existingId] = existing;
+          const ep = _projects.find(p => p.id === existingId);
+          if (ep) {
+            ep.data = sharedData;
+            ep.updatedAt = Date.now();
+          } else {
+            restoredProject.id = existingId;
+            _projects.push(restoredProject);
+          }
+        } else {
+          _projects.push(restoredProject);
+        }
+        _projects = _projects.filter(p => !(p.id === DEFAULT_PROJECT_ID && _projects.length > 1));
+        _initialLoadDone = true;
+        await saveProjects(false);
+        renderProjectGrid();
+        toast('✅ Restored from shared document', 'success', 5000);
+        ov.remove();
+      } catch(e) { toast('Restore failed: ' + e.message, 'error'); }
+    });
+  });
+}
+
 // ── Export dialog ─────────────────────────────────────
 function showExportDialog() {
   flushActiveProject();
