@@ -431,7 +431,70 @@
             border: none;
             min-width: unset;
         }
-        /* ── Chat Manager Sidebar ── */
+        /* ── Thread toggle-all button ── */
+        #toggleAllThreadsBtn {
+            background: none;
+            border: 1px solid #c5cae9;
+            border-radius: 6px;
+            color: #7986cb;
+            font-size: 12px;
+            padding: 3px 10px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        #toggleAllThreadsBtn:hover { background: #e8eaf6; }
+
+        /* ── Mobile layout ── */
+        @media (max-width: 600px) {
+            #app-wrapper {
+                padding: 8px 6px 8px 8px;
+                gap: 0;
+            }
+            /* Sidebar hidden by default on mobile */
+            #chatSidebar {
+                position: fixed;
+                top: 0;
+                left: 0;
+                height: 100vh;
+                z-index: 200;
+                border-radius: 0 8px 8px 0;
+                box-shadow: 2px 0 16px rgba(0,0,0,0.15);
+                margin-right: 0;
+            }
+            #chatSidebar.collapsed {
+                width: 0;
+                min-width: 0;
+                opacity: 0;
+                pointer-events: none;
+            }
+            /* Overlay behind sidebar on mobile */
+            #sidebarMobileOverlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.3);
+                z-index: 199;
+            }
+            #sidebarMobileOverlay.active { display: block; }
+            /* Chat fills full width on mobile */
+            .chat-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+            }
+            /* Smaller toolbar buttons on mobile */
+            .toolbar button {
+                font-size: 11px !important;
+                padding: 3px 6px !important;
+            }
+            #sidebarToggleBtn {
+                top: 8px;
+                left: 8px;
+                width: 32px;
+                height: 32px;
+                font-size: 16px;
+            }
+        }
         #app-wrapper {
             display: flex;
             align-items: flex-start;
@@ -564,11 +627,42 @@
             padding: 2px 5px;
             outline: none;
         }
+        /* ── Drag-and-drop file load overlay ── */
+        #dropOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 500;
+            background: rgba(121,134,203,0.18);
+            border: 3px dashed #7986cb;
+            border-radius: 12px;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+        #dropOverlay.active {
+            display: flex;
+        }
+        #dropOverlay .drop-msg {
+            background: white;
+            border-radius: 12px;
+            padding: 28px 48px;
+            font-size: 22px;
+            color: #5c6bc0;
+            font-weight: 600;
+            box-shadow: 0 4px 24px rgba(90,100,180,0.18);
+            text-align: center;
+            pointer-events: none;
+        }
     </style>
-</head>
 <body>
 
 <button id="sidebarToggleBtn" onclick="toggleSidebar()" title="Toggle chat list">☰</button>
+
+<div id="dropOverlay">
+    <div class="drop-msg">📄 Drop .txt file to load chat</div>
+</div>
+<div id="sidebarMobileOverlay" onclick="toggleSidebar()"></div>
 
 <div id="app-wrapper">
 <div id="chatSidebar">
@@ -615,6 +709,7 @@
         <option value="bullets">Bullets</option>
     </select>
     <button onclick="openChatFile()" style="color:white;background-color:orange;" title="Open a saved txt file from Disk">📂 Open</button>
+    <button id="toggleAllThreadsBtn" onclick="toggleAllThreads()" title="Open / close all threads">💬 Threads</button>
     <button onclick="importIdealog()" style="color:white;background-color:#0891b2;" title="Import exported .txt from Idealog/ThinkLog (entries + threads)">🧠 Idealog</button>
     <button id="googleAuthBtn" onclick="scToggleAuth()" style="color:white;background-color:#546e7a;" title="Sign in with Google to sync all chats to cloud">🔑 Sign In</button>
     <button onclick="exportToGmail()" style="color:white;background-color:green;" title="Send the contexts to your gmail account">✉️ Gmail</button>
@@ -626,8 +721,9 @@
 </div>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260615: v25e: Fix threads lost across devices — Firestore silently drops nested arrays, so messages now stored as messagesJson string; scParseDoc() handles both formats. Save filename now uses chat title directly (e.g. "Chat 0615 Mon.txt").<br>
-            20260615: v25d: New chat datestamp title; soft lavender sidebar; bigger auth footer.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260615: v25i: 4 view modes — ¶ Plain, ¶• Thread Bullets, • Msg Bullets, •• Full Bullets; shared _pvRenderParagraph for screen+print; no vertical lines in any mode.
+            20260615: v25h: Beautiful print view — Plain/Bullets tabs in modal; 🖨️ Print button opens styled print window with title, date, clean typography; threads shown as indented replies; Save as PDF via browser print.<br>
+            20260615: v25g: Mobile layout fix; 💬 Threads toggle-all button.<br>
 <!--             20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
             20260611b: v211b: Fix autosave not triggering — moved hook inside sendMessage; removed broken window.sendMessage monkey-patch.<br>
             20260611c: v211c: Autosave on every keystroke (debounced 800ms) — covers typing in main input, in-place message edits, and thread replies.
@@ -1415,34 +1511,168 @@
     }
 
     // Paragraph view: all messages + thread replies as flowing text, no timestamps
+    // ── Paragraph / bullet view state ─────────────────────
+    let _paragraphViewMode = 'plain'; // 'plain' | 'bullets'
+
+    function copyParagraphView() {
+        var paragraphs = buildParagraphData();
+        var chatTitle  = document.getElementById('chatTitle').textContent.trim();
+        var mode       = _paragraphViewMode;
+        var msgBullet  = (mode==='msg-bullets' || mode==='full-bullets');
+        var thrBullet  = (mode==='plain-bullets' || mode==='full-bullets');
+        var out = [];
+        if (chatTitle) out.push(chatTitle, '');
+        paragraphs.forEach(function(p) {
+            var indent = p.isSubchat ? '    ' : '';
+            var prefix = msgBullet ? (p.isSubchat ? '◦ ' : '• ') : '';
+            out.push(indent + prefix + p.text);
+            p.replies.forEach(function(r) {
+                out.push((p.isSubchat ? '        ' : '    ') + (thrBullet ? '• ' : '') + r);
+            });
+            if (!p.isSubchat) out.push('');
+        });
+        while (out.length && out[out.length-1]==='') out.pop();
+        var text = out.join('\n');
+        navigator.clipboard.writeText(text).then(function() {
+            var btn = document.getElementById('paragraph-copy-btn');
+            btn.textContent = '✅ Copied!';
+            setTimeout(function() { btn.textContent = 'Copy'; }, 1800);
+        }).catch(function() { prompt('Copy this text:', text); });
+    }
+
     function showParagraphView() {
         _paragraphViewMode = 'plain';
-        let chatTitle = document.getElementById("chatTitle").textContent.trim();
-        let paragraphs = buildParagraphData();
-
-        let html = paragraphs.map(p => {
-            let style = p.isSubchat
-                ? 'margin: 6px 0 6px 24px; color: #555; font-size: 0.95em;'
-                : 'margin: 10px 0; color: #222;';
-            let safeText = p.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            let replyHtml = p.replies.map(r =>
-                '<p style="margin:4px 0 4px 24px;color:#444;font-size:0.95em;">'
-                + r.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-                + '</p>'
-            ).join('');
-            return '<p style="' + style + '">' + safeText + '</p>' + replyHtml;
-        }).join('');
-
-        document.getElementById('paragraph-view-title').textContent = chatTitle || 'Chat View';
-        document.getElementById('paragraph-view-body').innerHTML = html || '<p style="color:#999;">No messages.</p>';
+        _renderParagraphView();
         document.getElementById('paragraph-view-modal').style.display = 'block';
     }
 
     function closeParagraphView() {
         document.getElementById('paragraph-view-modal').style.display = 'none';
+        // Reset dropdown
+        var sel = document.querySelector('select[onchange="handleParagraphViewChange(this)"]');
+        if (sel) sel.value = 'none';
     }
 
-    // Shared data collector for both view modes
+    function switchPVMode(mode) {
+        _paragraphViewMode = mode;
+        _renderParagraphView();
+    }
+
+    function _pvRenderParagraph(p, i, paragraphs, mode) {
+        var safe = function(t){ return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+        var msgBullet = (mode==='msg-bullets' || mode==='full-bullets');
+        var thrBullet = (mode==='plain-bullets' || mode==='full-bullets');
+        var html = '';
+        var si = p.isSubchat ? '24px' : '0';
+        var mc = p.isSubchat ? '#555' : '#1a1a2e';
+        var ms = p.isSubchat ? '0.95em' : '1em';
+        if (msgBullet) {
+            html += '<div style="display:flex;gap:8px;align-items:baseline;margin:' +
+                (p.isSubchat ? '5px 0 2px '+si : '12px 0 2px 0') + ';">' +
+                '<span style="color:#7986cb;flex-shrink:0;font-size:1.1em;">' +
+                (p.isSubchat ? '◦' : '•') + '</span>' +
+                '<span style="color:' + mc + ';font-size:' + ms + ';">' + safe(p.text) + '</span></div>';
+        } else {
+            html += '<p style="margin:' + (p.isSubchat ? '6px 0 2px '+si : '13px 0 2px 0') +
+                ';color:' + mc + ';font-size:' + ms + ';">' + safe(p.text) + '</p>';
+        }
+        if (p.replies.length > 0) {
+            var ri = p.isSubchat ? '44px' : '20px';
+            if (thrBullet) {
+                html += '<ul style="margin:3px 0 8px ' + ri + ';padding:0;list-style:none;">';
+                p.replies.forEach(function(r) {
+                    html += '<li style="display:flex;gap:7px;align-items:baseline;color:#546e7a;font-size:0.91em;margin:3px 0;">' +
+                        '<span style="color:#9fa8da;flex-shrink:0;">•</span>' +
+                        '<span>' + safe(r) + '</span></li>';
+                });
+                html += '</ul>';
+            } else {
+                p.replies.forEach(function(r) {
+                    html += '<p style="margin:2px 0 2px ' + ri + ';color:#607d8b;font-size:0.91em;font-style:italic;">' + safe(r) + '</p>';
+                });
+                html += '<div style="height:4px;"></div>';
+            }
+        }
+        if (!msgBullet && !p.isSubchat && i < paragraphs.length-1 && !paragraphs[i+1].isSubchat)
+            html += '<hr style="border:none;border-top:1px solid #eef0f9;margin:10px 0;">';
+        return html;
+    }
+
+    function _renderParagraphView() {
+        var chatTitle  = document.getElementById('chatTitle').textContent.trim();
+        var paragraphs = buildParagraphData();
+        var mode       = _paragraphViewMode;
+        document.getElementById('paragraph-view-title').textContent = chatTitle || 'Chat View';
+        var now = new Date();
+        document.getElementById('paragraph-view-date').textContent =
+            now.toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+        var ids   = ['pv-tab-plain','pv-tab-plain-bullets','pv-tab-msg-bullets','pv-tab-full-bullets'];
+        var modes = ['plain','plain-bullets','msg-bullets','full-bullets'];
+        ids.forEach(function(id, idx) {
+            var el = document.getElementById(id); if (!el) return;
+            var a = (modes[idx]===mode);
+            el.style.background = a ? 'white' : 'rgba(255,255,255,0.15)';
+            el.style.color      = a ? '#5c6bc0' : 'white';
+            el.style.fontWeight = a ? '600' : '400';
+        });
+        var mc = document.getElementById('pv-msg-count');
+        if (mc) {
+            var rc = paragraphs.reduce(function(n,p){ return n+p.replies.length; },0);
+            mc.textContent = paragraphs.length + ' msg' + (paragraphs.length!==1?'s':'') +
+                (rc ? ' · ' + rc + ' repl' + (rc!==1?'ies':'y') : '');
+        }
+        var html = '';
+        paragraphs.forEach(function(p,i){ html += _pvRenderParagraph(p,i,paragraphs,mode); });
+        document.getElementById('paragraph-view-body').innerHTML =
+            html || '<p style="color:#9fa8da;text-align:center;margin-top:40px;">No messages yet.</p>';
+    }
+
+    function showParagraphView2() {
+        _paragraphViewMode = 'plain-bullets';
+        _renderParagraphView();
+        document.getElementById('paragraph-view-modal').style.display = 'block';
+    }
+
+    function printParagraphView() {
+        var chatTitle = document.getElementById('chatTitle').textContent.trim() || 'Chat View';
+        var paragraphs = buildParagraphData();
+        var mode      = _paragraphViewMode;
+        var now       = new Date();
+        var dateStr   = now.toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+        var labels    = { 'plain':'¶ Plain', 'plain-bullets':'¶• Plain + Thread Bullets',
+                          'msg-bullets':'• Msg Bullets', 'full-bullets':'•• Full Bullets' };
+        var modeLabel = labels[mode] || mode;
+        var safeTitle = chatTitle.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+        var bodyHtml  = '';
+        paragraphs.forEach(function(p,i){ bodyHtml += _pvRenderParagraph(p,i,paragraphs,mode); });
+        var win = window.open('', '_blank', 'width=840,height=920');
+        win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8">'
+            + '<title>' + safeTitle + '</title>'
+            + '<style>'
+            + '@page { margin: 20mm 18mm; }'
+            + 'body { font-family: Georgia, serif; font-size: 11pt; color: #1a1a2e; line-height: 1.85; background: white; margin: 0; padding: 0; }'
+            + '.ph { border-bottom: 2.5px solid #5c6bc0; padding-bottom: 14px; margin-bottom: 26px; }'
+            + '.pt { font-size: 20pt; font-weight: 700; color: #3949ab; margin: 0 0 4px 0; }'
+            + '.pd { font-size: 9.5pt; color: #7986cb; margin: 0; }'
+            + '.pm { font-size: 9pt; color: #9fa8da; margin: 4px 0 0 0; }'
+            + '.pf { margin-top: 40px; border-top: 1px solid #e0e0e0; padding-top: 10px; font-size: 8.5pt; color: #aaa; }'
+            + 'p, div { margin: 0; } ul { margin: 0; padding: 0; }'
+            + '@media print { .np { display:none; } }'
+            + '</style></head><body>'
+            + '<div class="ph"><p class="pt">' + safeTitle + '</p>'
+            + '<p class="pd">' + dateStr + '</p>'
+            + '<p class="pm">' + modeLabel + '</p></div>'
+            + bodyHtml
+            + '<div class="pf">Selfchat — ' + safeTitle + ' — ' + dateStr + '</div>'
+            + '<div class="np" style="margin-top:28px;text-align:center;">'
+            + '<button onclick="window.print()" style="background:#5c6bc0;color:white;border:none;border-radius:8px;padding:10px 32px;font-size:14px;cursor:pointer;">Print / Save as PDF</button>'
+            + '<button onclick="window.close()" style="margin-left:12px;background:#eee;border:none;border-radius:8px;padding:10px 20px;font-size:14px;cursor:pointer;">Close</button>'
+            + '</div></body></html>');
+        win.document.close();
+        setTimeout(function() { win.focus(); }, 300);
+    }
+
+        // Shared data collector for both view modes
     function buildParagraphData() {
         let paragraphs = [];
         Array.from(document.getElementById("chatBox").children).forEach(div => {
@@ -1465,158 +1695,146 @@
         return paragraphs;
     }
 
-    // _paragraphViewMode tracks which mode is open: 'plain' or 'bullets'
-    let _paragraphViewMode = 'plain';
+    // ── Shared file parser — called by button AND drag-and-drop ──
+    function parseAndLoadChatFile(text, filename) {
+        var lines = text.split('\n');
 
-    function showParagraphView2() {
-        _paragraphViewMode = 'bullets';
-        let chatTitle = document.getElementById("chatTitle").textContent.trim();
-        let paragraphs = buildParagraphData();
-        let html = paragraphs.map(p => {
-            let style = p.isSubchat
-                ? 'margin: 6px 0 6px 24px; color: #555; font-size: 0.95em;'
-                : 'margin: 10px 0; color: #222;';
-            let safeText = p.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            let replyHtml = p.replies.length > 0
-                ? '<ul style="margin:4px 0 4px 24px;padding-left:16px;color:#444;font-size:0.95em;">'
-                  + p.replies.map(r => '<li style="margin:2px 0;">' + r.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</li>').join('')
-                  + '</ul>'
-                : '';
-            return '<p style="' + style + '">' + safeText + '</p>' + replyHtml;
-        }).join('');
-        document.getElementById('paragraph-view-title').textContent = (chatTitle || 'Chat View') + ' (Bullets)';
-        document.getElementById('paragraph-view-body').innerHTML = html || '<p style="color:#999;">No messages.</p>';
-        document.getElementById('paragraph-view-modal').style.display = 'block';
-    }
+        // Determine title: use line 0 if it looks like a title (not a message line),
+        // otherwise use the filename (without extension) — flexible, no format required
+        var firstLine = lines[0] ? lines[0].trim() : '';
+        var isMessageLine = /^(  •|•) /.test(firstLine);
+        var title = (!isMessageLine && firstLine.length > 0)
+            ? firstLine
+            : (filename ? filename.replace(/\.[^.]+$/, '') : 'Imported Chat');
 
-    function copyParagraphView() {
-        let paragraphs = buildParagraphData();
-        let chatTitle = document.getElementById("chatTitle").textContent.trim();
-        let lines = [];
-        if (chatTitle) lines.push(chatTitle, '');
-        paragraphs.forEach(p => {
-            let indent = p.isSubchat ? '    ' : '';
-            lines.push(indent + p.text);
-            p.replies.forEach(r => {
-                if (_paragraphViewMode === 'bullets') {
-                    lines.push('    • ' + r);
-                } else {
-                    lines.push('    ' + r);
+        // Create a new chat entry in the sidebar for this file
+        cmSaveCurrent(); // save whatever is open
+        var newId    = cmGenId();
+        var list     = cmLoad();
+        list.unshift({ id: newId, title: title, messages: [], createdAt: Date.now(), updatedAt: Date.now() });
+        cmSave(list);
+        _windowChatId = newId;
+        localStorage.setItem(CM_CUR, newId);
+
+        document.getElementById('chatTitle').textContent = title;
+        var chatBox = document.getElementById('chatBox');
+        chatBox.innerHTML = '';
+
+        var lastMsg        = null;
+        var pendingReplies = [];
+
+        function flushReplies() {
+            if (lastMsg && pendingReplies.length > 0) {
+                var inner = lastMsg.querySelector('.thread-panel-inner');
+                if (inner) {
+                    pendingReplies.forEach(function(r) {
+                        var row = document.createElement('div');
+                        row.className = 'thread-reply-row';
+                        var rt = document.createElement('span');
+                        rt.className = 'thread-reply-text';
+                        rt.textContent = r.text;
+                        var rts = document.createElement('span');
+                        rts.className = 'thread-reply-ts';
+                        rts.textContent = r.ts || '';
+                        var btn = document.createElement('button');
+                        btn.className = 'thread-reply-del';
+                        btn.textContent = '✕';
+                        (function(capMsg, capInner, capRow) {
+                            btn.onclick = function(e) {
+                                e.stopPropagation();
+                                capRow.parentNode && capRow.parentNode.removeChild(capRow);
+                                var tb = capMsg.querySelector('.thread-toggle-btn');
+                                if (tb) {
+                                    var n = capInner.querySelectorAll('.thread-reply-row').length;
+                                    tb.textContent = n ? '💬 ' + n : '💬';
+                                    tb.classList.toggle('has-replies', n > 0);
+                                }
+                            };
+                        })(lastMsg, inner, row);
+                        row.appendChild(rt);
+                        row.appendChild(rts);
+                        row.appendChild(btn);
+                        var inputRow = inner.querySelector('.thread-input-row');
+                        inner.insertBefore(row, inputRow);
+                    });
+                    var tb = lastMsg.querySelector('.thread-toggle-btn');
+                    if (tb) {
+                        var n = inner.querySelectorAll('.thread-reply-row').length;
+                        tb.textContent = n ? '💬 ' + n : '💬';
+                        tb.classList.toggle('has-replies', n > 0);
+                    }
                 }
-            });
-            lines.push('');  // blank line between paragraphs
+                pendingReplies = [];
+            }
+            lastMsg = null;
+        }
+
+        // Parse from line 2 if title was on line 0 (skip blank line 1), else from line 0
+        var startLine = (!isMessageLine && firstLine.length > 0) ? 2 : 0;
+        lines.slice(startLine).forEach(function(line) {
+            // Thread reply line: "  ↳ text  @timestamp"
+            if (/^  \u21b3 /.test(line)) {
+                var rest  = line.slice(4);
+                var tsm   = rest.match(/\s{2}@(.{1,12})$/);
+                var replyTs   = tsm ? tsm[1].replace(/\r$/, '') : '';
+                var replyText = tsm ? rest.slice(0, rest.length - tsm[0].length).trim() : rest.trim();
+                if (replyText) pendingReplies.push({ text: replyText, ts: replyTs });
+                return;
+            }
+            // Message line — flexible: accepts both timestamped and plain lines
+            // Try format: "• [H] text (HH:MM AM)" first
+            var match = line.match(/^(  •|•) (\[H\]\s)?(.*?) \((\d+:\d+ [APM]{2})\)\s*$/);
+            if (match) {
+                flushReplies();
+                var isSubchat     = match[1] === '  •';
+                var isHighlighted = !!match[2];
+                var text          = match[3];
+                var ts            = match[4];
+                text = text.replace(/\[X\]/g, '<span class="checkbox-wrapper"><input type="checkbox" checked></span>')
+                           .replace(/\[ \]/g, '<span class="checkbox-wrapper"><input type="checkbox"></span>');
+                lastMsg = sendMessage(text, ts, true);
+                if (isSubchat)     lastMsg.classList.add('subchat');
+                if (isHighlighted) lastMsg.classList.add('highlighted-yellow');
+                pendingReplies = [];
+                return;
+            }
+            // Fallback: plain text line — load as-is (no timestamp requirement)
+            var plain = line.replace(/^\r/, '').replace(/\r$/, '');
+            if (plain.trim()) {
+                flushReplies();
+                var plainText = plain.replace(/\[X\]/g, '<span class="checkbox-wrapper"><input type="checkbox" checked></span>')
+                                    .replace(/\[ \]/g, '<span class="checkbox-wrapper"><input type="checkbox"></span>');
+                lastMsg = sendMessage(plainText, null, true);
+                pendingReplies = [];
+            }
         });
-        // Remove trailing blank line
-        while (lines.length && lines[lines.length - 1] === '') lines.pop();
-        let text = lines.join('\n');
-        navigator.clipboard.writeText(text).then(() => {
-            let btn = document.getElementById('paragraph-copy-btn');
-            btn.textContent = '✅ Copied!';
-            setTimeout(() => { btn.textContent = '📋 Copy'; }, 1800);
-        }).catch(() => {
-            prompt('Copy this text:', text);
+        flushReplies();
+
+        requestAnimationFrame(function() {
+            scrollToBottom(chatBox);
+            updateSubchatToggles();
         });
+
+        // Save to chat list and cloud
+        cmSaveCurrent();
+        renderSidebar();
+        if (typeof scUser !== 'undefined' && scUser && typeof scPushChat === 'function') {
+            setTimeout(function() {
+                scPushChat(newId);
+                if (typeof scListenChat === 'function') scListenChat(newId);
+            }, 400);
+        }
     }
 
     function openChatFile() {
-        let input = document.createElement("input");
-        input.type = "file";
-        input.accept = ".txt";
-        input.onchange = function (event) {
+        let input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.txt';
+        input.onchange = function(event) {
             let file = event.target.files[0];
             if (!file) return;
-
             let reader = new FileReader();
-            reader.onload = function () {
-                let lines = reader.result.split("\n");
-                document.getElementById("chatTitle").textContent = lines[0].trim();
-
-                let chatBox = document.getElementById("chatBox");
-                chatBox.innerHTML = "";
-                let lastMsg = null;
-                let pendingReplies = [];
-
-                function flushReplies() {
-                    if (lastMsg && pendingReplies.length > 0) {
-                        var inner = lastMsg.querySelector('.thread-panel-inner');
-                        if (inner) {
-                            pendingReplies.forEach(function(r) {
-                                var row = document.createElement('div');
-                                row.className = 'thread-reply-row';
-                                var rt = document.createElement('span');
-                                rt.className = 'thread-reply-text';
-                                rt.textContent = r.text;
-                                var rts = document.createElement('span');
-                                rts.className = 'thread-reply-ts';
-                                rts.textContent = r.ts || '';
-                                var btn = document.createElement('button');
-                                btn.className = 'thread-reply-del';
-                                btn.textContent = '✕';
-                                (function(capturedMsg, capturedInner, capturedRow) {
-                                    btn.onclick = function(e) {
-                                        e.stopPropagation();
-                                        capturedRow.parentNode && capturedRow.parentNode.removeChild(capturedRow);
-                                        var tb = capturedMsg.querySelector('.thread-toggle-btn');
-                                        if (tb) {
-                                            var n = capturedInner.querySelectorAll('.thread-reply-row').length;
-                                            tb.textContent = n ? '💬 ' + n : '💬';
-                                            if (n > 0) tb.classList.add('has-replies');
-                                            else tb.classList.remove('has-replies');
-                                        }
-                                    };
-                                })(lastMsg, inner, row);
-                                row.appendChild(rt);
-                                row.appendChild(rts);
-                                row.appendChild(btn);
-                                var inputRow = inner.querySelector('.thread-input-row');
-                                inner.insertBefore(row, inputRow);
-                            });
-                            // update toggle label
-                            var tb = lastMsg.querySelector('.thread-toggle-btn');
-                            if (tb) {
-                                var n = inner.querySelectorAll('.thread-reply-row').length;
-                                tb.textContent = n ? '💬 ' + n : '💬';
-                                if (n > 0) tb.classList.add('has-replies');
-                                else tb.classList.remove('has-replies');
-                            }
-                        }
-                        pendingReplies = [];
-                    }
-                    lastMsg = null;
-                }
-
-                lines.slice(2).forEach(line => {
-                    // Reply line: starts with "  ↳ "
-                    if (/^  \u21b3 /.test(line)) {
-                        let rest = line.slice(4);
-                        let tsm = rest.match(/\s{2}@(.{4,8})$/);
-                        let replyTs = tsm ? tsm[1].replace(/\r$/, '') : '';
-                        let replyText = tsm ? rest.slice(0, rest.length - tsm[0].length).trim() : rest.trim();
-                        if (replyText) pendingReplies.push({ text: replyText, ts: replyTs });
-                        return;
-                    }
-                    let match = line.match(/(  •|•) (\[H\]\s)?(.*?) \((\d+:\d+ [APM]{2})\)/);
-                    if (match) {
-                        flushReplies();
-                        let isSubchat = match[1] === "  •";
-                        let isHighlighted = !!match[2];
-                        let text = match[3];
-                        let timestamp = match[4];
-                        text = text.replace(/\[X\]/g, '<span class="checkbox-wrapper"><input type="checkbox" checked></span>')
-                                   .replace(/\[ \]/g, '<span class="checkbox-wrapper"><input type="checkbox"></span>');
-                        lastMsg = sendMessage(text, timestamp, true);
-                        if (isSubchat) lastMsg.classList.add("subchat");
-                        if (isHighlighted) lastMsg.classList.add("highlighted-yellow");
-                        pendingReplies = [];
-                    }
-                });
-                flushReplies(); // flush last message
-
-                requestAnimationFrame(() => {
-                    scrollToBottom(chatBox);
-                    updateSubchatToggles();
-                });
-            };
+            reader.onload = function() { parseAndLoadChatFile(reader.result, file.name); };
             reader.readAsText(file);
         };
         input.click();
@@ -3933,11 +4151,26 @@ function escHtml(str) {
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── Sidebar toggle ────────────────────────────────────────
+// ── Sidebar toggle (desktop + mobile) ────────────────────
 function toggleSidebar() {
-    var sb = document.getElementById('chatSidebar');
-    sb.classList.toggle('collapsed');
-    localStorage.setItem('sc_sidebar_open', sb.classList.contains('collapsed') ? '0' : '1');
+    var sb      = document.getElementById('chatSidebar');
+    var overlay = document.getElementById('sidebarMobileOverlay');
+    var isNowCollapsed = !sb.classList.contains('collapsed');
+    sb.classList.toggle('collapsed', isNowCollapsed);
+    if (overlay) overlay.classList.toggle('active', !isNowCollapsed);
+    localStorage.setItem('sc_sidebar_open', isNowCollapsed ? '0' : '1');
+}
+
+// ── Toggle all thread panels open / closed ────────────────
+var _allThreadsOpen = false;
+function toggleAllThreads() {
+    var panels  = document.querySelectorAll('.thread-panel');
+    var buttons = document.querySelectorAll('.thread-toggle-btn');
+    _allThreadsOpen = !_allThreadsOpen;
+    panels.forEach(function(p)  { p.classList.toggle('thread-panel-open', _allThreadsOpen); });
+    buttons.forEach(function(b) { b.classList.toggle('panel-open', _allThreadsOpen); });
+    var btn = document.getElementById('toggleAllThreadsBtn');
+    if (btn) btn.textContent = _allThreadsOpen ? '💬 Close All' : '💬 Threads';
 }
 
 // ── Hook autosaveTick to also save to localStorage list ───
@@ -3954,7 +4187,13 @@ function toggleSidebar() {
 document.addEventListener('DOMContentLoaded', function() {
     // Restore sidebar open/closed state
     var sb = document.getElementById('chatSidebar');
-    if (localStorage.getItem('sc_sidebar_open') === '0') sb.classList.add('collapsed');
+    var isMobile = window.innerWidth <= 600;
+    if (isMobile) {
+        // Always start collapsed on mobile
+        sb.classList.add('collapsed');
+    } else if (localStorage.getItem('sc_sidebar_open') === '0') {
+        sb.classList.add('collapsed');
+    }
 
     var titleEl = document.getElementById('chatTitle');
     if (titleEl) {
@@ -4272,19 +4511,112 @@ scAuth.onAuthStateChanged(function(user) {
 
 // Init UI on load
 document.addEventListener('DOMContentLoaded', function() { scUpdateAuthUI(); });
+
+// ── Drag-and-drop file loading ────────────────────────────
+(function() {
+    var overlay = document.getElementById('dropOverlay');
+    var dragCounter = 0; // track enter/leave pairs
+
+    document.addEventListener('dragenter', function(e) {
+        // Only react to file drags
+        if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+        dragCounter++;
+        if (overlay) overlay.classList.add('active');
+        e.preventDefault();
+    });
+
+    document.addEventListener('dragleave', function(e) {
+        dragCounter--;
+        if (dragCounter <= 0) {
+            dragCounter = 0;
+            if (overlay) overlay.classList.remove('active');
+        }
+    });
+
+    document.addEventListener('dragover', function(e) {
+        if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    });
+
+    document.addEventListener('drop', function(e) {
+        dragCounter = 0;
+        if (overlay) overlay.classList.remove('active');
+
+        // Only intercept file drops — let internal message reorder still work
+        var files = e.dataTransfer && e.dataTransfer.files;
+        if (!files || files.length === 0) return;
+
+        var file = files[0];
+        if (!file.name.match(/\.(txt|html|htm)$/i)) {
+            alert('Please drop a .txt file to load a chat.');
+            e.preventDefault();
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        var reader = new FileReader();
+        reader.onload = function() {
+            if (typeof parseAndLoadChatFile === 'function') {
+                parseAndLoadChatFile(reader.result, file.name);
+            }
+        };
+        reader.readAsText(file);
+    });
+})();
 </script>
 
 
 <!-- Paragraph View Modal -->
-<div id="paragraph-view-modal" style="display:none;position:fixed;z-index:2000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,0.5);" onclick="if(event.target===this)closeParagraphView()">
-    <div style="background:#fff;margin:4% auto;padding:28px;border-radius:12px;width:92%;max-width:680px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 6px 30px rgba(0,0,0,0.25);">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-            <h3 id="paragraph-view-title" style="font-size:1.2rem;color:#2e7d32;font-weight:600;margin:0;"></h3>
-            <div style="display:flex;gap:8px;align-items:center;">
-                <button onclick="copyParagraphView()" id="paragraph-copy-btn" style="background:#2e7d32;color:white;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:0.9rem;">📋 Copy</button>
-                <button onclick="closeParagraphView()" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:#666;line-height:1;">&times;</button>
+<div id="paragraph-view-modal" style="display:none;position:fixed;z-index:2000;left:0;top:0;width:100%;height:100%;background:rgba(80,90,150,0.35);backdrop-filter:blur(2px);" onclick="if(event.target===this)closeParagraphView()">
+    <div style="background:#fff;margin:3% auto;border-radius:14px;width:94%;max-width:720px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(80,90,180,0.22);overflow:hidden;">
+
+        <!-- Header -->
+        <div style="background:linear-gradient(135deg,#7986cb,#5c6bc0);padding:18px 22px 14px;color:white;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+                <div style="flex:1;min-width:0;">
+                    <div id="paragraph-view-title" style="font-size:1.25rem;font-weight:700;letter-spacing:0.01em;line-height:1.3;"></div>
+                    <div id="paragraph-view-date" style="font-size:0.8rem;opacity:0.8;margin-top:3px;"></div>
+                </div>
+                <button onclick="closeParagraphView()" style="background:rgba(255,255,255,0.2);border:none;border-radius:6px;color:white;font-size:1.3rem;cursor:pointer;padding:2px 8px;line-height:1.2;flex-shrink:0;">&times;</button>
+            </div>
+            <!-- Mode tabs: 4 modes -->
+            <div style="display:flex;gap:5px;margin-top:12px;flex-wrap:wrap;">
+                <button id="pv-tab-plain" onclick="switchPVMode('plain')"
+                    style="font-size:11px;padding:4px 11px;border-radius:20px;border:1px solid rgba(255,255,255,0.5);cursor:pointer;background:white;color:#5c6bc0;font-weight:600;">
+                    ¶ Plain
+                </button>
+                <button id="pv-tab-plain-bullets" onclick="switchPVMode('plain-bullets')"
+                    style="font-size:11px;padding:4px 11px;border-radius:20px;border:1px solid rgba(255,255,255,0.5);cursor:pointer;background:rgba(255,255,255,0.15);color:white;">
+                    ¶• Thread Bullets
+                </button>
+                <button id="pv-tab-msg-bullets" onclick="switchPVMode('msg-bullets')"
+                    style="font-size:11px;padding:4px 11px;border-radius:20px;border:1px solid rgba(255,255,255,0.5);cursor:pointer;background:rgba(255,255,255,0.15);color:white;">
+                    • Msg Bullets
+                </button>
+                <button id="pv-tab-full-bullets" onclick="switchPVMode('full-bullets')"
+                    style="font-size:11px;padding:4px 11px;border-radius:20px;border:1px solid rgba(255,255,255,0.5);cursor:pointer;background:rgba(255,255,255,0.15);color:white;">
+                    •• Full Bullets
+                </button>
             </div>
         </div>
-        <div id="paragraph-view-body" style="overflow-y:auto;flex:1;line-height:1.7;font-size:1rem;padding-right:6px;"></div>
+
+        <!-- Body -->
+        <div id="paragraph-view-body" style="overflow-y:auto;flex:1;padding:22px 26px;line-height:1.8;font-size:1rem;font-family:Georgia,serif;color:#2c2c2c;background:#fafbff;"></div>
+
+        <!-- Footer actions -->
+        <div style="padding:12px 22px;border-top:1px solid #e8eaf6;background:#f5f6fd;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <button onclick="copyParagraphView()" id="paragraph-copy-btn"
+                style="background:#7986cb;color:white;border:none;border-radius:7px;padding:7px 18px;cursor:pointer;font-size:13px;font-weight:500;">
+                📋 Copy
+            </button>
+            <button onclick="printParagraphView()"
+                style="background:#5c6bc0;color:white;border:none;border-radius:7px;padding:7px 18px;cursor:pointer;font-size:13px;font-weight:500;">
+                🖨️ Print
+            </button>
+            <span style="margin-left:auto;font-size:11px;color:#9fa8da;" id="pv-msg-count"></span>
+        </div>
     </div>
 </div>
