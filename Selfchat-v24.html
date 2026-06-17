@@ -721,7 +721,8 @@
 </div>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260615: v25i: 4 view modes — ¶ Plain, ¶• Thread Bullets, • Msg Bullets, •• Full Bullets; shared _pvRenderParagraph for screen+print; no vertical lines in any mode.
+            Copyright © 2026 Dr. Wen-Ming Yang 20260617: v25j: Persist thread toggle state — per-message open/close saved in localStorage and restored on reload; global 💬 Threads button state also remembered.<br>
+            20260615: v25i: 4 view modes — ¶ Plain, ¶• Thread Bullets, • Msg Bullets, •• Full Bullets; shared _pvRenderParagraph for screen+print; no vertical lines in any mode.
             20260615: v25h: Beautiful print view — Plain/Bullets tabs in modal; 🖨️ Print button opens styled print window with title, date, clean typography; threads shown as indented replies; Save as PDF via browser print.<br>
             20260615: v25g: Mobile layout fix; 💬 Threads toggle-all button.<br>
 <!--             20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
@@ -3875,13 +3876,15 @@ function cmSerializeChat() {
             var rts = row.querySelector('.thread-reply-ts');
             if (rt) replies.push({ text: rt.textContent, ts: rts ? rts.textContent : '' });
         });
+        var threadPanel = div.querySelector('.thread-panel');
         msgs.push({
-            html:     textSpan.innerHTML,
-            ts:       tsSpan ? tsSpan.textContent : '',
-            isSub:    div.classList.contains('subchat'),
-            isYellow: div.classList.contains('highlighted-yellow'),
-            isOrange: div.classList.contains('highlighted-orange'),
-            replies:  replies
+            html:       textSpan.innerHTML,
+            ts:         tsSpan ? tsSpan.textContent : '',
+            isSub:      div.classList.contains('subchat'),
+            isYellow:   div.classList.contains('highlighted-yellow'),
+            isOrange:   div.classList.contains('highlighted-orange'),
+            replies:    replies,
+            threadOpen: !!(threadPanel && threadPanel.classList.contains('thread-panel-open'))
         });
     });
     return msgs;
@@ -3940,6 +3943,12 @@ function cmRestoreChat(data) {
                     toggleBtn.classList.toggle('has-replies', cnt > 0);
                 }
             }
+        }
+
+        // Restore thread panel open/closed state
+        if (m.threadOpen) {
+            var panel = msgEl.querySelector('.thread-panel');
+            if (panel) panel.classList.add('thread-panel-open');
         }
     });
     document.getElementById('chatTitle').textContent = data.title || 'Untitled';
@@ -4171,6 +4180,7 @@ function toggleAllThreads() {
     buttons.forEach(function(b) { b.classList.toggle('panel-open', _allThreadsOpen); });
     var btn = document.getElementById('toggleAllThreadsBtn');
     if (btn) btn.textContent = _allThreadsOpen ? '💬 Close All' : '💬 Threads';
+    localStorage.setItem('sc_threads_open', _allThreadsOpen ? '1' : '0');
 }
 
 // ── Hook autosaveTick to also save to localStorage list ───
@@ -4200,6 +4210,13 @@ document.addEventListener('DOMContentLoaded', function() {
         titleEl.addEventListener('blur', function() {
             cmSaveCurrent();
         });
+    }
+
+    // Restore global threads-open state
+    if (localStorage.getItem('sc_threads_open') === '1') {
+        _allThreadsOpen = true;
+        var btn = document.getElementById('toggleAllThreadsBtn');
+        if (btn) btn.textContent = '💬 Close All';
     }
 
     // Bootstrap: load existing chats or create first one
