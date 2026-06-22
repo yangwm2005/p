@@ -552,6 +552,16 @@
             flex: 1;
             margin-bottom: 0;
         }
+        #syncDot {
+            font-size: 13px;
+            flex-shrink: 0;
+            cursor: pointer;
+            opacity: 0.85;
+            transition: opacity .15s, transform .15s;
+            user-select: none;
+            line-height: 1;
+        }
+        #syncDot:hover { opacity: 1; transform: scale(1.25); }
         #chatSidebar {
             width: 220px;
             min-width: 220px;
@@ -706,6 +716,7 @@
     <div id="titleRow">
         <button id="sidebarToggleBtn" onclick="toggleSidebar()" title="Toggle chat list">☰</button>
         <div id="chatTitle" class="editable-title" contenteditable="true">Title</div>
+        <span id="syncDot" title="Not signed in" onclick="scForcePush()">⚫</span>
     </div>
     <input type="text" id="searchInput" placeholder="🔍 Search messages..." oninput="filterMessages()">
     <div class="chat-box" id="chatBox"></div>
@@ -754,8 +765,8 @@
 <button id="fabThreadToggle" title="Toggle all threads open / closed">💬</button>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260622: v24m: 💬 FAB re-pins to container right edge after sidebar toggle transition completes.<br>
-<!--                 20260622: v25o: 💬 FAB pinned to right edge of chat-container via JS (tracks on scroll/resize), slides vertically, always visible.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260622: v25n: Sync dot indicator in title row — ⚫ not signed in, 🟡 saving, 🟢 saved, 🔴 error; click to force-push to cloud.<br>
+<!--        20260622: v25p: 💬 FAB re-pins to container right edge after sidebar toggle transition completes.<br>
             20260615: v25i: 4 view modes — ¶ Plain, ¶• Thread Bullets, • Msg Bullets, •• Full Bullets; shared _pvRenderParagraph for screen+print; no vertical lines in any mode.
             20260615: v25h: Beautiful print view — Plain/Bullets tabs in modal; 🖨️ Print button opens styled print window with title, date, clean typography; threads shown as indented replies; Save as PDF via browser print.<br>
             20260615: v25g: Mobile layout fix; 💬 Threads toggle-all button.<br>
@@ -4425,12 +4436,42 @@ function scPushChat(chatId) {
     };
     scLastPushTs[chatId] = data._lastEditTs;
     scPushing[chatId]    = true;
+    scUpdateSyncDot('pending');
     ref.set(data).then(function() {
-        setTimeout(function() { scPushing[chatId] = false; }, 1500);
+        setTimeout(function() {
+            scPushing[chatId] = false;
+            scUpdateSyncDot('synced');
+        }, 1500);
     }).catch(function(e) {
         scPushing[chatId] = false;
+        scUpdateSyncDot('error');
         console.warn('Selfchat push error:', e);
     });
+}
+
+// ── Sync dot indicator ─────────────────────────────────────
+function scUpdateSyncDot(state) {
+    var dot = document.getElementById('syncDot');
+    if (!dot) return;
+    if (!scUser) {
+        dot.textContent = '⚫'; dot.title = 'Not signed in — click to sign in'; return;
+    }
+    if (state === 'pending') {
+        dot.textContent = '🟡'; dot.title = 'Saving to cloud…';
+    } else if (state === 'synced') {
+        dot.textContent = '🟢'; dot.title = 'Saved to cloud — click to force save';
+    } else if (state === 'error') {
+        dot.textContent = '🔴'; dot.title = 'Cloud save failed — click to retry';
+    }
+}
+
+// ── Force-push current chat to cloud (dot click handler) ──
+function scForcePush() {
+    if (!scUser) { document.getElementById('scSignInBtn') && document.getElementById('scSignInBtn').click(); return; }
+    if (_windowChatId) {
+        scUpdateSyncDot('pending');
+        scPushChat(_windowChatId);
+    }
 }
 
 // ── Parse a Firestore doc back to a local chat object ─────
@@ -4564,6 +4605,7 @@ function scUpdateAuthUI() {
                 '<div style="color:#7986cb;font-size:11px;margin-bottom:8px;">☁️ ' + count + ' chat' + (count!==1?'s':'') + ' synced</div>' +
                 '<button onclick="scToggleAuth()" style="width:100%;font-size:13px;background:#e8eaf6;color:#5c6bc0;border:1px solid #c5cae9;border-radius:6px;padding:6px 0;cursor:pointer;font-weight:500;">Sign Out</button>';
         }
+        scUpdateSyncDot('synced');
     } else {
         if (btn) {
             btn.textContent = '🔑 Sign In';
@@ -4575,6 +4617,7 @@ function scUpdateAuthUI() {
                 '<div style="color:#7986cb;font-size:13px;margin-bottom:8px;">☁️ Sync your chats<br><span style="font-size:11px;color:#9fa8da;">across all devices</span></div>' +
                 '<button onclick="scToggleAuth()" style="width:100%;font-size:13px;background:#7986cb;color:white;border:none;border-radius:6px;padding:7px 0;cursor:pointer;font-weight:600;">Sign In with Google</button>';
         }
+        scUpdateSyncDot('');  // not signed in → ⚫
     }
 }
 
