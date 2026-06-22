@@ -444,10 +444,37 @@
         }
         #toggleAllThreadsBtn:hover { background: #e8eaf6; }
 
+        /* ── Floating draggable thread-toggle shortcut ── */
+        #fabThreadToggle {
+            position: fixed;
+            z-index: 9999;
+            top: 50vh;
+            left: 0; /* overridden by JS to sit on container right edge */
+            transform: translateY(-50%);
+            background: #7986cb;
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            font-size: 18px;
+            cursor: grab;
+            box-shadow: 0 3px 10px rgba(0,0,0,.28);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            transition: background .15s, box-shadow .15s;
+            touch-action: none;
+        }
+        #fabThreadToggle:hover { background: #5c6bc0; box-shadow: 0 5px 14px rgba(0,0,0,.32); }
+        #fabThreadToggle.threads-open { background: #3949ab; }
+        #fabThreadToggle:active { cursor: grabbing; }
+
         /* ── Mobile layout ── */
         @media (max-width: 600px) {
             #app-wrapper {
-                padding: 8px 6px 8px 8px;
+                padding: 8px;
                 gap: 0;
             }
             /* Sidebar hidden by default on mobile */
@@ -487,42 +514,44 @@
                 font-size: 11px !important;
                 padding: 3px 6px !important;
             }
-            #sidebarToggleBtn {
-                top: 8px;
-                left: 8px;
-                width: 32px;
-                height: 32px;
-                font-size: 16px;
-            }
         }
         #app-wrapper {
             display: flex;
             align-items: flex-start;
             width: 100%;
             gap: 0;
-            padding: 12px 12px 12px 56px;
+            padding: 12px;
             box-sizing: border-box;
             min-height: 100vh;
         }
         #sidebarToggleBtn {
-            position: fixed;
-            top: 12px;
-            left: 12px;
-            z-index: 300;
             background: #7986cb;
             color: white;
             border: none;
             border-radius: 6px;
-            width: 36px;
-            height: 36px;
+            width: 34px;
+            height: 34px;
             font-size: 18px;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            flex-shrink: 0;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+            transition: background .15s;
         }
         #sidebarToggleBtn:hover { background: #5c6bc0; }
+        /* ── Title row: hamburger + editable title side-by-side ── */
+        #titleRow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        #titleRow .editable-title {
+            flex: 1;
+            margin-bottom: 0;
+        }
         #chatSidebar {
             width: 220px;
             min-width: 220px;
@@ -657,8 +686,6 @@
     </style>
 <body>
 
-<button id="sidebarToggleBtn" onclick="toggleSidebar()" title="Toggle chat list">☰</button>
-
 <div id="dropOverlay">
     <div class="drop-msg">📄 Drop .txt file to load chat</div>
 </div>
@@ -676,7 +703,10 @@
     </div>
 </div>
 <div class="chat-container">
-    <div id="chatTitle" class="editable-title" contenteditable="true">Title</div>
+    <div id="titleRow">
+        <button id="sidebarToggleBtn" onclick="toggleSidebar()" title="Toggle chat list">☰</button>
+        <div id="chatTitle" class="editable-title" contenteditable="true">Title</div>
+    </div>
     <input type="text" id="searchInput" placeholder="🔍 Search messages..." oninput="filterMessages()">
     <div class="chat-box" id="chatBox"></div>
     <div class="input-area">
@@ -698,34 +728,38 @@
         <option value="v7">V7(No timestamp)</option>
     </select>
     <button onclick="saveChatAsFile()" style="color:white;background-color:purple;" title="Save as a txt file on Disk">💾 Save</button>
-    <select onchange="handleExportV209Change(this)" style="width:90px;color:white;background-color:#1565c0;" title="Export for v209T10">
-        <option value="">📤 →v209</option>
-        <option value="eq">== separator</option>
-        <option value="bullet">• bullet points</option>
-    </select>
+    <button id="toggleAllThreadsBtn" onclick="toggleAllThreads()" title="Open / close all threads">💬 Threads</button>
     <select onchange="handleParagraphViewChange(this)" style="width:90px;color:white;background-color:#2e7d32;" title="Paragraph view options">
         <option value="">📄 View</option>
         <option value="plain">Plain</option>
         <option value="bullets">Bullets</option>
     </select>
     <button onclick="openChatFile()" style="color:white;background-color:orange;" title="Open a saved txt file from Disk">📂 Open</button>
-    <button id="toggleAllThreadsBtn" onclick="toggleAllThreads()" title="Open / close all threads">💬 Threads</button>
+
+    <select onchange="handleExportV209Change(this)" style="width:90px;color:white;background-color:#1565c0;" title="Export for v209T10">
+        <option value="">📤 →v209</option>
+        <option value="eq">== separator</option>
+        <option value="bullet">• bullet points</option>
+    </select>
+
     <button onclick="importIdealog()" style="color:white;background-color:#0891b2;" title="Import exported .txt from Idealog/ThinkLog (entries + threads)">🧠 Idealog</button>
     <button id="googleAuthBtn" onclick="scToggleAuth()" style="color:white;background-color:#546e7a;" title="Sign in with Google to sync all chats to cloud">🔑 Sign In</button>
     <button onclick="exportToGmail()" style="color:white;background-color:green;" title="Send the contexts to your gmail account">✉️ Gmail</button>
-    <!-- NEW: Dynalist buttons -->
     <button onclick="sendToDynalist()" style="color:white;background-color:#8e44ad;" title="Export to Dynalist">📝 Dynalist</button>
     <button onclick="showDynalistSettings()" style="color:white;background-color:#9b59b6;" title="Dynalist Settings">⚙️ Dynalist</button>
     <button onclick="shareChat()" style="color:white;background-color:#00aced;" title="Share chat to other apps">📤 Share</button>
     <button onclick="clearChat()" style="color:white;background-color:red;" title="Clear all chat contents">🗑️ Clear</button>
 </div>
+<!-- Floating draggable thread-toggle shortcut — absolute inside .chat-container -->
+<button id="fabThreadToggle" title="Toggle all threads open / closed">💬</button>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260617: v25j: Persist thread toggle state — per-message open/close saved in localStorage and restored on reload; global 💬 Threads button state also remembered.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260622: v24m: 💬 FAB re-pins to container right edge after sidebar toggle transition completes.<br>
+<!--                 20260622: v25o: 💬 FAB pinned to right edge of chat-container via JS (tracks on scroll/resize), slides vertically, always visible.<br>
             20260615: v25i: 4 view modes — ¶ Plain, ¶• Thread Bullets, • Msg Bullets, •• Full Bullets; shared _pvRenderParagraph for screen+print; no vertical lines in any mode.
             20260615: v25h: Beautiful print view — Plain/Bullets tabs in modal; 🖨️ Print button opens styled print window with title, date, clean typography; threads shown as indented replies; Save as PDF via browser print.<br>
             20260615: v25g: Mobile layout fix; 💬 Threads toggle-all button.<br>
-<!--             20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
+			20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
             20260611b: v211b: Fix autosave not triggering — moved hook inside sendMessage; removed broken window.sendMessage monkey-patch.<br>
             20260611c: v211c: Autosave on every keystroke (debounced 800ms) — covers typing in main input, in-place message edits, and thread replies.
             20251007: v209T9: Export to Dynalist.
@@ -4168,6 +4202,11 @@ function toggleSidebar() {
     sb.classList.toggle('collapsed', isNowCollapsed);
     if (overlay) overlay.classList.toggle('active', !isNowCollapsed);
     localStorage.setItem('sc_sidebar_open', isNowCollapsed ? '0' : '1');
+    // Re-pin FAB after sidebar CSS transition (0.22s) completes
+    if (window._fabPinX) {
+        window._fabPinX();
+        setTimeout(window._fabPinX, 240);
+    }
 }
 
 // ── Toggle all thread panels open / closed ────────────────
@@ -4183,6 +4222,94 @@ function toggleAllThreads() {
     localStorage.setItem('sc_threads_open', _allThreadsOpen ? '1' : '0');
 }
 
+// ── Floating thread-toggle FAB: pinned to container right edge ────
+(function() {
+    var FAB_POS_KEY = 'sc_fab_thread_pos';
+
+    function initFab() {
+        var fab = document.getElementById('fabThreadToggle');
+        if (!fab) return;
+        var container = document.querySelector('.chat-container');
+        if (!container) return;
+
+        // Pin X to the right edge of the chat-container
+        function pinX() {
+            var cr = container.getBoundingClientRect();
+            fab.style.left  = (cr.right - fab.offsetWidth / 2) + 'px';
+            fab.style.right = 'auto';
+        }
+        window._fabPinX = pinX;
+        pinX();
+        window.addEventListener('resize', pinX);
+        window.addEventListener('scroll', pinX, true);
+
+        // Restore saved vertical position
+        try {
+            var saved = JSON.parse(localStorage.getItem(FAB_POS_KEY));
+            if (saved && saved.y !== undefined) {
+                fab.style.top       = saved.y + 'px';
+                fab.style.transform = 'none';
+            }
+        } catch(e) {}
+
+        // Sync visual state with _allThreadsOpen
+        function syncFabState() {
+            fab.classList.toggle('threads-open', !!_allThreadsOpen);
+            fab.title = _allThreadsOpen ? 'Close all threads' : 'Open all threads';
+        }
+        syncFabState();
+
+        // Wrap toggleAllThreads to also sync FAB
+        var _origToggle = window.toggleAllThreads;
+        window.toggleAllThreads = function() {
+            _origToggle();
+            syncFabState();
+        };
+
+        // Vertical-only drag (X always pinned to container right edge)
+        var dragging = false, startY, origTop, moved;
+
+        function onStart(cy) {
+            dragging = true;
+            moved    = false;
+            origTop  = fab.getBoundingClientRect().top;
+            fab.style.top       = origTop + 'px';
+            fab.style.transform = 'none';
+            startY = cy;
+            fab.style.cursor = 'grabbing';
+        }
+
+        function onMove(cy) {
+            if (!dragging) return;
+            var dy = cy - startY;
+            if (Math.abs(dy) > 3) moved = true;
+            var newTop = Math.max(0, Math.min(window.innerHeight - fab.offsetHeight, origTop + dy));
+            fab.style.top = newTop + 'px';
+        }
+
+        function onEnd() {
+            if (!dragging) return;
+            dragging = false;
+            fab.style.cursor = 'grab';
+            localStorage.setItem(FAB_POS_KEY, JSON.stringify({ y: parseFloat(fab.style.top) }));
+            if (!moved) { window.toggleAllThreads(); }
+        }
+
+        fab.addEventListener('mousedown', function(e) { e.preventDefault(); onStart(e.clientY); });
+        document.addEventListener('mousemove', function(e) { onMove(e.clientY); });
+        document.addEventListener('mouseup',   function()  { onEnd(); });
+
+        fab.addEventListener('touchstart', function(e) { onStart(e.touches[0].clientY); }, { passive: true });
+        fab.addEventListener('touchmove',  function(e) { onMove(e.touches[0].clientY);  }, { passive: true });
+        fab.addEventListener('touchend',   function()  { onEnd(); });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initFab);
+    } else {
+        initFab();
+    }
+})();
 // ── Hook autosaveTick to also save to localStorage list ───
 (function() {
     var _orig = window.autosaveTick;
@@ -4217,6 +4344,8 @@ document.addEventListener('DOMContentLoaded', function() {
         _allThreadsOpen = true;
         var btn = document.getElementById('toggleAllThreadsBtn');
         if (btn) btn.textContent = '💬 Close All';
+        var fab = document.getElementById('fabThreadToggle');
+        if (fab) { fab.classList.add('threads-open'); fab.title = 'Close all threads'; }
     }
 
     // Bootstrap: load existing chats or create first one
