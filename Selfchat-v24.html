@@ -765,12 +765,12 @@
 <button id="fabThreadToggle" title="Toggle all threads open / closed">💬</button>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260622: v25n: Sync dot indicator in title row — ⚫ not signed in, 🟡 saving, 🟢 saved, 🔴 error; click to force-push to cloud.<br>
-<!--        20260622: v25p: 💬 FAB re-pins to container right edge after sidebar toggle transition completes.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260626: v24t: 📄 Save .txt button added to View modal footer next to 🖨️ Print — exports current view mode as a named .txt file.<br>
+<!--        20260622: v25s: Simplified view modal bar — removed redundant Copy button, keeping only 📄 Save .txt.<br>
             20260615: v25i: 4 view modes — ¶ Plain, ¶• Thread Bullets, • Msg Bullets, •• Full Bullets; shared _pvRenderParagraph for screen+print; no vertical lines in any mode.
             20260615: v25h: Beautiful print view — Plain/Bullets tabs in modal; 🖨️ Print button opens styled print window with title, date, clean typography; threads shown as indented replies; Save as PDF via browser print.<br>
             20260615: v25g: Mobile layout fix; 💬 Threads toggle-all button.<br>
-			20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
+            20260611: v211: Fix threads not loading on drag-drop reload; fix \r in timestamps; fix delete-button closure in openChatFile.<br>
             20260611b: v211b: Fix autosave not triggering — moved hook inside sendMessage; removed broken window.sendMessage monkey-patch.<br>
             20260611c: v211c: Autosave on every keystroke (debounced 800ms) — covers typing in main input, in-place message edits, and thread replies.
             20251007: v209T9: Export to Dynalist.
@@ -1586,6 +1586,37 @@
         }).catch(function() { prompt('Copy this text:', text); });
     }
 
+    function saveTxtParagraphView() {
+        var paragraphs = buildParagraphData();
+        var chatTitle  = document.getElementById('chatTitle').textContent.trim();
+        var mode       = _paragraphViewMode;
+        var msgBullet  = (mode==='msg-bullets' || mode==='full-bullets');
+        var thrBullet  = (mode==='plain-bullets' || mode==='full-bullets');
+        var out = [];
+        if (chatTitle) out.push(chatTitle, '');
+        paragraphs.forEach(function(p) {
+            var indent = p.isSubchat ? '    ' : '';
+            var prefix = msgBullet ? (p.isSubchat ? '◦ ' : '• ') : '';
+            out.push(indent + prefix + p.text);
+            p.replies.forEach(function(r) {
+                out.push((p.isSubchat ? '        ' : '    ') + (thrBullet ? '• ' : '') + r);
+            });
+            if (!p.isSubchat) out.push('');
+        });
+        while (out.length && out[out.length-1]==='') out.pop();
+        var text = out.join('\n');
+        var filename = (chatTitle.replace(/[^a-z0-9\-_\s]/gi, '').trim() || 'chat') + '.txt';
+        var blob = new Blob([text], { type: 'text/plain' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+        var btn = document.getElementById('paragraph-txt-btn');
+        if (btn) { btn.textContent = '✅ Saved!'; setTimeout(function() { btn.textContent = '📄 Save .txt'; }, 1800); }
+    }
+
     function showParagraphView() {
         _paragraphViewMode = 'plain';
         _renderParagraphView();
@@ -1711,8 +1742,9 @@
             + bodyHtml
             + '<div class="pf">Selfchat — ' + safeTitle + ' — ' + dateStr + '</div>'
             + '<div class="np" style="margin-top:28px;text-align:center;">'
-            + '<button onclick="window.print()" style="background:#5c6bc0;color:white;border:none;border-radius:8px;padding:10px 32px;font-size:14px;cursor:pointer;">Print / Save as PDF</button>'
-            + '<button onclick="window.close()" style="margin-left:12px;background:#eee;border:none;border-radius:8px;padding:10px 20px;font-size:14px;cursor:pointer;">Close</button>'
+            + '<button onclick="window.print()" style="background:#5c6bc0;color:white;border:none;border-radius:8px;padding:10px 32px;font-size:14px;cursor:pointer;">🖨️ Print / Save as PDF</button>'
+            + '<button onclick="(function(){var blob=new Blob([document.body.innerText],{type:\'text/plain\'});var a=document.createElement(\'a\');a.href=URL.createObjectURL(blob);a.download=document.title.replace(/[^a-z0-9\\-_\\s]/gi,\'\').trim()+\'.txt\';document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);})()" style="margin-left:10px;background:#1565c0;color:white;border:none;border-radius:8px;padding:10px 20px;font-size:14px;cursor:pointer;">📄 .txt</button>'
+            + '<button onclick="window.close()" style="margin-left:10px;background:#eee;border:none;border-radius:8px;padding:10px 20px;font-size:14px;cursor:pointer;">Close</button>'
             + '</div></body></html>');
         win.document.close();
         setTimeout(function() { win.focus(); }, 300);
@@ -1987,17 +2019,23 @@
             });
         });
         let escaped = JSON.stringify(lines.join('\n'));
+        let titleEscaped = JSON.stringify(chatTitle || 'chat');
         return '<div id="copy-bar" style="position:sticky;top:0;z-index:999;background:rgba(255,255,255,0.95);padding:6px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #ddd;backdrop-filter:blur(4px);">'
             + '<span style="font-weight:600;color:#333;flex:1;">' + chatTitle + '</span>'
-            + '<button id="copy-btn" onclick="doCopy()" style="background:#2e7d32;color:white;border:none;border-radius:6px;padding:5px 14px;cursor:pointer;font-size:0.9rem;">\uD83D\uDCCB Copy</button>'
+            + '<button id="txt-btn" onclick="doTxt()" style="background:#1565c0;color:white;border:none;border-radius:6px;padding:5px 14px;cursor:pointer;font-size:0.9rem;">\uD83D\uDCC4 Save .txt</button>'
             + '</div>'
-            + '<script>var _text = ' + escaped + ';'
-            + 'function doCopy(){'
-            + 'navigator.clipboard.writeText(_text).then(function(){'
-            + 'var btn=document.getElementById("copy-btn");'
-            + 'btn.textContent="\u2705 Copied!";'
-            + 'setTimeout(function(){btn.textContent="\uD83D\uDCCB Copy";},1800);'
-            + '}).catch(function(){prompt("Copy this text:",_text);});}'
+            + '<script>var _text = ' + escaped + '; var _title = ' + titleEscaped + ';'
+            + 'function doTxt(){'
+            + 'var blob=new Blob([_text],{type:"text/plain"});'
+            + 'var a=document.createElement("a");'
+            + 'a.href=URL.createObjectURL(blob);'
+            + 'a.download=_title.replace(/[^a-z0-9\\-_\\s]/gi,"").trim()||"chat";'
+            + 'a.download+=".txt";'
+            + 'document.body.appendChild(a);a.click();'
+            + 'setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1000);'
+            + 'var btn=document.getElementById("txt-btn");'
+            + 'btn.textContent="\u2705 Saved!";'
+            + 'setTimeout(function(){btn.textContent="\uD83D\uDCC4 Save .txt";},1800);}'
             + '<\/script>';
     }
 
@@ -4804,6 +4842,10 @@ document.addEventListener('DOMContentLoaded', function() { scUpdateAuthUI(); });
             <button onclick="printParagraphView()"
                 style="background:#5c6bc0;color:white;border:none;border-radius:7px;padding:7px 18px;cursor:pointer;font-size:13px;font-weight:500;">
                 🖨️ Print
+            </button>
+            <button onclick="saveTxtParagraphView()" id="paragraph-txt-btn"
+                style="background:#1565c0;color:white;border:none;border-radius:7px;padding:7px 18px;cursor:pointer;font-size:13px;font-weight:500;">
+                📄 Save .txt
             </button>
             <span style="margin-left:auto;font-size:11px;color:#9fa8da;" id="pv-msg-count"></span>
         </div>
