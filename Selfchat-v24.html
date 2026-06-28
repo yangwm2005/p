@@ -4535,45 +4535,78 @@ function scParseDoc(data, chatId) {
 // ── Load all chats from Firestore, merge with localStorage ─
 function scLoadFromCloud() {
     if (!scUser) return;
-    scDb.collection('users').doc(scUser.uid)
-        .collection('selfchat').get()
-        .then(function(snapshot) {
-            if (snapshot.empty) {
-                // First sign-in: push local chats up to cloud
-                cmLoad().forEach(function(c) { scPushChat(c.id); });
-                cmLoad().forEach(function(c) { scListenChat(c.id); });
-                scUpdateAuthUI();
-                return;
-            }
-            var cloudChats = [];
-            snapshot.forEach(function(doc) { cloudChats.push(scParseDoc(doc.data(), doc.id)); });
 
-            // Merge cloud + local (newer timestamp wins)
-            var merged = {};
-            cmLoad().forEach(function(c) { merged[c.id] = c; });
-            cloudChats.forEach(function(c) {
-                var localTs = merged[c.id] ? (merged[c.id].updatedAt || 0) : 0;
-                if (!merged[c.id] || (c.updatedAt || 0) >= localTs) {
-                    merged[c.id] = c;
+    // Step 1: fetch tombstones first, then fetch chats
+    var tRef = scTombstoneRef();
+    var tombstonePromise = tRef
+        ? tRef.get().then(function(doc) { return doc.exists ? (doc.data() || {}) : {}; })
+              .catch(function() { return {}; })
+        : Promise.resolve({});
+
+    tombstonePromise.then(function(tombstones) {
+        return scDb.collection('users').doc(scUser.uid)
+            .collection('selfchat').get()
+            .then(function(snapshot) {
+                if (snapshot.empty) {
+                    // First sign-in: push local chats up to cloud (skip tombstoned)
+                    var localList = cmLoad().filter(function(c) {
+                        return !tombstones[c.id] || (c.createdAt || 0) > tombstones[c.id];
+                    });
+                    cmSave(localList);
+                    localList.forEach(function(c) { scPushChat(c.id); scListenChat(c.id); });
+                    scUpdateAuthUI();
+                    renderSidebar();
+                    return;
                 }
+
+                var cloudChats = [];
+                snapshot.forEach(function(doc) { cloudChats.push(scParseDoc(doc.data(), doc.id)); });
+
+                // Merge cloud + local (newer timestamp wins),
+                // but exclude any chat that has a tombstone newer than its creation time
+                var merged = {};
+                cmLoad().forEach(function(c) {
+                    var deletedAt = tombstones[c.id] || 0;
+                    if (!deletedAt || (c.createdAt || 0) > deletedAt) {
+                        merged[c.id] = c;
+                    }
+                });
+                cloudChats.forEach(function(c) {
+                    var deletedAt = tombstones[c.id] || 0;
+                    if (deletedAt && (c.createdAt || 0) <= deletedAt) return; // skip tombstoned
+                    var localTs = merged[c.id] ? (merged[c.id].updatedAt || 0) : 0;
+                    if (!merged[c.id] || (c.updatedAt || 0) >= localTs) {
+                        merged[c.id] = c;
+                    }
+                });
+
+                var mergedList = Object.values(merged).sort(function(a,b) {
+                    return (b.updatedAt||0) - (a.updatedAt||0);
+                });
+                cmSave(mergedList);
+
+                // If the active chat was deleted on another device, switch away
+                if (_windowChatId && tombstones[_windowChatId]) {
+                    _windowChatId = null;
+                    if (mergedList.length > 0) {
+                        cmSetCurrent(mergedList[0].id);
+                        cmRestoreChat(mergedList[0]);
+                    } else {
+                        document.getElementById('chatBox').innerHTML = '';
+                        document.getElementById('chatTitle').textContent = 'Untitled';
+                    }
+                } else {
+                    var curChat = mergedList.find(function(c) { return c.id === _windowChatId; });
+                    if (curChat) cmRestoreChat(curChat);
+                }
+
+                renderSidebar();
+                scUpdateAuthUI();
+
+                // Start listeners for all surviving chats
+                mergedList.forEach(function(c) { scListenChat(c.id); });
             });
-
-            var mergedList = Object.values(merged).sort(function(a,b) {
-                return (b.updatedAt||0) - (a.updatedAt||0);
-            });
-            cmSave(mergedList);
-
-            // Refresh current window's active chat if updated
-            var curChat = mergedList.find(function(c) { return c.id === _windowChatId; });
-            if (curChat) cmRestoreChat(curChat);
-
-            renderSidebar();
-            scUpdateAuthUI();
-
-            // Start listeners for all chats
-            mergedList.forEach(function(c) { scListenChat(c.id); });
-        })
-        .catch(function(e) { console.warn('Selfchat cloud load error:', e); });
+    }).catch(function(e) { console.warn('Selfchat cloud load error:', e); });
 }
 
 // ── Real-time listener for one chat ──────────────────────
@@ -4611,13 +4644,27 @@ function scStopAllListeners() {
     scLastPushTs = {};
 }
 
-// ── Delete chat from Firestore too ────────────────────────
+// ── Tombstone ref (tracks deleted chat IDs across devices) ──
+function scTombstoneRef() {
+    if (!scUser) return null;
+    return scDb.collection('users').doc(scUser.uid)
+               .collection('selfchat_meta').doc('tombstones');
+}
+
+// ── Delete chat from Firestore + write tombstone ──────────
 function scDeleteChat(chatId) {
     if (!scUser) return;
     var ref = scChatRef(chatId);
     if (!ref) return;
     if (scListeners[chatId]) { scListeners[chatId](); delete scListeners[chatId]; }
     ref.delete().catch(function(e) { console.warn('Selfchat delete error:', e); });
+
+    // Record deletion tombstone so other devices know to remove this chat
+    var tRef = scTombstoneRef();
+    if (tRef) {
+        tRef.set({ [chatId]: Date.now() }, { merge: true })
+            .catch(function(e) { console.warn('Selfchat tombstone write error:', e); });
+    }
 }
 
 // ── Auth UI ───────────────────────────────────────────────
