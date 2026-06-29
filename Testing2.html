@@ -341,7 +341,7 @@
             display: flex; gap: 3px; margin-top: 2px; align-items: center;
             opacity: 0; pointer-events: none; transition: opacity .12s;
         }
-        .sub-thread-panel.open .sub-input-row,
+        .sub-thread-panel.open:hover .sub-input-row,
         .sub-input-row:focus-within { opacity: 1; pointer-events: all; }
         .sub-input-row textarea {
             flex: 1; min-width: 0; padding: 2px 8px;
@@ -718,6 +718,18 @@
             border-top: 1px solid #dde1f0;
             background: #eaedfa;
         }
+        .week-divider {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            color: #9fa8da;
+            padding: 10px 8px 3px;
+            border-bottom: 1px solid #e8eaf6;
+            margin-bottom: 2px;
+            user-select: none;
+        }
+        .week-divider:first-child { padding-top: 4px; }
         .cli-rename-input {
             flex: 1;
             background: #e3e6f5;
@@ -1969,7 +1981,8 @@
                                 r.subreplies.forEach(function(sr){addSR(sr.text,sr.ts);});
                             }
 
-                            subToggle.onclick=function(e){e.stopPropagation();subPanel.classList.toggle('open');updSub();};
+                            subToggle.onclick=function(e){e.stopPropagation();subPanel.classList.toggle('open');if(subPanel.classList.contains('open')){setTimeout(function(){siTa3&&siTa3.focus();},60);}updSub();};
+                            subPanel.addEventListener('focusout',function(){setTimeout(function(){if(subPanel.contains(document.activeElement))return;if(!subPanel.querySelectorAll('.sub-reply-row').length){subPanel.classList.remove('open');updSub();}},150);});
                             updSub();
                             capRow.appendChild(subPanel);
 
@@ -3968,6 +3981,19 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
                 updateSubToggleLabel();
             };
+
+            // Auto-close when focus leaves and there are no sub-replies
+            subPanel.addEventListener('focusout', function() {
+                setTimeout(function() {
+                    if (subPanel.contains(document.activeElement)) return;
+                    var hasSubs = subPanel.querySelectorAll('.sub-reply-row').length > 0;
+                    if (!hasSubs) {
+                        subPanel.classList.remove('open');
+                        updateSubToggleLabel();
+                    }
+                }, 150);
+            });
+
             updateSubToggleLabel();
 
             // insert before the input row
@@ -4408,9 +4434,20 @@ function cmRestoreChat(data) {
                             return function(e) {
                                 e.stopPropagation();
                                 sp.classList.toggle('open');
+                                if (sp.classList.contains('open')) { setTimeout(function(){ var ta=sp.querySelector('textarea'); if(ta)ta.focus(); }, 60); }
                                 ula();
                             };
                         })(subPanel, subToggle, updSubLabel);
+                        (function(sp, ula) {
+                            sp.addEventListener('focusout', function() {
+                                setTimeout(function() {
+                                    if (sp.contains(document.activeElement)) return;
+                                    if (!sp.querySelectorAll('.sub-reply-row').length) {
+                                        sp.classList.remove('open'); ula();
+                                    }
+                                }, 150);
+                            });
+                        })(subPanel, updSubLabel);
                         updSubLabel();
 
                         row.appendChild(subPanel);
@@ -4611,6 +4648,41 @@ function cmDuplicateChat(id) {
 }
 
 // ── Render sidebar ────────────────────────────────────────
+// ── Week-group helper ────────────────────────────────────
+function _weekKey(ts) {
+    // Returns a sortable string "YYYY-Www" for the ISO week containing ts
+    var d = new Date(ts || Date.now());
+    // ISO week: Thursday of the week determines the year
+    var day = d.getDay() || 7; // Mon=1…Sun=7
+    d.setDate(d.getDate() + 4 - day); // shift to Thursday
+    var yearStart = new Date(d.getFullYear(), 0, 1);
+    var week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+    return d.getFullYear() + '-W' + String(week).padStart(2, '0');
+}
+
+function _weekLabel(key) {
+    // "2025-W03" → "Jan 13 – Jan 19, 2025"
+    var parts = key.match(/^(\d{4})-W(\d{2})$/);
+    if (!parts) return key;
+    var year = parseInt(parts[1]);
+    var week = parseInt(parts[2]);
+    // ISO week 1 = week containing Jan 4
+    var jan4 = new Date(year, 0, 4);
+    var dayOfWeek = jan4.getDay() || 7;
+    var mon = new Date(jan4);
+    mon.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
+    var sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    var fmt = function(dt) {
+        return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    };
+    var now = new Date();
+    var thisKey = _weekKey(now.getTime());
+    var lastKey = _weekKey(now.getTime() - 7 * 86400000);
+    if (key === thisKey) return 'This week';
+    if (key === lastKey) return 'Last week';
+    return fmt(mon) + ' – ' + fmt(sun) + ', ' + year;
+}
+
 function renderSidebar() {
     var list    = cmLoad();
     var current = cmCurrentId();
@@ -4623,28 +4695,53 @@ function renderSidebar() {
         return;
     }
 
-    list.forEach(function(chat) {
-        var item = document.createElement('div');
-        item.className = 'chat-list-item' + (chat.id === current ? ' active' : '');
-        item.title = chat.title;
+    // Sort newest-first by createdAt (fall back to updatedAt for legacy chats)
+    var sorted = list.slice().sort(function(a, b) {
+        return (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0);
+    });
 
-        // Sync dot
-        var syncDot = '';
-        if (localStorage.getItem('sc_sync_' + chat.id) === '1') {
-            syncDot = '<span class="cli-sync">●</span>';
+    // Group into ordered weeks
+    var weeks = [];     // [{key, label, chats:[]}]
+    var weekMap = {};
+    sorted.forEach(function(chat) {
+        var key = _weekKey(chat.createdAt || chat.updatedAt || 0);
+        if (!weekMap[key]) {
+            weekMap[key] = { key: key, label: _weekLabel(key), chats: [] };
+            weeks.push(weekMap[key]);
         }
+        weekMap[key].chats.push(chat);
+    });
 
-        item.innerHTML =
-            syncDot +
-            '<span class="cli-name">' + escHtml(chat.title) + '</span>' +
-            '<span class="cli-actions">' +
-              '<button onclick="event.stopPropagation();cmRenameChat(\'' + chat.id + '\',this.closest(\'.chat-list-item\'))" title="Rename">✏️</button>' +
-              '<button onclick="event.stopPropagation();cmDuplicateChat(\'' + chat.id + '\')" title="Duplicate">⧉</button>' +
-              '<button onclick="event.stopPropagation();cmDeleteChat(\'' + chat.id + '\')" title="Delete" style="color:#ef9a9a;">🗑</button>' +
-            '</span>';
+    weeks.forEach(function(week) {
+        // Week divider
+        var div = document.createElement('div');
+        div.className = 'week-divider';
+        div.textContent = week.label;
+        el.appendChild(div);
 
-        item.addEventListener('click', function() { cmOpenChat(chat.id); });
-        el.appendChild(item);
+        // Chat items in this week
+        week.chats.forEach(function(chat) {
+            var item = document.createElement('div');
+            item.className = 'chat-list-item' + (chat.id === current ? ' active' : '');
+            item.title = chat.title;
+
+            var syncDot = '';
+            if (localStorage.getItem('sc_sync_' + chat.id) === '1') {
+                syncDot = '<span class="cli-sync">●</span>';
+            }
+
+            item.innerHTML =
+                syncDot +
+                '<span class="cli-name">' + escHtml(chat.title) + '</span>' +
+                '<span class="cli-actions">' +
+                  '<button onclick="event.stopPropagation();cmRenameChat(\'' + chat.id + '\',this.closest(\'.chat-list-item\'))" title="Rename">✏️</button>' +
+                  '<button onclick="event.stopPropagation();cmDuplicateChat(\'' + chat.id + '\')" title="Duplicate">⧉</button>' +
+                  '<button onclick="event.stopPropagation();cmDeleteChat(\'' + chat.id + '\')" title="Delete" style="color:#ef9a9a;">🗑</button>' +
+                '</span>';
+
+            item.addEventListener('click', function() { cmOpenChat(chat.id); });
+            el.appendChild(item);
+        });
     });
 }
 
@@ -4768,6 +4865,20 @@ function toggleAllThreads() {
         initFab();
     }
 })();
+// ── Close empty open sub-thread panels on outside click ──
+document.addEventListener('mousedown', function(e) {
+    document.querySelectorAll('.sub-thread-panel.open').forEach(function(sp) {
+        // If the click is inside this panel or on its toggle button, leave it alone
+        var toggleBtn = sp.closest('.thread-reply-row') && sp.closest('.thread-reply-row').querySelector('.sub-thread-toggle');
+        if (sp.contains(e.target) || (toggleBtn && toggleBtn.contains(e.target))) return;
+        // Only auto-close if there are no sub-replies
+        if (!sp.querySelectorAll('.sub-reply-row').length) {
+            sp.classList.remove('open');
+            if (toggleBtn) { toggleBtn.textContent = '↩'; toggleBtn.classList.remove('has-subreplies'); }
+        }
+    });
+});
+
 // ── Hook autosaveTick to also save to localStorage list ───
 (function() {
     var _orig = window.autosaveTick;
