@@ -656,6 +656,44 @@
             border-top: 1px solid #dde1f0;
             background: #eaedfa;
         }
+        .week-divider {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.07em;
+            text-transform: uppercase;
+            color: #9fa8da;
+            padding: 10px 8px 3px;
+            border-bottom: 1px solid #e8eaf6;
+            margin-bottom: 2px;
+            user-select: none;
+        }
+        .week-divider:first-child { padding-top: 4px; }
+        #sortBar {
+            display: flex;
+            gap: 4px;
+            padding: 5px 7px 4px;
+            background: #eaedfa;
+            border-bottom: 1px solid #dde1f0;
+        }
+        #sortBar button {
+            flex: 1;
+            padding: 2px 0;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+            border: 1px solid #c5cae9;
+            border-radius: 10px;
+            background: none;
+            color: #7986cb;
+            cursor: pointer;
+            transition: background .13s, color .13s;
+        }
+        #sortBar button:hover { background: #e3e6f5; }
+        #sortBar button.sort-active {
+            background: #7986cb;
+            color: #fff;
+            border-color: #7986cb;
+        }
         .cli-rename-input {
             flex: 1;
             background: #e3e6f5;
@@ -706,6 +744,11 @@
     <div id="sidebarHeader">
         💬 Chats
         <button id="newChatBtn" onclick="newChat()" title="New chat">＋</button>
+    </div>
+    <div id="sortBar">
+        <button id="sortBtn-week"    class="sort-active" onclick="setSortMode('week')">Week</button>
+        <button id="sortBtn-updated" onclick="setSortMode('updated')">Updated</button>
+        <button id="sortBtn-name"    onclick="setSortMode('name')">Name</button>
     </div>
     <div id="chatList"></div>
     <div id="sidebarFooter">
@@ -4202,6 +4245,79 @@ function cmDuplicateChat(id) {
 }
 
 // ── Render sidebar ────────────────────────────────────────
+// ── Sort mode (persisted) ────────────────────────────────
+var _sortMode = localStorage.getItem('sc_sort_mode') || 'week';
+
+function setSortMode(mode) {
+    _sortMode = mode;
+    localStorage.setItem('sc_sort_mode', mode);
+    ['week','updated','name'].forEach(function(m) {
+        var btn = document.getElementById('sortBtn-' + m);
+        if (btn) btn.classList.toggle('sort-active', m === mode);
+    });
+    renderSidebar();
+}
+
+(function() {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function() { setSortMode(_sortMode); });
+    } else {
+        setSortMode(_sortMode);
+    }
+})();
+
+// ── Week-group helpers ────────────────────────────────────
+function _weekKey(ts) {
+    var d = new Date(ts || Date.now());
+    var day = d.getDay() || 7;
+    d.setDate(d.getDate() + 4 - day);
+    var yearStart = new Date(d.getFullYear(), 0, 1);
+    var week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+    return d.getFullYear() + '-W' + String(week).padStart(2, '0');
+}
+
+function _weekLabel(key) {
+    var parts = key.match(/^(\d{4})-W(\d{2})$/);
+    if (!parts) return key;
+    var year = parseInt(parts[1]);
+    var week = parseInt(parts[2]);
+    var jan4 = new Date(year, 0, 4);
+    var dayOfWeek = jan4.getDay() || 7;
+    var mon = new Date(jan4);
+    mon.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
+    var sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    var fmt = function(dt) { return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
+    var thisKey = _weekKey(Date.now());
+    var lastKey = _weekKey(Date.now() - 7 * 86400000);
+    if (key === thisKey) return 'This week';
+    if (key === lastKey) return 'Last week';
+    return fmt(mon) + ' – ' + fmt(sun) + ', ' + year;
+}
+
+function _renderChatItem(chat, current, el) {
+    var item = document.createElement('div');
+    item.className = 'chat-list-item' + (chat.id === current ? ' active' : '');
+    item.title = chat.title;
+    var syncDot = localStorage.getItem('sc_sync_' + chat.id) === '1' ? '<span class="cli-sync">●</span>' : '';
+    item.innerHTML =
+        syncDot +
+        '<span class="cli-name">' + escHtml(chat.title) + '</span>' +
+        '<span class="cli-actions">' +
+          '<button onclick="event.stopPropagation();cmRenameChat(\'' + chat.id + '\',this.closest(\'.chat-list-item\'))" title="Rename">✏️</button>' +
+          '<button onclick="event.stopPropagation();cmDuplicateChat(\'' + chat.id + '\')" title="Duplicate">⧉</button>' +
+          '<button onclick="event.stopPropagation();cmDeleteChat(\'' + chat.id + '\')" title="Delete" style="color:#ef9a9a;">🗑</button>' +
+        '</span>';
+    item.addEventListener('click', function() { cmOpenChat(chat.id); });
+    el.appendChild(item);
+}
+
+function _addDivider(el, label) {
+    var div = document.createElement('div');
+    div.className = 'week-divider';
+    div.textContent = label;
+    el.appendChild(div);
+}
+
 function renderSidebar() {
     var list    = cmLoad();
     var current = cmCurrentId();
@@ -4214,29 +4330,64 @@ function renderSidebar() {
         return;
     }
 
-    list.forEach(function(chat) {
-        var item = document.createElement('div');
-        item.className = 'chat-list-item' + (chat.id === current ? ' active' : '');
-        item.title = chat.title;
+    var mode = _sortMode || 'week';
 
-        // Sync dot
-        var syncDot = '';
-        if (localStorage.getItem('sc_sync_' + chat.id) === '1') {
-            syncDot = '<span class="cli-sync">●</span>';
-        }
+    if (mode === 'week') {
+        var sorted = list.slice().sort(function(a, b) {
+            return (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0);
+        });
+        var weeks = [], weekMap = {};
+        sorted.forEach(function(chat) {
+            var key = _weekKey(chat.createdAt || chat.updatedAt || 0);
+            if (!weekMap[key]) { weekMap[key] = { label: _weekLabel(key), chats: [] }; weeks.push(weekMap[key]); }
+            weekMap[key].chats.push(chat);
+        });
+        weeks.forEach(function(week) {
+            _addDivider(el, week.label);
+            week.chats.forEach(function(chat) { _renderChatItem(chat, current, el); });
+        });
 
-        item.innerHTML =
-            syncDot +
-            '<span class="cli-name">' + escHtml(chat.title) + '</span>' +
-            '<span class="cli-actions">' +
-              '<button onclick="event.stopPropagation();cmRenameChat(\'' + chat.id + '\',this.closest(\'.chat-list-item\'))" title="Rename">✏️</button>' +
-              '<button onclick="event.stopPropagation();cmDuplicateChat(\'' + chat.id + '\')" title="Duplicate">⧉</button>' +
-              '<button onclick="event.stopPropagation();cmDeleteChat(\'' + chat.id + '\')" title="Delete" style="color:#ef9a9a;">🗑</button>' +
-            '</span>';
+    } else if (mode === 'updated') {
+        var sorted = list.slice().sort(function(a, b) {
+            return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+        });
+        var now = new Date();
+        var sod = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        var groups = [
+            { label: 'Today',     chats: [], test: function(ts) { return ts >= sod; } },
+            { label: 'Yesterday', chats: [], test: function(ts) { return ts >= sod - 86400000 && ts < sod; } },
+            { label: 'This week', chats: [], test: function(ts) { return _weekKey(ts) === _weekKey(now.getTime()) && ts < sod - 86400000; } },
+            { label: 'Last week', chats: [], test: function(ts) { return _weekKey(ts) === _weekKey(now.getTime() - 7*86400000); } },
+            { label: 'Older',     chats: [], test: function(ts) { return true; } }
+        ];
+        sorted.forEach(function(chat) {
+            var ts = chat.updatedAt || chat.createdAt || 0;
+            for (var i = 0; i < groups.length; i++) {
+                if (groups[i].test(ts)) { groups[i].chats.push(chat); break; }
+            }
+        });
+        groups.forEach(function(g) {
+            if (!g.chats.length) return;
+            _addDivider(el, g.label);
+            g.chats.forEach(function(chat) { _renderChatItem(chat, current, el); });
+        });
 
-        item.addEventListener('click', function() { cmOpenChat(chat.id); });
-        el.appendChild(item);
-    });
+    } else if (mode === 'name') {
+        var sorted = list.slice().sort(function(a, b) {
+            return (a.title || '').toLowerCase().localeCompare((b.title || '').toLowerCase());
+        });
+        var groups = [], groupMap = {};
+        sorted.forEach(function(chat) {
+            var letter = (chat.title || '?')[0].toUpperCase();
+            if (!/[A-Z]/.test(letter)) letter = '#';
+            if (!groupMap[letter]) { groupMap[letter] = { label: letter, chats: [] }; groups.push(groupMap[letter]); }
+            groupMap[letter].chats.push(chat);
+        });
+        groups.forEach(function(g) {
+            _addDivider(el, g.label);
+            g.chats.forEach(function(chat) { _renderChatItem(chat, current, el); });
+        });
+    }
 }
 
 function escHtml(str) {
