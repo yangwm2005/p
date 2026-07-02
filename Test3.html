@@ -63,6 +63,37 @@
     font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-faint);
     border-left:2px solid var(--line-strong); padding-left:10px;
   }
+
+  /* project picker */
+  .project-picker{position:relative; align-self:center;}
+  .project-picker-btn{
+    display:flex; align-items:center; gap:6px; font-size:13px; font-weight:500;
+    padding:6px 10px; border-radius:6px; border:1px solid var(--line-strong); background:var(--panel);
+  }
+  .project-picker-btn .caret-down{font-size:9px; color:var(--ink-faint);}
+  .project-dropdown{
+    position:absolute; top:calc(100% + 6px); left:0; width:260px; z-index:15;
+    background:var(--panel); border:1px solid var(--line-strong); border-radius:8px;
+    box-shadow:0 8px 22px rgba(20,26,34,0.14); overflow:hidden;
+  }
+  .project-list{max-height:260px; overflow-y:auto; padding:6px;}
+  .project-row{
+    display:flex; align-items:center; gap:6px; padding:8px 8px; border-radius:6px; cursor:pointer; font-size:13px;
+  }
+  .project-row:hover{background:#fafbfc;}
+  .project-row.active{background:var(--accent-fill); font-weight:600;}
+  .project-row .proj-name{flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .project-row .proj-actions{display:flex; gap:2px; flex-shrink:0; opacity:0; transition:opacity .12s;}
+  .project-row:hover .proj-actions{opacity:1;}
+  .project-row .proj-actions button{border:none; background:none; padding:3px 5px; font-size:11px; color:var(--ink-faint); border-radius:3px;}
+  .project-row .proj-actions button:hover{background:var(--accent-soft);}
+  .project-row .proj-actions button.danger-icon:hover{background:var(--rust-fill); color:var(--rust);}
+  .project-new-row{display:flex; gap:6px; padding:8px; border-top:1px solid var(--line);}
+  .project-new-row input{
+    flex:1; min-width:0; border:1px solid var(--line-strong); border-radius:5px; padding:6px 8px;
+    font-family:inherit; font-size:12.5px;
+  }
+  .project-new-row button{padding:6px 10px; font-size:12px;}
   .controls{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
   button{
     font-family:'IBM Plex Sans',sans-serif; font-size:13px; cursor:pointer;
@@ -266,6 +297,40 @@
     :root{--sidebar-w:230px;}
     .tree-row .meta{display:none;}
   }
+
+  /* ---------- print view ---------- */
+  #printArea{ display:none; }
+  .print-header{ margin-bottom:14px; }
+  .print-header h1{ font-size:20px; margin:0 0 4px; font-weight:700; }
+  .print-meta{ font-size:11.5px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; }
+  .print-table{ width:100%; border-collapse:collapse; font-size:11px; }
+  .print-table th{
+    text-align:left; font-size:9.5px; text-transform:uppercase; letter-spacing:0.5px;
+    color:var(--ink-faint); font-weight:600; padding:0 8px 6px; border-bottom:1.5px solid var(--ink);
+    vertical-align:bottom;
+  }
+  .print-table td{ padding:4px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  .print-table tr.depth-0 td.print-name{ font-weight:700; }
+  .print-name-cell{ display:flex; align-items:center; }
+  .print-dates, .print-pred{ font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--ink-soft); white-space:nowrap; }
+  .print-timeline-th{ padding-bottom:0; }
+  .print-month-band{ display:flex; width:100%; border-bottom:1.5px solid var(--ink); padding-bottom:5px; }
+  .print-month-seg{ font-size:9px; font-weight:600; color:var(--ink-soft); border-left:1px solid var(--line-strong); padding-left:4px; overflow:hidden; white-space:nowrap; }
+  .print-month-seg:first-child{ border-left:none; }
+  .print-bar-track{ position:relative; height:18px; }
+  .print-bar{ position:absolute; top:2px; height:14px; border-radius:2.5px; background:var(--accent); box-shadow:0 0.5px 0 rgba(0,0,0,0.15); }
+  .print-bar.depth-gt0{ background:var(--accent-child); }
+  .print-bar.overdue{ background:var(--rust); }
+  .print-bar-label{ position:absolute; top:2px; height:14px; display:flex; align-items:center; font-family:'IBM Plex Mono',monospace; font-size:9px; color:var(--ink-faint); white-space:nowrap; }
+  .print-footer{ margin-top:16px; font-size:9.5px; color:var(--ink-faint); text-align:center; }
+
+  @media print{
+    @page{ size: landscape; margin: 12mm; }
+    body > *:not(#printArea){ display:none !important; }
+    #printArea{ display:block !important; }
+    .print-table thead{ display:table-header-group; }
+    .print-table tr{ break-inside:avoid; }
+  }
 </style>
 </head>
 <body>
@@ -273,6 +338,19 @@
 <div class="topbar">
   <div class="brand">
     <h1>Gantt</h1>
+    <div class="project-picker" id="projectPicker">
+      <button class="project-picker-btn" id="projectPickerBtn">
+        <span id="activeProjectName">Loading…</span>
+        <span class="caret-down">▾</span>
+      </button>
+      <div class="project-dropdown" id="projectDropdown" style="display:none;">
+        <div class="project-list" id="projectList"></div>
+        <div class="project-new-row">
+          <input type="text" id="newProjectInput" placeholder="New project name…" maxlength="80">
+          <button id="newProjectBtn" class="primary">+ Add</button>
+        </div>
+      </div>
+    </div>
     <span class="tick-mark" id="taskCountLabel">0 tasks</span>
   </div>
   <div class="controls">
@@ -285,6 +363,7 @@
       <button id="zoomWeek">Week</button>
     </div>
     <button id="todayBtn" class="ghost" title="Scroll to today">Today</button>
+    <button id="printBtn" class="ghost" title="Print or save as PDF">Print</button>
     <button id="exportBtn" class="ghost" title="Export tasks as JSON">Export</button>
     <button id="importBtn" class="ghost" title="Import tasks from JSON">Import</button>
     <input type="file" id="importFile" accept="application/json" style="display:none;">
@@ -326,6 +405,8 @@
 </div>
 
 <footer>Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.</footer>
+
+<div id="printArea"></div>
 
 <!-- Inspector panel -->
 <div class="backdrop" id="backdrop"></div>
@@ -383,8 +464,8 @@
     messagingSenderId: "663058774385",
     appId: "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
   };
-  var CLOUD_FIELD = "ganttTasks";
-  var CLOUD_UPDATED_FIELD = "ganttUpdatedAt";
+  var CLOUD_FIELD = "ganttProjects";
+  var CLOUD_UPDATED_FIELD = "ganttProjectsUpdatedAt";
   var firebaseReady = false;
   var auth = null, db = null;
   var currentUser = null;
@@ -409,20 +490,21 @@
   function shortLabel(d){ return MONTH_NAMES[d.getMonth()] + " " + d.getDate(); }
   function daysInMonth(year, month){ return new Date(year, month+1, 0).getDate(); }
   function uid(){ return "t" + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+  function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
   // ---------- state ----------
-  var tasks = loadTasks();
+  var PROJECTS_KEY = "gantt_v2_projects";
+  var ACTIVE_PROJECT_KEY = "gantt_v2_activeProject";
+  var projects = {};
+  var activeProjectId = null;
+  var tasks = [];
+  loadProjects();
+  tasks = projects[activeProjectId].tasks;
+
   var zoom = localStorage.getItem(ZOOM_KEY) || "day";
   var autoShift = localStorage.getItem(SHIFT_KEY) !== "0";
   var currentInspectId = null;
 
-  function loadTasks(){
-    try{
-      var raw = localStorage.getItem(STORE_KEY);
-      if(raw) return JSON.parse(raw).map(normalizeTask);
-    }catch(e){ console.error("Failed to load tasks", e); }
-    return seedTasks();
-  }
   function normalizeTask(t){
     return {
       id: t.id, name: t.name, start: t.start, end: t.end,
@@ -444,11 +526,201 @@
       { id:c4, name:"Test & review",        start:iso(14), end:iso(17), pred:[c3], parentId:p2, collapsed:false }
     ];
   }
+
+  function loadProjects(){
+    try{
+      var raw = localStorage.getItem(PROJECTS_KEY);
+      if(raw){
+        var parsed = JSON.parse(raw);
+        var ids = Object.keys(parsed);
+        if(ids.length){
+          ids.forEach(function(id){
+            projects[id] = {
+              id: id,
+              name: parsed[id].name || "Untitled project",
+              tasks: Array.isArray(parsed[id].tasks) ? parsed[id].tasks.map(normalizeTask) : []
+            };
+          });
+          activeProjectId = localStorage.getItem(ACTIVE_PROJECT_KEY);
+          if(!activeProjectId || !projects[activeProjectId]) activeProjectId = ids[0];
+          return;
+        }
+      }
+    }catch(e){ console.error("Failed to load projects", e); }
+
+    // migration path: earlier versions stored one flat task list under STORE_KEY
+    try{
+      var oldRaw = localStorage.getItem(STORE_KEY);
+      if(oldRaw){
+        var oldTasks = JSON.parse(oldRaw).map(normalizeTask);
+        var mid = uid();
+        projects[mid] = { id:mid, name:"My Gantt Chart", tasks: oldTasks };
+        activeProjectId = mid;
+        localStorage.removeItem(STORE_KEY);
+        return;
+      }
+    }catch(e){ console.error("Failed to migrate legacy tasks", e); }
+
+    // brand new install
+    var id2 = uid();
+    projects[id2] = { id:id2, name:"My Gantt Chart", tasks: seedTasks() };
+    activeProjectId = id2;
+  }
+
+  function saveProjectsLocal(){
+    try{
+      var out = {};
+      Object.keys(projects).forEach(function(id){
+        out[id] = { name: projects[id].name, tasks: projects[id].tasks };
+      });
+      localStorage.setItem(PROJECTS_KEY, JSON.stringify(out));
+      if(activeProjectId) localStorage.setItem(ACTIVE_PROJECT_KEY, activeProjectId);
+    }catch(e){ console.error("Failed to save projects", e); }
+  }
+
   function saveTasks(){
-    try{ localStorage.setItem(STORE_KEY, JSON.stringify(tasks)); }
-    catch(e){ console.error("Failed to save tasks", e); }
+    if(activeProjectId && projects[activeProjectId]) projects[activeProjectId].tasks = tasks;
+    saveProjectsLocal();
     if(!applyingRemote) scheduleCloudSave();
   }
+
+  // ---------- project picker ----------
+  var projectPickerEl = document.getElementById("projectPicker");
+  var projectPickerBtnEl = document.getElementById("projectPickerBtn");
+  var projectDropdownEl = document.getElementById("projectDropdown");
+  var projectListEl = document.getElementById("projectList");
+  var activeProjectNameEl = document.getElementById("activeProjectName");
+  var newProjectInputEl = document.getElementById("newProjectInput");
+  var newProjectBtnEl = document.getElementById("newProjectBtn");
+
+  function renderProjectPicker(){
+    var active = projects[activeProjectId];
+    activeProjectNameEl.textContent = active ? active.name : "Untitled project";
+
+    projectListEl.innerHTML = "";
+    Object.keys(projects).sort(function(a,b){
+      return projects[a].name.localeCompare(projects[b].name);
+    }).forEach(function(id){
+      var p = projects[id];
+      var row = document.createElement("div");
+      row.className = "project-row" + (id===activeProjectId ? " active" : "");
+
+      var name = document.createElement("div");
+      name.className = "proj-name";
+      name.textContent = p.name;
+      row.appendChild(name);
+
+      var actions = document.createElement("div");
+      actions.className = "proj-actions";
+
+      var renameBtn = document.createElement("button");
+      renameBtn.textContent = "✎";
+      renameBtn.title = "Rename";
+      renameBtn.addEventListener("click", function(ev){
+        ev.stopPropagation();
+        renameProject(id);
+      });
+      actions.appendChild(renameBtn);
+
+      var delBtn = document.createElement("button");
+      delBtn.textContent = "✕";
+      delBtn.className = "danger-icon";
+      delBtn.title = "Delete project";
+      delBtn.addEventListener("click", function(ev){
+        ev.stopPropagation();
+        deleteProject(id);
+      });
+      actions.appendChild(delBtn);
+
+      row.appendChild(actions);
+      row.addEventListener("click", function(){ switchProject(id); });
+      projectListEl.appendChild(row);
+    });
+  }
+
+  function switchProject(id){
+    if(!projects[id] || id === activeProjectId){ closeProjectDropdown(); return; }
+    activeProjectId = id;
+    tasks = projects[id].tasks;
+    saveProjectsLocal();
+    closeInspector();
+    closeProjectDropdown();
+    render();
+    renderProjectPicker();
+  }
+
+  function createProject(name){
+    var trimmed = (name || "").trim();
+    var id = uid();
+    projects[id] = { id:id, name: trimmed || "Untitled project", tasks: [] };
+    activeProjectId = id;
+    tasks = projects[id].tasks;
+    saveProjectsLocal();
+    closeInspector();
+    closeProjectDropdown();
+    render();
+    renderProjectPicker();
+  }
+
+  function renameProject(id){
+    var p = projects[id];
+    if(!p) return;
+    var name = prompt("Rename project", p.name);
+    if(name === null) return;
+    name = name.trim();
+    if(!name) return;
+    p.name = name;
+    saveProjectsLocal();
+    if(!applyingRemote) scheduleCloudSave();
+    renderProjectPicker();
+  }
+
+  function deleteProject(id){
+    var p = projects[id];
+    if(!p) return;
+    if(Object.keys(projects).length <= 1){
+      alert("You need at least one project — create a new one before deleting this.");
+      return;
+    }
+    if(!confirm('Delete project "' + p.name + '" and all its tasks? This cannot be undone.')) return;
+    delete projects[id];
+    if(activeProjectId === id){
+      var nextId = Object.keys(projects)[0];
+      activeProjectId = nextId;
+      tasks = projects[nextId].tasks;
+      closeInspector();
+    }
+    saveProjectsLocal();
+    if(!applyingRemote) scheduleCloudSave();
+    render();
+    renderProjectPicker();
+  }
+
+  function openProjectDropdown(){
+    projectDropdownEl.style.display = "block";
+    newProjectInputEl.value = "";
+  }
+  function closeProjectDropdown(){
+    projectDropdownEl.style.display = "none";
+  }
+  function toggleProjectDropdown(){
+    if(projectDropdownEl.style.display === "block") closeProjectDropdown();
+    else openProjectDropdown();
+  }
+
+  projectPickerBtnEl.addEventListener("click", function(e){
+    e.stopPropagation();
+    toggleProjectDropdown();
+  });
+  newProjectBtnEl.addEventListener("click", function(){
+    if(newProjectInputEl.value.trim()) createProject(newProjectInputEl.value);
+  });
+  newProjectInputEl.addEventListener("keydown", function(e){
+    if(e.key === "Enter" && newProjectInputEl.value.trim()) createProject(newProjectInputEl.value);
+  });
+  document.addEventListener("click", function(e){
+    if(!projectPickerEl.contains(e.target)) closeProjectDropdown();
+  });
 
   // ---------- firebase auth + firestore sync ----------
   var syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl;
@@ -519,29 +791,50 @@
     });
   }
 
-  function subscribeToCloud(uid){
+  function subscribeToCloud(firebaseUid){
     unsubscribeCloud();
     setSyncState("syncing", "Connecting…");
-    cloudUnsub = db.collection("users").doc(uid).onSnapshot(function(snap){
+    cloudUnsub = db.collection("users").doc(firebaseUid).onSnapshot(function(snap){
       if(snap.metadata.hasPendingWrites) return; // ignore our own optimistic echo
       var data = snap.data() || {};
-      var remoteTasks = data[CLOUD_FIELD];
-      if(!Array.isArray(remoteTasks)){
+      var remote = data[CLOUD_FIELD];
+      if(!remote || typeof remote !== "object" || !Object.keys(remote).length){
         // nothing in the cloud yet for this app — push what we have locally
         setSyncState("synced", "Synced");
         pushToCloud();
         return;
       }
-      var remoteJSON = JSON.stringify(remoteTasks);
+      var remoteJSON = JSON.stringify(remote);
       if(remoteJSON === lastSyncedJSON){
         setSyncState("synced", "Synced");
         return;
       }
       applyingRemote = true;
-      tasks = remoteTasks.map(normalizeTask);
+      var newProjects = {};
+      Object.keys(remote).forEach(function(id){
+        newProjects[id] = {
+          id: id,
+          name: remote[id].name || "Untitled project",
+          tasks: Array.isArray(remote[id].tasks) ? remote[id].tasks.map(normalizeTask) : []
+        };
+      });
+      projects = newProjects;
+      if(!projects[activeProjectId]){
+        var ids = Object.keys(projects);
+        if(ids.length){
+          activeProjectId = ids[0];
+        } else {
+          var freshId = uid();
+          projects[freshId] = { id:freshId, name:"My Gantt Chart", tasks: [] };
+          activeProjectId = freshId;
+        }
+      }
+      tasks = projects[activeProjectId].tasks;
       lastSyncedJSON = remoteJSON;
+      saveProjectsLocal();
       closeInspector();
       render();
+      renderProjectPicker();
       applyingRemote = false;
       setSyncState("synced", "Synced");
     }, function(err){
@@ -565,10 +858,14 @@
 
   function pushToCloud(){
     if(!firebaseReady || !currentUser) return;
-    var json = JSON.stringify(tasks);
+    var out = {};
+    Object.keys(projects).forEach(function(id){
+      out[id] = { name: projects[id].name, tasks: projects[id].tasks };
+    });
+    var json = JSON.stringify(out);
     if(json === lastSyncedJSON){ setSyncState("synced", "Synced"); return; }
     var payload = {};
-    payload[CLOUD_FIELD] = tasks;
+    payload[CLOUD_FIELD] = out;
     payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
     db.collection("users").doc(currentUser.uid).set(payload, { merge:true })
       .then(function(){
@@ -1447,6 +1744,88 @@
     wrap.scrollLeft = Math.max(0, x - wrap.clientWidth/2);
   });
 
+  document.getElementById("printBtn").addEventListener("click", function(){
+    buildPrintArea();
+    setTimeout(function(){ window.print(); }, 30);
+  });
+
+  function buildPrintArea(){
+    var printEl = document.getElementById("printArea");
+    var list = visibleFlatten(); // respects current collapse state
+    var pRange = getRange();
+    var pTotalDays = Math.max(1, daysBetween(pRange.start, pRange.end) + 1);
+    var today = todayDate();
+
+    function pct(days){ return (days / pTotalDays) * 100; }
+
+    // month band segments proportional to day count in range
+    var monthSegs = [];
+    var cur = new Date(pRange.start);
+    var curMonthStart = new Date(cur);
+    var dayCount = 0;
+    while(cur.getTime() <= pRange.end.getTime()){
+      dayCount++;
+      var next = addDays(cur, 1);
+      if(next.getMonth() !== cur.getMonth() || next.getTime() > pRange.end.getTime()){
+        monthSegs.push({ label: monthLabel(curMonthStart), days: dayCount });
+        curMonthStart = next;
+        dayCount = 0;
+      }
+      cur = next;
+    }
+
+    var activeProj = projects[activeProjectId];
+    var projName = activeProj ? activeProj.name : "Untitled project";
+
+    var html = "";
+    html += '<div class="print-header">';
+    html += '<h1>' + esc(projName) + '</h1>';
+    html += '<div class="print-meta">Generated ' + esc(shortLabel(today)) + ' ' + today.getFullYear() +
+            ' &middot; Range: ' + esc(shortLabel(pRange.start)) + ' &ndash; ' + esc(shortLabel(pRange.end)) +
+            ' &middot; ' + list.length + (list.length===1?' task':' tasks') + '</div>';
+    html += '</div>';
+
+    html += '<table class="print-table"><colgroup>' +
+      '<col style="width:220px"><col style="width:66px"><col style="width:66px">' +
+      '<col style="width:56px"><col></colgroup>';
+    html += '<thead><tr>' +
+      '<th>Task</th><th>Start</th><th>End</th><th>Pred.</th>' +
+      '<th class="print-timeline-th"><div class="print-month-band">' +
+      monthSegs.map(function(seg){
+        return '<div class="print-month-seg" style="flex:'+seg.days+' 0 0;">'+esc(seg.label)+'</div>';
+      }).join("") +
+      '</div></th>' +
+      '</tr></thead><tbody>';
+
+    list.forEach(function(entry){
+      var t = entry.task;
+      var s = parseDate(t.start), e = parseDate(t.end);
+      var dur = daysBetween(s,e) + 1;
+      var left = pct(daysBetween(pRange.start, s));
+      var width = Math.max(pct(1), pct(dur));
+      var overdue = e.getTime() < today.getTime();
+      var predText = idsToNumbers(t.pred) || "—";
+      var labelLeft = Math.min(left + width + 1, 88);
+
+      html += '<tr class="depth-' + entry.depth + '">';
+      html += '<td class="print-name"><div class="print-name-cell" style="padding-left:' + (entry.depth*14) + 'px;">' + esc(t.name) + '</div></td>';
+      html += '<td class="print-dates">' + esc(t.start) + '</td>';
+      html += '<td class="print-dates">' + esc(t.end) + '</td>';
+      html += '<td class="print-pred">' + esc(predText) + '</td>';
+      html += '<td><div class="print-bar-track"><div class="print-bar' +
+        (entry.depth>0 ? ' depth-gt0' : '') + (overdue ? ' overdue' : '') +
+        '" style="left:' + left.toFixed(2) + '%; width:' + width.toFixed(2) + '%;"></div>' +
+        '<div class="print-bar-label" style="left:' + labelLeft.toFixed(2) + '%;">' + dur + 'd</div>' +
+        '</div></td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    html += '<div class="print-footer">Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.</div>';
+
+    printEl.innerHTML = html;
+  }
+
   document.getElementById("exportBtn").addEventListener("click", function(){
     var blob = new Blob([JSON.stringify(tasks, null, 2)], {type:"application/json"});
     var url = URL.createObjectURL(blob);
@@ -1484,6 +1863,7 @@
   });
 
   // ---------- init ----------
+  renderProjectPicker();
   initFirebase();
   render();
 })();
