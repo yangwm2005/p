@@ -297,40 +297,6 @@
     :root{--sidebar-w:230px;}
     .tree-row .meta{display:none;}
   }
-
-  /* ---------- print view ---------- */
-  #printArea{ display:none; }
-  .print-header{ margin-bottom:14px; }
-  .print-header h1{ font-size:20px; margin:0 0 4px; font-weight:700; }
-  .print-meta{ font-size:11.5px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; }
-  .print-table{ width:100%; border-collapse:collapse; font-size:11px; }
-  .print-table th{
-    text-align:left; font-size:9.5px; text-transform:uppercase; letter-spacing:0.5px;
-    color:var(--ink-faint); font-weight:600; padding:0 8px 6px; border-bottom:1.5px solid var(--ink);
-    vertical-align:bottom;
-  }
-  .print-table td{ padding:4px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
-  .print-table tr.depth-0 td.print-name{ font-weight:700; }
-  .print-name-cell{ display:flex; align-items:center; }
-  .print-dates, .print-pred{ font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--ink-soft); white-space:nowrap; }
-  .print-timeline-th{ padding-bottom:0; }
-  .print-month-band{ display:flex; width:100%; border-bottom:1.5px solid var(--ink); padding-bottom:5px; }
-  .print-month-seg{ font-size:9px; font-weight:600; color:var(--ink-soft); border-left:1px solid var(--line-strong); padding-left:4px; overflow:hidden; white-space:nowrap; }
-  .print-month-seg:first-child{ border-left:none; }
-  .print-bar-track{ position:relative; height:18px; }
-  .print-bar{ position:absolute; top:2px; height:14px; border-radius:2.5px; background:var(--accent); box-shadow:0 0.5px 0 rgba(0,0,0,0.15); }
-  .print-bar.depth-gt0{ background:var(--accent-child); }
-  .print-bar.overdue{ background:var(--rust); }
-  .print-bar-label{ position:absolute; top:2px; height:14px; display:flex; align-items:center; font-family:'IBM Plex Mono',monospace; font-size:9px; color:var(--ink-faint); white-space:nowrap; }
-  .print-footer{ margin-top:16px; font-size:9.5px; color:var(--ink-faint); text-align:center; }
-
-  @media print{
-    @page{ size: landscape; margin: 12mm; }
-    body > *:not(#printArea){ display:none !important; }
-    #printArea{ display:block !important; }
-    .print-table thead{ display:table-header-group; }
-    .print-table tr{ break-inside:avoid; }
-  }
 </style>
 </head>
 <body>
@@ -363,7 +329,7 @@
       <button id="zoomWeek">Week</button>
     </div>
     <button id="todayBtn" class="ghost" title="Scroll to today">Today</button>
-    <button id="printBtn" class="ghost" title="Print or save as PDF">Print</button>
+    <button id="printBtn" class="ghost" title="Open a print preview in a new window">Print</button>
     <button id="exportBtn" class="ghost" title="Export tasks as JSON">Export</button>
     <button id="importBtn" class="ghost" title="Import tasks from JSON">Import</button>
     <input type="file" id="importFile" accept="application/json" style="display:none;">
@@ -405,8 +371,6 @@
 </div>
 
 <footer>Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.</footer>
-
-<div id="printArea"></div>
 
 <!-- Inspector panel -->
 <div class="backdrop" id="backdrop"></div>
@@ -1744,17 +1708,70 @@
     wrap.scrollLeft = Math.max(0, x - wrap.clientWidth/2);
   });
 
-  document.getElementById("printBtn").addEventListener("click", function(){
-    buildPrintArea();
-    setTimeout(function(){ window.print(); }, 30);
-  });
+  document.getElementById("printBtn").addEventListener("click", openPrintPreview);
 
-  function buildPrintArea(){
-    var printEl = document.getElementById("printArea");
+  function buildGridOverlayHTML(printZoom, pRange, pct, todayInRangePct){
+    var overlay = "";
+
+    if(printZoom === "week"){
+      var wCur = new Date(pRange.start);
+      var acc = 0;
+      var boundaries = [];
+      while(wCur.getTime() <= pRange.end.getTime()){
+        var daysToNextMonday = (8 - wCur.getDay()) % 7 || 7;
+        var segEndExclusive = addDays(wCur, daysToNextMonday);
+        var rangeEndExclusive = addDays(pRange.end, 1);
+        if(segEndExclusive.getTime() > rangeEndExclusive.getTime()) segEndExclusive = rangeEndExclusive;
+        acc += daysBetween(wCur, segEndExclusive);
+        boundaries.push(pct(acc));
+        wCur = segEndExclusive;
+      }
+      boundaries.pop(); // final boundary is the range end — no line needed there
+      boundaries.forEach(function(p){
+        overlay += '<div style="position:absolute; top:0; bottom:0; left:' + p.toFixed(3) + '%; width:1px; background:#c7ccd3;"></div>';
+      });
+    } else {
+      var dCur = new Date(pRange.start);
+      var dIdx = 0;
+      while(dCur.getTime() <= pRange.end.getTime()){
+        var isWeekend = (dCur.getDay()===0 || dCur.getDay()===6);
+        if(isWeekend){
+          overlay += '<div style="position:absolute; top:0; bottom:0; left:' + pct(dIdx).toFixed(3) + '%; width:' + pct(1).toFixed(3) + '%; background:#f2f3f4;"></div>';
+        }
+        if(dIdx > 0){
+          overlay += '<div style="position:absolute; top:0; bottom:0; left:' + pct(dIdx).toFixed(3) + '%; width:1px; background:#e6e9ec;"></div>';
+        }
+        dCur = addDays(dCur, 1);
+        dIdx++;
+      }
+    }
+
+    if(todayInRangePct !== null){
+      overlay += '<div style="position:absolute; top:0; bottom:0; left:' + todayInRangePct.toFixed(3) + '%; width:2px; background:#c9882c;"></div>';
+    }
+    return overlay;
+  }
+
+  function getTightRange(list){
+    if(!list.length){
+      var t = todayDate();
+      return { start:t, end: addDays(t,6) };
+    }
+    var minS = null, maxE = null;
+    list.forEach(function(entry){
+      var s = parseDate(entry.task.start), e = parseDate(entry.task.end);
+      if(minS===null || s.getTime()<minS.getTime()) minS = s;
+      if(maxE===null || e.getTime()>maxE.getTime()) maxE = e;
+    });
+    return { start: minS, end: maxE };
+  }
+
+  function buildPrintBodyHTML(){
     var list = visibleFlatten(); // respects current collapse state
-    var pRange = getRange();
+    var pRange = getTightRange(list); // tight to the actual tasks — no interactive-view padding
     var pTotalDays = Math.max(1, daysBetween(pRange.start, pRange.end) + 1);
     var today = todayDate();
+    var printZoom = zoom; // reflects the app's current Day/Week toggle
 
     function pct(days){ return (days / pTotalDays) * 100; }
 
@@ -1774,6 +1791,41 @@
       cur = next;
     }
 
+    // ---- day/week tick band ----
+    var tickSegs = [];
+    if(printZoom === "week"){
+      var wCur2 = new Date(pRange.start);
+      while(wCur2.getTime() <= pRange.end.getTime()){
+        var daysToNextMonday2 = (8 - wCur2.getDay()) % 7 || 7;
+        var segEndExclusive2 = addDays(wCur2, daysToNextMonday2);
+        var rangeEndExclusive2 = addDays(pRange.end, 1);
+        if(segEndExclusive2.getTime() > rangeEndExclusive2.getTime()) segEndExclusive2 = rangeEndExclusive2;
+        var segDays2 = daysBetween(wCur2, segEndExclusive2);
+        tickSegs.push({ label: shortLabel(wCur2), days: segDays2, weekend:false });
+        wCur2 = segEndExclusive2;
+      }
+    } else {
+      var dCur2 = new Date(pRange.start);
+      while(dCur2.getTime() <= pRange.end.getTime()){
+        var isWeekend2 = (dCur2.getDay()===0 || dCur2.getDay()===6);
+        tickSegs.push({ label: String(dCur2.getDate()), days: 1, weekend:isWeekend2 });
+        dCur2 = addDays(dCur2, 1);
+      }
+    }
+
+    var todayInRangePct = null;
+    if(today.getTime() >= pRange.start.getTime() && today.getTime() <= pRange.end.getTime()){
+      todayInRangePct = pct(daysBetween(pRange.start, today));
+    }
+    // computed once and reused identically in every row — same date range for every task
+    var gridOverlayHTML = buildGridOverlayHTML(printZoom, pRange, pct, todayInRangePct);
+
+    var tickBandHTML = '<div class="print-tick-band">' +
+      tickSegs.map(function(seg){
+        return '<div class="print-tick-seg' + (seg.weekend ? ' weekend' : '') + '" style="flex:' + seg.days + ' 0 0;">' + esc(seg.label) + '</div>';
+      }).join("") +
+      '</div>';
+
     var activeProj = projects[activeProjectId];
     var projName = activeProj ? activeProj.name : "Untitled project";
 
@@ -1782,20 +1834,24 @@
     html += '<h1>' + esc(projName) + '</h1>';
     html += '<div class="print-meta">Generated ' + esc(shortLabel(today)) + ' ' + today.getFullYear() +
             ' &middot; Range: ' + esc(shortLabel(pRange.start)) + ' &ndash; ' + esc(shortLabel(pRange.end)) +
-            ' &middot; ' + list.length + (list.length===1?' task':' tasks') + '</div>';
+            ' &middot; ' + list.length + (list.length===1?' task':' tasks') +
+            ' &middot; View: ' + (printZoom==="week" ? "Week" : "Day") + '</div>';
     html += '</div>';
 
     html += '<table class="print-table"><colgroup>' +
-      '<col style="width:220px"><col style="width:66px"><col style="width:66px">' +
-      '<col style="width:56px"><col></colgroup>';
+      '<col style="width:150px"><col style="width:38px"><col style="width:56px"><col></colgroup>';
     html += '<thead><tr>' +
-      '<th>Task</th><th>Start</th><th>End</th><th>Pred.</th>' +
+      '<th>Task</th><th>Days</th><th>Pred.</th>' +
       '<th class="print-timeline-th"><div class="print-month-band">' +
       monthSegs.map(function(seg){
         return '<div class="print-month-seg" style="flex:'+seg.days+' 0 0;">'+esc(seg.label)+'</div>';
       }).join("") +
-      '</div></th>' +
+      '</div>' + tickBandHTML +
+      '</th>' +
       '</tr></thead><tbody>';
+
+    // rough estimate of the timeline column's printed pixel width (landscape page minus the other columns/margins)
+    var ASSUMED_TIMELINE_PX = 630;
 
     list.forEach(function(entry){
       var t = entry.task;
@@ -1805,25 +1861,103 @@
       var width = Math.max(pct(1), pct(dur));
       var overdue = e.getTime() < today.getTime();
       var predText = idsToNumbers(t.pred) || "—";
-      var labelLeft = Math.min(left + width + 1, 88);
+
+      var barPx = (width/100) * ASSUMED_TIMELINE_PX;
+      var neededPx = t.name.length * 5.4 + 12;
+      var labelOutside = barPx < neededPx;
 
       html += '<tr class="depth-' + entry.depth + '">';
       html += '<td class="print-name"><div class="print-name-cell" style="padding-left:' + (entry.depth*14) + 'px;">' + esc(t.name) + '</div></td>';
-      html += '<td class="print-dates">' + esc(t.start) + '</td>';
-      html += '<td class="print-dates">' + esc(t.end) + '</td>';
+      html += '<td class="print-dur">' + dur + 'd</td>';
       html += '<td class="print-pred">' + esc(predText) + '</td>';
-      html += '<td><div class="print-bar-track"><div class="print-bar' +
-        (entry.depth>0 ? ' depth-gt0' : '') + (overdue ? ' overdue' : '') +
-        '" style="left:' + left.toFixed(2) + '%; width:' + width.toFixed(2) + '%;"></div>' +
-        '<div class="print-bar-label" style="left:' + labelLeft.toFixed(2) + '%;">' + dur + 'd</div>' +
-        '</div></td>';
+      html += '<td><div class="print-bar-track">' + gridOverlayHTML;
+      html += '<div class="print-bar' + (entry.depth>0 ? ' depth-gt0' : '') + (overdue ? ' overdue' : '') +
+        '" style="left:' + left.toFixed(2) + '%; width:' + width.toFixed(2) + '%;">' +
+        (labelOutside ? '' : '<span class="print-bar-label">' + esc(t.name) + '</span>') +
+        '</div>';
+      if(labelOutside){
+        html += '<span class="print-bar-label outside" style="position:absolute; left:calc(' + left.toFixed(2) + '% + ' + width.toFixed(2) + '% + 4px); top:1px;">' + esc(t.name) + '</span>';
+      }
+      html += '</div></td>';
       html += '</tr>';
     });
 
     html += '</tbody></table>';
     html += '<div class="print-footer">Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.</div>';
 
-    printEl.innerHTML = html;
+    return html;
+  }
+
+  var PRINT_PREVIEW_CSS =
+    "*{box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; color-adjust:exact;} " +
+    "body{font-family:'IBM Plex Sans',sans-serif; color:#1c2430; background:#e8eaed; margin:0; padding:0;} " +
+    ".preview-toolbar{position:sticky; top:0; z-index:10; display:flex; align-items:center; justify-content:space-between; " +
+      "padding:12px 20px; background:#1c2430; color:#fff;} " +
+    ".preview-toolbar span{font-size:12.5px; color:#c7ccd3;} " +
+    ".preview-toolbar button{font-family:inherit; font-size:13px; font-weight:600; cursor:pointer; " +
+      "border:none; border-radius:5px; background:#2c5f7c; color:#fff; padding:8px 16px;} " +
+    ".preview-toolbar button:hover{background:#244c63;} " +
+    ".preview-page{max-width:1050px; margin:20px auto; background:#fff; padding:22px 26px; " +
+      "box-shadow:0 2px 10px rgba(20,26,34,0.15); border-radius:4px;} " +
+    ".print-header{margin-bottom:14px;} " +
+    ".print-header h1{font-size:20px; margin:0 0 4px; font-weight:700;} " +
+    ".print-meta{font-size:11.5px; color:#5b6472; font-family:'IBM Plex Mono',monospace;} " +
+    ".print-table{width:100%; border-collapse:collapse; font-size:11px;} " +
+    ".print-table th{text-align:left; font-size:9.5px; text-transform:uppercase; letter-spacing:0.5px; " +
+      "color:#8d96a3; font-weight:600; padding:0 8px 6px; border-bottom:1.5px solid #1c2430; vertical-align:bottom;} " +
+    ".print-table td{padding:4px 8px; border-bottom:1px solid #e2e6ea; vertical-align:middle;} " +
+    ".print-table tr.depth-0 td.print-name{font-weight:700;} " +
+    ".print-name-cell{display:flex; align-items:center;} " +
+    ".print-dur, .print-pred{font-family:'IBM Plex Mono',monospace; font-size:10px; color:#5b6472; white-space:nowrap;} " +
+    ".print-timeline-th{padding-bottom:0;} " +
+    ".print-month-band{display:flex; width:100%; border-bottom:1.5px solid #1c2430; padding-bottom:5px;} " +
+    ".print-month-seg{font-size:9px; font-weight:600; color:#5b6472; border-left:1px solid #c7ccd3; padding-left:4px; overflow:hidden; white-space:nowrap;} " +
+    ".print-month-seg:first-child{border-left:none;} " +
+    ".print-tick-band{display:flex; width:100%; margin-top:2px;} " +
+    ".print-tick-seg{font-size:7.5px; color:#8d96a3; text-align:center; border-left:1px solid #e2e6ea; overflow:hidden; white-space:nowrap; padding:1px 0;} " +
+    ".print-tick-seg:first-child{border-left:none;} " +
+    ".print-tick-seg.weekend{background:#f2f3f4; color:#5b6472; font-weight:600;} " +
+    ".print-bar-track{position:relative; height:20px; background-color:#fff;} " +
+    ".print-bar{position:absolute; top:1px; height:18px; border-radius:3px; background:#2c5f7c; display:flex; align-items:center; overflow:hidden;} " +
+    ".print-bar.depth-gt0{background:#5f8da6;} " +
+    ".print-bar.overdue{background:#b5493d;} " +
+    ".print-bar-label{color:#fff; font-size:9.5px; font-weight:600; padding:0 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;} " +
+    ".print-bar-label.outside{color:#1c2430; font-weight:600; padding-left:4px;} " +
+    ".print-footer{margin-top:16px; font-size:9.5px; color:#8d96a3; text-align:center;} " +
+    "@media print{ " +
+      "@page{ size: landscape; margin: 12mm; } " +
+      "html, body{background:#fff; -webkit-print-color-adjust:exact; print-color-adjust:exact; color-adjust:exact;} " +
+      ".preview-toolbar{display:none;} " +
+      ".preview-page{box-shadow:none; margin:0; padding:0; max-width:none; border-radius:0;} " +
+      ".print-table thead{display:table-header-group;} " +
+      ".print-table tr{break-inside:avoid;} " +
+      ".print-bar, .print-bar-track, .print-tick-seg.weekend{-webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;} " +
+    "}";
+
+  function openPrintPreview(){
+    var bodyHTML = buildPrintBodyHTML();
+    var win = window.open("", "_blank", "width=1150,height=850");
+    if(!win){
+      alert("Your browser blocked the preview popup. Please allow popups for this page and try again.");
+      return;
+    }
+    var doc = win.document;
+    doc.open();
+    doc.write(
+      "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Print preview</title>" +
+      "<link href='https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap' rel='stylesheet'>" +
+      "<style>" + PRINT_PREVIEW_CSS + "</style></head><body>" +
+      "<div class='preview-toolbar'>" +
+        "<span>Print preview — review below, then print or save as PDF</span>" +
+        "<button id='doPrintBtn'>Print</button>" +
+      "</div>" +
+      "<div class='preview-page'>" + bodyHTML + "</div>" +
+      "</body></html>"
+    );
+    doc.close();
+    win.document.getElementById("doPrintBtn").addEventListener("click", function(){
+      win.print();
+    });
   }
 
   document.getElementById("exportBtn").addEventListener("click", function(){
