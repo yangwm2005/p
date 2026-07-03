@@ -333,6 +333,8 @@
     <button id="exportBtn" class="ghost" title="Export tasks as JSON">Export</button>
     <button id="importBtn" class="ghost" title="Import tasks from JSON">Import</button>
     <input type="file" id="importFile" accept="application/json" style="display:none;">
+    <button id="importOutlineBtn" class="ghost" title="Import an indented text outline as a new project">Import Outline</button>
+    <input type="file" id="importOutlineFile" accept=".txt,text/plain" style="display:none;">
     <button id="addTaskBtn" class="primary">+ Add task</button>
     <div class="auth-group" id="authGroup">
       <span class="sync-dot" id="syncDot" data-state="offline" title="Not signed in"></span>
@@ -613,10 +615,10 @@
     renderProjectPicker();
   }
 
-  function createProject(name){
+  function createProject(name, initialTasks){
     var trimmed = (name || "").trim();
     var id = uid();
-    projects[id] = { id:id, name: trimmed || "Untitled project", tasks: [] };
+    projects[id] = { id:id, name: trimmed || "Untitled project", tasks: initialTasks || [] };
     activeProjectId = id;
     tasks = projects[id].tasks;
     saveProjectsLocal();
@@ -2059,6 +2061,64 @@
         alert("Could not import file: " + err.message);
       }
       importFile.value = "";
+    };
+    reader.readAsText(file);
+  });
+
+  // parses an indented plain-text outline into a hierarchy of tasks.
+  // nesting is inferred from each line's leading whitespace (spaces or tabs — any consistent
+  // indent works, an indent-stack tracks depth rather than assuming a fixed spaces-per-level).
+  // common bullet/numbering prefixes ("-", "*", "•", "1.", "a)") are stripped from each line.
+  // every task gets a placeholder 1-day date, staggered day-by-day in document order, purely so
+  // they don't all stack on top of each other before you drag them into place.
+  function parseOutlineText(text){
+    var rawLines = text.replace(/\r\n?/g, "\n").split("\n");
+    var stack = []; // {width, id}
+    var out = [];
+    var t0 = todayDate();
+    var lineIndex = 0;
+
+    rawLines.forEach(function(raw){
+      var expanded = raw.replace(/\t/g, "    ");
+      if(!expanded.trim()) return; // skip blank lines
+      var width = expanded.match(/^ */)[0].length;
+      var name = expanded.slice(width).trim();
+      name = name.replace(/^[-*•‣▪]\s+/, "").replace(/^\d+[.)]\s+/, "").replace(/^[a-zA-Z][.)]\s+/, "");
+      if(!name) return;
+
+      while(stack.length && stack[stack.length-1].width >= width) stack.pop();
+      var parentId = stack.length ? stack[stack.length-1].id : null;
+
+      var id = uid();
+      var start = addDays(t0, lineIndex);
+      var end = addDays(start, 1);
+      out.push({
+        id: id, name: name,
+        start: formatDate(start), end: formatDate(end),
+        pred: [], parentId: parentId, collapsed:false
+      });
+      stack.push({ width: width, id: id });
+      lineIndex++;
+    });
+
+    return out;
+  }
+
+  var importOutlineFile = document.getElementById("importOutlineFile");
+  document.getElementById("importOutlineBtn").addEventListener("click", function(){ importOutlineFile.click(); });
+  importOutlineFile.addEventListener("change", function(e){
+    var file = e.target.files[0];
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      var parsed = parseOutlineText(ev.target.result || "");
+      if(!parsed.length){
+        alert("Couldn't find any lines to import in that file.");
+      } else {
+        var defaultName = file.name.replace(/\.[^.]+$/, "").trim() || "Imported Outline";
+        createProject(defaultName, parsed);
+      }
+      importOutlineFile.value = "";
     };
     reader.readAsText(file);
   });
