@@ -94,6 +94,15 @@
     font-family:inherit; font-size:12.5px;
   }
   .project-new-row button{padding:6px 10px; font-size:12px;}
+
+  /* PM link indicator */
+  .pm-link-badge{
+    display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--accent);
+    background:var(--accent-fill); border:1px solid var(--accent-soft); border-radius:6px;
+    padding:5px 10px; white-space:nowrap;
+  }
+  .pm-link-badge a{color:var(--accent); font-weight:600; text-decoration:none;}
+  .pm-link-badge a:hover{text-decoration:underline;}
   .controls{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
   button{
     font-family:'IBM Plex Sans',sans-serif; font-size:13px; cursor:pointer;
@@ -368,6 +377,9 @@
       </div>
     </div>
     <span class="tick-mark" id="taskCountLabel">0 tasks</span>
+    <div class="pm-link-badge" id="pmLinkBadge" style="display:none;">
+      🔗 Linked to Q-PM <span id="pmSyncStatus" class="mono" style="font-size:10px;"></span> &nbsp;<a href="#" id="pmBackLink">← Back</a>
+    </div>
   </div>
   <div class="controls">
     <label class="toggle">
@@ -567,7 +579,13 @@
       pred: Array.isArray(t.pred) ? t.pred : [],
       parentId: t.parentId || null,
       collapsed: !!t.collapsed,
-      thinkLog: Array.isArray(t.thinkLog) ? t.thinkLog : []
+      thinkLog: Array.isArray(t.thinkLog) ? t.thinkLog : [],
+      // Q-PM-owned fields — Gantt preserves these untouched, only mirrors title/dueDate for linked projects
+      title: t.title || t.name,
+      status: t.status || "todo",
+      priority: t.priority || "medium",
+      note: t.note || "",
+      dueDate: t.dueDate || t.end
     };
   }
   function seedTasks(){
@@ -595,7 +613,9 @@
             projects[id] = {
               id: id,
               name: parsed[id].name || "Untitled project",
-              tasks: Array.isArray(parsed[id].tasks) ? parsed[id].tasks.map(normalizeTask) : []
+              tasks: Array.isArray(parsed[id].tasks) ? parsed[id].tasks.map(normalizeTask) : [],
+              linkedPmProjectId: parsed[id].linkedPmProjectId || null,
+              pmReturnUrl: parsed[id].pmReturnUrl || null
             };
           });
           activeProjectId = localStorage.getItem(ACTIVE_PROJECT_KEY);
@@ -628,7 +648,12 @@
     try{
       var out = {};
       Object.keys(projects).forEach(function(id){
-        out[id] = { name: projects[id].name, tasks: projects[id].tasks };
+        out[id] = {
+          name: projects[id].name,
+          tasks: projects[id].tasks,
+          linkedPmProjectId: projects[id].linkedPmProjectId || null,
+          pmReturnUrl: projects[id].pmReturnUrl || null
+        };
       });
       localStorage.setItem(PROJECTS_KEY, JSON.stringify(out));
       if(activeProjectId) localStorage.setItem(ACTIVE_PROJECT_KEY, activeProjectId);
@@ -637,8 +662,17 @@
 
   function saveTasks(){
     if(activeProjectId && projects[activeProjectId]) projects[activeProjectId].tasks = tasks;
+    if(!applyingRemote){
+      tasks.forEach(function(t){
+        t.title = t.name;
+        t.dueDate = t.end;
+      });
+    }
     saveProjectsLocal();
-    if(!applyingRemote) scheduleCloudSave();
+    if(!applyingRemote){
+      scheduleCloudSave();
+      if(projects[activeProjectId] && projects[activeProjectId].linkedPmProjectId) scheduleSharedTaskPush();
+    }
   }
 
   // ---------- project picker ----------
@@ -653,6 +687,7 @@
   function renderProjectPicker(){
     var active = projects[activeProjectId];
     activeProjectNameEl.textContent = active ? active.name : "Untitled project";
+    renderPmLinkBadge(active);
 
     projectListEl.innerHTML = "";
     Object.keys(projects).sort(function(a,b){
@@ -704,12 +739,17 @@
     closeProjectDropdown();
     render();
     renderProjectPicker();
+    refreshSharedTaskSubscription();
   }
 
-  function createProject(name, initialTasks){
+  function createProject(name, initialTasks, linkFields){
     var trimmed = (name || "").trim();
     var id = uid();
-    projects[id] = { id:id, name: trimmed || "Untitled project", tasks: initialTasks || [] };
+    projects[id] = {
+      id:id, name: trimmed || "Untitled project", tasks: initialTasks || [],
+      linkedPmProjectId: (linkFields && linkFields.linkedPmProjectId) || null,
+      pmReturnUrl: (linkFields && linkFields.pmReturnUrl) || null
+    };
     activeProjectId = id;
     tasks = projects[id].tasks;
     saveProjectsLocal();
@@ -717,6 +757,59 @@
     closeProjectDropdown();
     render();
     renderProjectPicker();
+    refreshSharedTaskSubscription();
+  }
+
+  function findProjectByPmId(pmProjectId){
+    return Object.keys(projects).find(function(id){
+      return projects[id].linkedPmProjectId === pmProjectId;
+    }) || null;
+  }
+
+  var pmLinkBadgeEl = document.getElementById("pmLinkBadge");
+  var pmBackLinkEl = document.getElementById("pmBackLink");
+  var pmSyncStatusEl = document.getElementById("pmSyncStatus");
+  var pmSyncState = "idle"; // idle | subscribed | error | signedout
+  function setPmSyncState(state){
+    pmSyncState = state;
+    if(!pmSyncStatusEl) return;
+    var labels = {
+      idle: "(connecting…)",
+      subscribed: "· tasks syncing",
+      error: "· sync error (see console)",
+      signedout: "· sign in to sync tasks"
+    };
+    pmSyncStatusEl.textContent = labels[state] || "";
+  }
+  function renderPmLinkBadge(activeProject){
+    if(activeProject && activeProject.linkedPmProjectId){
+      pmLinkBadgeEl.style.display = "flex";
+      pmBackLinkEl.href = activeProject.pmReturnUrl || "#";
+      setPmSyncState(pmSyncState);
+    } else {
+      pmLinkBadgeEl.style.display = "none";
+    }
+  }
+
+  // if opened from Q-PM (?pmProjectId=...&pmProjectName=...&pmReturnUrl=...), find or create the
+  // matching Gantt project and switch straight to it, so the link between the two apps is durable.
+  function handlePmLinkFromUrl(){
+    var params = new URLSearchParams(window.location.search);
+    var pmProjectId = params.get("pmProjectId");
+    if(!pmProjectId) return;
+    var pmProjectName = params.get("pmProjectName") || "Untitled PM Project";
+    var pmReturnUrl = params.get("pmReturnUrl") || null;
+
+    var existingId = findProjectByPmId(pmProjectId);
+    if(existingId){
+      projects[existingId].pmReturnUrl = pmReturnUrl || projects[existingId].pmReturnUrl;
+      activeProjectId = existingId;
+      tasks = projects[existingId].tasks;
+      saveProjectsLocal();
+      refreshSharedTaskSubscription();
+    } else {
+      createProject(pmProjectName, [], { linkedPmProjectId: pmProjectId, pmReturnUrl: pmReturnUrl });
+    }
   }
 
   function renameProject(id){
@@ -839,10 +932,13 @@
         userAvatarEl.src = user.photoURL || "";
         userNameEl.textContent = user.displayName || user.email || "Signed in";
         subscribeToCloud(user.uid);
+        sharedTaskSubscribedPmId = null; // force re-evaluation now that we're signed in
+        refreshSharedTaskSubscription();
       } else {
         signInBtnEl.style.display = "flex";
         userChipEl.style.display = "none";
         unsubscribeCloud();
+        unsubscribeSharedTasks();
         setSyncState("offline", "Not signed in");
       }
     });
@@ -872,7 +968,9 @@
         newProjects[id] = {
           id: id,
           name: remote[id].name || "Untitled project",
-          tasks: Array.isArray(remote[id].tasks) ? remote[id].tasks.map(normalizeTask) : []
+          tasks: Array.isArray(remote[id].tasks) ? remote[id].tasks.map(normalizeTask) : [],
+          linkedPmProjectId: remote[id].linkedPmProjectId || null,
+          pmReturnUrl: remote[id].pmReturnUrl || null
         };
       });
       projects = newProjects;
@@ -917,7 +1015,12 @@
     if(!firebaseReady || !currentUser) return;
     var out = {};
     Object.keys(projects).forEach(function(id){
-      out[id] = { name: projects[id].name, tasks: projects[id].tasks };
+      out[id] = {
+        name: projects[id].name,
+        tasks: projects[id].tasks,
+        linkedPmProjectId: projects[id].linkedPmProjectId || null,
+        pmReturnUrl: projects[id].pmReturnUrl || null
+      };
     });
     var json = JSON.stringify(out);
     if(json === lastSyncedJSON){ setSyncState("synced", "Synced"); return; }
@@ -933,6 +1036,103 @@
         console.error("Cloud save failed", err);
         setSyncState("error", "Save failed: " + err.message);
       });
+  }
+
+  // ---------- shared task sync (Q-PM link) ----------
+  var SHARED_FIELD = "sharedPmGanttTasks";
+  var sharedTaskUnsub = null;
+  var sharedTaskSaveTimer = null;
+  var sharedTaskSubscribedPmId = null;
+  var lastSharedSyncedJSON = null;
+
+  // shared task shape carries fields both apps understand; each app mirrors only the fields it owns.
+  function toSharedTask(t){
+    return {
+      id: t.id,
+      title: t.name, name: t.name,
+      status: t.status || "todo",
+      priority: t.priority || "medium",
+      note: t.note || "",
+      thinkLog: t.thinkLog || [],
+      dueDate: t.end, end: t.end,
+      start: t.start,
+      pred: t.pred || [],
+      parentId: t.parentId || null,
+      collapsed: !!t.collapsed
+    };
+  }
+
+  function refreshSharedTaskSubscription(){
+    var proj = projects[activeProjectId];
+    var pmId = proj && proj.linkedPmProjectId ? proj.linkedPmProjectId : null;
+    if(pmId === sharedTaskSubscribedPmId) return; // already correct, nothing to do
+    unsubscribeSharedTasks();
+    if(!pmId) return;
+    if(!firebaseReady || !currentUser){
+      setPmSyncState("signedout");
+      return;
+    }
+    subscribeSharedTasks(pmId);
+  }
+
+  function subscribeSharedTasks(pmProjectId){
+    if(!firebaseReady || !currentUser) return;
+    sharedTaskSubscribedPmId = pmProjectId;
+    setPmSyncState("idle");
+    sharedTaskUnsub = db.collection("users").doc(currentUser.uid).onSnapshot(function(snap){
+      if(snap.metadata.hasPendingWrites) return;
+      setPmSyncState("subscribed");
+      var proj = projects[activeProjectId];
+      if(!proj || proj.linkedPmProjectId !== pmProjectId) return; // user switched away mid-flight
+      var data = snap.data() || {};
+      var shared = (data[SHARED_FIELD] || {})[pmProjectId];
+      if(!shared || !Array.isArray(shared.tasks)) return;
+
+      var json = JSON.stringify(shared.tasks);
+      if(json === lastSharedSyncedJSON) return;
+      lastSharedSyncedJSON = json;
+
+      applyingRemote = true;
+      tasks = shared.tasks.map(normalizeTask);
+      proj.tasks = tasks;
+      saveProjectsLocal();
+      closeInspector();
+      render();
+      renderProjectPicker();
+      applyingRemote = false;
+    }, function(err){
+      console.error("Shared task sync error", err);
+      setPmSyncState("error");
+    });
+  }
+
+  function unsubscribeSharedTasks(){
+    if(sharedTaskUnsub){ sharedTaskUnsub(); sharedTaskUnsub = null; }
+    if(sharedTaskSaveTimer){ clearTimeout(sharedTaskSaveTimer); sharedTaskSaveTimer = null; }
+    sharedTaskSubscribedPmId = null;
+    lastSharedSyncedJSON = null;
+  }
+
+  function scheduleSharedTaskPush(){
+    if(!firebaseReady || !currentUser){ setPmSyncState("signedout"); return; }
+    if(sharedTaskSaveTimer) clearTimeout(sharedTaskSaveTimer);
+    sharedTaskSaveTimer = setTimeout(pushSharedTasks, 700);
+  }
+
+  function pushSharedTasks(){
+    var proj = projects[activeProjectId];
+    if(!proj || !proj.linkedPmProjectId || !firebaseReady || !currentUser) return;
+    var pmId = proj.linkedPmProjectId;
+    var sharedTasks = tasks.map(toSharedTask);
+    var json = JSON.stringify(sharedTasks);
+    if(json === lastSharedSyncedJSON) return;
+
+    var payload = {};
+    payload[SHARED_FIELD] = {};
+    payload[SHARED_FIELD][pmId] = { tasks: sharedTasks, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+    db.collection("users").doc(currentUser.uid).set(payload, { merge:true })
+      .then(function(){ lastSharedSyncedJSON = json; setPmSyncState("subscribed"); })
+      .catch(function(err){ console.error("Shared task push failed", err); setPmSyncState("error"); });
   }
 
   // ---------- tree helpers ----------
@@ -1153,7 +1353,7 @@
       title.textContent = t.name;
       row.appendChild(title);
 
-      var logCount = (t.thinkLog || []).filter(function(x){ return !x.section; }).length;
+      var logCount = (t.thinkLog || []).filter(function(x){ return !x.section && !x.isSubtitle; }).length;
       if(logCount > 0){
         var tb = document.createElement("span");
         tb.className = "think-badge";
@@ -1667,7 +1867,7 @@
     var dur = daysBetween(s,e)+1;
     inspDuration.textContent = dur + (dur===1?" day":" days") + "  ·  " + shortLabel(s) + " – " + shortLabel(e);
 
-    var logCount = (t.thinkLog || []).filter(function(x){ return !x.section; }).length;
+    var logCount = (t.thinkLog || []).filter(function(x){ return !x.section && !x.isSubtitle; }).length;
     var badge = document.getElementById("inspThinkBadge");
     if(logCount > 0){ badge.style.display = "inline"; badge.textContent = logCount; }
     else { badge.style.display = "none"; }
@@ -1755,10 +1955,10 @@
       return;
     }
     msgs.forEach(function(entry){
-      if(entry.section){
+      if(entry.section || entry.isSubtitle){
         var sec = document.createElement("div");
         sec.className = "tl-section";
-        sec.textContent = "── " + entry.section + " ──";
+        sec.textContent = "── " + (entry.section || entry.text || "") + " ──";
         containerEl.appendChild(sec);
         return;
       }
@@ -1825,7 +2025,7 @@
   });
   tlSectionMenuEl.querySelectorAll("button").forEach(function(btn){
     btn.addEventListener("click", function(){
-      tlMsgs.push({ section: btn.dataset.label });
+      tlMsgs.push({ section: btn.dataset.label, isSubtitle: true, text: btn.dataset.label, timestamp: new Date().toLocaleString() });
       tlSectionMenuEl.classList.remove("show");
       renderThinkLogChat();
       saveThinkLog();
@@ -1887,7 +2087,11 @@
 
   function newTaskTemplate(parentId){
     var t = todayDate();
-    return { id:uid(), name:"New task", start:formatDate(t), end:formatDate(addDays(t,3)), pred:[], parentId:parentId, collapsed:false, thinkLog:[] };
+    var end = formatDate(addDays(t,3));
+    return {
+      id:uid(), name:"New task", start:formatDate(t), end:end, pred:[], parentId:parentId, collapsed:false, thinkLog:[],
+      title:"New task", status:"todo", priority:"medium", note:"", dueDate:end
+    };
   }
 
   function addSibling(ref){
@@ -2389,7 +2593,46 @@
     reader.readAsText(file);
   });
 
+  // ---------- paste an outline directly into the current project ----------
+  var toastEl = null;
+  function showToast(msg){
+    if(!toastEl){
+      toastEl = document.createElement("div");
+      toastEl.style.cssText =
+        "position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:60;" +
+        "background:var(--ink); color:#fff; font-size:12.5px; padding:9px 16px; border-radius:20px;" +
+        "box-shadow:0 6px 18px rgba(20,26,34,0.25); opacity:0; transition:opacity .2s; pointer-events:none;";
+      document.body.appendChild(toastEl);
+    }
+    toastEl.textContent = msg;
+    requestAnimationFrame(function(){ toastEl.style.opacity = "1"; });
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function(){ toastEl.style.opacity = "0"; }, 2200);
+  }
+
+  function isEditableTarget(el){
+    if(!el) return false;
+    var tag = el.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+  }
+
+  document.addEventListener("paste", function(e){
+    if(isEditableTarget(e.target)) return; // let normal paste-into-field behavior happen untouched
+    if(!e.clipboardData) return;
+    var text = e.clipboardData.getData("text/plain");
+    if(!text || !text.trim()) return;
+
+    var parsed = parseOutlineText(text);
+    if(!parsed.length) return;
+
+    e.preventDefault();
+    tasks = tasks.concat(parsed);
+    render();
+    showToast("Added " + parsed.length + (parsed.length===1 ? " task" : " tasks") + " from clipboard");
+  });
+
   // ---------- init ----------
+  handlePmLinkFromUrl();
   renderProjectPicker();
   initFirebase();
   render();
