@@ -987,8 +987,11 @@
       tasks = projects[activeProjectId].tasks;
       lastSyncedJSON = remoteJSON;
       saveProjectsLocal();
-      closeInspector();
-      render();
+      render(); // render() only closes the inspector if the open task genuinely no longer exists
+      if(currentInspectId){
+        var stillOpenTask = tasks.find(function(t){ return t.id === currentInspectId; });
+        if(stillOpenTask) populateInspector(stillOpenTask); // keep panel open, just refresh its content
+      }
       renderProjectPicker();
       applyingRemote = false;
       setSyncState("synced", "Synced");
@@ -1096,8 +1099,11 @@
       tasks = shared.tasks.map(normalizeTask);
       proj.tasks = tasks;
       saveProjectsLocal();
-      closeInspector();
-      render();
+      render(); // render() only closes the inspector if the open task genuinely no longer exists
+      if(currentInspectId){
+        var stillOpenSharedTask = tasks.find(function(t){ return t.id === currentInspectId; });
+        if(stillOpenSharedTask) populateInspector(stillOpenSharedTask); // keep panel open, refresh content
+      }
       renderProjectPicker();
       applyingRemote = false;
     }, function(err){
@@ -2591,6 +2597,44 @@
       importOutlineFile.value = "";
     };
     reader.readAsText(file);
+  });
+
+  // ---------- paste an outline directly into the current project ----------
+  var toastEl = null;
+  function showToast(msg){
+    if(!toastEl){
+      toastEl = document.createElement("div");
+      toastEl.style.cssText =
+        "position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:60;" +
+        "background:var(--ink); color:#fff; font-size:12.5px; padding:9px 16px; border-radius:20px;" +
+        "box-shadow:0 6px 18px rgba(20,26,34,0.25); opacity:0; transition:opacity .2s; pointer-events:none;";
+      document.body.appendChild(toastEl);
+    }
+    toastEl.textContent = msg;
+    requestAnimationFrame(function(){ toastEl.style.opacity = "1"; });
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(function(){ toastEl.style.opacity = "0"; }, 2200);
+  }
+
+  function isEditableTarget(el){
+    if(!el) return false;
+    var tag = el.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+  }
+
+  document.addEventListener("paste", function(e){
+    if(isEditableTarget(e.target)) return; // let normal paste-into-field behavior happen untouched
+    if(!e.clipboardData) return;
+    var text = e.clipboardData.getData("text/plain");
+    if(!text || !text.trim()) return;
+
+    var parsed = parseOutlineText(text);
+    if(!parsed.length) return;
+
+    e.preventDefault();
+    tasks = tasks.concat(parsed);
+    render();
+    showToast("Added " + parsed.length + (parsed.length===1 ? " task" : " tasks") + " from clipboard");
   });
 
   // ---------- init ----------
