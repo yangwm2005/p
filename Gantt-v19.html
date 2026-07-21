@@ -216,6 +216,34 @@
     padding:5px 11px; text-decoration:none; border:1px solid var(--accent-soft);
   }
   .help-toc a:hover{background:var(--accent-soft);}
+
+  /* ---------- paste outline modal ---------- */
+  .po-backdrop{position:fixed; inset:0; background:rgba(28,36,48,0.4); z-index:45; display:none;}
+  .po-backdrop.show{display:block;}
+  .po-panel{
+    position:fixed; top:8%; left:50%; transform:translateX(-50%);
+    width:520px; max-width:92vw; background:var(--panel);
+    border-radius:10px; box-shadow:0 14px 44px rgba(20,26,34,0.3);
+    z-index:46; display:none; flex-direction:column; overflow:hidden;
+  }
+  .po-panel.show{display:flex;}
+  .po-header{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--line);}
+  .po-header .po-title{font-weight:700; font-size:14px;}
+  .po-close{border:none; background:none; font-size:14px; color:var(--ink-faint); cursor:pointer; padding:4px 8px; border-radius:4px;}
+  .po-close:hover{background:var(--accent-fill);}
+  .po-body{padding:16px 18px;}
+  .po-body label{font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--ink-faint); font-weight:600; margin-bottom:6px; display:block;}
+  #poProjectName{
+    width:100%; padding:8px 10px; border:1px solid var(--line-strong); border-radius:6px;
+    font-family:inherit; font-size:13px; margin-bottom:14px;
+  }
+  #poTextarea{
+    width:100%; height:220px; resize:vertical; padding:10px 12px; border:1px solid var(--line-strong);
+    border-radius:6px; font-family:'IBM Plex Mono',monospace; font-size:12px; line-height:1.5;
+  }
+  .po-hint{font-size:11.5px; color:var(--ink-faint); margin:8px 0 0; line-height:1.4;}
+  .po-actions{display:flex; gap:8px; padding:14px 18px; border-top:1px solid var(--line);}
+  .po-actions button{flex:1;}
   .think-preview{border-top:1px solid var(--line); padding-top:14px;}
   .think-preview-header{display:flex; align-items:center; gap:6px; margin-bottom:8px;}
   .think-preview-header .settings-label{margin:0;}
@@ -432,6 +460,7 @@
     <input type="file" id="importFile" accept="application/json" style="display:none;">
     <button id="importOutlineBtn" class="ghost" title="Import an indented text outline as a new project">Import Outline</button>
     <input type="file" id="importOutlineFile" accept=".txt,text/plain" style="display:none;">
+    <button id="pasteOutlineBtn" class="ghost" title="Paste an indented outline as a new project">📋 Paste Outline</button>
     <button id="importIcsBtn" class="ghost" title="Import an .ics calendar file as a new project">📅 Import Calendar</button>
     <input type="file" id="importIcsFile" accept=".ics,text/calendar" style="display:none;">
     <button id="addTaskBtn" class="primary">+ Add task</button>
@@ -613,7 +642,8 @@
       <ul>
         <li><strong>Import</strong> loads a previously exported JSON file, replacing the tasks in your current project.</li>
         <li><strong>Import Outline</strong> reads an indented <code>.txt</code> file — indentation (spaces, tabs, bullets, numbering) becomes the task hierarchy — and always creates a <em>new</em> project so nothing existing gets overwritten.</li>
-        <li>You can also just <strong>paste</strong> (<kbd>Ctrl/Cmd+V</kbd>) an indented outline directly anywhere in the app (as long as you're not focused in a text field) and it's added straight into your <em>current</em> project as tasks and sub-tasks. Dates are just placeholders — drag them into place afterward.</li>
+        <li><strong>📋 Paste Outline</strong> does the same thing as Import Outline, but from your clipboard instead of a file — opens a box where you paste (<kbd>Ctrl/Cmd+V</kbd>) an outline and give the new project a name, no need to save a file first.</li>
+        <li>For a quicker one-off addition, you can also just <strong>paste</strong> (<kbd>Ctrl/Cmd+V</kbd>) an indented outline directly anywhere in the app (as long as you're not focused in a text field) and it's added straight into your <em>current</em> project as tasks and sub-tasks, without opening any dialog. Dates are just placeholders — drag them into place afterward.</li>
         <li><strong>Import Calendar</strong> reads a <code>.ics</code> calendar file (from Google Calendar, iCloud, Outlook, or Gantt's own export) and turns each event into a task in a new project — see <a href="#help-calendar">Calendar import/export</a> below for details.</li>
       </ul>
     </div>
@@ -664,6 +694,26 @@
         <li>This requires being <strong>signed in with the same Google account</strong> in both apps, since that's the bridge between them.</li>
       </ul>
     </div>
+  </div>
+</div>
+
+<!-- Paste Outline modal -->
+<div class="po-backdrop" id="poBackdrop"></div>
+<div class="po-panel" id="poPanel" aria-hidden="true">
+  <div class="po-header">
+    <span class="po-title">📋 Paste Outline as New Project</span>
+    <button class="po-close" id="poCloseBtn" title="Close">✕</button>
+  </div>
+  <div class="po-body">
+    <label for="poProjectName">Project name</label>
+    <input type="text" id="poProjectName" placeholder="Pasted Outline" maxlength="80">
+    <label for="poTextarea">Outline</label>
+    <textarea id="poTextarea" placeholder="Paste your outline here (Ctrl/Cmd+V)…&#10;&#10;Indented lines become sub-tasks, e.g.:&#10;Kickoff meeting&#10;  Draft agenda&#10;  Book room"></textarea>
+    <p class="po-hint">Indentation (spaces, tabs, bullets, or numbering) becomes the task hierarchy. Dates are just placeholders — you can drag them into place afterward.</p>
+  </div>
+  <div class="po-actions">
+    <button id="poCancelBtn" class="ghost">Cancel</button>
+    <button id="poImportBtn" class="primary">Create Project</button>
   </div>
 </div>
 
@@ -2993,6 +3043,42 @@
       importIcsFile.value = "";
     };
     reader.readAsText(file);
+  });
+
+  // ---------- paste outline as a new project (modal) ----------
+  var poBackdropEl = document.getElementById("poBackdrop");
+  var poPanelEl = document.getElementById("poPanel");
+  var poProjectNameEl = document.getElementById("poProjectName");
+  var poTextareaEl = document.getElementById("poTextarea");
+
+  function openPasteOutlineModal(){
+    poProjectNameEl.value = "";
+    poTextareaEl.value = "";
+    poBackdropEl.classList.add("show");
+    poPanelEl.classList.add("show");
+    poPanelEl.setAttribute("aria-hidden", "false");
+    poTextareaEl.focus();
+  }
+  function closePasteOutlineModal(){
+    poBackdropEl.classList.remove("show");
+    poPanelEl.classList.remove("show");
+    poPanelEl.setAttribute("aria-hidden", "true");
+  }
+
+  document.getElementById("pasteOutlineBtn").addEventListener("click", openPasteOutlineModal);
+  document.getElementById("poCloseBtn").addEventListener("click", closePasteOutlineModal);
+  document.getElementById("poCancelBtn").addEventListener("click", closePasteOutlineModal);
+  poBackdropEl.addEventListener("click", closePasteOutlineModal);
+
+  document.getElementById("poImportBtn").addEventListener("click", function(){
+    var parsed = parseOutlineText(poTextareaEl.value || "");
+    if(!parsed.length){
+      alert("Couldn't find any lines to import — paste an outline into the box first.");
+      return;
+    }
+    var name = poProjectNameEl.value.trim() || "Pasted Outline";
+    closePasteOutlineModal();
+    createProject(name, parsed);
   });
 
   // ---------- paste an outline directly into the current project ----------
