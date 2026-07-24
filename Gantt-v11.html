@@ -326,7 +326,7 @@
 
   /* timeline */
   .timeline-wrap{flex:1; overflow-x:auto; overflow-y:visible; position:relative;}
-  .ruler{position:sticky; top:0; z-index:2; background:var(--panel); border-bottom:1px solid var(--line-strong);}
+  .ruler{position:sticky; top:0; z-index:2; background:var(--panel); border-bottom:1px solid var(--line-strong); cursor:ew-resize; touch-action:none; user-select:none;}
   .ruler-months{height:24px; position:relative; border-bottom:1px solid var(--line);}
   .ruler-days{height:16px; position:relative;}
   .month-label{
@@ -490,7 +490,7 @@
     <div class="addrow"><button id="addTaskBtn2">+ Add task</button></div>
   </div>
   <div class="timeline-wrap" id="timelineWrap">
-    <div class="ruler">
+    <div class="ruler" id="rulerEl" title="Drag left/right to zoom in or out">
       <div class="ruler-months" id="rulerMonths"></div>
       <div class="ruler-days" id="rulerDays"></div>
     </div>
@@ -620,7 +620,8 @@
         <li>Drag a bar <strong>vertically</strong> (or drag the ⠿ handle in the sidebar) to reorder tasks — drop on the top/bottom of another row to become its sibling, or in the middle to nest as its sub-task.</li>
         <li>With a task's panel open, press <kbd>Tab</kbd> to nest it under the task just above it, or <kbd>Shift+Tab</kbd> to move it back up a level — a quick keyboard alternative to dragging.</li>
         <li>Click the ▾ / ▸ caret next to a task to collapse or expand its sub-tasks.</li>
-        <li><strong>Day / Week</strong> buttons in the top bar zoom the timeline in or out.</li>
+        <li><strong>Day / Week</strong> buttons in the top bar jump between two zoom presets.</li>
+        <li>For finer control, click and drag left/right anywhere on the <strong>ruler</strong> (the row with the month and day labels) to continuously zoom in or out — your preferred scale is remembered separately for Day and Week mode.</li>
         <li><strong>Today</strong> scrolls the view back to the current date, marked with a dashed amber line.</li>
       </ul>
     </div>
@@ -730,10 +731,30 @@
   // ---------- constants ----------
   var STORE_KEY = "gantt_v2_tasks";
   var ZOOM_KEY = "gantt_v2_zoom";
+  var ZOOM_SCALE_KEY = "gantt_v2_zoomscale";
   var SHIFT_KEY = "gantt_v2_autoshift";
   var ROW_H = 40;
-  var ZOOMS = { day: 40, week: 13 };
+  var ZOOMS = loadZoomScale();
+  var ZOOM_MIN = { day: 16, week: 5 };
+  var ZOOM_MAX = { day: 110, week: 34 };
   var MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  function loadZoomScale(){
+    var defaults = { day: 40, week: 13 };
+    try{
+      var raw = localStorage.getItem(ZOOM_SCALE_KEY);
+      if(raw){
+        var parsed = JSON.parse(raw);
+        if(typeof parsed.day === "number") defaults.day = parsed.day;
+        if(typeof parsed.week === "number") defaults.week = parsed.week;
+      }
+    }catch(e){ /* fall back to defaults */ }
+    return defaults;
+  }
+  function saveZoomScale(){
+    try{ localStorage.setItem(ZOOM_SCALE_KEY, JSON.stringify(ZOOMS)); }
+    catch(e){ /* non-fatal */ }
+  }
 
   // ---------- firebase config (shared qtodo-syn project) ----------
   var FIREBASE_CONFIG = {
@@ -2398,6 +2419,45 @@
   zoomDayBtn.addEventListener("click", function(){ setZoom("day"); });
   zoomWeekBtn.addEventListener("click", function(){ setZoom("week"); });
   setZoom(zoom);
+
+  // ---------- drag the ruler to zoom in/out continuously ----------
+  (function(){
+    var rulerDragEl = document.getElementById("rulerEl");
+    var timelineWrapEl = document.getElementById("timelineWrap");
+    var dragging = false;
+    var lastX = 0;
+    var moved = false;
+
+    rulerDragEl.addEventListener("pointerdown", function(e){
+      dragging = true;
+      moved = false;
+      lastX = e.clientX;
+      rulerDragEl.setPointerCapture(e.pointerId);
+    });
+    rulerDragEl.addEventListener("pointermove", function(e){
+      if(!dragging) return;
+      var dx = e.clientX - lastX;
+      if(Math.abs(dx) < 1) return;
+      lastX = e.clientX;
+      moved = true;
+
+      var sensitivity = zoom === "day" ? 0.5 : 0.18;
+      var oldPx = ZOOMS[zoom];
+      var newPx = Math.max(ZOOM_MIN[zoom], Math.min(ZOOM_MAX[zoom], oldPx + dx * sensitivity));
+      if(newPx === oldPx) return;
+
+      var oldScrollLeft = timelineWrapEl.scrollLeft;
+      ZOOMS[zoom] = newPx;
+      render();
+      timelineWrapEl.scrollLeft = oldScrollLeft * (newPx / oldPx); // keep the same view roughly anchored
+    });
+    rulerDragEl.addEventListener("pointerup", function(e){
+      if(!dragging) return;
+      dragging = false;
+      rulerDragEl.releasePointerCapture(e.pointerId);
+      if(moved) saveZoomScale();
+    });
+  })();
 
   document.getElementById("todayBtn").addEventListener("click", function(){
     var wrap = document.getElementById("timelineWrap");
