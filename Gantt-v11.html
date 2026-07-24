@@ -366,6 +366,7 @@
   .bar:active{cursor:grabbing;}
   .bar.depth-gt0{background:var(--accent-child);}
   .bar.overdue{background:var(--rust);}
+  .bar.overdue-outline{box-shadow:0 0 0 2px var(--rust) inset;}
   .bar.selected{box-shadow:0 0 0 2px var(--ink), 0 1px 2px rgba(28,36,48,0.18);}
   .bar .bar-label{color:#fff; font-size:11px; font-weight:500; padding:0 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none;}
   .bar .handle{position:absolute; top:0; bottom:0; width:8px; cursor:ew-resize; touch-action:none;}
@@ -411,6 +412,22 @@
   .date-selects{display:flex; gap:6px;}
   .date-selects select{flex:1; min-width:0; padding:6px 2px; border:1px solid var(--line-strong); border-radius:5px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; background:#fff;}
   .duration-readout{font-size:12px; color:var(--ink-soft); margin-top:2px;}
+  .color-swatches{display:flex; flex-wrap:wrap; gap:7px; margin-top:8px;}
+  .color-swatch{
+    width:22px; height:22px; border-radius:50%; border:2px solid transparent; cursor:pointer;
+    padding:0; box-sizing:border-box; position:relative;
+  }
+  .color-swatch:hover{transform:scale(1.1);}
+  .color-swatch.selected{border-color:var(--ink);}
+  .color-swatch.selected::after{
+    content:"✓"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:11px; font-weight:700; text-shadow:0 0 2px rgba(0,0,0,0.5);
+  }
+  .color-swatch.default-swatch{
+    background:var(--panel); border:2px dashed var(--line-strong); display:flex; align-items:center;
+    justify-content:center; font-size:9px; color:var(--ink-faint);
+  }
+  .color-swatch.default-swatch.selected{border-color:var(--ink); border-style:solid;}
   .inspector-actions{display:flex; gap:8px; padding:14px 18px; border-top:1px solid var(--line); flex-wrap:wrap;}
   .inspector-actions button{flex:1; min-width:90px;}
 
@@ -533,6 +550,10 @@
           <div class="date-selects" id="inspEndSelects"></div>
         </div>
         <div class="duration-readout mono" id="inspDuration"></div>
+        <div class="date-block">
+          <span class="date-block-label">Color</span>
+          <div class="color-swatches" id="inspColorSwatches"></div>
+        </div>
       </div>
     </div>
     <div class="think-preview">
@@ -607,7 +628,8 @@
       <ul>
         <li>Click <strong>+ Add task</strong> (top bar or bottom of the sidebar) to create a new task.</li>
         <li>Click a task's <strong>name</strong> in the sidebar, or click its <strong>bar</strong> on the timeline, to open its detail panel — both do the same thing.</li>
-        <li>In the panel you can rename the task, set start/end dates with the Year/Month/Day dropdowns, and see its Think Log.</li>
+        <li>In the panel you can rename the task, set start/end dates with the Year/Month/Day dropdowns, pick a custom <strong>color</strong> for its bar, and see its Think Log.</li>
+        <li>A task's color overrides the default blue/light-blue coloring; the overdue indicator still shows as a red outline around a custom-colored bar rather than replacing your chosen color.</li>
         <li>Use <strong>+ Sibling</strong> to add a task at the same level, or <strong>+ Sub-task</strong> to nest one underneath — the parent auto-expands.</li>
         <li><strong>Delete</strong> removes the task (and warns you first if it has sub-tasks, since those go with it).</li>
       </ul>
@@ -661,6 +683,7 @@
         <li><strong>Export</strong> downloads your current project's tasks as a JSON file — useful as a backup or to move a project between browsers.</li>
         <li><strong>Print</strong> opens a separate preview window with a clean, paper-friendly version of the chart — task names right on the bars, a month/day (or week) grid, and dependency lines. It has its own Print button so your main chart is untouched.</li>
         <li>The printed view reflects whichever <strong>Day/Week</strong> zoom you currently have selected, and always fits tightly to your actual task dates (no empty padding).</li>
+        <li>Check <strong>🖨 Toner-saving</strong> in the preview window to switch bars from solid fills to colored outlines and drop the weekend shading — the same task colors and distinctions stay visible, just using far less ink/toner on paper.</li>
       </ul>
     </div>
 
@@ -738,6 +761,18 @@
   var ZOOM_MIN = { day: 16, week: 5 };
   var ZOOM_MAX = { day: 110, week: 34 };
   var MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  var TASK_COLORS = [
+    { name:"Blue",   hex:"#2c5f7c" },
+    { name:"Teal",   hex:"#2f8f7a" },
+    { name:"Green",  hex:"#4c8c4a" },
+    { name:"Olive",  hex:"#8a8a3c" },
+    { name:"Amber",  hex:"#c9882c" },
+    { name:"Orange", hex:"#c1652c" },
+    { name:"Rust",   hex:"#b5493d" },
+    { name:"Pink",   hex:"#b23d6e" },
+    { name:"Purple", hex:"#6b4c9e" },
+    { name:"Gray",   hex:"#6b7280" }
+  ];
 
   function loadZoomScale(){
     var defaults = { day: 40, week: 13 };
@@ -813,6 +848,7 @@
       parentId: t.parentId || null,
       collapsed: !!t.collapsed,
       thinkLog: Array.isArray(t.thinkLog) ? t.thinkLog : [],
+      color: t.color || null,
       // Q-PM-owned fields — Gantt preserves these untouched, only mirrors title/dueDate for linked projects
       title: t.title || t.name,
       status: t.status || "todo",
@@ -1847,8 +1883,15 @@
       var width = Math.max(pxPerDay - 2, (daysBetween(s,e)+1)*pxPerDay - 4);
 
       var bar = document.createElement("div");
-      bar.className = "bar" + (entry.depth>0 ? " depth-gt0" : "");
-      if(e.getTime() < today.getTime()) bar.classList.add("overdue");
+      var isOverdue = e.getTime() < today.getTime();
+      bar.className = "bar";
+      if(t.color){
+        bar.style.background = t.color;
+        if(isOverdue) bar.classList.add("overdue-outline");
+      } else {
+        if(entry.depth>0) bar.classList.add("depth-gt0");
+        if(isOverdue) bar.classList.add("overdue");
+      }
       if(t.id === currentInspectId) bar.classList.add("selected");
       bar.style.left = left + "px";
       bar.style.top = (i*ROW_H) + "px";
@@ -2139,6 +2182,35 @@
       render();
       populateInspector(t);
     });
+
+    buildColorSwatches(t);
+  }
+
+  function buildColorSwatches(t){
+    var container = document.getElementById("inspColorSwatches");
+    container.innerHTML = "";
+
+    var defaultBtn = document.createElement("button");
+    defaultBtn.className = "color-swatch default-swatch" + (!t.color ? " selected" : "");
+    defaultBtn.textContent = "—";
+    defaultBtn.title = "Default color";
+    defaultBtn.addEventListener("click", function(){ setTaskColor(t, null); });
+    container.appendChild(defaultBtn);
+
+    TASK_COLORS.forEach(function(c){
+      var btn = document.createElement("button");
+      btn.className = "color-swatch" + (t.color === c.hex ? " selected" : "");
+      btn.style.background = c.hex;
+      btn.title = c.name;
+      btn.addEventListener("click", function(){ setTaskColor(t, c.hex); });
+      container.appendChild(btn);
+    });
+  }
+
+  function setTaskColor(t, hex){
+    t.color = hex;
+    render();
+    if(currentInspectId === t.id) populateInspector(t);
   }
 
   function openInspector(t){
@@ -2335,7 +2407,7 @@
     var t = todayDate();
     var end = formatDate(addDays(t,3));
     return {
-      id:uid(), name:"New task", start:formatDate(t), end:end, pred:[], parentId:parentId, collapsed:false, thinkLog:[],
+      id:uid(), name:"New task", start:formatDate(t), end:end, pred:[], parentId:parentId, collapsed:false, thinkLog:[], color:null,
       title:"New task", status:"todo", priority:"medium", note:"", dueDate:end
     };
   }
@@ -2520,7 +2592,7 @@
       while(dCur.getTime() <= pRange.end.getTime()){
         var isWeekend = (dCur.getDay()===0 || dCur.getDay()===6);
         if(isWeekend){
-          overlay += '<div style="position:absolute; top:0; bottom:0; left:' + pct(dIdx).toFixed(3) + '%; width:' + pct(1).toFixed(3) + '%; background:#f2f3f4;"></div>';
+          overlay += '<div class="print-weekend-shade" style="position:absolute; top:0; bottom:0; left:' + pct(dIdx).toFixed(3) + '%; width:' + pct(1).toFixed(3) + '%; background:#f2f3f4;"></div>';
         }
         if(dIdx > 0){
           overlay += '<div style="position:absolute; top:0; bottom:0; left:' + pct(dIdx).toFixed(3) + '%; width:1px; background:#e6e9ec;"></div>';
@@ -2700,12 +2772,14 @@
       var neededPx = t.name.length * 5.4 + 12;
       var labelOutside = barPx < neededPx;
 
-      var out = '<div class="print-bar' + (entry.depth>0 ? ' depth-gt0' : '') + (overdue ? ' overdue' : '') +
-        '" style="left:' + left.toFixed(2) + '%; width:' + width.toFixed(2) + '%; top:' + top + 'px;">' +
+      var barColor = t.color || (overdue ? "#b5493d" : (entry.depth>0 ? "#5f8da6" : "#2c5f7c"));
+
+      var out = '<div class="print-bar' + (overdue && !t.color ? ' overdue-marker' : '') +
+        '" style="--bar-color:' + barColor + '; left:' + left.toFixed(2) + '%; width:' + width.toFixed(2) + '%; top:' + top + 'px;">' +
         (labelOutside ? '' : '<span class="print-bar-label">' + esc(t.name) + '</span>') +
         '</div>';
       if(labelOutside){
-        out += '<span class="print-bar-label outside" style="position:absolute; left:calc(' + left.toFixed(2) + '% + ' + width.toFixed(2) + '% + 4px); top:' + top + 'px;">' + esc(t.name) + '</span>';
+        out += '<span class="print-bar-label outside" style="position:absolute; left:calc(' + left.toFixed(2) + '% + ' + width.toFixed(2) + '% + 4px); top:' + top + 'px; --bar-color:' + barColor + ';">' + esc(t.name) + '</span>';
       }
       return out;
     }).join("");
@@ -2762,9 +2836,7 @@
     ".print-tick-seg.weekend{background:#f2f3f4; color:#5b6472; font-weight:600;} " +
     ".print-timeline-body{position:relative; background-color:#fff;} " +
     ".print-row-sep{position:absolute; left:0; right:0; height:1px; background:#e2e6ea;} " +
-    ".print-bar{position:absolute; height:18px; border-radius:3px; background:#2c5f7c; display:flex; align-items:center; overflow:hidden;} " +
-    ".print-bar.depth-gt0{background:#5f8da6;} " +
-    ".print-bar.overdue{background:#b5493d;} " +
+    ".print-bar{position:absolute; height:18px; border-radius:3px; background:var(--bar-color,#2c5f7c); display:flex; align-items:center; overflow:hidden; box-sizing:border-box;} " +
     ".print-bar-label{color:#fff; font-size:9.5px; font-weight:600; padding:0 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;} " +
     ".print-bar-label.outside{color:#1c2430; font-weight:600; padding-left:4px;} " +
     ".print-dep-h{position:absolute; height:1.4px; background:#5b6472;} " +
@@ -2773,6 +2845,13 @@
     ".print-dep-dot{position:absolute; width:4px; height:4px; border-radius:50%; background:#5b6472;} " +
     ".print-dep-dot.violated{background:#b5493d;} " +
     ".print-footer{margin-top:16px; font-size:9.5px; color:#8d96a3; text-align:center;} " +
+    /* toner-saving mode: bars become outlines instead of solid fills, weekend shading is dropped —
+       both are the biggest ink/toner consumers on a printed page, everything else is left as-is */
+    ".preview-page.toner-saving .print-bar{background:#fff; border:2px solid var(--bar-color,#2c5f7c);} " +
+    ".preview-page.toner-saving .print-bar-label{color:var(--bar-color,#2c5f7c);} " +
+    ".preview-page.toner-saving .print-bar-label.outside{color:var(--bar-color,#2c5f7c);} " +
+    ".preview-page.toner-saving .print-weekend-shade{display:none;} " +
+    ".po-toner-toggle{display:flex; align-items:center; gap:6px; font-size:12px; color:#c7ccd3; cursor:pointer;} " +
     "@media print{ " +
       "@page{ size: landscape; margin: 12mm; } " +
       "html, body{background:#fff; -webkit-print-color-adjust:exact; print-color-adjust:exact; color-adjust:exact;} " +
@@ -2797,14 +2876,18 @@
       "<style>" + PRINT_PREVIEW_CSS + "</style></head><body>" +
       "<div class='preview-toolbar'>" +
         "<span>Print preview — review below, then print or save as PDF</span>" +
+        "<label class='po-toner-toggle'><input type='checkbox' id='tonerSavingToggle'> 🖨 Toner-saving (outlines, no shading)</label>" +
         "<button id='doPrintBtn'>Print</button>" +
       "</div>" +
-      "<div class='preview-page'>" + bodyHTML + "</div>" +
+      "<div class='preview-page' id='previewPage'>" + bodyHTML + "</div>" +
       "</body></html>"
     );
     doc.close();
     win.document.getElementById("doPrintBtn").addEventListener("click", function(){
       win.print();
+    });
+    win.document.getElementById("tonerSavingToggle").addEventListener("change", function(e){
+      win.document.getElementById("previewPage").classList.toggle("toner-saving", e.target.checked);
     });
   }
 
