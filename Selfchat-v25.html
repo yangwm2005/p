@@ -533,6 +533,48 @@
         #fabThreadToggle.threads-open { background: #3949ab; }
         #fabThreadToggle:active { cursor: grabbing; }
 
+        #fabTimestripe {
+            position: fixed;
+            z-index: 9999;
+            top: 50vh;
+            left: 0; /* overridden by JS */
+            transform: translateY(-70px);
+            background: #5c6bc0;
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            font-size: 18px;
+            cursor: pointer;
+            box-shadow: 0 3px 10px rgba(0,0,0,.28);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            transition: background .15s, box-shadow .15s;
+        }
+        #fabTimestripe:hover { background: #3949ab; box-shadow: 0 5px 14px rgba(0,0,0,.32); }
+
+        #chatSearchWrap {
+            padding: 5px 8px 4px;
+            background: #eaedfa;
+            border-bottom: 1px solid #dde1f0;
+        }
+        #chatSearch {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 4px 10px;
+            border: 1px solid #c5cae9;
+            border-radius: 12px;
+            font-size: 12px;
+            background: #fff;
+            color: #333;
+            outline: none;
+        }
+        #chatSearch:focus { border-color: #7986cb; }
+        #chatSearch::placeholder { color: #b0b8d8; }
+
         /* ── Mobile layout ── */
         @media (max-width: 600px) {
             #app-wrapper {
@@ -812,6 +854,9 @@
         <button id="sortBtn-updated" onclick="setSortMode('updated')">Updated</button>
         <button id="sortBtn-name"    onclick="setSortMode('name')">Name</button>
     </div>
+    <div id="chatSearchWrap">
+        <input id="chatSearch" type="search" placeholder="🔍 Search chats…" oninput="filterChatList(this.value)" />
+    </div>
     <div id="chatList"></div>
     <div id="sidebarFooter">
         <div id="scUserLabel">Not signed in</div>
@@ -867,6 +912,7 @@
     <button onclick="clearChat()" style="color:white;background-color:red;" title="Clear all chat contents">🗑️ Clear</button>
 </div>
 <!-- Floating draggable thread-toggle shortcut — absolute inside .chat-container -->
+<button id="fabTimestripe" title="Open Timestripe Horizons" onclick="window.open('https://timestripe.com/horizons/','_blank','width=1000,height=700,resizable=yes,scrollbars=yes')">🌅</button>
 <button id="fabThreadToggle" title="Toggle all threads open / closed">💬</button>
     <div>
         <footer>
@@ -4703,6 +4749,13 @@ function setSortMode(mode) {
 })();
 
 // ── Week-group helpers ────────────────────────────────────
+// ── Chat list search filter ──────────────────────────────
+var _chatSearchQ = '';
+function filterChatList(q) {
+    _chatSearchQ = (q || '').trim().toLowerCase();
+    renderSidebar();
+}
+
 function _weekKey(ts) {
     var d = new Date(ts || Date.now());
     var day = d.getDay() || 7;
@@ -4764,8 +4817,16 @@ function renderSidebar() {
     if (!el) return;
     el.innerHTML = '';
 
+    if (_chatSearchQ) {
+        list = list.filter(function(c) {
+            return (c.title || '').toLowerCase().indexOf(_chatSearchQ) !== -1;
+        });
+    }
+
     if (list.length === 0) {
-        el.innerHTML = '<div style="color:#9fa8da;font-size:12px;padding:16px 12px;">No chats yet.<br>Click ＋ to start.</div>';
+        el.innerHTML = _chatSearchQ
+            ? '<div style="color:#9fa8da;font-size:12px;padding:16px 12px;">No chats match "' + _chatSearchQ + '".</div>'
+            : '<div style="color:#9fa8da;font-size:12px;padding:16px 12px;">No chats yet.<br>Click ＋ to start.</div>';
         return;
     }
 
@@ -4877,8 +4938,11 @@ function toggleAllThreads() {
         // Pin X to the right edge of the chat-container
         function pinX() {
             var cr = container.getBoundingClientRect();
-            fab.style.left  = (cr.right - fab.offsetWidth / 2) + 'px';
+            var x = (cr.right - fab.offsetWidth / 2) + 'px';
+            fab.style.left  = x;
             fab.style.right = 'auto';
+            var ts = document.getElementById('fabTimestripe');
+            if (ts) { ts.style.left = x; ts.style.right = 'auto'; }
         }
         window._fabPinX = pinX;
         pinX();
