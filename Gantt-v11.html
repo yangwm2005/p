@@ -683,7 +683,10 @@
         <li><strong>Export</strong> downloads your current project's tasks as a JSON file — useful as a backup or to move a project between browsers.</li>
         <li><strong>Print</strong> opens a separate preview window with a clean, paper-friendly version of the chart — task names right on the bars, a month/day (or week) grid, and dependency lines. It has its own Print button so your main chart is untouched.</li>
         <li>The printed view reflects whichever <strong>Day/Week</strong> zoom you currently have selected, and always fits tightly to your actual task dates (no empty padding).</li>
+        <li>Check <strong>🩶 Row banding</strong> to shade every other task row light gray, making it easier to trace a row across a wide printed chart.</li>
+        <li>Check <strong>⬜ Grayscale bars</strong> to print every bar in a neutral light gray instead of your task colors — useful for a black &amp; white printer, or a more subdued, formal-looking printout. Combine it with Toner-saving for gray outlines instead of gray fills.</li>
         <li>Check <strong>🖨 Toner-saving</strong> in the preview window to switch bars from solid fills to colored outlines and drop the weekend shading — the same task colors and distinctions stay visible, just using far less ink/toner on paper.</li>
+        <li>Both options can be used together or separately, and update the preview instantly so you can see exactly what you'll get before printing.</li>
       </ul>
     </div>
 
@@ -2751,13 +2754,19 @@
     var ASSUMED_TIMELINE_PX = 720;
     var bodyHeight = list.length * PRINT_ROW_H;
 
-    var sidebarRowsHTML = list.map(function(entry){
-      return '<div class="print-name-row depth-' + entry.depth + '" style="height:' + PRINT_ROW_H + 'px; padding-left:' + (8 + entry.depth*14) + 'px;">' +
+    var sidebarRowsHTML = list.map(function(entry, i){
+      return '<div class="print-name-row depth-' + entry.depth + (i%2===1 ? ' row-band' : '') +
+        '" style="height:' + PRINT_ROW_H + 'px; padding-left:' + (8 + entry.depth*14) + 'px;">' +
         '<span class="print-name-text">' + esc(entry.task.name) + '</span></div>';
     }).join("");
 
     var rowSepHTML = list.map(function(entry, i){
       return '<div class="print-row-sep" style="top:' + ((i+1)*PRINT_ROW_H - 1) + 'px;"></div>';
+    }).join("");
+
+    var rowBandHTML = list.map(function(entry, i){
+      if(i%2 !== 1) return "";
+      return '<div class="print-row-band" style="top:' + (i*PRINT_ROW_H) + 'px; height:' + PRINT_ROW_H + 'px;"></div>';
     }).join("");
 
     var barsHTML = list.map(function(entry, i){
@@ -2793,7 +2802,7 @@
       }).join("") +
       '</div>' + tickBandHTML + '</div>';
     html += '<div class="print-timeline-body" style="height:' + bodyHeight + 'px;">' +
-      gridOverlayHTML + rowSepHTML + depHTML + barsHTML +
+      rowBandHTML + gridOverlayHTML + rowSepHTML + depHTML + barsHTML +
       '</div>';
     html += '</div></div>';
 
@@ -2851,6 +2860,18 @@
     ".preview-page.toner-saving .print-bar-label{color:var(--bar-color,#2c5f7c);} " +
     ".preview-page.toner-saving .print-bar-label.outside{color:var(--bar-color,#2c5f7c);} " +
     ".preview-page.toner-saving .print-weekend-shade{display:none;} " +
+    /* light gray row banding — an alternate print option, independent of toner-saving */
+    ".print-row-band{position:absolute; left:0; right:0; background:#f2f3f4; display:none;} " +
+    ".preview-page.row-banding .print-row-band{display:block;} " +
+    ".preview-page.row-banding .print-name-row.row-band{background:#f2f3f4;} " +
+    /* grayscale bars — ignores task/depth colors entirely, useful for black & white printers
+       or a more subdued look; combines cleanly with toner-saving (outline turns gray too) */
+    ".preview-page.grayscale-bars .print-bar{background:#c7ccd3;} " +
+    ".preview-page.grayscale-bars .print-bar-label{color:#1c2430;} " +
+    ".preview-page.grayscale-bars .print-bar-label.outside{color:#1c2430;} " +
+    ".preview-page.toner-saving.grayscale-bars .print-bar{background:#fff; border:2px solid #8d96a3;} " +
+    ".preview-page.toner-saving.grayscale-bars .print-bar-label{color:#5b6472;} " +
+    ".preview-page.toner-saving.grayscale-bars .print-bar-label.outside{color:#5b6472;} " +
     ".po-toner-toggle{display:flex; align-items:center; gap:6px; font-size:12px; color:#c7ccd3; cursor:pointer;} " +
     "@media print{ " +
       "@page{ size: landscape; margin: 12mm; } " +
@@ -2876,6 +2897,8 @@
       "<style>" + PRINT_PREVIEW_CSS + "</style></head><body>" +
       "<div class='preview-toolbar'>" +
         "<span>Print preview — review below, then print or save as PDF</span>" +
+        "<label class='po-toner-toggle'><input type='checkbox' id='rowBandingToggle'> 🩶 Row banding</label>" +
+        "<label class='po-toner-toggle'><input type='checkbox' id='grayscaleBarsToggle'> ⬜ Grayscale bars</label>" +
         "<label class='po-toner-toggle'><input type='checkbox' id='tonerSavingToggle'> 🖨 Toner-saving (outlines, no shading)</label>" +
         "<button id='doPrintBtn'>Print</button>" +
       "</div>" +
@@ -2888,6 +2911,12 @@
     });
     win.document.getElementById("tonerSavingToggle").addEventListener("change", function(e){
       win.document.getElementById("previewPage").classList.toggle("toner-saving", e.target.checked);
+    });
+    win.document.getElementById("rowBandingToggle").addEventListener("change", function(e){
+      win.document.getElementById("previewPage").classList.toggle("row-banding", e.target.checked);
+    });
+    win.document.getElementById("grayscaleBarsToggle").addEventListener("change", function(e){
+      win.document.getElementById("previewPage").classList.toggle("grayscale-bars", e.target.checked);
     });
   }
 
