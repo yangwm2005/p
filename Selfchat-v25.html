@@ -536,9 +536,9 @@
         #fabTimestripe {
             position: fixed;
             z-index: 9999;
-            top: 50vh;
+            top: calc(50vh - 62px);
             left: 0; /* overridden by JS */
-            transform: translateY(-70px);
+            transform: none;
             background: #5c6bc0;
             color: #fff;
             border: none;
@@ -546,13 +546,14 @@
             width: 40px;
             height: 40px;
             font-size: 18px;
-            cursor: pointer;
+            cursor: grab;
             box-shadow: 0 3px 10px rgba(0,0,0,.28);
             display: flex;
             align-items: center;
             justify-content: center;
             user-select: none;
             transition: background .15s, box-shadow .15s;
+            touch-action: none;
         }
         #fabTimestripe:hover { background: #3949ab; box-shadow: 0 5px 14px rgba(0,0,0,.32); }
 
@@ -5029,6 +5030,32 @@ document.addEventListener('mousedown', function(e) {
         }
     });
 });
+
+// ── Timestripe FAB: independent vertical drag ────────────
+(function() {
+    var TS_POS_KEY = 'sc_fab_ts_pos';
+    function initTsFab() {
+        var ts = document.getElementById('fabTimestripe');
+        if (!ts) return;
+        try {
+            var saved = JSON.parse(localStorage.getItem(TS_POS_KEY));
+            if (saved && saved.y !== undefined) { ts.style.top = saved.y + 'px'; }
+        } catch(e) {}
+        if (window._fabPinX) window._fabPinX();
+        var dragging = false, startY, origTop, moved;
+        function onStart(cy) { dragging=true; moved=false; origTop=ts.getBoundingClientRect().top; ts.style.top=origTop+'px'; startY=cy; ts.style.cursor='grabbing'; }
+        function onMove(cy) { if(!dragging) return; var dy=cy-startY; if(Math.abs(dy)>3) moved=true; ts.style.top=Math.max(0,Math.min(window.innerHeight-ts.offsetHeight,origTop+dy))+'px'; if(window._fabPinX) window._fabPinX(); }
+        function onEnd() { if(!dragging) return; dragging=false; ts.style.cursor='grab'; localStorage.setItem(TS_POS_KEY,JSON.stringify({y:parseFloat(ts.style.top)})); if(!moved) window.open('https://timestripe.com/horizons/','_blank','width=1000,height=700,resizable=yes,scrollbars=yes'); }
+        ts.addEventListener('mousedown', function(e){e.preventDefault();onStart(e.clientY);});
+        document.addEventListener('mousemove', function(e){onMove(e.clientY);});
+        document.addEventListener('mouseup', function(){onEnd();});
+        ts.addEventListener('touchstart', function(e){onStart(e.touches[0].clientY);},{passive:true});
+        ts.addEventListener('touchmove',  function(e){onMove(e.touches[0].clientY);}, {passive:true});
+        ts.addEventListener('touchend',   function(){onEnd();});
+        ts.removeAttribute('onclick');
+    }
+    if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',initTsFab); } else { initTsFab(); }
+})();
 
 // ── Hook autosaveTick to also save to localStorage list ───
 (function() {
