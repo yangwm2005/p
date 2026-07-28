@@ -378,8 +378,10 @@
   .empty-state p{font-size:13px; margin:0; color:var(--ink-faint);}
 
   /* timeline */
-  .timeline-wrap{flex:1; overflow-x:auto; overflow-y:visible; position:relative;}
-  .ruler{position:sticky; top:0; z-index:2; background:var(--panel); border-bottom:1px solid var(--line-strong); cursor:ew-resize; touch-action:none; user-select:none;}
+  .timeline-wrap{flex:1; position:relative;}
+  .ruler-outer{position:sticky; top:0; z-index:2; background:var(--panel); border-bottom:1px solid var(--line-strong); overflow:hidden;}
+  .ruler{cursor:ew-resize; touch-action:none; user-select:none;}
+  .timeline-scroll{overflow-x:auto; overflow-y:hidden; width:100%;}
   .ruler-months{height:24px; position:relative; border-bottom:1px solid var(--line);}
   .ruler-days{height:16px; position:relative;}
   .month-label{
@@ -561,16 +563,20 @@
     <div class="addrow"><button id="addTaskBtn2">+ Add task</button></div>
   </div>
   <div class="timeline-wrap" id="timelineWrap">
-    <div class="ruler" id="rulerEl" title="Drag left/right to zoom in or out">
-      <div class="ruler-months" id="rulerMonths"></div>
-      <div class="ruler-days" id="rulerDays"></div>
+    <div class="ruler-outer" id="rulerOuter">
+      <div class="ruler" id="rulerEl" title="Drag left/right to zoom in or out">
+        <div class="ruler-months" id="rulerMonths"></div>
+        <div class="ruler-days" id="rulerDays"></div>
+      </div>
     </div>
-    <div class="timeline-body" id="timelineBody">
-      <div class="gridlines" id="gridlines"></div>
-      <svg id="depLayer"></svg>
-      <div id="barsLayer"></div>
-      <div class="today-line" id="todayLine"></div>
-      <div class="today-flag" id="todayFlag">Today</div>
+    <div class="timeline-scroll" id="timelineScroll">
+      <div class="timeline-body" id="timelineBody">
+        <div class="gridlines" id="gridlines"></div>
+        <svg id="depLayer"></svg>
+        <div id="barsLayer"></div>
+        <div class="today-line" id="todayLine"></div>
+        <div class="today-flag" id="todayFlag">Today</div>
+      </div>
     </div>
   </div>
 </div>
@@ -2543,7 +2549,7 @@
     openInspector(nt);
     requestAnimationFrame(function(){
       inspTitle.focus(); inspTitle.select();
-      var wrap = document.getElementById("timelineWrap");
+      var wrap = document.getElementById("timelineScroll");
       wrap.scrollLeft = Math.max(0, dayX(parseDate(nt.start)) - 200);
     });
   }
@@ -2573,7 +2579,7 @@
   // ---------- drag the ruler to zoom in/out continuously ----------
   (function(){
     var rulerDragEl = document.getElementById("rulerEl");
-    var timelineWrapEl = document.getElementById("timelineWrap");
+    var timelineWrapEl = document.getElementById("timelineScroll");
     var dragging = false;
     var lastX = 0;
     var moved = false;
@@ -2609,8 +2615,20 @@
     });
   })();
 
+  // keep the sticky ruler visually in sync with the timeline body's horizontal scroll —
+  // the ruler itself no longer scrolls (that's now handled by #timelineScroll alone,
+  // so vertical scrolling stays owned entirely by .board and the sidebar/timeline never
+  // fall out of row alignment), so its position is mirrored via a transform instead.
+  (function(){
+    var timelineScrollEl = document.getElementById("timelineScroll");
+    var rulerEl2 = document.getElementById("rulerEl");
+    timelineScrollEl.addEventListener("scroll", function(){
+      rulerEl2.style.transform = "translateX(-" + timelineScrollEl.scrollLeft + "px)";
+    });
+  })();
+
   document.getElementById("todayBtn").addEventListener("click", function(){
-    var wrap = document.getElementById("timelineWrap");
+    var wrap = document.getElementById("timelineScroll");
     var x = dayX(todayDate());
     wrap.scrollLeft = Math.max(0, x - wrap.clientWidth/2);
   });
