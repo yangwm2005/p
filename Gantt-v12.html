@@ -403,6 +403,10 @@
   .gweekend{position:absolute; top:0; bottom:0; background:var(--weekend);}
   .row-track{position:absolute; left:0; right:0; border-bottom:1px solid var(--line);}
 
+  #groupLayer{position:absolute; top:0; left:0; z-index:1; pointer-events:none; overflow:visible;}
+  .group-bracket path{fill:none; stroke:var(--accent); stroke-width:1.5; stroke-linecap:round; opacity:.55;}
+  .group-bracket.depth1 path{stroke:var(--accent-child);}
+  .group-bracket.depth2 path,.group-bracket.depth3 path,.group-bracket.depth4 path,.group-bracket.depth5 path{stroke:var(--accent-soft); opacity:.8;}
   #depLayer{position:absolute; top:0; left:0; z-index:1; pointer-events:none; overflow:visible;}
   #barsLayer{position:absolute; top:0; left:0; z-index:2;}
 
@@ -581,6 +585,7 @@
     <div class="timeline-scroll" id="timelineScroll">
       <div class="timeline-body" id="timelineBody">
         <div class="gridlines" id="gridlines"></div>
+        <svg id="groupLayer"></svg>
         <svg id="depLayer"></svg>
         <div id="barsLayer"></div>
         <div class="today-line" id="todayLine"></div>
@@ -1664,6 +1669,7 @@
   var rulerDays = document.getElementById("rulerDays");
   var gridlinesEl = document.getElementById("gridlines");
   var barsLayer = document.getElementById("barsLayer");
+  var groupLayer = document.getElementById("groupLayer");
   var depLayer = document.getElementById("depLayer");
   var timelineBody = document.getElementById("timelineBody");
   var todayLine = document.getElementById("todayLine");
@@ -1689,6 +1695,7 @@
     renderSidebar();
     renderRuler();
     renderGrid();
+    renderGroupBrackets();
     renderBars();
     renderDeps();
     renderToday();
@@ -1700,6 +1707,8 @@
     rulerDays.style.width = totalWidth + "px";
     barsLayer.style.width = totalWidth + "px";
     barsLayer.style.height = bodyHeight + "px";
+    groupLayer.setAttribute("width", totalWidth);
+    groupLayer.setAttribute("height", bodyHeight);
     depLayer.setAttribute("width", totalWidth);
     depLayer.setAttribute("height", bodyHeight);
     gridlinesEl.style.width = totalWidth + "px";
@@ -2003,12 +2012,56 @@
     });
   }
 
+  // ---------- group brackets (visual "[" linking a parent to its visible sub-tasks) ----------
+  function renderGroupBrackets(){
+    while(groupLayer.firstChild) groupLayer.removeChild(groupLayer.firstChild);
+    var SVGNS = "http://www.w3.org/2000/svg";
+    var TICK = 6;       // length of the top/bottom horizontal tick, in px
+    var BASE_GAP = 22;  // how far left of the bars the shallowest bracket sits
+    var STEP = 8;        // how much each deeper level moves back in toward the bars
+    var MIN_GAP = 5;
+
+    visList.forEach(function(entry, i){
+      var t = entry.task, depth = entry.depth;
+      if(!entry.hasChildren || t.collapsed) return; // only expanded parents get a bracket
+
+      // find the contiguous run of visible descendant rows right after this one
+      var lastIdx = i;
+      for(var j = i+1; j < visList.length; j++){
+        if(visList[j].depth <= depth) break;
+        lastIdx = j;
+      }
+      if(lastIdx === i) return; // shouldn't happen (hasChildren && !collapsed), but be safe
+
+      // bracket sits to the left of the earliest bar in this group (parent + its visible sub-tree)
+      var minStartX = dayX(parseDate(t.start));
+      for(var k = i+1; k <= lastIdx; k++){
+        var cx = dayX(parseDate(visList[k].task.start));
+        if(cx < minStartX) minStartX = cx;
+      }
+      var gap = Math.max(MIN_GAP, BASE_GAP - depth*STEP);
+      var x = Math.max(2, minStartX - gap);
+      var yTop = i*ROW_H + ROW_H/2;
+      var yBottom = lastIdx*ROW_H + ROW_H/2;
+
+      var g = document.createElementNS(SVGNS, "g");
+      g.setAttribute("class", "group-bracket depth" + Math.min(depth,5));
+      var path = document.createElementNS(SVGNS, "path");
+      var d = "M " + (x+TICK) + " " + yTop + " L " + x + " " + yTop + " L " + x + " " + yBottom + " L " + (x+TICK) + " " + yBottom;
+      path.setAttribute("d", d);
+      g.appendChild(path);
+      groupLayer.appendChild(g);
+    });
+  }
+
   // ---------- bars ----------
   var REORDER_THRESHOLD = 18; // px of vertical drag on a bar before it switches to reorder/re-parent mode
-  var POINTER = { id:null, mode:null, task:null, startX:0, startY:0, origStart:null, origEnd:null, barEl:null, origLeft:null, origWidth:null, reordering:false };
+  var POINTER = { id:null, mode:null, task:null, startX:0, startY:0, origStart:null, origEnd:null, barEl:null, origLeft:null, origWidth:null, reordering:false, groupTasks:[] };
+  var barElsById = {};
 
   function renderBars(){
     barsLayer.innerHTML = "";
+    barElsById = {};
     var today = todayDate();
     visList.forEach(function(entry, i){
       var t = entry.task;
@@ -2047,6 +2100,7 @@
       }
       attachDrag(bar, t, "move");
 
+      barElsById[t.id] = bar;
       barsLayer.appendChild(bar);
     });
   }
@@ -2068,7 +2122,9 @@
       POINTER.origWidth = POINTER.barEl.style.width;
       POINTER.reordering = false;
 
-      var excludeIds = mode==="move" ? getDescendants(task.id).map(function(d){ return d.id; }).concat([task.id]) : [];
+      var groupTasks = mode==="move" ? getDescendants(task.id) : [];
+      POINTER.groupTasks = groupTasks;
+      var excludeIds = mode==="move" ? groupTasks.map(function(d){ return d.id; }).concat([task.id]) : [];
 
       function onMove(ev){
         if(ev.pointerId !== POINTER.id) return;
@@ -2137,6 +2193,16 @@
     }
     POINTER.barEl.style.left = left + "px";
     POINTER.barEl.style.width = width + "px";
+
+    if(POINTER.mode === "move" && POINTER.groupTasks && POINTER.groupTasks.length){
+      POINTER.groupTasks.forEach(function(gt){
+        var gEl = barElsById[gt.id];
+        if(!gEl) return; // e.g. hidden inside a collapsed branch
+        var gs = addDays(parseDate(gt.start), dayDelta), ge = addDays(parseDate(gt.end), dayDelta);
+        gEl.style.left = dayX(gs) + "px";
+        gEl.style.width = Math.max(pxPerDay-2, (daysBetween(gs,ge)+1)*pxPerDay - 4) + "px";
+      });
+    }
   }
 
   function commitDrag(dayDelta){
@@ -2147,6 +2213,12 @@
     if(POINTER.mode === "move"){
       t.start = formatDate(addDays(s, dayDelta));
       t.end = formatDate(addDays(e, dayDelta));
+      if(POINTER.groupTasks && POINTER.groupTasks.length){
+        POINTER.groupTasks.forEach(function(gt){
+          gt.start = formatDate(addDays(parseDate(gt.start), dayDelta));
+          gt.end = formatDate(addDays(parseDate(gt.end), dayDelta));
+        });
+      }
     } else if(POINTER.mode === "resize-l"){
       var ns = addDays(s, dayDelta);
       if(ns.getTime() > e.getTime()) ns = new Date(e);
