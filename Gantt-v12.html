@@ -378,7 +378,7 @@
   .empty-state p{font-size:13px; margin:0; color:var(--ink-faint);}
 
   /* timeline */
-  .timeline-wrap{flex:1; position:relative;}
+  .timeline-wrap{flex:1; min-width:0; position:relative;}
   .ruler-outer{position:sticky; top:0; z-index:2; background:var(--panel); border-bottom:1px solid var(--line-strong); overflow:hidden;}
   .ruler{cursor:ew-resize; touch-action:none; user-select:none;}
   .timeline-scroll{overflow-x:auto; overflow-y:hidden; width:100%;}
@@ -422,6 +422,10 @@
   .bar.depth-gt0{background:var(--accent-child);}
   .bar.overdue{background:var(--rust);}
   .bar.overdue-outline{box-shadow:0 0 0 2px var(--rust) inset;}
+  .bar.bar-rollup{
+    cursor:pointer;
+    background-image:repeating-linear-gradient(135deg, rgba(255,255,255,0.16) 0 6px, rgba(255,255,255,0) 6px 12px);
+  }
   .bar.selected{box-shadow:0 0 0 2px var(--ink), 0 1px 2px rgba(28,36,48,0.18);}
   .bar .bar-label{color:#fff; font-size:11px; font-weight:500; padding:0 8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none;}
   .bar .handle{position:absolute; top:0; bottom:0; width:8px; cursor:ew-resize; touch-action:none;}
@@ -457,6 +461,7 @@
     font-family:inherit; width:100%;
   }
   .hint{font-size:11.5px; color:var(--ink-faint); margin:8px 0 0; line-height:1.4;}
+  .rollup-hint{color:var(--accent);}
   #inspPred{
     width:100%; padding:8px 10px; border:1px solid var(--line-strong); border-radius:5px;
     font-size:12.5px;
@@ -522,6 +527,10 @@
     <label class="toggle">
       <input type="checkbox" id="autoShiftToggle" checked>
       Auto-shift dependents
+    </label>
+    <label class="toggle" title="Parent tasks automatically span from their earliest sub-task's start to their latest sub-task's end. Their dates become read-only while this is on.">
+      <input type="checkbox" id="rollupToggle">
+      Auto-size parent bars
     </label>
     <div class="zoomgroup">
       <button id="zoomDay" class="active">Day</button>
@@ -610,6 +619,7 @@
           <div class="date-selects" id="inspEndSelects"></div>
         </div>
         <div class="duration-readout mono" id="inspDuration"></div>
+        <p class="hint rollup-hint" id="inspRollupHint" style="display:none;">📐 This task's dates are calculated from its sub-tasks (Auto-size parent bars is on) — edit a sub-task's dates instead.</p>
         <div class="date-block">
           <span class="date-block-label">Color</span>
           <div class="color-swatches" id="inspColorSwatches"></div>
@@ -701,6 +711,7 @@
       <h3>📊 Timeline &amp; dragging</h3>
       <ul>
         <li>Drag the <strong>middle</strong> of a bar sideways to move its dates; drag the <strong>edges</strong> to resize it.</li>
+        <li>Toggle <strong>Auto-size parent bars</strong> (top bar) to make any task with sub-tasks automatically span from its earliest sub-task's start to its latest sub-task's end — including sub-tasks nested several levels deep. While this is on, a parent's own dates become read-only (shown with a diagonal-stripe pattern on its bar) since they're calculated, not set directly — edit a sub-task's dates instead, and the parent updates automatically. You can still reorder or nest a locked parent by dragging it vertically, just not stretch its dates.</li>
         <li>Drag a bar <strong>vertically</strong> (or drag the ⠿ handle in the sidebar) to reorder tasks — drop on the top/bottom of another row to become its sibling, or in the middle to nest as its sub-task.</li>
         <li>With a task's panel open, press <kbd>Tab</kbd> to nest it under the task just above it, or <kbd>Shift+Tab</kbd> to move it back up a level — a quick keyboard alternative to dragging.</li>
         <li>Click the ▾ / ▸ caret next to a task to collapse or expand its sub-tasks.</li>
@@ -717,6 +728,7 @@
         <li>Open a task's panel and type the row numbers of tasks it depends on in the <strong>Predecessors</strong> field (e.g. <kbd>1, 3</kbd>) — this works between <em>any</em> two tasks, whether they're under the same parent or under completely different top-level tasks.</li>
         <li>An arrow is drawn from the end of each predecessor to the start of the dependent task — it turns <strong>red</strong> if the dates actually overlap.</li>
         <li>Toggle <strong>Auto-shift dependents</strong> (top bar) to have a task automatically move later when its predecessor's dates change.</li>
+        <li>Toggle <strong>Auto-size parent bars</strong> (top bar) to make any task with sub-tasks automatically span from its earliest sub-task's start to its latest sub-task's end — like a summary bar in other Gantt tools. While it's on, a parent's own dates become read-only (shown with a diagonal stripe pattern on its bar) since they're calculated, not set directly; edit a sub-task's dates instead and the parent updates automatically, including through multiple levels of nesting.</li>
       </ul>
     </div>
 
@@ -1557,6 +1569,43 @@
       if(!changed) break;
     }
   }
+
+  // ---------- parent bar rollup (optional) ----------
+  var ROLLUP_KEY = "gantt_v2_rollup";
+  var rollupEnabled = localStorage.getItem(ROLLUP_KEY) === "1";
+
+  function isRollupParent(taskId){
+    return rollupEnabled && getChildren(taskId).length > 0;
+  }
+
+  function computeSubtreeRange(taskId){
+    var kids = getChildren(taskId);
+    if(!kids.length){
+      var t = tasks.find(function(x){ return x.id===taskId; });
+      return t ? { start: parseDate(t.start), end: parseDate(t.end) } : null;
+    }
+    var minS = null, maxE = null;
+    kids.forEach(function(k){
+      var r = computeSubtreeRange(k.id);
+      if(!r) return;
+      if(minS===null || r.start.getTime() < minS.getTime()) minS = r.start;
+      if(maxE===null || r.end.getTime() > maxE.getTime()) maxE = r.end;
+    });
+    return minS ? { start:minS, end:maxE } : null;
+  }
+
+  function applyParentRollup(){
+    if(!rollupEnabled) return;
+    tasks.forEach(function(t){
+      if(!getChildren(t.id).length) return;
+      var r = computeSubtreeRange(t.id);
+      if(r){
+        t.start = formatDate(r.start);
+        t.end = formatDate(r.end);
+      }
+    });
+  }
+
   function wouldCreateCycle(taskId, candidatePredIds){
     var visited = {};
     function reaches(fromId, targetId){
@@ -1627,6 +1676,7 @@
 
   function render(){
     cascade();
+    applyParentRollup();
     saveTasks();
     range = getRange();
     pxPerDay = ZOOMS[zoom];
@@ -1968,6 +2018,7 @@
 
       var bar = document.createElement("div");
       var isOverdue = e.getTime() < today.getTime();
+      var locked = isRollupParent(t.id);
       bar.className = "bar";
       if(t.color){
         bar.style.background = t.color;
@@ -1977,22 +2028,24 @@
         if(isOverdue) bar.classList.add("overdue");
       }
       if(t.id === currentInspectId) bar.classList.add("selected");
+      if(locked) bar.classList.add("bar-rollup");
       bar.style.left = left + "px";
       bar.style.top = (i*ROW_H) + "px";
       bar.style.width = width + "px";
-      bar.title = t.name + "  (" + t.start + " → " + t.end + ")";
+      bar.title = t.name + "  (" + t.start + " → " + t.end + ")" + (locked ? "  — spans its sub-tasks (Auto-size is on)" : "");
 
       var label = document.createElement("div");
       label.className = "bar-label";
       label.textContent = t.name;
       bar.appendChild(label);
 
-      var hl = document.createElement("div"); hl.className = "handle l"; bar.appendChild(hl);
-      var hr = document.createElement("div"); hr.className = "handle r"; bar.appendChild(hr);
-
+      if(!locked){
+        var hl = document.createElement("div"); hl.className = "handle l"; bar.appendChild(hl);
+        var hr = document.createElement("div"); hr.className = "handle r"; bar.appendChild(hr);
+        attachDrag(hl, t, "resize-l");
+        attachDrag(hr, t, "resize-r");
+      }
       attachDrag(bar, t, "move");
-      attachDrag(hl, t, "resize-l");
-      attachDrag(hr, t, "resize-r");
 
       barsLayer.appendChild(bar);
     });
@@ -2067,6 +2120,7 @@
 
   function previewDrag(dayDelta){
     if(!POINTER.barEl) return;
+    if(isRollupParent(POINTER.task.id)) return; // dates are computed from sub-tasks, not draggable
     var s = parseDate(POINTER.origStart), e = parseDate(POINTER.origEnd);
     var left, width;
     if(POINTER.mode === "move"){
@@ -2088,6 +2142,7 @@
   function commitDrag(dayDelta){
     if(dayDelta === 0){ render(); return; }
     var t = POINTER.task;
+    if(isRollupParent(t.id)){ render(); return; } // dates are computed from sub-tasks, not draggable
     var s = parseDate(POINTER.origStart), e = parseDate(POINTER.origEnd);
     if(POINTER.mode === "move"){
       t.start = formatDate(addDays(s, dayDelta));
@@ -2172,13 +2227,14 @@
     return { min: min, max: max };
   }
 
-  function buildDateSelects(container, dateStr, onChange){
+  function buildDateSelects(container, dateStr, onChange, disabled){
     container.innerHTML = "";
     var d = parseDate(dateStr);
     var yr = getYearRange();
 
     var yearSel = document.createElement("select");
     yearSel.setAttribute("aria-label","Year");
+    yearSel.disabled = !!disabled;
     for(var y=yr.min; y<=yr.max; y++){
       var opt = document.createElement("option");
       opt.value = y; opt.textContent = y;
@@ -2188,6 +2244,7 @@
 
     var monthSel = document.createElement("select");
     monthSel.setAttribute("aria-label","Month");
+    monthSel.disabled = !!disabled;
     MONTH_NAMES.forEach(function(m, idx){
       var opt = document.createElement("option");
       opt.value = idx; opt.textContent = m;
@@ -2197,6 +2254,7 @@
 
     var daySel = document.createElement("select");
     daySel.setAttribute("aria-label","Day");
+    daySel.disabled = !!disabled;
     function fillDays(){
       var y = Number(yearSel.value), m = Number(monthSel.value);
       var maxDay = daysInMonth(y, m);
@@ -2254,18 +2312,22 @@
       "No notes yet for this task — click 💬 Think Log to add one."
     );
 
+    var locked = isRollupParent(t.id);
     buildDateSelects(inspStartSelects, t.start, function(newStart){
       if(parseDate(newStart).getTime() > parseDate(t.end).getTime()) t.end = newStart;
       t.start = newStart;
       render();
       populateInspector(t);
-    });
+    }, locked);
     buildDateSelects(inspEndSelects, t.end, function(newEnd){
       if(parseDate(newEnd).getTime() < parseDate(t.start).getTime()) t.start = newEnd;
       t.end = newEnd;
       render();
       populateInspector(t);
-    });
+    }, locked);
+
+    var rollupHintEl = document.getElementById("inspRollupHint");
+    rollupHintEl.style.display = locked ? "block" : "none";
 
     buildColorSwatches(t);
   }
@@ -2561,6 +2623,17 @@
     autoShift = e.target.checked;
     localStorage.setItem(SHIFT_KEY, autoShift ? "1" : "0");
     render();
+  });
+
+  document.getElementById("rollupToggle").checked = rollupEnabled;
+  document.getElementById("rollupToggle").addEventListener("change", function(e){
+    rollupEnabled = e.target.checked;
+    localStorage.setItem(ROLLUP_KEY, rollupEnabled ? "1" : "0");
+    render();
+    if(currentInspectId){
+      var t = tasks.find(function(x){ return x.id === currentInspectId; });
+      if(t) populateInspector(t);
+    }
   });
 
   var zoomDayBtn = document.getElementById("zoomDay");
