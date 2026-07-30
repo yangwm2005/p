@@ -1499,25 +1499,30 @@
       if(json === lastPrivateJSON){ setSyncState('synced', 'Synced'); return; }
 
       applyingRemote = true;
-      Object.keys(workspace.documents).forEach(id=>{
-        if(!workspace.documents[id].shareId) delete workspace.documents[id];
-      });
-      Object.keys(remote).forEach(id=>{
-        const merged = mergeDoc(workspace.documents[id], remote[id]);
-        workspace.documents[id] = merged;
-      });
-      if(!workspace.documents[workspace.activeDocId]){
-        const ids = Object.keys(workspace.documents);
-        workspace.activeDocId = ids.length ? ids[0] : null;
+      try{
+        Object.keys(workspace.documents).forEach(id=>{
+          if(!workspace.documents[id].shareId) delete workspace.documents[id];
+        });
+        Object.keys(remote).forEach(id=>{
+          const merged = mergeDoc(workspace.documents[id], remote[id]);
+          workspace.documents[id] = merged;
+        });
+        if(!workspace.documents[workspace.activeDocId]){
+          const ids = Object.keys(workspace.documents);
+          workspace.activeDocId = ids.length ? ids[0] : null;
+        }
+        if(!workspace.activeDocId){
+          const fresh = makeDoc('Untitled');
+          workspace.documents[fresh.id] = fresh;
+          workspace.activeDocId = fresh.id;
+        }
+        lastPrivateJSON = json;
+        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+      } catch(mergeErr){
+        console.error('Private doc merge failed — keeping local copy as-is', mergeErr);
+      } finally {
+        applyingRemote = false;
       }
-      if(!workspace.activeDocId){
-        const fresh = makeDoc('Untitled');
-        workspace.documents[fresh.id] = fresh;
-        workspace.activeDocId = fresh.id;
-      }
-      lastPrivateJSON = json;
-      applyingRemote = false;
-      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
       renderDocList();
       renderTreePreservingFocus();
       setSyncState('synced', 'Synced');
@@ -1653,15 +1658,23 @@
       if(json === lastSharedJSON[shareId]) return;
 
       applyingRemote = true;
-      const remoteDoc = Object.assign({}, data.doc, {
-        id: shareId, shareId,
-        ownerUid: data.ownerUid, ownerEmail: data.ownerEmail
-      });
-      const merged = mergeDoc(workspace.documents[shareId], remoteDoc);
-      workspace.documents[shareId] = merged;
-      if(!workspace.activeDocId) workspace.activeDocId = shareId;
-      applyingRemote = false;
-      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+      let merged;
+      try{
+        const remoteDoc = Object.assign({}, data.doc, {
+          id: shareId, shareId,
+          ownerUid: data.ownerUid, ownerEmail: data.ownerEmail
+        });
+        merged = mergeDoc(workspace.documents[shareId], remoteDoc);
+        workspace.documents[shareId] = merged;
+        if(!workspace.activeDocId) workspace.activeDocId = shareId;
+        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+      } catch(mergeErr){
+        console.error('Shared doc merge failed — keeping local copy as-is', mergeErr);
+        applyingRemote = false;
+        return;
+      } finally {
+        applyingRemote = false;
+      }
       renderDocList();
       if(workspace.activeDocId === shareId) renderTreePreservingFocus();
       setSyncState('synced', 'Synced');
