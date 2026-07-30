@@ -514,16 +514,23 @@
 
   // ---------------- Data model ----------------
   // workspace = { activeDocId, documents: { [docId]: Doc } }
-  // Doc = { id, name, createdAt, updatedAt, rootId, zoomedId, nodes: { [id]: Node } }
-  // Node = { id, text, children:[ids], collapsed:bool, done:bool, parentId }
+  // Doc = { id, name, createdAt, updatedAt, rootId, zoomedId, nodes: { [id]: Node }, tombstones: { [id]: deletedAtMs } }
+  // Node = { id, text, children:[ids], collapsed:bool, done:bool, parentId, updatedAt }
+  // `updatedAt` per node + `tombstones` on the doc let us merge two edited copies of a shared
+  // document (from two different browsers) without one side's edit silently clobbering the other's.
+
+  function touch(node){
+    if(node) node.updatedAt = Date.now();
+    return node;
+  }
 
   function makeNode(parentId, text){
-    return { id: uid(), text: text || "", children: [], collapsed:false, done:false, parentId };
+    return { id: uid(), text: text || "", children: [], collapsed:false, done:false, parentId, updatedAt: Date.now() };
   }
 
   function makeDoc(name){
     const rootId = "root";
-    const root = { id: rootId, text:"", children:[], collapsed:false, done:false, parentId:null };
+    const root = { id: rootId, text:"", children:[], collapsed:false, done:false, parentId:null, updatedAt: Date.now() };
     const doc = {
       id: uid(),
       name: name || "Untitled",
@@ -532,6 +539,7 @@
       rootId,
       zoomedId: rootId,
       nodes: { [rootId]: root },
+      tombstones: {},     // nodeId -> deletedAt ms, so a stale remote copy can't resurrect a deleted node
       shareId: null,       // set once this document is shared via a shared_projects/{shareId} doc
       ownerUid: null,
       ownerEmail: null
@@ -615,6 +623,8 @@
     if(!n) return;
     [...n.children].forEach(c => deleteSubtree(doc, c));
     delete doc.nodes[id];
+    if(!doc.tombstones) doc.tombstones = {};
+    doc.tombstones[id] = Date.now();
   }
 
   function indentNode(doc, node){
@@ -627,6 +637,8 @@
     prevSib.children.push(node.id);
     node.parentId = prevSibId;
     prevSib.collapsed = false;
+    touch(prevSib);
+    touch(node);
     return true;
   }
 
@@ -648,6 +660,7 @@
     node.children = node.children.concat(trailing);
     node.parentId = grandparent.id;
     grandparent.children.splice(parentIdxInGp+1, 0, node.id);
+    touch(node); touch(parent); touch(grandparent);
     return true;
   }
 
@@ -658,6 +671,7 @@
     if(newIdx < 0 || newIdx >= arr.length) return false;
     arr.splice(idx,1);
     arr.splice(newIdx,0,node.id);
+    touch(getNode(doc, node.parentId));
     return true;
   }
 
@@ -665,6 +679,7 @@
     const arr = siblingsOf(doc, node);
     const idx = arr.indexOf(node.id);
     arr.splice(idx+1, 0, newNode.id);
+    touch(getNode(doc, node.parentId));
     doc.nodes[newNode.id] = newNode;
   }
 
@@ -878,6 +893,7 @@
       check.addEventListener('click', (e)=>{
         e.stopPropagation();
         node.done = !node.done;
+        touch(node);
         scheduleSave();
         renderTree();
       });
@@ -930,11 +946,13 @@
         // prevent dropping onto own descendant
         let p = targetNode;
         while(p){ if(p.id === draggedId) return; p = p.parentId ? d.nodes[p.parentId] : null; }
+        const oldParent = d.nodes[draggedNode.parentId];
         removeFromParent(d, draggedNode);
         draggedNode.parentId = targetNode.parentId;
         const arr = siblingsOf(d, targetNode);
         const idx = arr.indexOf(id);
         arr.splice(idx, 0, draggedId);
+        touch(draggedNode); touch(oldParent); touch(d.nodes[targetNode.parentId]);
         scheduleSave();
         renderTree();
       });
@@ -1025,7 +1043,7 @@
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
       if(!node) return;
-      node.text = el.innerText;
+      node.text = el.innerText; touch(node);
       scheduleSave();
       // keep zoom title in sync if this node is currently zoomed as a breadcrumb ancestor label somewhere - re-render breadcrumb only (cheap)
       renderBreadcrumb(doc);
@@ -1044,12 +1062,14 @@
         const before = fullText.slice(0, offset);
         const after = fullText.slice(offset);
         node.text = before;
+        touch(node);
 
         const newNode = makeNode(node.parentId, after);
         if(node.children.length > 0 && !node.collapsed){
           newNode.parentId = node.id;
           doc.nodes[newNode.id] = newNode;
           node.children.unshift(newNode.id);
+          touch(node);
         } else {
           insertAfter(doc, node, newNode);
         }
@@ -1062,7 +1082,7 @@
       if(e.key === 'Tab'){
         e.preventDefault();
         const offset = getCaretOffset(el);
-        node.text = el.innerText;
+        node.text = el.innerText; touch(node);
         const ok = e.shiftKey ? outdentNode(doc, node) : indentNode(doc, node);
         if(ok){ scheduleSave(); focusRequest = { id: node.id, caret: offset }; renderTree(); }
         return;
@@ -1071,7 +1091,7 @@
       if(e.key === 'Backspace' && isCaretAtStart(el)){
         const arr = siblingsOf(doc, node);
         const idx = arr.indexOf(node.id);
-        node.text = el.innerText;
+        node.text = el.innerText; touch(node);
         if(node.text === '' && node.children.length === 0){
           // delete empty leaf, move focus to previous visible node
           const parent = doc.nodes[node.parentId];
@@ -1081,6 +1101,7 @@
             e.preventDefault();
             deleteSubtree(doc, node.id);
             arr.splice(arr.indexOf(node.id),1);
+            touch(parent);
             scheduleSave();
             focusRequest = { id: prevVisible.id, caret: 'end' };
             renderTree();
@@ -1090,6 +1111,7 @@
             const pc = parent.children;
             const ni = pc.indexOf(node.id);
             if(ni > -1) pc.splice(ni,1);
+            touch(parent);
             scheduleSave();
             focusRequest = { id: parent.id, caret: 'end' };
             renderTree();
@@ -1112,8 +1134,13 @@
         node.children.forEach(cid=>{ doc.nodes[cid].parentId = target.id; });
         target.children = target.children.concat(node.children);
         target.collapsed = false;
+        touch(target);
+        const oldParent = doc.nodes[node.parentId];
         removeFromParent(doc, node);
         delete doc.nodes[node.id];
+        if(!doc.tombstones) doc.tombstones = {};
+        doc.tombstones[node.id] = Date.now();
+        touch(oldParent);
         scheduleSave();
         focusRequest = { id: target.id, caret: mergeAt };
         renderTree();
@@ -1126,7 +1153,7 @@
         const pos = visible.indexOf(nodeId);
         if(pos > 0){
           e.preventDefault();
-          node.text = el.innerText;
+          node.text = el.innerText; touch(node);
           scheduleSave();
           focusRequest = { id: visible[pos-1], caret: 'end' };
           renderTree();
@@ -1139,7 +1166,7 @@
         const pos = visible.indexOf(nodeId);
         if(pos > -1 && pos < visible.length-1){
           e.preventDefault();
-          node.text = el.innerText;
+          node.text = el.innerText; touch(node);
           scheduleSave();
           focusRequest = { id: visible[pos+1], caret: 'end' };
           renderTree();
@@ -1149,7 +1176,7 @@
 
       if(e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')){
         e.preventDefault();
-        node.text = el.innerText;
+        node.text = el.innerText; touch(node);
         const moved = moveNode(doc, node, e.key === 'ArrowUp' ? -1 : 1);
         if(moved){
           scheduleSave();
@@ -1161,7 +1188,7 @@
 
       if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){
         e.preventDefault();
-        node.text = el.innerText;
+        node.text = el.innerText; touch(node);
         node.done = !node.done;
         scheduleSave();
         focusRequest = { id: node.id, caret: getCaretOffset(el) };
@@ -1173,7 +1200,7 @@
     el.addEventListener('blur', ()=>{
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
-      if(node) node.text = el.innerText;
+      if(node) node.text = el.innerText; touch(node);
       scheduleSave();
     });
   }
@@ -1205,6 +1232,7 @@
     const n = makeNode(zoomNode.id, "");
     doc.nodes[n.id] = n;
     zoomNode.children.push(n.id);
+    touch(zoomNode);
     scheduleSave();
     focusRequest = { id: n.id, caret: 'start' };
     renderTree();
@@ -1474,7 +1502,10 @@
       Object.keys(workspace.documents).forEach(id=>{
         if(!workspace.documents[id].shareId) delete workspace.documents[id];
       });
-      Object.keys(remote).forEach(id=>{ workspace.documents[id] = remote[id]; });
+      Object.keys(remote).forEach(id=>{
+        const merged = mergeDoc(workspace.documents[id], remote[id]);
+        workspace.documents[id] = merged;
+      });
       if(!workspace.documents[workspace.activeDocId]){
         const ids = Object.keys(workspace.documents);
         workspace.activeDocId = ids.length ? ids[0] : null;
@@ -1487,7 +1518,8 @@
       lastPrivateJSON = json;
       applyingRemote = false;
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
-      renderAll();
+      renderDocList();
+      renderTreePreservingFocus();
       setSyncState('synced', 'Synced');
     }, err=>{
       console.error('Cloud sync error', err);
@@ -1544,6 +1576,74 @@
       }, err=> console.error('shared index error', err));
   }
 
+  // ---- merge a locally-held copy of a shared doc with a freshly-arrived remote copy ----
+  // Whole-document last-write-wins (just replacing local with remote) will resurrect nodes the
+  // other person just deleted, if their edit happened to reach Firestore a moment earlier. This
+  // merges node-by-node using each node's own `updatedAt`, and treats `tombstones` as authoritative
+  // so a deletion can't be undone by a stale copy that doesn't know about it yet.
+  function mergeDoc(local, remote){
+    if(!local) return remote;
+    if(!remote) return local;
+
+    const tombstones = Object.assign({}, local.tombstones || {});
+    Object.entries(remote.tombstones || {}).forEach(([id, t])=>{
+      tombstones[id] = Math.max(tombstones[id] || 0, t);
+    });
+
+    const nodes = {};
+    const allIds = new Set([...Object.keys(local.nodes || {}), ...Object.keys(remote.nodes || {})]);
+    allIds.forEach(id=>{
+      const ln = (local.nodes || {})[id];
+      const rn = (remote.nodes || {})[id];
+      const winner = (ln && rn) ? ((rn.updatedAt || 0) >= (ln.updatedAt || 0) ? rn : ln) : (rn || ln);
+      if(!winner) return;
+      const deletedAt = tombstones[id] || 0;
+      if(deletedAt && deletedAt >= (winner.updatedAt || 0)) return; // deletion wins over a stale copy
+      nodes[id] = Object.assign({}, winner);
+    });
+
+    // drop dangling child references (deleted or otherwise missing nodes)
+    Object.values(nodes).forEach(n=>{ n.children = (n.children || []).filter(cid => nodes[cid]); });
+
+    const rootId = remote.rootId || local.rootId;
+    if(!nodes[rootId]){
+      nodes[rootId] = (local.nodes||{})[rootId] || (remote.nodes||{})[rootId] || { id: rootId, text:'', children:[], collapsed:false, done:false, parentId:null, updatedAt: Date.now() };
+    }
+    // reattach any orphaned node (parent missing/deleted, or never referenced) under root
+    const referenced = new Set();
+    Object.values(nodes).forEach(n=> n.children.forEach(cid=>referenced.add(cid)));
+    Object.keys(nodes).forEach(id=>{
+      if(id === rootId) return;
+      if(!referenced.has(id)) nodes[rootId].children.push(id);
+    });
+
+    const nameWins = (remote.updatedAt || 0) >= (local.updatedAt || 0);
+    return {
+      id: remote.id || local.id,
+      shareId: remote.shareId || local.shareId,
+      ownerUid: remote.ownerUid || local.ownerUid,
+      ownerEmail: remote.ownerEmail || local.ownerEmail,
+      createdAt: Math.min(local.createdAt || Date.now(), remote.createdAt || Date.now()),
+      updatedAt: Math.max(local.updatedAt || 0, remote.updatedAt || 0),
+      name: nameWins ? remote.name : local.name,
+      rootId,
+      zoomedId: (local.zoomedId && nodes[local.zoomedId]) ? local.zoomedId : rootId, // keep your own scroll position where possible
+      nodes,
+      tombstones
+    };
+  }
+
+  // Rebuilding the whole tree on every remote snapshot would blow away focus/cursor mid-keystroke.
+  // Capture what's focused first, restore it after, so a collaborator's edit doesn't interrupt yours.
+  function renderTreePreservingFocus(){
+    const active = document.activeElement;
+    if(active && active.classList && active.classList.contains('content')){
+      const row = active.closest('.row');
+      if(row) focusRequest = { id: row.dataset.id, caret: getCaretOffset(active) };
+    }
+    renderTree();
+  }
+
   function subscribeToSharedDoc(shareId){
     sharedDocUnsubs[shareId] = db.collection('shared_projects').doc(shareId).onSnapshot(snap=>{
       if(!snap.exists) return;
@@ -1553,17 +1653,27 @@
       if(json === lastSharedJSON[shareId]) return;
 
       applyingRemote = true;
-      const docData = Object.assign({}, data.doc, {
+      const remoteDoc = Object.assign({}, data.doc, {
         id: shareId, shareId,
         ownerUid: data.ownerUid, ownerEmail: data.ownerEmail
       });
-      workspace.documents[shareId] = docData;
+      const merged = mergeDoc(workspace.documents[shareId], remoteDoc);
+      workspace.documents[shareId] = merged;
       if(!workspace.activeDocId) workspace.activeDocId = shareId;
-      lastSharedJSON[shareId] = json;
       applyingRemote = false;
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
-      renderAll();
+      renderDocList();
+      if(workspace.activeDocId === shareId) renderTreePreservingFocus();
       setSyncState('synced', 'Synced');
+
+      // if the merge differs from what's on the server (e.g. it healed a conflict), push the
+      // reconciled version back so both sides converge quickly instead of fighting each other.
+      const mergedJSON = JSON.stringify(merged);
+      if(mergedJSON === json){
+        lastSharedJSON[shareId] = json; // merge matches the server as-is, nothing to push
+      } else {
+        scheduleCloudSave(shareId); // leave lastSharedJSON stale so pushSharedDoc detects the diff and writes
+      }
     }, err=> console.error('shared doc error', err));
   }
 
