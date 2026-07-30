@@ -917,8 +917,9 @@
 <button id="fabThreadToggle" title="Toggle all threads open / closed">💬</button>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260626: v24t: 📄 Save .txt button added to View modal footer next to 🖨️ Print — exports current view mode as a named .txt file.<br>
-<!--        20260622: v25s: Simplified view modal bar — removed redundant Copy button, keeping only 📄 Save .txt.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260730: v25: 📥 Paste now restores an item's subitems (thread replies, including nested level-2 sub-replies) along with it — works for both the app clipboard (Copy → Paste in-app) and the system clipboard (pasting the copied text elsewhere, including into another window/instance).<br>
+<!--        20260626: v24t: 📄 Save .txt button added to View modal footer next to 🖨️ Print — exports current view mode as a named .txt file.<br>
+            20260622: v25s: Simplified view modal bar — removed redundant Copy button, keeping only 📄 Save .txt.<br>
             20260615: v25i: 4 view modes — ¶ Plain, ¶• Thread Bullets, • Msg Bullets, •• Full Bullets; shared _pvRenderParagraph for screen+print; no vertical lines in any mode.
             20260615: v25h: Beautiful print view — Plain/Bullets tabs in modal; 🖨️ Print button opens styled print window with title, date, clean typography; threads shown as indented replies; Save as PDF via browser print.<br>
             20260615: v25g: Mobile layout fix; 💬 Threads toggle-all button.<br>
@@ -1501,7 +1502,15 @@
             text: msg.querySelector(".message-text").innerHTML,
             timestamp: msg.querySelector(".timestamp").textContent,
             isSubchat: msg.classList.contains("subchat"),
-            isHighlighted: msg.classList.contains("highlighted-yellow") || msg.classList.contains("highlighted-orange")
+            isHighlighted: msg.classList.contains("highlighted-yellow") || msg.classList.contains("highlighted-orange"),
+            threadReplies: Array.from(msg.querySelectorAll('.thread-reply-row')).map(row => ({
+                text: row.querySelector('.thread-reply-text') ? row.querySelector('.thread-reply-text').textContent : '',
+                ts: row.querySelector('.thread-reply-ts') ? row.querySelector('.thread-reply-ts').textContent : '',
+                subreplies: Array.from(row.querySelectorAll('.sub-reply-row')).map(sr => ({
+                    text: sr.querySelector('.sub-reply-text') ? sr.querySelector('.sub-reply-text').textContent : '',
+                    ts: sr.querySelector('.sub-reply-ts') ? sr.querySelector('.sub-reply-ts').textContent : ''
+                }))
+            }))
         }));
 
         const clipboardText = Array.from(selectedMessages).map(msg => {
@@ -1544,6 +1553,152 @@
             });
     }
 
+    // Attach thread replies (and their level-2 sub-replies) to a message that already
+    // has its (empty) thread panel — used by Paste to restore an item's subitems.
+    // `replies` is an array of {text, ts, subreplies: [{text, ts}, ...]}.
+    function attachThreadReplies(msgEl, replies) {
+        if (!replies || !replies.length) return;
+        var inner = msgEl.querySelector('.thread-panel-inner');
+        var toggleBtn = msgEl.querySelector('.thread-toggle-btn');
+        if (!inner) return;
+        var inputRow = inner.querySelector('.thread-input-row');
+
+        function updateToggleLabel() {
+            var cnt = inner.querySelectorAll('.thread-reply-row').length;
+            if (toggleBtn) {
+                toggleBtn.textContent = cnt ? '💬 ' + cnt : '💬';
+                toggleBtn.classList.toggle('has-replies', cnt > 0);
+            }
+        }
+
+        replies.forEach(function(r) {
+            if (!r || !r.text) return;
+
+            var row = document.createElement('div');
+            row.className = 'thread-reply-row';
+            row.style.flexDirection = 'column';
+            row.style.alignItems = 'stretch';
+
+            var topBar = document.createElement('div');
+            topBar.style.cssText = 'display:flex;align-items:center;gap:4px;';
+
+            var subToggle = document.createElement('button');
+            subToggle.className = 'sub-thread-toggle';
+            subToggle.textContent = '↩';
+
+            var rtSpan = document.createElement('span');
+            rtSpan.className = 'thread-reply-text';
+            rtSpan.textContent = r.text || '';
+            var tsSpan = document.createElement('span');
+            tsSpan.className = 'thread-reply-ts';
+            tsSpan.textContent = r.ts || '';
+            var delBtn = document.createElement('button');
+            delBtn.className = 'thread-reply-del';
+            delBtn.title = 'Delete reply';
+            delBtn.textContent = '✕';
+
+            topBar.appendChild(subToggle);
+            topBar.appendChild(rtSpan);
+            topBar.appendChild(tsSpan);
+            topBar.appendChild(delBtn);
+            row.appendChild(topBar);
+
+            // ── sub-thread panel (level 2) ──
+            var subPanel = document.createElement('div');
+            subPanel.className = 'sub-thread-panel';
+
+            function updateSubToggleLabel() {
+                var cnt = subPanel.querySelectorAll('.sub-reply-row').length;
+                subToggle.textContent = cnt ? '↩' + cnt : '↩';
+                subToggle.classList.toggle('has-subreplies', cnt > 0);
+                subToggle.title = cnt ? (cnt + ' sub-repl' + (cnt !== 1 ? 'ies' : 'y') + ' — click to toggle') : 'Add sub-thread reply';
+            }
+
+            function addSubReplyRow(sText, sTs) {
+                var sRow = document.createElement('div');
+                sRow.className = 'sub-reply-row';
+                var sTxt = document.createElement('span');
+                sTxt.className = 'sub-reply-text';
+                sTxt.textContent = sText;
+                var sTs2 = document.createElement('span');
+                sTs2.className = 'sub-reply-ts';
+                sTs2.textContent = sTs || '';
+                var sDel = document.createElement('button');
+                sDel.className = 'sub-reply-del';
+                sDel.textContent = '✕';
+                sDel.onclick = function(e) {
+                    e.stopPropagation();
+                    sRow.parentNode && sRow.parentNode.removeChild(sRow);
+                    updateSubToggleLabel();
+                    autosaveTick();
+                };
+                sRow.appendChild(sTxt); sRow.appendChild(sTs2); sRow.appendChild(sDel);
+                var siRow = subPanel.querySelector('.sub-input-row');
+                subPanel.insertBefore(sRow, siRow);
+                updateSubToggleLabel();
+            }
+
+            var siRow = document.createElement('div');
+            siRow.className = 'sub-input-row';
+            var siTa = document.createElement('textarea');
+            siTa.placeholder = 'Sub-reply… (Enter to send)';
+            siTa.rows = 1;
+            siTa.addEventListener('input', function() {
+                siTa.style.height = 'auto';
+                siTa.style.height = Math.min(siTa.scrollHeight, 70) + 'px';
+            });
+            var siBtn = document.createElement('button');
+            siBtn.textContent = '↩ Send';
+            function doSendSubReply() {
+                var txt = siTa.value.trim();
+                if (!txt) return;
+                addSubReplyRow(txt, getCurrentTimeFmt ? getCurrentTimeFmt() : getCurrentTime());
+                siTa.value = ''; siTa.style.height = 'auto'; siTa.focus();
+                autosaveTick();
+            }
+            siBtn.onclick = function(e) { e.stopPropagation(); doSendSubReply(); };
+            siTa.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSendSubReply(); }
+            });
+            siRow.appendChild(siTa); siRow.appendChild(siBtn);
+            subPanel.appendChild(siRow);
+            row.appendChild(subPanel);
+
+            if (r.subreplies && r.subreplies.length) {
+                r.subreplies.forEach(function(sr) { addSubReplyRow(sr.text, sr.ts); });
+            }
+
+            subToggle.onclick = function(e) {
+                e.stopPropagation();
+                var isOpen = subPanel.classList.contains('open');
+                subPanel.classList.toggle('open', !isOpen);
+                if (!isOpen) { setTimeout(function() { siTa.focus(); }, 60); }
+                updateSubToggleLabel();
+            };
+            subPanel.addEventListener('focusout', function() {
+                setTimeout(function() {
+                    if (subPanel.contains(document.activeElement)) return;
+                    if (!subPanel.querySelectorAll('.sub-reply-row').length) {
+                        subPanel.classList.remove('open');
+                        updateSubToggleLabel();
+                    }
+                }, 150);
+            });
+            updateSubToggleLabel();
+
+            delBtn.onclick = function(e) {
+                e.stopPropagation();
+                row.parentNode && row.parentNode.removeChild(row);
+                updateToggleLabel();
+            };
+
+            if (inputRow) inner.insertBefore(row, inputRow);
+            else inner.appendChild(row);
+        });
+
+        updateToggleLabel();
+    }
+
     function pasteMessages() {
         const chatBox = document.getElementById("chatBox");
         let targetMessage = null;
@@ -1559,6 +1714,7 @@
                 const newMessage = sendMessage(msgData.text, msgData.timestamp, true);
                 if (msgData.isSubchat) newMessage.classList.add("subchat");
                 if (msgData.isHighlighted) newMessage.classList.add("highlighted-yellow");
+                attachThreadReplies(newMessage, msgData.threadReplies);
 
                 if (targetMessage) {
                     targetMessage.after(newMessage);
@@ -1586,8 +1742,10 @@
 
                 const lines = text.split("\n");
                 let pastedCount = 0;
+                let i = 0;
 
-                lines.forEach(line => {
+                while (i < lines.length) {
+                    const line = lines[i];
                     const match = line.match(/(  •|•) (\[H\]\s)?(.*?) \((\d+:\d+ [APM]{2})\)/);
                     if (match) {
                         const isSubchat = match[1] === "  •";
@@ -1599,6 +1757,26 @@
                         if (isSubchat) newMessage.classList.add("subchat");
                         if (isHighlighted) newMessage.classList.add("highlighted-yellow");
 
+                        // Collect any following "  ↳ text  @ts" reply lines, and any nested
+                        // "    ↳↳ text  @ts" sub-reply lines under each of them, as subitems.
+                        const replies = [];
+                        let j = i + 1;
+                        while (j < lines.length) {
+                            const replyMatch = lines[j].match(/^ {2}↳ (.*?)(?:  @(\d+:\d+ [APM]{2}))?$/);
+                            if (!replyMatch) break;
+                            const reply = { text: replyMatch[1], ts: replyMatch[2] || '', subreplies: [] };
+                            j++;
+                            while (j < lines.length) {
+                                const subMatch = lines[j].match(/^ {4}↳↳ (.*?)(?:  @(\d+:\d+ [APM]{2}))?$/);
+                                if (!subMatch) break;
+                                reply.subreplies.push({ text: subMatch[1], ts: subMatch[2] || '' });
+                                j++;
+                            }
+                            replies.push(reply);
+                        }
+                        if (replies.length) attachThreadReplies(newMessage, replies);
+                        i = j;
+
                         if (targetMessage) {
                             targetMessage.after(newMessage);
                             targetMessage = newMessage;
@@ -1606,8 +1784,10 @@
                             chatBox.appendChild(newMessage);
                         }
                         pastedCount++;
+                    } else {
+                        i++;
                     }
-                });
+                }
 
                 if (pastedCount > 0) {
                     requestAnimationFrame(() => {
