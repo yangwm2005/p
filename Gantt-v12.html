@@ -2058,6 +2058,9 @@
   var REORDER_THRESHOLD = 18; // px of vertical drag on a bar before it switches to reorder/re-parent mode
   var POINTER = { id:null, mode:null, task:null, startX:0, startY:0, origStart:null, origEnd:null, barEl:null, origLeft:null, origWidth:null, reordering:false, groupTasks:[] };
   var barElsById = {};
+  var lastBarTap = { id:null, time:0 };
+  var barTapTimer = null;
+  var DBLTAP_MS = 300;
 
   function renderBars(){
     barsLayer.innerHTML = "";
@@ -2164,7 +2167,28 @@
           commitRowDrag(task, target);
         } else {
           commitDrag(Math.round(totalDx/pxPerDay));
-          if(wasTap && mode==="move") openInspector(task);
+          if(wasTap && mode==="move"){
+            var hasKids = getChildren(task.id).length > 0;
+            if(!hasKids){
+              openInspector(task);
+            } else {
+              var now = Date.now();
+              var isDblTap = lastBarTap.id === task.id && (now - lastBarTap.time) < DBLTAP_MS;
+              if(barTapTimer){ clearTimeout(barTapTimer); barTapTimer = null; }
+              if(isDblTap){
+                lastBarTap = { id:null, time:0 };
+                task.collapsed = !task.collapsed;
+                render();
+              } else {
+                lastBarTap = { id: task.id, time: now };
+                barTapTimer = setTimeout(function(){
+                  barTapTimer = null;
+                  lastBarTap = { id:null, time:0 };
+                  openInspector(task);
+                }, DBLTAP_MS);
+              }
+            }
+          }
         }
         POINTER.id = null;
         POINTER.reordering = false;
@@ -2916,6 +2940,40 @@
     }
   }
 
+  // group brackets: plain divs (same print-safety approach as buildDependencyHTML) linking an
+  // expanded parent row down through its visible sub-task rows
+  function buildGroupBracketHTML(list, pct, rangeStart){
+    var BASE_GAP = 16, STEP = 6, MIN_GAP = 4, TICK_PX = 5;
+    var html = "";
+    list.forEach(function(entry, i){
+      var t = entry.task, depth = entry.depth;
+      if(!entry.hasChildren || t.collapsed) return;
+      var lastIdx = i;
+      for(var j = i+1; j < list.length; j++){
+        if(list[j].depth <= depth) break;
+        lastIdx = j;
+      }
+      if(lastIdx === i) return;
+
+      var minStartPct = pct(daysBetween(rangeStart, parseDate(t.start)));
+      for(var k = i+1; k <= lastIdx; k++){
+        var cp = pct(daysBetween(rangeStart, parseDate(list[k].task.start)));
+        if(cp < minStartPct) minStartPct = cp;
+      }
+      var gap = Math.max(MIN_GAP, BASE_GAP - depth*STEP);
+      var xPct = minStartPct;
+      var yTop = i*PRINT_ROW_H + PRINT_ROW_H/2;
+      var yBottom = lastIdx*PRINT_ROW_H + PRINT_ROW_H/2;
+      var depthCls = "depth" + Math.min(depth,5);
+      var leftCalc = 'calc(' + xPct.toFixed(3) + '% - ' + gap + 'px)';
+
+      html += '<div class="print-group-bracket-v ' + depthCls + '" style="left:' + leftCalc + '; top:' + yTop + 'px; height:' + (yBottom-yTop) + 'px;"></div>';
+      html += '<div class="print-group-bracket-h ' + depthCls + '" style="left:' + leftCalc + '; top:' + (yTop-0.75) + 'px; width:' + TICK_PX + 'px;"></div>';
+      html += '<div class="print-group-bracket-h ' + depthCls + '" style="left:' + leftCalc + '; top:' + (yBottom-0.75) + 'px; width:' + TICK_PX + 'px;"></div>';
+    });
+    return html;
+  }
+
   function buildPrintBodyHTML(){
     var list = visibleFlatten(); // respects current collapse state
     var pRange = getTightRange(list); // tight to the actual tasks — no interactive-view padding
@@ -2969,6 +3027,7 @@
     }
     var gridOverlayHTML = buildGridOverlayHTML(printZoom, pRange, pct, todayInRangePct);
     var depHTML = buildDependencyHTML(list, pct, pRange.start);
+    var bracketHTML = buildGroupBracketHTML(list, pct, pRange.start);
 
     var tickBandHTML = '<div class="print-tick-band">' +
       tickSegs.map(function(seg){
@@ -3040,7 +3099,7 @@
       }).join("") +
       '</div>' + tickBandHTML + '</div>';
     html += '<div class="print-timeline-body" style="height:' + bodyHeight + 'px;">' +
-      rowBandHTML + gridOverlayHTML + rowSepHTML + depHTML + barsHTML +
+      rowBandHTML + gridOverlayHTML + rowSepHTML + bracketHTML + depHTML + barsHTML +
       '</div>';
     html += '</div></div>';
 
@@ -3091,6 +3150,16 @@
     ".print-dep-h.violated, .print-dep-v.violated{background:#b5493d;} " +
     ".print-dep-dot{position:absolute; width:4px; height:4px; border-radius:50%; background:#5b6472;} " +
     ".print-dep-dot.violated{background:#b5493d;} " +
+    /* group brackets — links an expanded parent row down through its visible sub-task rows */
+    ".print-group-bracket-v{position:absolute; width:1.4px; background:#2c5f7c; opacity:.55;} " +
+    ".print-group-bracket-h{position:absolute; height:1.4px; background:#2c5f7c; opacity:.55;} " +
+    ".print-group-bracket-v.depth1, .print-group-bracket-h.depth1{background:#5f8da6;} " +
+    ".print-group-bracket-v.depth2, .print-group-bracket-h.depth2, " +
+    ".print-group-bracket-v.depth3, .print-group-bracket-h.depth3, " +
+    ".print-group-bracket-v.depth4, .print-group-bracket-h.depth4, " +
+    ".print-group-bracket-v.depth5, .print-group-bracket-h.depth5{background:#8d96a3; opacity:.8;} " +
+    ".preview-page:not(.show-group-brackets) .print-group-bracket-v, " +
+    ".preview-page:not(.show-group-brackets) .print-group-bracket-h{display:none;} " +
     ".print-footer{margin-top:16px; font-size:9.5px; color:#8d96a3; text-align:center;} " +
     /* toner-saving mode: bars become outlines instead of solid fills, weekend shading is dropped —
        both are the biggest ink/toner consumers on a printed page, everything else is left as-is */
@@ -3110,6 +3179,7 @@
     ".preview-page.toner-saving.grayscale-bars .print-bar{background:#fff; border:2px solid #8d96a3;} " +
     ".preview-page.toner-saving.grayscale-bars .print-bar-label{color:#5b6472;} " +
     ".preview-page.toner-saving.grayscale-bars .print-bar-label.outside{color:#5b6472;} " +
+    ".preview-page.grayscale-bars .print-group-bracket-v, .preview-page.grayscale-bars .print-group-bracket-h{background:#8d96a3;} " +
     ".po-toner-toggle{display:flex; align-items:center; gap:6px; font-size:12px; color:#c7ccd3; cursor:pointer;} " +
     "@media print{ " +
       "@page{ size: landscape; margin: 12mm; } " +
@@ -3117,7 +3187,7 @@
       ".preview-toolbar{display:none;} " +
       ".preview-page{box-shadow:none; margin:0; padding:0; max-width:none; border-radius:0;} " +
       ".print-name-row{break-inside:avoid;} " +
-      ".print-bar, .print-tick-seg.weekend, .print-dep-h, .print-dep-v, .print-dep-dot{-webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;} " +
+      ".print-bar, .print-tick-seg.weekend, .print-dep-h, .print-dep-v, .print-dep-dot, .print-group-bracket-v, .print-group-bracket-h{-webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;} " +
     "}";
 
   function openPrintPreview(){
@@ -3136,11 +3206,12 @@
       "<div class='preview-toolbar'>" +
         "<span>Print preview — review below, then print or save as PDF</span>" +
         "<label class='po-toner-toggle'><input type='checkbox' id='rowBandingToggle'> 🩶 Row banding</label>" +
+        "<label class='po-toner-toggle'><input type='checkbox' id='groupBracketsToggle' checked> 🗂 Group brackets</label>" +
         "<label class='po-toner-toggle'><input type='checkbox' id='grayscaleBarsToggle'> ⬜ Grayscale bars</label>" +
         "<label class='po-toner-toggle'><input type='checkbox' id='tonerSavingToggle'> 🖨 Toner-saving (outlines, no shading)</label>" +
         "<button id='doPrintBtn'>Print</button>" +
       "</div>" +
-      "<div class='preview-page' id='previewPage'>" + bodyHTML + "</div>" +
+      "<div class='preview-page show-group-brackets' id='previewPage'>" + bodyHTML + "</div>" +
       "</body></html>"
     );
     doc.close();
@@ -3152,6 +3223,9 @@
     });
     win.document.getElementById("rowBandingToggle").addEventListener("change", function(e){
       win.document.getElementById("previewPage").classList.toggle("row-banding", e.target.checked);
+    });
+    win.document.getElementById("groupBracketsToggle").addEventListener("change", function(e){
+      win.document.getElementById("previewPage").classList.toggle("show-group-brackets", e.target.checked);
     });
     win.document.getElementById("grayscaleBarsToggle").addEventListener("change", function(e){
       win.document.getElementById("previewPage").classList.toggle("grayscale-bars", e.target.checked);
