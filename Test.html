@@ -350,6 +350,48 @@
   .row.done > .row-main > .content{color:var(--done); text-decoration:line-through;}
   .row.dimmed{opacity:0.4;}
   .row.search-match .content{background:linear-gradient(transparent 60%, var(--accent-soft) 60%);}
+  .menu-btn{
+    flex-shrink:0;
+    width:22px; height:26px;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    color:var(--ink-faint);
+    border-radius:4px;
+    opacity:0;
+  }
+  .row-main:hover .menu-btn, .menu-btn.open{opacity:1;}
+  .menu-btn:hover, .menu-btn.open{background:var(--accent-soft); color:var(--accent-ink);}
+
+  #itemMenu{
+    position:fixed;
+    background:var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius:8px;
+    box-shadow:var(--shadow);
+    min-width:170px;
+    padding:5px;
+    display:none;
+    flex-direction:column;
+    z-index:60;
+  }
+  #itemMenu.open{display:flex;}
+  #itemMenu button{
+    display:flex; align-items:center; gap:8px;
+    text-align:left;
+    background:none;
+    border:none;
+    padding:7px 9px;
+    border-radius:5px;
+    font-family:inherit;
+    font-size:12.5px;
+    color:var(--ink);
+    cursor:pointer;
+  }
+  #itemMenu button:hover{background:var(--accent-soft); color:var(--accent-ink);}
+  #itemMenu button svg{flex-shrink:0; opacity:0.8;}
+  #itemMenu button.danger{color:var(--danger);}
+  #itemMenu button.danger:hover{background:rgba(181,83,60,0.12); color:var(--danger);}
+  #itemMenu hr{border:none; border-top:1px solid var(--line); margin:4px 2px; width:100%;}
   .children{
     margin-left:24px;
     border-left:1px solid var(--line);
@@ -500,6 +542,19 @@
       <button class="topbtn" id="shareCloseBtn">Close</button>
     </div>
   </div>
+</div>
+
+<div id="itemMenu">
+  <button data-action="done" id="itemMenuDoneBtn">Mark as complete</button>
+  <button data-action="zoom">Zoom in</button>
+  <button data-action="duplicate">Duplicate</button>
+  <hr>
+  <button data-action="indent">Indent</button>
+  <button data-action="outdent">Outdent</button>
+  <button data-action="moveup">Move up</button>
+  <button data-action="movedown">Move down</button>
+  <hr>
+  <button data-action="delete" class="danger">Delete</button>
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -716,6 +771,7 @@
     if(name === 'check') return '<svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>';
     if(name === 'trash') return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0l1 14h8l1-14"/></svg>';
     if(name === 'share') return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.5l6.8-3.9M8.6 13.5l6.8 3.9"/></svg>';
+    if(name === 'menu') return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>';
     return '';
   }
 
@@ -771,6 +827,10 @@
     } else if(doc.shareId){
       // owner (or offline copy of a shared doc): delete the shared project for everyone
       deleteSharedDoc(doc.shareId);
+    } else {
+      // private doc: merge:true writes never remove keys that are no longer sent, so we have to
+      // explicitly tell Firestore to drop this one or it'll quietly reappear on the next sync.
+      deletePrivateDocRemote(docId);
     }
     delete workspace.documents[docId];
     if(workspace.activeDocId === docId){
@@ -920,10 +980,20 @@
       content.innerText = node.text;
       attachEditingHandlers(content, id);
 
+      const menuBtn = document.createElement('div');
+      menuBtn.className = 'menu-btn';
+      menuBtn.title = 'Item options';
+      menuBtn.innerHTML = icon('menu');
+      menuBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        openItemMenu(id, menuBtn);
+      });
+
       rowMain.appendChild(gutter);
       rowMain.appendChild(check);
       rowMain.appendChild(bulletWrap);
       rowMain.appendChild(content);
+      rowMain.appendChild(menuBtn);
       row.appendChild(rowMain);
 
       // drag & drop reordering
@@ -1264,6 +1334,134 @@
     }
   });
 
+  // ---------------- Per-item options menu ----------------
+  const itemMenuEl = document.getElementById('itemMenu');
+  const itemMenuDoneBtn = document.getElementById('itemMenuDoneBtn');
+  let itemMenuNodeId = null;
+  let itemMenuBtnEl = null;
+
+  function openItemMenu(nodeId, btnEl){
+    const doc = activeDoc();
+    const node = doc.nodes[nodeId];
+    if(!node) return;
+    if(itemMenuNodeId === nodeId && itemMenuEl.classList.contains('open')){
+      closeItemMenu();
+      return;
+    }
+    itemMenuNodeId = nodeId;
+    itemMenuBtnEl = btnEl;
+    itemMenuDoneBtn.textContent = node.done ? 'Mark as not complete' : 'Mark as complete';
+    itemMenuEl.classList.add('open');
+    btnEl.classList.add('open');
+
+    const rect = btnEl.getBoundingClientRect();
+    const menuRect = itemMenuEl.getBoundingClientRect();
+    let left = rect.right - menuRect.width;
+    let top = rect.bottom + 4;
+    if(left < 8) left = 8;
+    if(top + menuRect.height > window.innerHeight - 8) top = rect.top - menuRect.height - 4;
+    itemMenuEl.style.left = left + 'px';
+    itemMenuEl.style.top = top + 'px';
+  }
+
+  function closeItemMenu(){
+    itemMenuEl.classList.remove('open');
+    if(itemMenuBtnEl) itemMenuBtnEl.classList.remove('open');
+    itemMenuNodeId = null;
+    itemMenuBtnEl = null;
+  }
+
+  function countDescendants(node, doc){
+    let c = 0;
+    node.children.forEach(cid=>{ const child = doc.nodes[cid]; if(child) c += 1 + countDescendants(child, doc); });
+    return c;
+  }
+
+  function duplicateNode(doc, node){
+    function cloneDeep(n, parentId){
+      const copy = makeNode(parentId, n.text);
+      copy.done = n.done;
+      copy.collapsed = n.collapsed;
+      doc.nodes[copy.id] = copy;
+      n.children.forEach(cid=>{
+        const child = doc.nodes[cid];
+        if(!child) return;
+        const childCopy = cloneDeep(child, copy.id);
+        copy.children.push(childCopy.id);
+      });
+      return copy;
+    }
+    const clone = cloneDeep(node, node.parentId);
+    insertAfter(doc, node, clone);
+    return clone;
+  }
+
+  function deleteNodeWithConfirm(doc, node){
+    const count = countDescendants(node, doc);
+    if(count > 0 && !confirm(`Delete this item and its ${count} sub-item${count > 1 ? 's' : ''}?`)) return;
+    const parent = doc.nodes[node.parentId];
+    removeFromParent(doc, node);
+    deleteSubtree(doc, node.id);
+    touch(parent);
+    scheduleSave();
+    renderTree();
+  }
+
+  function handleItemMenuAction(action, nodeId){
+    const doc = activeDoc();
+    const node = doc.nodes[nodeId];
+    if(!node) return;
+    switch(action){
+      case 'done':
+        node.done = !node.done;
+        touch(node);
+        scheduleSave();
+        renderTree();
+        break;
+      case 'zoom':
+        doc.zoomedId = nodeId;
+        scheduleSave();
+        renderTree();
+        break;
+      case 'duplicate':
+        duplicateNode(doc, node);
+        scheduleSave();
+        renderTree();
+        break;
+      case 'indent':
+        if(indentNode(doc, node)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        break;
+      case 'outdent':
+        if(outdentNode(doc, node)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        break;
+      case 'moveup':
+        if(moveNode(doc, node, -1)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        break;
+      case 'movedown':
+        if(moveNode(doc, node, 1)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        break;
+      case 'delete':
+        deleteNodeWithConfirm(doc, node);
+        break;
+    }
+  }
+
+  itemMenuEl.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button[data-action]');
+    if(!btn || !itemMenuNodeId) return;
+    handleItemMenuAction(btn.dataset.action, itemMenuNodeId);
+    closeItemMenu();
+  });
+  document.addEventListener('click', (e)=>{
+    if(itemMenuEl.classList.contains('open') && !itemMenuEl.contains(e.target) && !e.target.closest('.menu-btn')){
+      closeItemMenu();
+    }
+  });
+  document.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape' && itemMenuEl.classList.contains('open')) closeItemMenu();
+  });
+  document.getElementById('outlineScroll').addEventListener('scroll', closeItemMenu);
+
   // ---------------- Export / Import ----------------
   const shareBtn = document.getElementById('shareBtn');
   const exportMenu = document.getElementById('exportMenu');
@@ -1550,6 +1748,17 @@
     });
   }
 
+  // A plain merge:true write only adds/updates the keys you send — it never removes a key that's
+  // simply absent from the payload. So deleting a document locally, or moving it into shared_projects,
+  // needs an explicit dot-path field deletion or the old copy quietly comes back on the next sync.
+  function deletePrivateDocRemote(docId){
+    if(!firebaseReady || !currentUser) return;
+    const path = 'threadlineDocs.' + docId;
+    db.collection('users').doc(currentUser.uid).update({
+      [path]: firebase.firestore.FieldValue.delete()
+    }).catch(err=> console.error('Could not remove document from cloud', err));
+  }
+
   // ---- shared documents: one doc per share under shared_projects/{shareId} ----
   function subscribeToSharedIndex(email){
     if(sharedIndexUnsub) sharedIndexUnsub();
@@ -1804,11 +2013,13 @@
       doc: payload,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }).then(()=>{
-      delete workspace.documents[doc.id];
+      const oldDocId = doc.id;
+      delete workspace.documents[oldDocId];
       workspace.documents[shareId] = payload;
-      if(workspace.activeDocId === doc.id) workspace.activeDocId = shareId;
+      if(workspace.activeDocId === oldDocId) workspace.activeDocId = shareId;
       lastSharedJSON[shareId] = JSON.stringify(payload);
       if(!sharedDocUnsubs[shareId]) subscribeToSharedDoc(shareId);
+      deletePrivateDocRemote(oldDocId); // otherwise the pre-share copy quietly reappears later
       scheduleSave(shareId);
       renderAll();
       openShareModal(shareId);
