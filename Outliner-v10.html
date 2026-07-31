@@ -640,6 +640,18 @@
   "use strict";
 
   const STORAGE_KEY = "threadline_outliner_v1";
+  // Firestore doesn't guarantee it returns object keys in the same order they were written in,
+  // but plain JSON.stringify is order-sensitive — comparing a Firestore-returned object against a
+  // locally-built one with it can report "changed" when nothing actually changed, which causes an
+  // endless push→recheck→push loop (visible as a sync dot stuck on orange). Sort keys before
+  // comparing so equivalent data always produces the same string, arrays keep their order (order
+  // matters there — it's your outline structure).
+  function stableStringify(obj){
+    if(obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+    if(Array.isArray(obj)) return '[' + obj.map(stableStringify).join(',') + ']';
+    const keys = Object.keys(obj).sort();
+    return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
+  }
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
   const HIGHLIGHT_COLORS = ['yellow','green','blue','pink','purple','gray'];
 
@@ -2341,7 +2353,7 @@
         pushPrivateDocs();
         return;
       }
-      const json = JSON.stringify({ docs: remote, folders: remoteFolders });
+      const json = stableStringify({ docs: remote, folders: remoteFolders });
       if(json === lastPrivateJSON){ setSyncState('synced', 'Synced'); return; }
 
       applyingRemote = true;
@@ -2388,7 +2400,7 @@
     Object.values(workspace.documents).forEach(d=>{ if(!d.shareId) out[d.id] = d; });
     const folders = {};
     Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
-    const json = JSON.stringify({ docs: out, folders });
+    const json = stableStringify({ docs: out, folders });
     if(json === lastPrivateJSON){ setSyncState('synced', 'Synced'); return; }
     db.collection('users').doc(currentUser.uid).set({
       threadlineDocs: out,
@@ -2538,7 +2550,7 @@
         return;
       }
 
-      const json = JSON.stringify(data.doc);
+      const json = stableStringify(data.doc);
       if(json === lastSharedJSON[shareId]) return;
 
       applyingRemote = true;
@@ -2565,7 +2577,7 @@
 
       // if the merge differs from what's on the server (e.g. it healed a conflict), push the
       // reconciled version back so both sides converge quickly instead of fighting each other.
-      const mergedJSON = JSON.stringify(merged);
+      const mergedJSON = stableStringify(merged);
       if(mergedJSON === json){
         lastSharedJSON[shareId] = json; // merge matches the server as-is, nothing to push
       } else {
@@ -2577,7 +2589,7 @@
   // Folder metadata is lightweight (name + membership) and always written directly rather than
   // through the debounced node-edit pipeline, so this just merges it in — no conflict resolution needed.
   function applyFolderSnapshot(shareId, data){
-    const json = JSON.stringify({ name: data.name, collaboratorEmails: data.collaboratorEmails || [] });
+    const json = stableStringify({ name: data.name, collaboratorEmails: data.collaboratorEmails || [] });
     if(json === lastSharedJSON[shareId]) return;
     applyingRemote = true;
     try{
@@ -2603,7 +2615,7 @@
   function pushSharedDoc(shareId){
     const doc = workspace.documents[shareId];
     if(!doc || !firebaseReady || !currentUser) return;
-    const json = JSON.stringify(doc);
+    const json = stableStringify(doc);
     if(json === lastSharedJSON[shareId]){ setSyncState('synced', 'Synced'); return; }
     db.collection('shared_projects').doc(shareId).set({
       doc: doc,
@@ -2732,7 +2744,7 @@
       delete workspace.documents[oldDocId];
       workspace.documents[shareId] = payload;
       if(workspace.activeDocId === oldDocId) workspace.activeDocId = shareId;
-      lastSharedJSON[shareId] = JSON.stringify(payload);
+      lastSharedJSON[shareId] = stableStringify(payload);
       if(!sharedDocUnsubs[shareId]) subscribeToSharedDoc(shareId);
       deletePrivateDocRemote(oldDocId); // otherwise the pre-share copy quietly reappears later
       scheduleSave(shareId);
@@ -2771,7 +2783,7 @@
         id: shareId, shareId, ownerUid: currentUser.uid, ownerEmail, collaboratorEmails
       });
       docsInFolder.forEach(d => { d.folderId = shareId; });
-      lastSharedJSON[shareId] = JSON.stringify({ name: folder.name, collaboratorEmails });
+      lastSharedJSON[shareId] = stableStringify({ name: folder.name, collaboratorEmails });
       if(!sharedDocUnsubs[shareId]) subscribeToSharedDoc(shareId);
       deletePrivateFolderRemote(oldFolderId);
       // existing documents in the folder become shared with the same members too
