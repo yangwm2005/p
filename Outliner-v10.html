@@ -2717,7 +2717,7 @@
     const invites = (Array.isArray(inviteEmails) ? inviteEmails : [inviteEmails]).filter(Boolean);
     const collaboratorEmails = [ownerEmail, ...invites].filter((e,i,arr)=> e && arr.indexOf(e) === i);
     const payload = Object.assign({}, doc, { id: shareId, shareId, ownerUid: currentUser.uid, ownerEmail });
-    ref.set({
+    return ref.set({
       kind: 'doc',
       ownerUid: currentUser.uid,
       ownerEmail,
@@ -2753,7 +2753,7 @@
     const shareId = ref.id;
     const ownerEmail = (currentUser.email || '').toLowerCase();
     const collaboratorEmails = [ownerEmail, inviteEmail].filter((e,i,arr)=> e && arr.indexOf(e) === i);
-    ref.set({
+    return ref.set({
       kind: 'folder',
       ownerUid: currentUser.uid,
       ownerEmail,
@@ -2801,21 +2801,21 @@
   }
 
   function addMemberToExisting(shareId, email){
-    db.collection('shared_projects').doc(shareId).update({
+    return db.collection('shared_projects').doc(shareId).update({
       collaboratorEmails: firebase.firestore.FieldValue.arrayUnion(email)
     }).then(()=> openShareModal(shareId, shareModalKind))
     .catch(err=>{ console.error(err); alert('Could not add that member: ' + err.message); });
   }
 
   function removeMemberFromDoc(shareId, email){
-    db.collection('shared_projects').doc(shareId).update({
+    return db.collection('shared_projects').doc(shareId).update({
       collaboratorEmails: firebase.firestore.FieldValue.arrayRemove(email)
     }).then(()=> openShareModal(shareId, shareModalKind))
     .catch(err=>{ console.error(err); alert('Could not remove that member: ' + err.message); });
   }
 
   function addMemberToFolder(folder, email){
-    addMemberToExisting(folder.shareId, email);
+    const p = addMemberToExisting(folder.shareId, email);
     if(!folder.collaboratorEmails.includes(email)) folder.collaboratorEmails.push(email);
     Object.values(workspace.documents).forEach(d=>{
       if(d.folderId !== folder.id) return;
@@ -2824,10 +2824,11 @@
         collaboratorEmails: firebase.firestore.FieldValue.arrayUnion(email)
       }).catch(err=> console.error(err));
     });
+    return p;
   }
 
   function removeMemberFromFolder(folder, email){
-    removeMemberFromDoc(folder.shareId, email);
+    const p = removeMemberFromDoc(folder.shareId, email);
     folder.collaboratorEmails = folder.collaboratorEmails.filter(e => e !== email);
     Object.values(workspace.documents).forEach(d=>{
       if(d.folderId !== folder.id || !d.shareId) return;
@@ -2835,6 +2836,7 @@
         collaboratorEmails: firebase.firestore.FieldValue.arrayRemove(email)
       }).catch(err=> console.error(err));
     });
+    return p;
   }
 
   function leaveSharedDoc(shareId){
@@ -2849,22 +2851,44 @@
   }
 
   document.getElementById('shareAddBtn').addEventListener('click', ()=>{
+    const btn = document.getElementById('shareAddBtn');
     const input = document.getElementById('shareEmailInput');
     const email = input.value.trim().toLowerCase();
     if(!email || !email.includes('@')){ alert('Enter a valid email address.'); return; }
-    if(!currentUser) return;
-    if(shareModalKind === 'folder'){
-      const folder = workspace.folders[shareModalDocId];
-      if(!folder) return;
-      if(!folder.shareId) createSharedFolder(folder, email);
-      else addMemberToFolder(folder, email);
-    } else {
-      const doc = workspace.documents[shareModalDocId];
-      if(!doc) return;
-      if(!doc.shareId) createSharedDoc(doc, email);
-      else addMemberToExisting(doc.shareId, email);
+    if(!currentUser){ alert('You got signed out — sign in again with Google and retry.'); return; }
+
+    try{
+      let target = null;
+      if(shareModalKind === 'folder') target = workspace.folders[shareModalDocId];
+      else target = workspace.documents[shareModalDocId];
+      if(!target){
+        alert('Could not find that ' + (shareModalKind === 'folder' ? 'folder' : 'document') + ' anymore — try closing and reopening this from the sidebar.');
+        return;
+      }
+
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = 'Adding…';
+      const reset = () => { btn.disabled = false; btn.textContent = originalLabel; };
+
+      let op;
+      if(shareModalKind === 'folder'){
+        op = !target.shareId ? createSharedFolder(target, email) : addMemberToFolder(target, email);
+      } else {
+        op = !target.shareId ? createSharedDoc(target, email) : addMemberToExisting(target.shareId, email);
+      }
+      // these helpers return a promise when there's Firestore work to wait on
+      if(op && typeof op.then === 'function'){
+        op.then(reset).catch((err)=>{ reset(); console.error(err); alert('Something went wrong: ' + (err && err.message || err)); });
+      } else {
+        reset();
+      }
+      input.value = '';
+    }catch(err){
+      console.error('Share-add failed', err);
+      alert('Something went wrong adding that person: ' + err.message + '\n\nOpen the browser console (F12) for details.');
+      btn.disabled = false;
     }
-    input.value = '';
   });
   document.getElementById('shareEmailInput').addEventListener('keydown', (e)=>{
     if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('shareAddBtn').click(); }
