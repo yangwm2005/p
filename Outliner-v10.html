@@ -176,12 +176,33 @@
     justify-content:space-between;
   }
   #sidebarHead span{font-size:11px; text-transform:uppercase; letter-spacing:0.6px; color:var(--ink-faint); font-weight:600;}
-  #newDocBtn{
+  #newDocBtn, #newFolderBtn{
     background:none; border:none; cursor:pointer; color:var(--ink-soft);
     width:22px;height:22px; border-radius:5px; display:flex; align-items:center; justify-content:center;
   }
-  #newDocBtn:hover{background:var(--accent-soft); color:var(--accent-ink);}
+  #newDocBtn:hover, #newFolderBtn:hover{background:var(--accent-soft); color:var(--accent-ink);}
   #docList{flex:1; overflow-y:auto; padding:2px 6px 10px;}
+  #docList.drop-root{background:var(--accent-soft); border-radius:6px;}
+  .folderItem{
+    display:flex; align-items:center; gap:6px;
+    padding:7px 8px; border-radius:5px; cursor:pointer;
+    font-size:12.5px; font-weight:600; color:var(--ink-soft);
+    margin-top:4px;
+  }
+  .folderItem:hover{background:var(--paper);}
+  .folderItem.dragover{background:var(--accent-soft); outline:1.5px dashed var(--accent);}
+  .folderItem .toggle{
+    width:14px; height:14px; display:flex; align-items:center; justify-content:center;
+    color:var(--ink-faint); flex-shrink:0; transition:transform .1s ease;
+  }
+  .folderItem.collapsed .toggle{transform:rotate(-90deg);}
+  .folderItem .name{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .folderItem .count{font-size:10.5px; color:var(--ink-faint); font-weight:400; font-family:'IBM Plex Mono',monospace;}
+  .folderItem .iconbtn{opacity:0; background:none; border:none; cursor:pointer; color:var(--ink-faint); width:18px; height:18px; display:flex; align-items:center; justify-content:center; border-radius:4px; flex-shrink:0;}
+  .folderItem:hover .iconbtn{opacity:1;}
+  .folderItem .iconbtn:hover{color:var(--danger); background:rgba(181,83,60,0.12);}
+  .folderChildren{margin-left:10px; padding-left:8px; border-left:1px solid var(--line);}
+  .docItem.dragging{opacity:0.4;}
   .docItem{
     display:flex;
     align-items:center;
@@ -313,9 +334,10 @@
   .bullet-wrap{
     width:18px; height:26px;
     display:flex; align-items:center; justify-content:center;
-    cursor:pointer;
+    cursor:grab;
     flex-shrink:0;
   }
+  .bullet-wrap:active{cursor:grabbing;}
   .bullet{
     width:6px; height:6px; border-radius:50%;
     background:var(--ink-faint);
@@ -497,9 +519,14 @@
   <div id="sidebar">
     <div id="sidebarHead">
       <span>Documents</span>
-      <button id="newDocBtn" title="New document">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
-      </button>
+      <div style="display:flex; gap:2px;">
+        <button id="newFolderBtn" title="New folder">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 12v4M10 14h4"/></svg>
+        </button>
+        <button id="newDocBtn" title="New document">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
     </div>
     <div id="docList"></div>
     <div id="sidebarFoot">Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.</div>
@@ -701,7 +728,8 @@
       tombstones: {},     // nodeId -> deletedAt ms, so a stale remote copy can't resurrect a deleted node
       shareId: null,       // set once this document is shared via a shared_projects/{shareId} doc
       ownerUid: null,
-      ownerEmail: null
+      ownerEmail: null,
+      folderId: null        // set when filed under a sidebar folder
     };
     // seed with one empty line so it's ready to type
     const first = makeNode(rootId, "");
@@ -710,17 +738,25 @@
     return doc;
   }
 
+  function makeFolder(name){
+    return { id: uid(), name: name || 'New folder', collapsed: false, createdAt: Date.now(), updatedAt: Date.now() };
+  }
+
   function loadWorkspace(){
     try{
       const raw = localStorage.getItem(STORAGE_KEY);
       if(raw){
         const ws = JSON.parse(raw);
-        if(ws && ws.documents && Object.keys(ws.documents).length) return ws;
+        if(ws && ws.documents && Object.keys(ws.documents).length){
+          if(!ws.folders) ws.folders = {};
+          Object.values(ws.documents).forEach(d=>{ if(d.folderId === undefined) d.folderId = null; });
+          return ws;
+        }
       }
     }catch(e){ console.warn("Failed to load storage", e); }
     const doc = makeDoc("Welcome");
     seedWelcome(doc);
-    return { activeDocId: doc.id, documents: { [doc.id]: doc } };
+    return { activeDocId: doc.id, documents: { [doc.id]: doc }, folders: {} };
   }
 
   function seedWelcome(doc){
@@ -888,50 +924,134 @@
     if(name === 'trash') return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0l1 14h8l1-14"/></svg>';
     if(name === 'share') return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.5l6.8-3.9M8.6 13.5l6.8 3.9"/></svg>';
     if(name === 'menu') return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>';
+    if(name === 'edit') return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
     return '';
+  }
+
+  function buildDocItemEl(doc){
+    const el = document.createElement('div');
+    el.className = 'docItem' + (doc.id === workspace.activeDocId ? ' active' : '');
+    el.draggable = true;
+    el.dataset.docId = doc.id;
+    const isShared = !!doc.shareId;
+    el.innerHTML = `<span class="dot"></span><span class="name"></span>`
+      + (isShared ? `<span class="share-badge" title="${doc.ownerUid && currentUser && doc.ownerUid===currentUser.uid ? 'Shared by you' : 'Shared with you'}"></span>` : '')
+      + `<button class="iconbtn share${isShared ? ' is-shared' : ''}" title="Share this document">${icon('share')}</button>`
+      + `<button class="iconbtn del" title="Delete document">${icon('trash')}</button>`;
+    el.querySelector('.name').textContent = doc.name || "Untitled";
+    el.addEventListener('click', (e)=>{
+      if(e.target.closest('.del') || e.target.closest('.share')) return;
+      workspace.activeDocId = doc.id;
+      searchQuery = ""; searchInput.value = "";
+      scheduleSave();
+      renderAll();
+    });
+    el.querySelector('.share').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      openShareModal(doc.id);
+    });
+    el.querySelector('.del').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      if(Object.keys(workspace.documents).length <= 1){
+        alert("You need at least one document.");
+        return;
+      }
+      const isOwnerOrPrivate = !doc.shareId || (currentUser && doc.ownerUid === currentUser.uid);
+      const msg = doc.shareId && !isOwnerOrPrivate
+        ? `Leave "${doc.name}"? You'll lose access; the owner and other members keep it.`
+        : doc.shareId
+          ? `Delete "${doc.name}"? This removes it for everyone it's shared with.`
+          : `Delete "${doc.name}"? This cannot be undone.`;
+      if(confirm(msg)){
+        removeDocument(doc.id);
+      }
+    });
+    el.addEventListener('dragstart', (e)=>{
+      e.dataTransfer.setData('application/x-threadline-doc', doc.id);
+      el.classList.add('dragging');
+    });
+    el.addEventListener('dragend', ()=> el.classList.remove('dragging'));
+    return el;
+  }
+
+  function buildFolderRowEl(folder, docsInFolder){
+    const wrap = document.createElement('div');
+    const row = document.createElement('div');
+    row.className = 'folderItem' + (folder.collapsed ? ' collapsed' : '');
+    row.innerHTML = `<span class="toggle">${icon('chevron')}</span><span class="name"></span><span class="count">${docsInFolder.length}</span>`
+      + `<button class="iconbtn rename" title="Rename folder">${icon('edit')}</button>`
+      + `<button class="iconbtn del" title="Delete folder (documents move back to Documents)">${icon('trash')}</button>`;
+    row.querySelector('.name').textContent = folder.name || 'New folder';
+    row.addEventListener('click', (e)=>{
+      if(e.target.closest('.del') || e.target.closest('.rename')) return;
+      folder.collapsed = !folder.collapsed;
+      folder.updatedAt = Date.now();
+      scheduleSave();
+      renderDocList();
+    });
+    row.querySelector('.rename').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const next = prompt('Rename folder', folder.name || 'New folder');
+      if(next && next.trim()){
+        folder.name = next.trim();
+        folder.updatedAt = Date.now();
+        scheduleSave();
+        renderDocList();
+      }
+    });
+    row.querySelector('.del').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const msg = docsInFolder.length
+        ? `Delete folder "${folder.name}"? Its ${docsInFolder.length} document(s) move back to the top level — nothing is deleted.`
+        : `Delete folder "${folder.name}"?`;
+      if(!confirm(msg)) return;
+      docsInFolder.forEach(d => { d.folderId = null; });
+      delete workspace.folders[folder.id];
+      deletePrivateFolderRemote(folder.id);
+      scheduleSave();
+      renderDocList();
+    });
+    row.addEventListener('dragover', (e)=>{
+      if(e.dataTransfer.types.includes('application/x-threadline-doc')){
+        e.preventDefault();
+        row.classList.add('dragover');
+      }
+    });
+    row.addEventListener('dragleave', ()=> row.classList.remove('dragover'));
+    row.addEventListener('drop', (e)=>{
+      const docId = e.dataTransfer.getData('application/x-threadline-doc');
+      row.classList.remove('dragover');
+      if(!docId) return;
+      e.preventDefault();
+      const d = workspace.documents[docId];
+      if(!d) return;
+      d.folderId = folder.id;
+      scheduleSave();
+      renderDocList();
+    });
+    wrap.appendChild(row);
+
+    if(!folder.collapsed && docsInFolder.length){
+      const kids = document.createElement('div');
+      kids.className = 'folderChildren';
+      docsInFolder.forEach(d => kids.appendChild(buildDocItemEl(d)));
+      wrap.appendChild(kids);
+    }
+    return wrap;
   }
 
   function renderDocList(){
     docListEl.innerHTML = "";
-    const docs = Object.values(workspace.documents).sort((a,b)=>b.updatedAt-a.updatedAt);
-    docs.forEach(doc=>{
-      const el = document.createElement('div');
-      el.className = 'docItem' + (doc.id === workspace.activeDocId ? ' active' : '');
-      const isShared = !!doc.shareId;
-      el.innerHTML = `<span class="dot"></span><span class="name"></span>`
-        + (isShared ? `<span class="share-badge" title="${doc.ownerUid && currentUser && doc.ownerUid===currentUser.uid ? 'Shared by you' : 'Shared with you'}"></span>` : '')
-        + `<button class="iconbtn share${isShared ? ' is-shared' : ''}" title="Share this document">${icon('share')}</button>`
-        + `<button class="iconbtn del" title="Delete document">${icon('trash')}</button>`;
-      el.querySelector('.name').textContent = doc.name || "Untitled";
-      el.addEventListener('click', (e)=>{
-        if(e.target.closest('.del') || e.target.closest('.share')) return;
-        workspace.activeDocId = doc.id;
-        searchQuery = ""; searchInput.value = "";
-        scheduleSave();
-        renderAll();
-      });
-      el.querySelector('.share').addEventListener('click', (e)=>{
-        e.stopPropagation();
-        openShareModal(doc.id);
-      });
-      el.querySelector('.del').addEventListener('click', (e)=>{
-        e.stopPropagation();
-        if(Object.keys(workspace.documents).length <= 1){
-          alert("You need at least one document.");
-          return;
-        }
-        const isOwnerOrPrivate = !doc.shareId || (currentUser && doc.ownerUid === currentUser.uid);
-        const msg = doc.shareId && !isOwnerOrPrivate
-          ? `Leave "${doc.name}"? You'll lose access; the owner and other members keep it.`
-          : doc.shareId
-            ? `Delete "${doc.name}"? This removes it for everyone it's shared with.`
-            : `Delete "${doc.name}"? This cannot be undone.`;
-        if(confirm(msg)){
-          removeDocument(doc.id);
-        }
-      });
-      docListEl.appendChild(el);
+    const allDocs = Object.values(workspace.documents);
+    const folders = Object.values(workspace.folders || {}).sort((a,b)=> (a.name||'').localeCompare(b.name||''));
+
+    folders.forEach(folder=>{
+      const docsInFolder = allDocs.filter(d => d.folderId === folder.id).sort((a,b)=>b.updatedAt-a.updatedAt);
+      docListEl.appendChild(buildFolderRowEl(folder, docsInFolder));
     });
+
+    const unfiled = allDocs.filter(d => !d.folderId || !workspace.folders[d.folderId]).sort((a,b)=>b.updatedAt-a.updatedAt);
+    unfiled.forEach(doc => docListEl.appendChild(buildDocItemEl(doc)));
   }
 
   function removeDocument(docId){
@@ -1042,7 +1162,6 @@
 
       const rowMain = document.createElement('div');
       rowMain.className = 'row-main';
-      rowMain.draggable = true;
 
       const hasChildren = node.children.length > 0;
       const isCollapsed = !!node.collapsed && !searchInfo;
@@ -1073,7 +1192,8 @@
 
       const bulletWrap = document.createElement('div');
       bulletWrap.className = 'bullet-wrap';
-      bulletWrap.title = 'Click to zoom in · Shift/Cmd-click to select for copy';
+      bulletWrap.title = 'Click to zoom in · Shift/Cmd-click to select for copy · drag to reorder';
+      bulletWrap.draggable = true;
       const bullet = document.createElement('div');
       bullet.className = 'bullet' + (hasChildren ? ' has-children' : '');
       bulletWrap.appendChild(bullet);
@@ -1132,12 +1252,13 @@
       rowMain.appendChild(menuBtn);
       row.appendChild(rowMain);
 
-      // drag & drop reordering
-      rowMain.addEventListener('dragstart', (e)=>{
+      // drag & drop reordering — starts from the bullet only, so dragging inside the text
+      // selects text like normal instead of picking up the whole row
+      bulletWrap.addEventListener('dragstart', (e)=>{
         e.dataTransfer.setData('text/plain', id);
         rowMain.classList.add('drag-ghost');
       });
-      rowMain.addEventListener('dragend', ()=> rowMain.classList.remove('drag-ghost'));
+      bulletWrap.addEventListener('dragend', ()=> rowMain.classList.remove('drag-ghost'));
       rowMain.addEventListener('dragover', (e)=>{ e.preventDefault(); rowMain.classList.add('dragover'); });
       rowMain.addEventListener('dragleave', ()=> rowMain.classList.remove('dragover'));
       rowMain.addEventListener('drop', (e)=>{
@@ -1461,6 +1582,40 @@
     scheduleSave();
     renderAll();
     setTimeout(()=>zoomTitleEl.focus(), 0);
+  });
+
+  document.getElementById('newFolderBtn').addEventListener('click', ()=>{
+    const name = prompt('Folder name', 'New folder');
+    if(!name || !name.trim()) return;
+    const folder = makeFolder(name.trim());
+    if(!workspace.folders) workspace.folders = {};
+    workspace.folders[folder.id] = folder;
+    scheduleSave();
+    renderDocList();
+  });
+
+  // dropping a document on empty sidebar space (not on a folder) un-files it
+  docListEl.addEventListener('dragover', (e)=>{
+    if(e.target !== docListEl) return;
+    if(e.dataTransfer.types.includes('application/x-threadline-doc')){
+      e.preventDefault();
+      docListEl.classList.add('drop-root');
+    }
+  });
+  docListEl.addEventListener('dragleave', (e)=>{
+    if(e.target === docListEl) docListEl.classList.remove('drop-root');
+  });
+  docListEl.addEventListener('drop', (e)=>{
+    docListEl.classList.remove('drop-root');
+    if(e.target !== docListEl) return;
+    const docId = e.dataTransfer.getData('application/x-threadline-doc');
+    if(!docId) return;
+    e.preventDefault();
+    const d = workspace.documents[docId];
+    if(!d || !d.folderId) return;
+    d.folderId = null;
+    scheduleSave();
+    renderDocList();
   });
 
   document.getElementById('addFirstBtn').addEventListener('click', ()=>{
@@ -2049,12 +2204,13 @@
       if(snap.metadata.hasPendingWrites) return; // ignore our own optimistic echo
       const data = snap.data() || {};
       const remote = data.threadlineDocs;
+      const remoteFolders = data.threadlineFolders || {};
       if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
         setSyncState('synced', 'Synced');
         pushPrivateDocs();
         return;
       }
-      const json = JSON.stringify(remote);
+      const json = JSON.stringify({ docs: remote, folders: remoteFolders });
       if(json === lastPrivateJSON){ setSyncState('synced', 'Synced'); return; }
 
       applyingRemote = true;
@@ -2066,6 +2222,7 @@
           const merged = mergeDoc(workspace.documents[id], remote[id]);
           workspace.documents[id] = merged;
         });
+        workspace.folders = remoteFolders;
         if(!workspace.documents[workspace.activeDocId]){
           const ids = Object.keys(workspace.documents);
           workspace.activeDocId = ids.length ? ids[0] : null;
@@ -2095,10 +2252,12 @@
     if(!firebaseReady || !currentUser) return;
     const out = {};
     Object.values(workspace.documents).forEach(d=>{ if(!d.shareId) out[d.id] = d; });
-    const json = JSON.stringify(out);
+    const folders = workspace.folders || {};
+    const json = JSON.stringify({ docs: out, folders });
     if(json === lastPrivateJSON){ setSyncState('synced', 'Synced'); return; }
     db.collection('users').doc(currentUser.uid).set({
       threadlineDocs: out,
+      threadlineFolders: folders,
       threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge:true }).then(()=>{
       lastPrivateJSON = json;
@@ -2110,14 +2269,22 @@
   }
 
   // A plain merge:true write only adds/updates the keys you send — it never removes a key that's
-  // simply absent from the payload. So deleting a document locally, or moving it into shared_projects,
-  // needs an explicit dot-path field deletion or the old copy quietly comes back on the next sync.
+  // simply absent from the payload. So deleting a document (or folder) locally, or moving a document
+  // into shared_projects, needs an explicit dot-path field deletion or the old copy quietly comes back.
   function deletePrivateDocRemote(docId){
     if(!firebaseReady || !currentUser) return;
     const path = 'threadlineDocs.' + docId;
     db.collection('users').doc(currentUser.uid).update({
       [path]: firebase.firestore.FieldValue.delete()
     }).catch(err=> console.error('Could not remove document from cloud', err));
+  }
+
+  function deletePrivateFolderRemote(folderId){
+    if(!firebaseReady || !currentUser) return;
+    const path = 'threadlineFolders.' + folderId;
+    db.collection('users').doc(currentUser.uid).update({
+      [path]: firebase.firestore.FieldValue.delete()
+    }).catch(err=> console.error('Could not remove folder from cloud', err));
   }
 
   // ---- shared documents: one doc per share under shared_projects/{shareId} ----
