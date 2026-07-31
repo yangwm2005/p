@@ -112,6 +112,7 @@
     white-space:nowrap;
   }
   .topbtn:hover{border-color:var(--line-strong); color:var(--ink);}
+  .topbtn:disabled{opacity:0.35; cursor:default; pointer-events:none;}
   .topbtn.primary{background:var(--accent); color:#fff; border-color:var(--accent);}
   .topbtn.primary:hover{opacity:0.92;}
   #menuSpacer{flex:1;}
@@ -464,6 +465,8 @@
     <input id="searchInput" placeholder="Search this document…" autocomplete="off">
   </div>
   <div id="menuSpacer"></div>
+  <button class="topbtn" id="undoBtn" title="Undo (Ctrl+Z)" disabled>↶</button>
+  <button class="topbtn" id="redoBtn" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
   <button class="topbtn" id="themeBtn" title="Toggle theme">◐ Theme</button>
   <div id="exportMenuWrap">
     <button class="topbtn" id="shareBtn">⇪ Share / Export</button>
@@ -525,6 +528,8 @@
   <kbd>Alt+↑</kbd><kbd>Alt+↓</kbd> reorder item<br>
   <kbd>Ctrl+Enter</kbd> toggle done<br>
   <kbd>Backspace</kbd> at start merges up<br>
+  <kbd>Ctrl+Z</kbd> undo &nbsp; <kbd>Ctrl+Shift+Z</kbd> redo<br>
+  Shift/Cmd-click bullets to select, then <kbd>Ctrl+C</kbd>/<kbd>Ctrl+X</kbd>/<kbd>Ctrl+V</kbd><br>
   Click bullet to zoom in · click ▸ to collapse
 </div>
 
@@ -581,6 +586,101 @@
   function touch(node){
     if(node) node.updatedAt = Date.now();
     return node;
+  }
+
+  function toggleNodeDone(doc, node){
+    captureUndoPoint(doc);
+    node.done = !node.done;
+    touch(node);
+    scheduleSave();
+    renderTree();
+  }
+
+  // ---- undo / redo ----
+  function cloneDocState(doc){
+    return {
+      docId: doc.id,
+      nodes: JSON.parse(JSON.stringify(doc.nodes)),
+      tombstones: JSON.parse(JSON.stringify(doc.tombstones || {})),
+      zoomedId: doc.zoomedId
+    };
+  }
+
+  function flushPendingUndo(){
+    clearTimeout(undoDebounceTimer);
+    if(pendingUndoSnapshot){
+      undoStack.push(pendingUndoSnapshot);
+      if(undoStack.length > MAX_UNDO) undoStack.shift();
+      pendingUndoSnapshot = null;
+    }
+  }
+
+  // Call BEFORE a mutation, with the doc as it stood beforehand. Discrete actions (delete, indent,
+  // paste, etc.) get their own undo step immediately. Typing is coalesced: only the state before
+  // the first keystroke of a burst is kept, so Ctrl+Z undoes "what you just typed", not one letter
+  // at a time — the burst closes out after a short pause or once a different kind of edit happens.
+  function captureUndoPoint(doc, opts){
+    if(!doc) return;
+    const coalesce = opts && opts.coalesce;
+    if(coalesce){
+      if(!pendingUndoSnapshot || pendingUndoSnapshot.docId !== doc.id){
+        flushPendingUndo();
+        pendingUndoSnapshot = cloneDocState(doc);
+      }
+      clearTimeout(undoDebounceTimer);
+      undoDebounceTimer = setTimeout(flushPendingUndo, 700);
+    } else {
+      flushPendingUndo();
+      undoStack.push(cloneDocState(doc));
+      if(undoStack.length > MAX_UNDO) undoStack.shift();
+    }
+    redoStack = [];
+    updateUndoButtons();
+  }
+
+  function restoreSnapshot(snap){
+    const targetDoc = workspace.documents[snap.docId];
+    if(!targetDoc) return null;
+    targetDoc.nodes = snap.nodes;
+    targetDoc.tombstones = snap.tombstones;
+    targetDoc.zoomedId = (snap.zoomedId && targetDoc.nodes[snap.zoomedId]) ? snap.zoomedId : targetDoc.rootId;
+    // re-stamp everything as "now" so a shared document's sync merge treats this undo as authoritative
+    // rather than a stale copy that gets quietly overwritten by whatever's currently on the server
+    Object.values(targetDoc.nodes).forEach(n => touch(n));
+    if(workspace.activeDocId !== snap.docId) workspace.activeDocId = snap.docId;
+    return targetDoc;
+  }
+
+  function performUndo(){
+    flushPendingUndo();
+    if(!undoStack.length) return;
+    const doc = workspace.documents[undoStack[undoStack.length-1].docId];
+    if(doc) redoStack.push(cloneDocState(doc));
+    const snap = undoStack.pop();
+    if(restoreSnapshot(snap)){
+      scheduleSave();
+      renderAll();
+    }
+    updateUndoButtons();
+  }
+
+  function performRedo(){
+    if(!redoStack.length) return;
+    const doc = workspace.documents[redoStack[redoStack.length-1].docId];
+    if(doc) undoStack.push(cloneDocState(doc));
+    const snap = redoStack.pop();
+    if(restoreSnapshot(snap)){
+      scheduleSave();
+      renderAll();
+    }
+    updateUndoButtons();
+  }
+
+  function updateUndoButtons(){
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+    if(undoBtn) undoBtn.disabled = undoStack.length === 0 && !pendingUndoSnapshot;
+    if(redoBtn) redoBtn.disabled = redoStack.length === 0;
   }
 
   function makeNode(parentId, text){
@@ -654,6 +754,13 @@
   let selectedIds = new Set();     // multi-select for structured copy/cut/paste/delete
   let selectionAnchorId = null;    // shift-click range anchor
 
+  // ---- undo / redo ----
+  const MAX_UNDO = 100;
+  let undoStack = [];              // { docId, nodes, tombstones, zoomedId }
+  let redoStack = [];
+  let pendingUndoSnapshot = null;  // "before" snapshot for a coalesced (typing) burst, flushed on pause
+  let undoDebounceTimer = null;
+
   function activeDoc(){ return workspace.documents[workspace.activeDocId]; }
 
   let saveTimer = null;
@@ -692,6 +799,7 @@
     const arr = siblingsOf(doc, node);
     const idx = arr.indexOf(node.id);
     if(idx <= 0) return false; // no previous sibling
+    captureUndoPoint(doc);
     const prevSibId = arr[idx-1];
     const prevSib = getNode(doc, prevSibId);
     arr.splice(idx,1);
@@ -708,6 +816,7 @@
     if(!parent || parent.parentId === null){
       return false; // parent is root, can't outdent further
     }
+    captureUndoPoint(doc);
     const grandparent = getNode(doc, parent.parentId);
     const idx = removeFromParent(doc, node);
     const parentIdxInGp = grandparent.children.indexOf(parent.id);
@@ -730,6 +839,7 @@
     const idx = arr.indexOf(node.id);
     const newIdx = idx + dir;
     if(newIdx < 0 || newIdx >= arr.length) return false;
+    captureUndoPoint(doc);
     arr.splice(idx,1);
     arr.splice(newIdx,0,node.id);
     touch(getNode(doc, node.parentId));
@@ -958,10 +1068,7 @@
       check.title = 'Toggle done';
       check.addEventListener('click', (e)=>{
         e.stopPropagation();
-        node.done = !node.done;
-        touch(node);
-        scheduleSave();
-        renderTree();
+        toggleNodeDone(doc2, node);
       });
 
       const bulletWrap = document.createElement('div');
@@ -1045,6 +1152,7 @@
         // prevent dropping onto own descendant
         let p = targetNode;
         while(p){ if(p.id === draggedId) return; p = p.parentId ? d.nodes[p.parentId] : null; }
+        captureUndoPoint(d);
         const oldParent = d.nodes[draggedNode.parentId];
         removeFromParent(d, draggedNode);
         draggedNode.parentId = targetNode.parentId;
@@ -1142,6 +1250,7 @@
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
       if(!node) return;
+      captureUndoPoint(doc, { coalesce: true });
       node.text = el.innerText; touch(node);
       scheduleSave();
       // keep zoom title in sync if this node is currently zoomed as a breadcrumb ancestor label somewhere - re-render breadcrumb only (cheap)
@@ -1180,6 +1289,7 @@
 
       if(e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey){
         e.preventDefault();
+        captureUndoPoint(doc);
         const offset = getCaretOffset(el);
         const fullText = el.innerText;
         const before = fullText.slice(0, offset);
@@ -1222,6 +1332,7 @@
             const prevId = arr[idx-1];
             const prevVisible = lastVisibleDescendant(doc, doc.nodes[prevId]);
             e.preventDefault();
+            captureUndoPoint(doc);
             deleteSubtree(doc, node.id);
             arr.splice(arr.indexOf(node.id),1);
             touch(parent);
@@ -1230,6 +1341,7 @@
             renderTree();
           } else if(parent && parent.id !== doc.rootId){
             e.preventDefault();
+            captureUndoPoint(doc);
             deleteSubtree(doc, node.id);
             const pc = parent.children;
             const ni = pc.indexOf(node.id);
@@ -1250,6 +1362,7 @@
           targetId = node.parentId;
         }
         if(!targetId){ return; }
+        captureUndoPoint(doc);
         const target = doc.nodes[targetId];
         const mergeAt = target.text.length;
         target.text = target.text + node.text;
@@ -1311,6 +1424,7 @@
 
       if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){
         e.preventDefault();
+        captureUndoPoint(doc);
         node.text = el.innerText; touch(node);
         node.done = !node.done;
         scheduleSave();
@@ -1352,6 +1466,7 @@
   document.getElementById('addFirstBtn').addEventListener('click', ()=>{
     const doc = activeDoc();
     const zoomNode = doc.nodes[doc.zoomedId];
+    captureUndoPoint(doc);
     const n = makeNode(zoomNode.id, "");
     doc.nodes[n.id] = n;
     zoomNode.children.push(n.id);
@@ -1372,6 +1487,11 @@
     applyTheme(cur === 'dark' ? 'light' : 'dark');
   });
   applyTheme(localStorage.getItem('threadline_theme') || 'light');
+
+  // ---------------- Undo / redo buttons ----------------
+  document.getElementById('undoBtn').addEventListener('click', performUndo);
+  document.getElementById('redoBtn').addEventListener('click', performRedo);
+  updateUndoButtons();
 
   // ---------------- Help panel ----------------
   const helpToggle = document.getElementById('helpToggle');
@@ -1431,6 +1551,7 @@
   }
 
   function duplicateNode(doc, node){
+    captureUndoPoint(doc);
     function cloneDeep(n, parentId){
       const copy = makeNode(parentId, n.text);
       copy.done = n.done;
@@ -1452,6 +1573,7 @@
   function deleteNodeWithConfirm(doc, node){
     const count = countDescendants(node, doc);
     if(count > 0 && !confirm(`Delete this item and its ${count} sub-item${count > 1 ? 's' : ''}?`)) return;
+    captureUndoPoint(doc);
     const parent = doc.nodes[node.parentId];
     removeFromParent(doc, node);
     deleteSubtree(doc, node.id);
@@ -1466,10 +1588,7 @@
     if(!node) return;
     switch(action){
       case 'done':
-        node.done = !node.done;
-        touch(node);
-        scheduleSave();
-        renderTree();
+        toggleNodeDone(doc, node);
         break;
       case 'zoom':
         doc.zoomedId = nodeId;
@@ -1558,11 +1677,29 @@
     const lines = [];
     items.forEach(it=>{
       const indent = '\t'.repeat(depth);
-      const mark = it.done ? '[x] ' : '- ';
+      const mark = it.done ? '[x] ' : '';
       lines.push(indent + mark + (it.text || '').split('\n').join('\n' + indent + '  '));
       if(it.children && it.children.length) lines.push(itemsToPlainText(it.children, depth + 1));
     });
     return lines.join('\n');
+  }
+
+  function escapeHtml(s){
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // Real nested <ul><li> so other apps (Word, Docs, Notion, Gmail, Slack...) render true indentation
+  // on paste, instead of a flat line — HTML collapses plain whitespace/tabs when rendered.
+  function itemsToHtmlList(items){
+    if(!items || !items.length) return '';
+    let html = '<ul style="margin:0;padding-left:20px;">';
+    items.forEach(it=>{
+      const mark = it.done ? '\u2611\u00A0' : ''; // ☑ + nbsp
+      const text = escapeHtml(it.text || '').replace(/\n/g, '<br>');
+      html += '<li>' + mark + text + itemsToHtmlList(it.children) + '</li>';
+    });
+    html += '</ul>';
+    return html;
   }
 
   function copySelectionToClipboard(clipboardData){
@@ -1575,17 +1712,16 @@
     const plain = itemsToPlainText(items, 0);
     const jsonPayload = JSON.stringify({ threadlineClip: true, items });
     const b64 = btoa(unescape(encodeURIComponent(jsonPayload)));
-    const htmlEscaped = plain.split('\n')
-      .map(l => l.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'))
-      .join('<br>');
     clipboardData.setData('text/plain', plain);
-    clipboardData.setData('text/html', '<!--threadline-clip:' + b64 + '-->' + htmlEscaped);
+    clipboardData.setData('text/html', '<!--threadline-clip:' + b64 + '-->' + itemsToHtmlList(items));
     return true;
   }
 
   function deleteSelection(){
     const doc = activeDoc();
     const topIds = topLevelSelectedIds(doc);
+    if(!topIds.length) return;
+    captureUndoPoint(doc);
     topIds.forEach(id=>{
       const n = doc.nodes[id];
       if(!n) return;
@@ -1618,12 +1754,29 @@
     }
   });
 
+  // Global undo/redo. We intercept and preventDefault unconditionally on the key combo (not just
+  // when there's something to undo) so the browser's native per-field contenteditable undo never
+  // fires instead — that would silently desync the DOM from our node.text model.
+  document.addEventListener('keydown', (e)=>{
+    const mod = e.ctrlKey || e.metaKey;
+    if(!mod || e.altKey) return;
+    const key = e.key.toLowerCase();
+    if(key === 'z'){
+      e.preventDefault();
+      if(e.shiftKey) performRedo(); else performUndo();
+    } else if(key === 'y'){
+      e.preventDefault();
+      performRedo();
+    }
+  });
+
   // insert a parsed/pasted item tree at the given node: fills an empty target line in place,
   // otherwise inserts as new siblings right after it
   function insertStructuredPaste(nodeId, items){
     const doc = activeDoc();
     const node = doc.nodes[nodeId];
     if(!node || !items || !items.length) return;
+    captureUndoPoint(doc);
 
     let startIdx = 0;
     let anchor = node;
@@ -1677,7 +1830,7 @@
       const n = doc.nodes[id];
       if(id !== doc.rootId){
         const indent = '\t'.repeat(depth-1);
-        const mark = n.done ? '[x] ' : '- ';
+        const mark = n.done ? '[x] ' : '';
         const text = n.text.split('\n').join('\n' + indent + '  ');
         lines.push(indent + mark + text);
       }
