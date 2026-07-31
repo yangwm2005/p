@@ -200,7 +200,10 @@
   .folderItem .count{font-size:10.5px; color:var(--ink-faint); font-weight:400; font-family:'IBM Plex Mono',monospace;}
   .folderItem .iconbtn{opacity:0; background:none; border:none; cursor:pointer; color:var(--ink-faint); width:18px; height:18px; display:flex; align-items:center; justify-content:center; border-radius:4px; flex-shrink:0;}
   .folderItem:hover .iconbtn{opacity:1;}
-  .folderItem .iconbtn:hover{color:var(--danger); background:rgba(181,83,60,0.12);}
+  .folderItem .iconbtn.share.is-shared{opacity:1; color:var(--accent);}
+  .folderItem .iconbtn.share:hover, .folderItem .iconbtn.rename:hover{color:var(--accent-ink); background:var(--accent-soft);}
+  .folderItem .iconbtn.del:hover{color:var(--danger); background:rgba(181,83,60,0.12);}
+  .folderItem .share-badge{width:5px; height:5px; border-radius:50%; background:var(--accent); flex-shrink:0; margin-left:-2px;}
   .folderChildren{margin-left:10px; padding-left:8px; border-left:1px solid var(--line);}
   .docItem.dragging{opacity:0.4;}
   .docItem{
@@ -776,7 +779,10 @@
   }
 
   function makeFolder(name){
-    return { id: uid(), name: name || 'New folder', collapsed: false, createdAt: Date.now(), updatedAt: Date.now() };
+    return {
+      id: uid(), name: name || 'New folder', collapsed: false, createdAt: Date.now(), updatedAt: Date.now(),
+      shareId: null, ownerUid: null, ownerEmail: null, collaboratorEmails: []
+    };
   }
 
   function loadWorkspace(){
@@ -787,6 +793,12 @@
         if(ws && ws.documents && Object.keys(ws.documents).length){
           if(!ws.folders) ws.folders = {};
           Object.values(ws.documents).forEach(d=>{ if(d.folderId === undefined) d.folderId = null; });
+          Object.values(ws.folders).forEach(f=>{
+            if(f.shareId === undefined) f.shareId = null;
+            if(f.ownerUid === undefined) f.ownerUid = null;
+            if(f.ownerEmail === undefined) f.ownerEmail = null;
+            if(!f.collaboratorEmails) f.collaboratorEmails = [];
+          });
           return ws;
         }
       }
@@ -1014,17 +1026,25 @@
   function buildFolderRowEl(folder, docsInFolder){
     const wrap = document.createElement('div');
     const row = document.createElement('div');
+    const isShared = !!folder.shareId;
     row.className = 'folderItem' + (folder.collapsed ? ' collapsed' : '');
-    row.innerHTML = `<span class="toggle">${icon('chevron')}</span><span class="name"></span><span class="count">${docsInFolder.length}</span>`
+    row.innerHTML = `<span class="toggle">${icon('chevron')}</span><span class="name"></span>`
+      + (isShared ? `<span class="share-badge" title="${folder.ownerUid && currentUser && folder.ownerUid===currentUser.uid ? 'Shared by you' : 'Shared with you'}"></span>` : '')
+      + `<span class="count">${docsInFolder.length}</span>`
+      + `<button class="iconbtn share${isShared ? ' is-shared' : ''}" title="Share this folder — documents filed here share automatically">${icon('share')}</button>`
       + `<button class="iconbtn rename" title="Rename folder">${icon('edit')}</button>`
       + `<button class="iconbtn del" title="Delete folder (documents move back to Documents)">${icon('trash')}</button>`;
     row.querySelector('.name').textContent = folder.name || 'New folder';
     row.addEventListener('click', (e)=>{
-      if(e.target.closest('.del') || e.target.closest('.rename')) return;
+      if(e.target.closest('.del') || e.target.closest('.rename') || e.target.closest('.share')) return;
       folder.collapsed = !folder.collapsed;
       folder.updatedAt = Date.now();
       scheduleSave();
       renderDocList();
+    });
+    row.querySelector('.share').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      openShareModal(folder.id, 'folder');
     });
     row.querySelector('.rename').addEventListener('click', (e)=>{
       e.stopPropagation();
@@ -1032,17 +1052,34 @@
       if(next && next.trim()){
         folder.name = next.trim();
         folder.updatedAt = Date.now();
+        if(folder.shareId && firebaseReady && currentUser){
+          db.collection('shared_projects').doc(folder.shareId).update({
+            name: folder.name,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }).catch(err=> console.error('Could not rename shared folder', err));
+        }
         scheduleSave();
         renderDocList();
       }
     });
     row.querySelector('.del').addEventListener('click', (e)=>{
       e.stopPropagation();
+      const isMemberNotOwner = folder.shareId && currentUser && folder.ownerUid && folder.ownerUid !== currentUser.uid;
+      if(isMemberNotOwner){
+        if(!confirm(`Leave "${folder.name}"? You'll lose access to this folder grouping; documents already shared with you stay shared.`)) return;
+        leaveSharedDoc(folder.shareId);
+        docsInFolder.forEach(d => { d.folderId = null; });
+        delete workspace.folders[folder.id];
+        scheduleSave();
+        renderDocList();
+        return;
+      }
       const msg = docsInFolder.length
-        ? `Delete folder "${folder.name}"? Its ${docsInFolder.length} document(s) move back to the top level — nothing is deleted.`
+        ? `Delete folder "${folder.name}"? Its ${docsInFolder.length} document(s) move back to the top level — nothing is deleted, and any of them already shared stay shared.`
         : `Delete folder "${folder.name}"?`;
       if(!confirm(msg)) return;
       docsInFolder.forEach(d => { d.folderId = null; });
+      if(folder.shareId) deleteSharedDoc(folder.shareId);
       delete workspace.folders[folder.id];
       deletePrivateFolderRemote(folder.id);
       scheduleSave();
@@ -1063,6 +1100,7 @@
       const d = workspace.documents[docId];
       if(!d) return;
       d.folderId = folder.id;
+      if(folder.shareId) ensureDocSharedWithFolder(d, folder);
       scheduleSave();
       renderDocList();
     });
@@ -2218,6 +2256,7 @@
   let privateSaveTimer = null;
   let sharedSaveTimers = {};      // shareId -> timer
   let shareModalDocId = null;
+  let shareModalKind = 'doc'; // 'doc' | 'folder'
 
   let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl;
 
@@ -2314,7 +2353,10 @@
           const merged = mergeDoc(workspace.documents[id], remote[id]);
           workspace.documents[id] = merged;
         });
-        workspace.folders = remoteFolders;
+        Object.keys(workspace.folders).forEach(id=>{
+          if(!workspace.folders[id].shareId) delete workspace.folders[id];
+        });
+        Object.keys(remoteFolders).forEach(id=>{ workspace.folders[id] = remoteFolders[id]; });
         if(!workspace.documents[workspace.activeDocId]){
           const ids = Object.keys(workspace.documents);
           workspace.activeDocId = ids.length ? ids[0] : null;
@@ -2344,7 +2386,8 @@
     if(!firebaseReady || !currentUser) return;
     const out = {};
     Object.values(workspace.documents).forEach(d=>{ if(!d.shareId) out[d.id] = d; });
-    const folders = workspace.folders || {};
+    const folders = {};
+    Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
     const json = JSON.stringify({ docs: out, folders });
     if(json === lastPrivateJSON){ setSyncState('synced', 'Synced'); return; }
     db.collection('users').doc(currentUser.uid).set({
@@ -2396,15 +2439,21 @@
             sharedDocUnsubs[shareId]();
             delete sharedDocUnsubs[shareId];
             delete lastSharedJSON[shareId];
+            let changed = false;
             if(workspace.documents[shareId]){
               delete workspace.documents[shareId];
               if(workspace.activeDocId === shareId){
                 const ids = Object.keys(workspace.documents);
                 workspace.activeDocId = ids.length ? ids[0] : null;
               }
-              scheduleSave();
-              renderAll();
+              changed = true;
             }
+            if(workspace.folders[shareId]){
+              delete workspace.folders[shareId];
+              Object.values(workspace.documents).forEach(d=>{ if(d.folderId === shareId) d.folderId = null; });
+              changed = true;
+            }
+            if(changed){ scheduleSave(); renderAll(); }
           }
         });
       }, err=> console.error('shared index error', err));
@@ -2483,6 +2532,12 @@
       if(!snap.exists) return;
       if(snap.metadata.hasPendingWrites) return;
       const data = snap.data();
+
+      if(data.kind === 'folder'){
+        applyFolderSnapshot(shareId, data);
+        return;
+      }
+
       const json = JSON.stringify(data.doc);
       if(json === lastSharedJSON[shareId]) return;
 
@@ -2519,6 +2574,32 @@
     }, err=> console.error('shared doc error', err));
   }
 
+  // Folder metadata is lightweight (name + membership) and always written directly rather than
+  // through the debounced node-edit pipeline, so this just merges it in — no conflict resolution needed.
+  function applyFolderSnapshot(shareId, data){
+    const json = JSON.stringify({ name: data.name, collaboratorEmails: data.collaboratorEmails || [] });
+    if(json === lastSharedJSON[shareId]) return;
+    applyingRemote = true;
+    try{
+      const existing = workspace.folders[shareId];
+      workspace.folders[shareId] = {
+        id: shareId, shareId,
+        name: data.name || 'New folder',
+        collapsed: existing ? existing.collapsed : false, // collapse state stays a personal, local preference
+        ownerUid: data.ownerUid, ownerEmail: data.ownerEmail,
+        collaboratorEmails: data.collaboratorEmails || [],
+        createdAt: existing ? existing.createdAt : Date.now(),
+        updatedAt: Date.now()
+      };
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+    } finally {
+      applyingRemote = false;
+    }
+    lastSharedJSON[shareId] = json;
+    renderDocList();
+    setSyncState('synced', 'Synced');
+  }
+
   function pushSharedDoc(shareId){
     const doc = workspace.documents[shareId];
     if(!doc || !firebaseReady || !currentUser) return;
@@ -2552,41 +2633,48 @@
   }
 
   // ---- sharing UI ----
-  function openShareModal(docId){
-    const doc = workspace.documents[docId];
-    if(!doc) return;
-    shareModalDocId = docId;
+  function openShareModal(id, kind){
+    kind = kind || 'doc';
+    const target = kind === 'folder' ? workspace.folders[id] : workspace.documents[id];
+    if(!target) return;
+    shareModalDocId = id;
+    shareModalKind = kind;
     const overlay = document.getElementById('shareModalOverlay');
     const sub = document.getElementById('shareModalSub');
     const addRow = document.getElementById('shareAddRow');
     const stopBtn = document.getElementById('shareStopBtn');
     const list = document.getElementById('memberList');
-    document.getElementById('shareModalTitle').textContent = 'Share "' + (doc.name || 'Untitled') + '"';
+    const label = kind === 'folder' ? 'folder' : 'document';
+    document.getElementById('shareModalTitle').textContent = 'Share "' + (target.name || 'Untitled') + '"';
     list.innerHTML = '';
 
     if(!currentUser || !firebaseReady){
-      sub.textContent = 'Sign in with Google (top right) to share this document with other accounts.';
+      sub.textContent = `Sign in with Google (top right) to share this ${label} with other accounts.`;
       addRow.style.display = 'none';
       stopBtn.style.display = 'none';
       overlay.classList.add('open');
       return;
     }
 
-    const isOwner = !doc.shareId || doc.ownerUid === currentUser.uid;
+    const isOwner = !target.shareId || target.ownerUid === currentUser.uid;
     addRow.style.display = isOwner ? 'flex' : 'none';
-    stopBtn.style.display = (doc.shareId && isOwner) ? 'inline-block' : 'none';
+    stopBtn.style.display = (target.shareId && isOwner) ? 'inline-block' : 'none';
 
-    if(!doc.shareId){
-      sub.textContent = 'Not shared yet. Add a Google account email to start sharing.';
+    if(!target.shareId){
+      sub.textContent = kind === 'folder'
+        ? 'Not shared yet. Add a Google account email — any documents you file in this folder will share with them automatically.'
+        : 'Not shared yet. Add a Google account email to start sharing.';
       overlay.classList.add('open');
       return;
     }
 
     sub.textContent = isOwner
-      ? 'Anyone below can view and edit this document.'
-      : 'Shared by ' + (doc.ownerEmail || 'the owner') + '. You can view and edit.';
+      ? (kind === 'folder'
+          ? 'Anyone below can see this folder and everything filed in it. New documents you drop in share with them automatically.'
+          : 'Anyone below can view and edit this document.')
+      : `Shared by ${target.ownerEmail || 'the owner'}. You can view` + (kind === 'folder' ? ' this folder.' : ' and edit.');
 
-    db.collection('shared_projects').doc(doc.shareId).get().then(snap=>{
+    db.collection('shared_projects').doc(target.shareId).get().then(snap=>{
       const data = snap.data() || {};
       const members = data.collaboratorEmails || [];
       list.innerHTML = '';
@@ -2604,7 +2692,10 @@
         if(isOwner && !isOwnerEmail){
           const btn = document.createElement('button');
           btn.textContent = 'Remove';
-          btn.addEventListener('click', ()=> removeMemberFromDoc(doc.shareId, email));
+          btn.addEventListener('click', ()=>{
+            if(kind === 'folder') removeMemberFromFolder(target, email);
+            else removeMemberFromDoc(target.shareId, email);
+          });
           li.appendChild(btn);
         }
         list.appendChild(li);
@@ -2618,15 +2709,19 @@
     shareModalDocId = null;
   }
 
-  function createSharedDoc(doc, inviteEmail){
+  function createSharedDoc(doc, inviteEmails, openModal){
+    if(openModal === undefined) openModal = true;
     const ref = db.collection('shared_projects').doc();
     const shareId = ref.id;
     const ownerEmail = (currentUser.email || '').toLowerCase();
+    const invites = (Array.isArray(inviteEmails) ? inviteEmails : [inviteEmails]).filter(Boolean);
+    const collaboratorEmails = [ownerEmail, ...invites].filter((e,i,arr)=> e && arr.indexOf(e) === i);
     const payload = Object.assign({}, doc, { id: shareId, shareId, ownerUid: currentUser.uid, ownerEmail });
     ref.set({
+      kind: 'doc',
       ownerUid: currentUser.uid,
       ownerEmail,
-      collaboratorEmails: [ownerEmail, inviteEmail],
+      collaboratorEmails,
       collaborators: [currentUser.uid],
       linkSharing: false,
       shareToken: shareId,
@@ -2642,25 +2737,104 @@
       deletePrivateDocRemote(oldDocId); // otherwise the pre-share copy quietly reappears later
       scheduleSave(shareId);
       renderAll();
-      openShareModal(shareId);
+      if(openModal) openShareModal(shareId, 'doc');
     }).catch(err=>{
       console.error(err);
       alert('Could not share this document: ' + err.message + '\n\nMake sure your Firestore rules allow writes to shared_projects.');
     });
   }
 
+  // A shared folder is just another shared_projects entry (kind:'folder', no `doc` payload) —
+  // reuses your existing shared_projects collection and security rules rather than needing a new one.
+  // Filing a document into a shared folder automatically shares that document with the folder's
+  // current members; adding/removing a folder member cascades to every document currently filed there.
+  function createSharedFolder(folder, inviteEmail){
+    const ref = db.collection('shared_projects').doc();
+    const shareId = ref.id;
+    const ownerEmail = (currentUser.email || '').toLowerCase();
+    const collaboratorEmails = [ownerEmail, inviteEmail].filter((e,i,arr)=> e && arr.indexOf(e) === i);
+    ref.set({
+      kind: 'folder',
+      ownerUid: currentUser.uid,
+      ownerEmail,
+      collaboratorEmails,
+      collaborators: [currentUser.uid],
+      linkSharing: false,
+      shareToken: shareId,
+      name: folder.name || 'New folder',
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(()=>{
+      const oldFolderId = folder.id;
+      const docsInFolder = Object.values(workspace.documents).filter(d => d.folderId === oldFolderId);
+      delete workspace.folders[oldFolderId];
+      workspace.folders[shareId] = Object.assign({}, folder, {
+        id: shareId, shareId, ownerUid: currentUser.uid, ownerEmail, collaboratorEmails
+      });
+      docsInFolder.forEach(d => { d.folderId = shareId; });
+      lastSharedJSON[shareId] = JSON.stringify({ name: folder.name, collaboratorEmails });
+      if(!sharedDocUnsubs[shareId]) subscribeToSharedDoc(shareId);
+      deletePrivateFolderRemote(oldFolderId);
+      // existing documents in the folder become shared with the same members too
+      docsInFolder.forEach(d => ensureDocSharedWithFolder(d, workspace.folders[shareId]));
+      scheduleSave();
+      renderAll();
+      openShareModal(shareId, 'folder');
+    }).catch(err=>{
+      console.error(err);
+      alert('Could not share this folder: ' + err.message);
+    });
+  }
+
+  function ensureDocSharedWithFolder(doc, folder){
+    if(!folder.shareId || !currentUser || !firebaseReady) return;
+    const emails = (folder.collaboratorEmails && folder.collaboratorEmails.length)
+      ? folder.collaboratorEmails
+      : [folder.ownerEmail, (currentUser.email||'').toLowerCase()].filter(Boolean);
+    if(!doc.shareId){
+      const ownerEmail = (currentUser.email || '').toLowerCase();
+      createSharedDoc(doc, emails.filter(e => e !== ownerEmail), false);
+    } else {
+      db.collection('shared_projects').doc(doc.shareId).update({
+        collaboratorEmails: firebase.firestore.FieldValue.arrayUnion(...emails)
+      }).catch(err=> console.error('Could not add folder members to document', err));
+    }
+  }
+
   function addMemberToExisting(shareId, email){
     db.collection('shared_projects').doc(shareId).update({
       collaboratorEmails: firebase.firestore.FieldValue.arrayUnion(email)
-    }).then(()=> openShareModal(shareId))
+    }).then(()=> openShareModal(shareId, shareModalKind))
     .catch(err=>{ console.error(err); alert('Could not add that member: ' + err.message); });
   }
 
   function removeMemberFromDoc(shareId, email){
     db.collection('shared_projects').doc(shareId).update({
       collaboratorEmails: firebase.firestore.FieldValue.arrayRemove(email)
-    }).then(()=> openShareModal(shareId))
+    }).then(()=> openShareModal(shareId, shareModalKind))
     .catch(err=>{ console.error(err); alert('Could not remove that member: ' + err.message); });
+  }
+
+  function addMemberToFolder(folder, email){
+    addMemberToExisting(folder.shareId, email);
+    if(!folder.collaboratorEmails.includes(email)) folder.collaboratorEmails.push(email);
+    Object.values(workspace.documents).forEach(d=>{
+      if(d.folderId !== folder.id) return;
+      if(!d.shareId) ensureDocSharedWithFolder(d, folder);
+      else db.collection('shared_projects').doc(d.shareId).update({
+        collaboratorEmails: firebase.firestore.FieldValue.arrayUnion(email)
+      }).catch(err=> console.error(err));
+    });
+  }
+
+  function removeMemberFromFolder(folder, email){
+    removeMemberFromDoc(folder.shareId, email);
+    folder.collaboratorEmails = folder.collaboratorEmails.filter(e => e !== email);
+    Object.values(workspace.documents).forEach(d=>{
+      if(d.folderId !== folder.id || !d.shareId) return;
+      db.collection('shared_projects').doc(d.shareId).update({
+        collaboratorEmails: firebase.firestore.FieldValue.arrayRemove(email)
+      }).catch(err=> console.error(err));
+    });
   }
 
   function leaveSharedDoc(shareId){
@@ -2678,16 +2852,40 @@
     const input = document.getElementById('shareEmailInput');
     const email = input.value.trim().toLowerCase();
     if(!email || !email.includes('@')){ alert('Enter a valid email address.'); return; }
-    const doc = workspace.documents[shareModalDocId];
-    if(!doc || !currentUser) return;
-    if(!doc.shareId) createSharedDoc(doc, email);
-    else addMemberToExisting(doc.shareId, email);
+    if(!currentUser) return;
+    if(shareModalKind === 'folder'){
+      const folder = workspace.folders[shareModalDocId];
+      if(!folder) return;
+      if(!folder.shareId) createSharedFolder(folder, email);
+      else addMemberToFolder(folder, email);
+    } else {
+      const doc = workspace.documents[shareModalDocId];
+      if(!doc) return;
+      if(!doc.shareId) createSharedDoc(doc, email);
+      else addMemberToExisting(doc.shareId, email);
+    }
     input.value = '';
   });
   document.getElementById('shareEmailInput').addEventListener('keydown', (e)=>{
     if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('shareAddBtn').click(); }
   });
   document.getElementById('shareStopBtn').addEventListener('click', ()=>{
+    if(shareModalKind === 'folder'){
+      const folder = workspace.folders[shareModalDocId];
+      if(!folder || !folder.shareId) return;
+      if(!confirm('Stop sharing this folder? Other members will lose access to the folder grouping; documents already shared with them stay shared.')) return;
+      const shareId = folder.shareId;
+      const localCopy = Object.assign({}, folder, { id: uid(), shareId: null, ownerUid: null, ownerEmail: null, collaboratorEmails: [] });
+      deleteSharedDoc(shareId);
+      if(sharedDocUnsubs[shareId]){ sharedDocUnsubs[shareId](); delete sharedDocUnsubs[shareId]; }
+      delete workspace.folders[shareId];
+      workspace.folders[localCopy.id] = localCopy;
+      Object.values(workspace.documents).forEach(d=>{ if(d.folderId === shareId) d.folderId = localCopy.id; });
+      scheduleSave();
+      renderAll();
+      closeShareModal();
+      return;
+    }
     const doc = workspace.documents[shareModalDocId];
     if(!doc || !doc.shareId) return;
     if(!confirm('Stop sharing? Other members will lose access; your copy stays here.')) return;
