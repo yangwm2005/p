@@ -374,6 +374,13 @@
   .row.dimmed{opacity:0.4;}
   .row.search-match .content{background:linear-gradient(transparent 60%, var(--accent-soft) 60%);}
   .row.selected > .row-main{background:var(--accent-soft); box-shadow:inset 2px 0 0 var(--accent);}
+  .content.bold-text{font-weight:700;}
+  .row-main.bg-yellow{background:rgba(230,180,20,0.22);}
+  .row-main.bg-green{background:rgba(52,168,83,0.20);}
+  .row-main.bg-blue{background:rgba(66,133,244,0.18);}
+  .row-main.bg-pink{background:rgba(219,68,105,0.16);}
+  .row-main.bg-purple{background:rgba(154,82,222,0.18);}
+  .row-main.bg-gray{background:rgba(140,140,150,0.20);}
   .menu-btn{
     flex-shrink:0;
     width:22px; height:26px;
@@ -416,6 +423,23 @@
   #itemMenu button.danger{color:var(--danger);}
   #itemMenu button.danger:hover{background:rgba(181,83,60,0.12); color:var(--danger);}
   #itemMenu hr{border:none; border-top:1px solid var(--line); margin:4px 2px; width:100%;}
+  #itemMenu .menu-label{font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--ink-faint); padding:4px 9px 2px;}
+  #itemMenu .colorRow{display:flex; gap:6px; padding:4px 9px 6px;}
+  #itemMenu .swatch{
+    width:20px; height:20px; border-radius:50%;
+    border:1px solid var(--line-strong);
+    cursor:pointer; padding:0; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:10px; color:var(--ink-faint);
+  }
+  #itemMenu .swatch:hover{transform:scale(1.12); border-color:var(--accent);}
+  #itemMenu .swatch.active{box-shadow:0 0 0 2px var(--paper-raised), 0 0 0 3.5px var(--accent);}
+  #itemMenu .swatch.bg-yellow{background:rgba(230,180,20,0.55);}
+  #itemMenu .swatch.bg-green{background:rgba(52,168,83,0.5);}
+  #itemMenu .swatch.bg-blue{background:rgba(66,133,244,0.45);}
+  #itemMenu .swatch.bg-pink{background:rgba(219,68,105,0.4);}
+  #itemMenu .swatch.bg-purple{background:rgba(154,82,222,0.45);}
+  #itemMenu .swatch.bg-gray{background:rgba(140,140,150,0.5);}
   .children{
     margin-left:24px;
     border-left:1px solid var(--line);
@@ -553,7 +577,7 @@
   <kbd>Tab</kbd> indent &nbsp; <kbd>Shift+Tab</kbd> outdent<br>
   <kbd>↑</kbd><kbd>↓</kbd> move focus<br>
   <kbd>Alt+↑</kbd><kbd>Alt+↓</kbd> reorder item<br>
-  <kbd>Ctrl+Enter</kbd> toggle done<br>
+  <kbd>Ctrl+Enter</kbd> toggle done &nbsp; <kbd>Ctrl+B</kbd> toggle bold<br>
   <kbd>Backspace</kbd> at start merges up<br>
   <kbd>Ctrl+Z</kbd> undo &nbsp; <kbd>Ctrl+Shift+Z</kbd> redo<br>
   Shift/Cmd-click bullets to select, then <kbd>Ctrl+C</kbd>/<kbd>Ctrl+X</kbd>/<kbd>Ctrl+V</kbd><br>
@@ -579,8 +603,20 @@
 
 <div id="itemMenu">
   <button data-action="done" id="itemMenuDoneBtn">Mark as complete</button>
+  <button data-action="bold" id="itemMenuBoldBtn">Bold</button>
   <button data-action="zoom">Zoom in</button>
   <button data-action="duplicate">Duplicate</button>
+  <hr>
+  <div class="menu-label">Highlight</div>
+  <div class="colorRow">
+    <button class="swatch none" data-color="" title="No highlight">✕</button>
+    <button class="swatch bg-yellow" data-color="yellow" title="Yellow"></button>
+    <button class="swatch bg-green" data-color="green" title="Green"></button>
+    <button class="swatch bg-blue" data-color="blue" title="Blue"></button>
+    <button class="swatch bg-pink" data-color="pink" title="Pink"></button>
+    <button class="swatch bg-purple" data-color="purple" title="Purple"></button>
+    <button class="swatch bg-gray" data-color="gray" title="Gray"></button>
+  </div>
   <hr>
   <button data-action="copy">Copy (with sub-items)</button>
   <button data-action="cut">Cut (with sub-items)</button>
@@ -602,6 +638,7 @@
 
   const STORAGE_KEY = "threadline_outliner_v1";
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
+  const HIGHLIGHT_COLORS = ['yellow','green','blue','pink','purple','gray'];
 
   // ---------------- Data model ----------------
   // workspace = { activeDocId, documents: { [docId]: Doc } }
@@ -711,7 +748,7 @@
   }
 
   function makeNode(parentId, text){
-    return { id: uid(), text: text || "", children: [], collapsed:false, done:false, parentId, updatedAt: Date.now() };
+    return { id: uid(), text: text || "", children: [], collapsed:false, done:false, bold:false, bgColor:null, parentId, updatedAt: Date.now() };
   }
 
   function makeDoc(name){
@@ -1229,12 +1266,13 @@
       });
 
       const content = document.createElement('div');
-      content.className = 'content';
+      content.className = 'content' + (node.bold ? ' bold-text' : '');
       content.contentEditable = 'true';
       content.spellcheck = false;
       content.dataset.placeholder = 'Type something…';
       content.innerText = node.text;
       attachEditingHandlers(content, id);
+      if(HIGHLIGHT_COLORS.includes(node.bgColor)) rowMain.classList.add('bg-' + node.bgColor);
 
       const menuBtn = document.createElement('div');
       menuBtn.className = 'menu-btn';
@@ -1553,6 +1591,17 @@
         renderTree();
         return;
       }
+
+      if((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'b'){
+        e.preventDefault();
+        captureUndoPoint(doc);
+        node.text = el.innerText; touch(node);
+        node.bold = !node.bold;
+        scheduleSave();
+        focusRequest = { id: node.id, caret: getCaretOffset(el) };
+        renderTree();
+        return;
+      }
     });
 
     el.addEventListener('blur', ()=>{
@@ -1665,6 +1714,7 @@
   // ---------------- Per-item options menu ----------------
   const itemMenuEl = document.getElementById('itemMenu');
   const itemMenuDoneBtn = document.getElementById('itemMenuDoneBtn');
+  const itemMenuBoldBtn = document.getElementById('itemMenuBoldBtn');
   let itemMenuNodeId = null;
   let itemMenuBtnEl = null;
 
@@ -1679,6 +1729,10 @@
     itemMenuNodeId = nodeId;
     itemMenuBtnEl = btnEl;
     itemMenuDoneBtn.textContent = node.done ? 'Mark as not complete' : 'Mark as complete';
+    itemMenuBoldBtn.textContent = node.bold ? 'Remove bold' : 'Bold';
+    itemMenuEl.querySelectorAll('.swatch').forEach(sw=>{
+      sw.classList.toggle('active', (sw.dataset.color || null) === (node.bgColor || null));
+    });
     itemMenuEl.classList.add('open');
     btnEl.classList.add('open');
 
@@ -1711,6 +1765,8 @@
       const copy = makeNode(parentId, n.text);
       copy.done = n.done;
       copy.collapsed = n.collapsed;
+      copy.bold = n.bold;
+      copy.bgColor = n.bgColor;
       doc.nodes[copy.id] = copy;
       n.children.forEach(cid=>{
         const child = doc.nodes[cid];
@@ -1744,6 +1800,13 @@
     switch(action){
       case 'done':
         toggleNodeDone(doc, node);
+        break;
+      case 'bold':
+        captureUndoPoint(doc);
+        node.bold = !node.bold;
+        touch(node);
+        scheduleSave();
+        renderTree();
         break;
       case 'zoom':
         doc.zoomedId = nodeId;
@@ -1787,6 +1850,20 @@
   }
 
   itemMenuEl.addEventListener('click', (e)=>{
+    const swatch = e.target.closest('.swatch');
+    if(swatch && itemMenuNodeId){
+      const doc = activeDoc();
+      const node = doc.nodes[itemMenuNodeId];
+      if(node){
+        captureUndoPoint(doc);
+        node.bgColor = swatch.dataset.color || null;
+        touch(node);
+        scheduleSave();
+        renderTree();
+      }
+      closeItemMenu();
+      return;
+    }
     const btn = e.target.closest('button[data-action]');
     if(!btn || !itemMenuNodeId) return;
     handleItemMenuAction(btn.dataset.action, itemMenuNodeId);
@@ -1825,7 +1902,10 @@
 
   function exportNodeForClipboard(doc, id){
     const n = doc.nodes[id];
-    return { text: n.text, done: !!n.done, children: n.children.map(cid => exportNodeForClipboard(doc, cid)) };
+    return {
+      text: n.text, done: !!n.done, bold: !!n.bold, bgColor: n.bgColor || null,
+      children: n.children.map(cid => exportNodeForClipboard(doc, cid))
+    };
   }
 
   function itemsToPlainText(items, depth){
@@ -1833,7 +1913,9 @@
     items.forEach(it=>{
       const indent = '\t'.repeat(depth);
       const mark = it.done ? '[x] ' : '';
-      lines.push(indent + mark + (it.text || '').split('\n').join('\n' + indent + '  '));
+      let text = (it.text || '').split('\n').join('\n' + indent + '  ');
+      if(it.bold) text = '**' + text + '**';
+      lines.push(indent + mark + text);
       if(it.children && it.children.length) lines.push(itemsToPlainText(it.children, depth + 1));
     });
     return lines.join('\n');
@@ -1850,7 +1932,8 @@
     let html = '<ul style="margin:0;padding-left:20px;">';
     items.forEach(it=>{
       const mark = it.done ? '\u2611\u00A0' : ''; // ☑ + nbsp
-      const text = escapeHtml(it.text || '').replace(/\n/g, '<br>');
+      let text = escapeHtml(it.text || '').replace(/\n/g, '<br>');
+      if(it.bold) text = '<b>' + text + '</b>';
       html += '<li>' + mark + text + itemsToHtmlList(it.children) + '</li>';
     });
     html += '</ul>';
@@ -1986,7 +2069,8 @@
       if(id !== doc.rootId){
         const indent = '\t'.repeat(depth-1);
         const mark = n.done ? '[x] ' : '';
-        const text = n.text.split('\n').join('\n' + indent + '  ');
+        let text = n.text.split('\n').join('\n' + indent + '  ');
+        if(n.bold) text = '**' + text + '**';
         lines.push(indent + mark + text);
       }
       n.children.forEach(cid => walk(cid, id===doc.rootId ? depth : depth+1));
@@ -2020,12 +2104,18 @@
       const match = line.match(/^(\s*)/);
       const leading = match[1].replace(/\t/g,'  ');
       const depth = Math.floor(leading.length/2);
-      let clean = line.trim().replace(/^[-*•]\s?/, '');
+      // strip a leading bullet marker, but not the first * of a **bold** wrapper
+      let clean = line.trim().replace(/^(?:[-•]|\*(?!\*))\s?/, '');
       let done = false;
       if(/^\[x\]\s?/i.test(clean)){ done = true; clean = clean.replace(/^\[x\]\s?/i,''); }
       else if(/^\[ \]\s?/.test(clean)){ clean = clean.replace(/^\[ \]\s?/,''); }
+      let bold = false;
+      if(/^\*\*[\s\S]+\*\*$/.test(clean)){
+        bold = true;
+        clean = clean.slice(2, -2);
+      }
       while(stack.length && stack[stack.length-1].depth >= depth) stack.pop();
-      const item = { text: clean, done, children: [] };
+      const item = { text: clean, done, bold, children: [] };
       stack[stack.length-1].item.children.push(item);
       stack.push({ depth, item });
     });
@@ -2035,6 +2125,8 @@
   function buildNodeFromExport(doc, parentId, item){
     const n = makeNode(parentId, item.text || '');
     n.done = !!item.done;
+    n.bold = !!item.bold;
+    n.bgColor = item.bgColor || null;
     doc.nodes[n.id] = n;
     (item.children || []).forEach(child=>{
       const c = buildNodeFromExport(doc, n.id, child);
