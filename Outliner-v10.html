@@ -640,12 +640,8 @@
   "use strict";
 
   const STORAGE_KEY = "threadline_outliner_v1";
-  // Firestore doesn't guarantee it returns object keys in the same order they were written in,
-  // but plain JSON.stringify is order-sensitive — comparing a Firestore-returned object against a
-  // locally-built one with it can report "changed" when nothing actually changed, which causes an
-  // endless push→recheck→push loop (visible as a sync dot stuck on orange). Sort keys before
-  // comparing so equivalent data always produces the same string, arrays keep their order (order
-  // matters there — it's your outline structure).
+  const UNDO_STORAGE_KEY = "threadline_undo_v1";
+  
   function stableStringify(obj){
     if(obj === null || typeof obj !== 'object') return JSON.stringify(obj);
     if(Array.isArray(obj)) return '[' + obj.map(stableStringify).join(',') + ']';
@@ -656,32 +652,30 @@
   const HIGHLIGHT_COLORS = ['yellow','green','blue','pink','purple','gray'];
 
   // ---------------- Data model ----------------
-  // workspace = { activeDocId, documents: { [docId]: Doc } }
-  // Doc = { id, name, createdAt, updatedAt, rootId, zoomedId, nodes: { [id]: Node }, tombstones: { [id]: deletedAtMs } }
-  // Node = { id, text, children:[ids], collapsed:bool, done:bool, parentId, updatedAt }
-  // `updatedAt` per node + `tombstones` on the doc let us merge two edited copies of a shared
-  // document (from two different browsers) without one side's edit silently clobbering the other's.
-
-  function touch(node){
-    if(node) node.updatedAt = Date.now();
-    return node;
-  }
-
-  function toggleNodeDone(doc, node){
-    captureUndoPoint(doc);
-    node.done = !node.done;
-    touch(node);
-    scheduleSave();
-    renderTree();
-  }
+  let workspace = loadWorkspace();
+  let searchQuery = "";
+  let focusRequest = null;
+  let selectedIds = new Set();
+  let selectionAnchorId = null;
+  let isRendering = false;
 
   // ---- undo / redo ----
+  const MAX_UNDO = 100;
+  let undoStack = [];
+  let redoStack = [];
+  let pendingUndoSnapshot = null;
+  let undoDebounceTimer = null;
+  let isUndoing = false;
+
   function cloneDocState(doc){
+    if (!doc) return null;
     return {
       docId: doc.id,
-      nodes: JSON.parse(JSON.stringify(doc.nodes)),
+      nodes: JSON.parse(JSON.stringify(doc.nodes || {})),
       tombstones: JSON.parse(JSON.stringify(doc.tombstones || {})),
-      zoomedId: doc.zoomedId
+      zoomedId: doc.zoomedId,
+      name: doc.name,
+      rootId: doc.rootId
     };
   }
 
@@ -691,15 +685,12 @@
       undoStack.push(pendingUndoSnapshot);
       if(undoStack.length > MAX_UNDO) undoStack.shift();
       pendingUndoSnapshot = null;
+      saveUndoState();
     }
   }
 
-  // Call BEFORE a mutation, with the doc as it stood beforehand. Discrete actions (delete, indent,
-  // paste, etc.) get their own undo step immediately. Typing is coalesced: only the state before
-  // the first keystroke of a burst is kept, so Ctrl+Z undoes "what you just typed", not one letter
-  // at a time — the burst closes out after a short pause or once a different kind of edit happens.
   function captureUndoPoint(doc, opts){
-    if(!doc) return;
+    if(!doc || isUndoing || isRendering) return;
     const coalesce = opts && opts.coalesce;
     if(coalesce){
       if(!pendingUndoSnapshot || pendingUndoSnapshot.docId !== doc.id){
@@ -712,6 +703,7 @@
       flushPendingUndo();
       undoStack.push(cloneDocState(doc));
       if(undoStack.length > MAX_UNDO) undoStack.shift();
+      saveUndoState();
     }
     redoStack = [];
     updateUndoButtons();
@@ -720,14 +712,18 @@
   function restoreSnapshot(snap){
     const targetDoc = workspace.documents[snap.docId];
     if(!targetDoc) return null;
-    targetDoc.nodes = snap.nodes;
-    targetDoc.tombstones = snap.tombstones;
-    targetDoc.zoomedId = (snap.zoomedId && targetDoc.nodes[snap.zoomedId]) ? snap.zoomedId : targetDoc.rootId;
-    // re-stamp everything as "now" so a shared document's sync merge treats this undo as authoritative
-    // rather than a stale copy that gets quietly overwritten by whatever's currently on the server
-    Object.values(targetDoc.nodes).forEach(n => touch(n));
-    if(workspace.activeDocId !== snap.docId) workspace.activeDocId = snap.docId;
-    return targetDoc;
+    isUndoing = true;
+    try {
+      targetDoc.nodes = snap.nodes;
+      targetDoc.tombstones = snap.tombstones || {};
+      targetDoc.zoomedId = (snap.zoomedId && targetDoc.nodes[snap.zoomedId]) ? snap.zoomedId : targetDoc.rootId;
+      targetDoc.name = snap.name || targetDoc.name;
+      Object.values(targetDoc.nodes).forEach(n => touch(n));
+      if(workspace.activeDocId !== snap.docId) workspace.activeDocId = snap.docId;
+      return targetDoc;
+    } finally {
+      isUndoing = false;
+    }
   }
 
   function performUndo(){
@@ -737,6 +733,7 @@
     if(doc) redoStack.push(cloneDocState(doc));
     const snap = undoStack.pop();
     if(restoreSnapshot(snap)){
+      saveUndoState();
       scheduleSave();
       renderAll();
     }
@@ -749,10 +746,55 @@
     if(doc) undoStack.push(cloneDocState(doc));
     const snap = redoStack.pop();
     if(restoreSnapshot(snap)){
+      saveUndoState();
       scheduleSave();
       renderAll();
     }
     updateUndoButtons();
+  }
+
+  function saveUndoState(){
+    try {
+      const state = {
+        undoStack: undoStack.slice(0, MAX_UNDO),
+        redoStack: redoStack.slice(0, MAX_UNDO)
+      };
+      localStorage.setItem(UNDO_STORAGE_KEY, JSON.stringify(state));
+    } catch(e) {
+      console.warn("Failed to save undo state", e);
+    }
+  }
+
+  function loadUndoState(){
+    try {
+      const raw = localStorage.getItem(UNDO_STORAGE_KEY);
+      if(raw) {
+        const state = JSON.parse(raw);
+        if(state.undoStack && Array.isArray(state.undoStack)) {
+          undoStack = state.undoStack.filter(snap => workspace.documents[snap.docId]);
+        }
+        if(state.redoStack && Array.isArray(state.redoStack)) {
+          redoStack = state.redoStack.filter(snap => workspace.documents[snap.docId]);
+        }
+        updateUndoButtons();
+        return;
+      }
+    } catch(e) { 
+      console.warn("Failed to load undo state", e);
+    }
+    try {
+      Object.values(workspace.documents).forEach(doc => {
+        if(doc && doc.id) {
+          const snap = cloneDocState(doc);
+          if(snap) undoStack.push(snap);
+        }
+      });
+      if(undoStack.length > MAX_UNDO) undoStack = undoStack.slice(-MAX_UNDO);
+      saveUndoState();
+      updateUndoButtons();
+    } catch(e) {
+      console.warn("Could not rebuild undo state", e);
+    }
   }
 
   function updateUndoButtons(){
@@ -760,6 +802,19 @@
     const redoBtn = document.getElementById('redoBtn');
     if(undoBtn) undoBtn.disabled = undoStack.length === 0 && !pendingUndoSnapshot;
     if(redoBtn) redoBtn.disabled = redoStack.length === 0;
+  }
+
+  function touch(node){
+    if(node) node.updatedAt = Date.now();
+    return node;
+  }
+
+  function toggleNodeDone(doc, node){
+    captureUndoPoint(doc);
+    node.done = !node.done;
+    touch(node);
+    scheduleSave();
+    renderTree();
   }
 
   function makeNode(parentId, text){
@@ -777,13 +832,13 @@
       rootId,
       zoomedId: rootId,
       nodes: { [rootId]: root },
-      tombstones: {},     // nodeId -> deletedAt ms, so a stale remote copy can't resurrect a deleted node
-      shareId: null,       // set once this document is shared via a shared_projects/{shareId} doc
+      tombstones: {},
+      shareId: null,
       ownerUid: null,
       ownerEmail: null,
-      folderId: null        // set when filed under a sidebar folder
+      folderId: null,
+      syncVersion: 0
     };
-    // seed with one empty line so it's ready to type
     const first = makeNode(rootId, "");
     doc.nodes[first.id] = first;
     root.children.push(first.id);
@@ -804,7 +859,10 @@
         const ws = JSON.parse(raw);
         if(ws && ws.documents && Object.keys(ws.documents).length){
           if(!ws.folders) ws.folders = {};
-          Object.values(ws.documents).forEach(d=>{ if(d.folderId === undefined) d.folderId = null; });
+          Object.values(ws.documents).forEach(d=>{ 
+            if(d.folderId === undefined) d.folderId = null;
+            if(d.syncVersion === undefined) d.syncVersion = 0;
+          });
           Object.values(ws.folders).forEach(f=>{
             if(f.shareId === undefined) f.shareId = null;
             if(f.ownerUid === undefined) f.ownerUid = null;
@@ -845,31 +903,28 @@
     build(doc.rootId, lines);
   }
 
-  let workspace = loadWorkspace();
-  let searchQuery = "";
-  let focusRequest = null; // {id, caret:'start'|'end'|number}
-  let selectedIds = new Set();     // multi-select for structured copy/cut/paste/delete
-  let selectionAnchorId = null;    // shift-click range anchor
-
-  // ---- undo / redo ----
-  const MAX_UNDO = 100;
-  let undoStack = [];              // { docId, nodes, tombstones, zoomedId }
-  let redoStack = [];
-  let pendingUndoSnapshot = null;  // "before" snapshot for a coalesced (typing) burst, flushed on pause
-  let undoDebounceTimer = null;
-
   function activeDoc(){ return workspace.documents[workspace.activeDocId]; }
 
   let saveTimer = null;
-  function scheduleSave(docId){
+  let savePending = false;
+  
+  function scheduleSave(){
+    if(savePending) return;
+    savePending = true;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(()=>{
+      savePending = false;
       const d = activeDoc();
-      if(d) d.updatedAt = Date.now();
+      if(d) {
+        d.updatedAt = Date.now();
+        d.syncVersion = (d.syncVersion || 0) + 1;
+      }
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
       catch(e){ console.warn("save failed", e); }
+      if(firebaseReady && currentUser && !applyingRemote) {
+        triggerCloudSync();
+      }
     }, 200);
-    scheduleCloudSave(docId || workspace.activeDocId);
   }
 
   // ---------------- Node helpers ----------------
@@ -895,7 +950,7 @@
   function indentNode(doc, node){
     const arr = siblingsOf(doc, node);
     const idx = arr.indexOf(node.id);
-    if(idx <= 0) return false; // no previous sibling
+    if(idx <= 0) return false;
     captureUndoPoint(doc);
     const prevSibId = arr[idx-1];
     const prevSib = getNode(doc, prevSibId);
@@ -910,19 +965,13 @@
 
   function outdentNode(doc, node){
     const parent = getNode(doc, node.parentId);
-    if(!parent || parent.parentId === null){
-      return false; // parent is root, can't outdent further
-    }
+    if(!parent || parent.parentId === null) return false;
     captureUndoPoint(doc);
     const grandparent = getNode(doc, parent.parentId);
     const idx = removeFromParent(doc, node);
     const parentIdxInGp = grandparent.children.indexOf(parent.id);
-    // insert after parent, and move any of parent's remaining children after idx to become node's children (keep order integrity)
     const parentArr = parent.children;
-    // items that were after this node under old parent should move under `node` to preserve nesting semantics
-    // (already removed node from parentArr at position idx via removeFromParent's arr === parent.children)
-    const trailing = parentArr.splice(idx); // everything that was after node stays with parent... wait node removed already
-    // trailing now = items after node's old position; attach them as node's children (appended after existing)
+    const trailing = parentArr.splice(idx);
     trailing.forEach(cid => { doc.nodes[cid].parentId = node.id; });
     node.children = node.children.concat(trailing);
     node.parentId = grandparent.id;
@@ -931,7 +980,7 @@
     return true;
   }
 
-  function moveNode(doc, node, dir){ // dir: -1 up, +1 down
+  function moveNode(doc, node, dir){
     const arr = siblingsOf(doc, node);
     const idx = arr.indexOf(node.id);
     const newIdx = idx + dir;
@@ -958,7 +1007,6 @@
   }
 
   function flattenVisible(doc, startId){
-    // returns ordered array of node ids visible under startId (excluding startId itself)
     const out = [];
     const start = getNode(doc, startId);
     (function walk(n){
@@ -1145,17 +1193,16 @@
     const doc = workspace.documents[docId];
     if(!doc) return;
     if(doc.shareId && currentUser && doc.ownerUid && doc.ownerUid !== currentUser.uid){
-      // not the owner: just leave (remove self from member list), don't touch the shared copy
       leaveSharedDoc(doc.shareId);
     } else if(doc.shareId){
-      // owner (or offline copy of a shared doc): delete the shared project for everyone
       deleteSharedDoc(doc.shareId);
     } else {
-      // private doc: merge:true writes never remove keys that are no longer sent, so we have to
-      // explicitly tell Firestore to drop this one or it'll quietly reappear on the next sync.
       deletePrivateDocRemote(docId);
     }
     delete workspace.documents[docId];
+    undoStack = undoStack.filter(snap => snap.docId !== docId);
+    redoStack = redoStack.filter(snap => snap.docId !== docId);
+    saveUndoState();
     if(workspace.activeDocId === docId){
       workspace.activeDocId = Object.keys(workspace.documents)[0];
     }
@@ -1210,196 +1257,200 @@
   }
 
   function renderTree(){
-    const doc = activeDoc();
-    if(!doc) return;
-    renderBreadcrumb(doc);
+    if(isRendering) return;
+    isRendering = true;
+    try {
+      const doc = activeDoc();
+      if(!doc) { isRendering = false; return; }
+      renderBreadcrumb(doc);
 
-    const zoomNode = doc.nodes[doc.zoomedId];
-    if(doc.zoomedId === doc.rootId){
-      zoomTitleEl.classList.remove('hidden');
-      zoomTitleEl.setAttribute('data-placeholder', 'Untitled document');
-      if(zoomTitleEl.innerText !== doc.name) zoomTitleEl.innerText = doc.name;
-      zoomTitleEl.oninput = ()=>{ doc.name = zoomTitleEl.innerText.trim(); scheduleSave(); renderDocList(); renderBreadcrumb(doc); };
-    } else {
-      zoomTitleEl.classList.remove('hidden');
-      zoomTitleEl.setAttribute('data-placeholder', 'Untitled');
-      if(zoomTitleEl.innerText !== zoomNode.text) zoomTitleEl.innerText = zoomNode.text;
-      zoomTitleEl.oninput = ()=>{ zoomNode.text = zoomTitleEl.innerText; scheduleSave(); renderBreadcrumb(doc); };
-    }
+      const zoomNode = doc.nodes[doc.zoomedId];
+      if(doc.zoomedId === doc.rootId){
+        zoomTitleEl.classList.remove('hidden');
+        zoomTitleEl.setAttribute('data-placeholder', 'Untitled document');
+        if(zoomTitleEl.innerText !== doc.name) zoomTitleEl.innerText = doc.name;
+        zoomTitleEl.oninput = ()=>{ doc.name = zoomTitleEl.innerText.trim(); scheduleSave(); renderDocList(); renderBreadcrumb(doc); };
+      } else {
+        zoomTitleEl.classList.remove('hidden');
+        zoomTitleEl.setAttribute('data-placeholder', 'Untitled');
+        if(zoomTitleEl.innerText !== zoomNode.text) zoomTitleEl.innerText = zoomNode.text;
+        zoomTitleEl.oninput = ()=>{ zoomNode.text = zoomTitleEl.innerText; scheduleSave(); renderBreadcrumb(doc); };
+      }
 
-    const searchInfo = computeSearchVisibleSet(doc, searchQuery);
-    treeRootEl.innerHTML = "";
+      const searchInfo = computeSearchVisibleSet(doc, searchQuery);
+      treeRootEl.innerHTML = "";
 
-    const topIds = zoomNode.children;
-    if(topIds.length === 0 && !searchQuery){
-      emptyStateEl.style.display = 'block';
-    } else {
-      emptyStateEl.style.display = 'none';
-    }
+      const topIds = zoomNode.children;
+      if(topIds.length === 0 && !searchQuery){
+        emptyStateEl.style.display = 'block';
+      } else {
+        emptyStateEl.style.display = 'none';
+      }
 
-    function buildRow(id, depth){
-      const doc2 = activeDoc();
-      const node = doc2.nodes[id];
-      if(!node) return null;
-      if(searchInfo && !searchInfo.visible.has(id)) return null;
+      function buildRow(id, depth){
+        const doc2 = activeDoc();
+        const node = doc2.nodes[id];
+        if(!node) return null;
+        if(searchInfo && !searchInfo.visible.has(id)) return null;
 
-      const row = document.createElement('div');
-      row.className = 'row' + (node.done ? ' done' : '') + (selectedIds.has(id) ? ' selected' : '');
-      row.dataset.id = id;
+        const row = document.createElement('div');
+        row.className = 'row' + (node.done ? ' done' : '') + (selectedIds.has(id) ? ' selected' : '');
+        row.dataset.id = id;
 
-      const rowMain = document.createElement('div');
-      rowMain.className = 'row-main';
+        const rowMain = document.createElement('div');
+        rowMain.className = 'row-main';
 
-      const hasChildren = node.children.length > 0;
-      const isCollapsed = !!node.collapsed && !searchInfo;
+        const hasChildren = node.children.length > 0;
+        const isCollapsed = !!node.collapsed && !searchInfo;
 
-      const gutter = document.createElement('div');
-      gutter.className = 'gutter';
-      const toggle = document.createElement('div');
-      toggle.className = 'toggle' + (hasChildren ? ' has-children' : '') + (isCollapsed ? ' collapsed' : '');
-      toggle.innerHTML = icon('chevron');
-      toggle.title = hasChildren ? (isCollapsed ? 'Expand' : 'Collapse') : '';
-      toggle.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        if(!hasChildren) return;
-        node.collapsed = !node.collapsed;
-        scheduleSave();
-        renderTree();
-      });
-      gutter.appendChild(toggle);
-
-      const check = document.createElement('div');
-      check.className = 'check';
-      check.innerHTML = icon('check');
-      check.title = 'Toggle done';
-      check.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        toggleNodeDone(doc2, node);
-      });
-
-      const bulletWrap = document.createElement('div');
-      bulletWrap.className = 'bullet-wrap';
-      bulletWrap.title = 'Click to zoom in · Shift/Cmd-click to select for copy · drag to reorder';
-      bulletWrap.draggable = true;
-      const bullet = document.createElement('div');
-      bullet.className = 'bullet' + (hasChildren ? ' has-children' : '');
-      bulletWrap.appendChild(bullet);
-      bulletWrap.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        if(e.shiftKey){
-          const visible = flattenVisible(doc2, doc2.zoomedId);
-          if(!selectionAnchorId) selectionAnchorId = id;
-          const aIdx = visible.indexOf(selectionAnchorId);
-          const bIdx = visible.indexOf(id);
-          if(aIdx > -1 && bIdx > -1){
-            const from = Math.min(aIdx, bIdx), to = Math.max(aIdx, bIdx);
-            selectedIds = new Set(visible.slice(from, to + 1));
-          } else {
-            selectedIds = new Set([id]);
-            selectionAnchorId = id;
-          }
+        const gutter = document.createElement('div');
+        gutter.className = 'gutter';
+        const toggle = document.createElement('div');
+        toggle.className = 'toggle' + (hasChildren ? ' has-children' : '') + (isCollapsed ? ' collapsed' : '');
+        toggle.innerHTML = icon('chevron');
+        toggle.title = hasChildren ? (isCollapsed ? 'Expand' : 'Collapse') : '';
+        toggle.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          if(!hasChildren) return;
+          node.collapsed = !node.collapsed;
+          scheduleSave();
           renderTree();
-          return;
-        }
-        if(e.ctrlKey || e.metaKey){
-          if(selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
-          selectionAnchorId = id;
-          renderTree();
-          return;
-        }
-        selectedIds.clear();
-        selectionAnchorId = null;
-        doc2.zoomedId = id;
-        scheduleSave();
-        renderTree();
-        setTimeout(()=>zoomTitleEl.focus(), 0);
-      });
-
-      const content = document.createElement('div');
-      content.className = 'content' + (node.bold ? ' bold-text' : '');
-      content.contentEditable = 'true';
-      content.spellcheck = false;
-      content.dataset.placeholder = 'Type something…';
-      content.innerText = node.text;
-      attachEditingHandlers(content, id);
-      if(HIGHLIGHT_COLORS.includes(node.bgColor)) rowMain.classList.add('bg-' + node.bgColor);
-
-      const menuBtn = document.createElement('div');
-      menuBtn.className = 'menu-btn';
-      menuBtn.title = 'Item options';
-      menuBtn.innerHTML = icon('menu');
-      menuBtn.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        openItemMenu(id, menuBtn);
-      });
-
-      rowMain.appendChild(gutter);
-      rowMain.appendChild(check);
-      rowMain.appendChild(bulletWrap);
-      rowMain.appendChild(content);
-      rowMain.appendChild(menuBtn);
-      row.appendChild(rowMain);
-
-      // drag & drop reordering — starts from the bullet only, so dragging inside the text
-      // selects text like normal instead of picking up the whole row
-      bulletWrap.addEventListener('dragstart', (e)=>{
-        e.dataTransfer.setData('text/plain', id);
-        rowMain.classList.add('drag-ghost');
-      });
-      bulletWrap.addEventListener('dragend', ()=> rowMain.classList.remove('drag-ghost'));
-      rowMain.addEventListener('dragover', (e)=>{ e.preventDefault(); rowMain.classList.add('dragover'); });
-      rowMain.addEventListener('dragleave', ()=> rowMain.classList.remove('dragover'));
-      rowMain.addEventListener('drop', (e)=>{
-        e.preventDefault();
-        rowMain.classList.remove('dragover');
-        const draggedId = e.dataTransfer.getData('text/plain');
-        if(!draggedId || draggedId === id) return;
-        const d = activeDoc();
-        const draggedNode = d.nodes[draggedId];
-        const targetNode = d.nodes[id];
-        if(!draggedNode || !targetNode) return;
-        // prevent dropping onto own descendant
-        let p = targetNode;
-        while(p){ if(p.id === draggedId) return; p = p.parentId ? d.nodes[p.parentId] : null; }
-        captureUndoPoint(d);
-        const oldParent = d.nodes[draggedNode.parentId];
-        removeFromParent(d, draggedNode);
-        draggedNode.parentId = targetNode.parentId;
-        const arr = siblingsOf(d, targetNode);
-        const idx = arr.indexOf(id);
-        arr.splice(idx, 0, draggedId);
-        touch(draggedNode); touch(oldParent); touch(d.nodes[targetNode.parentId]);
-        scheduleSave();
-        renderTree();
-      });
-
-      const kids = document.createElement('div');
-      kids.className = 'children' + (hasChildren && !isCollapsed ? '' : ' empty');
-      if(hasChildren && !isCollapsed){
-        node.children.forEach(cid=>{
-          const childRow = buildRow(cid, depth+1);
-          if(childRow) kids.appendChild(childRow);
         });
+        gutter.appendChild(toggle);
+
+        const check = document.createElement('div');
+        check.className = 'check';
+        check.innerHTML = icon('check');
+        check.title = 'Toggle done';
+        check.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          toggleNodeDone(doc2, node);
+        });
+
+        const bulletWrap = document.createElement('div');
+        bulletWrap.className = 'bullet-wrap';
+        bulletWrap.title = 'Click to zoom in · Shift/Cmd-click to select for copy · drag to reorder';
+        bulletWrap.draggable = true;
+        const bullet = document.createElement('div');
+        bullet.className = 'bullet' + (hasChildren ? ' has-children' : '');
+        bulletWrap.appendChild(bullet);
+        bulletWrap.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          if(e.shiftKey){
+            const visible = flattenVisible(doc2, doc2.zoomedId);
+            if(!selectionAnchorId) selectionAnchorId = id;
+            const aIdx = visible.indexOf(selectionAnchorId);
+            const bIdx = visible.indexOf(id);
+            if(aIdx > -1 && bIdx > -1){
+              const from = Math.min(aIdx, bIdx), to = Math.max(aIdx, bIdx);
+              selectedIds = new Set(visible.slice(from, to + 1));
+            } else {
+              selectedIds = new Set([id]);
+              selectionAnchorId = id;
+            }
+            renderTree();
+            return;
+          }
+          if(e.ctrlKey || e.metaKey){
+            if(selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+            selectionAnchorId = id;
+            renderTree();
+            return;
+          }
+          selectedIds.clear();
+          selectionAnchorId = null;
+          doc2.zoomedId = id;
+          scheduleSave();
+          renderTree();
+          setTimeout(()=>zoomTitleEl.focus(), 0);
+        });
+
+        const content = document.createElement('div');
+        content.className = 'content' + (node.bold ? ' bold-text' : '');
+        content.contentEditable = 'true';
+        content.spellcheck = false;
+        content.dataset.placeholder = 'Type something…';
+        content.innerText = node.text;
+        attachEditingHandlers(content, id);
+        if(HIGHLIGHT_COLORS.includes(node.bgColor)) rowMain.classList.add('bg-' + node.bgColor);
+
+        const menuBtn = document.createElement('div');
+        menuBtn.className = 'menu-btn';
+        menuBtn.title = 'Item options';
+        menuBtn.innerHTML = icon('menu');
+        menuBtn.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          openItemMenu(id, menuBtn);
+        });
+
+        rowMain.appendChild(gutter);
+        rowMain.appendChild(check);
+        rowMain.appendChild(bulletWrap);
+        rowMain.appendChild(content);
+        rowMain.appendChild(menuBtn);
+        row.appendChild(rowMain);
+
+        bulletWrap.addEventListener('dragstart', (e)=>{
+          e.dataTransfer.setData('text/plain', id);
+          rowMain.classList.add('drag-ghost');
+        });
+        bulletWrap.addEventListener('dragend', ()=> rowMain.classList.remove('drag-ghost'));
+        rowMain.addEventListener('dragover', (e)=>{ e.preventDefault(); rowMain.classList.add('dragover'); });
+        rowMain.addEventListener('dragleave', ()=> rowMain.classList.remove('dragover'));
+        rowMain.addEventListener('drop', (e)=>{
+          e.preventDefault();
+          rowMain.classList.remove('dragover');
+          const draggedId = e.dataTransfer.getData('text/plain');
+          if(!draggedId || draggedId === id) return;
+          const d = activeDoc();
+          const draggedNode = d.nodes[draggedId];
+          const targetNode = d.nodes[id];
+          if(!draggedNode || !targetNode) return;
+          let p = targetNode;
+          while(p){ if(p.id === draggedId) return; p = p.parentId ? d.nodes[p.parentId] : null; }
+          captureUndoPoint(d);
+          const oldParent = d.nodes[draggedNode.parentId];
+          removeFromParent(d, draggedNode);
+          draggedNode.parentId = targetNode.parentId;
+          const arr = siblingsOf(d, targetNode);
+          const idx = arr.indexOf(id);
+          arr.splice(idx, 0, draggedId);
+          touch(draggedNode); touch(oldParent); touch(d.nodes[targetNode.parentId]);
+          scheduleSave();
+          renderTree();
+        });
+
+        const kids = document.createElement('div');
+        kids.className = 'children' + (hasChildren && !isCollapsed ? '' : ' empty');
+        if(hasChildren && !isCollapsed){
+          node.children.forEach(cid=>{
+            const childRow = buildRow(cid, depth+1);
+            if(childRow) kids.appendChild(childRow);
+          });
+        }
+
+        const container = document.createElement('div');
+        container.appendChild(row);
+        container.appendChild(kids);
+        return container;
       }
 
-      const container = document.createElement('div');
-      container.appendChild(row);
-      container.appendChild(kids);
-      return container;
-    }
+      topIds.forEach(id=>{
+        const r = buildRow(id, 0);
+        if(r) treeRootEl.appendChild(r);
+      });
 
-    topIds.forEach(id=>{
-      const r = buildRow(id, 0);
-      if(r) treeRootEl.appendChild(r);
-    });
-
-    if(focusRequest){
-      const el = treeRootEl.querySelector(`.row[data-id="${CSS.escape(focusRequest.id)}"] .content`);
-      if(el){
-        el.focus();
-        placeCaret(el, focusRequest.caret);
+      if(focusRequest){
+        const el = treeRootEl.querySelector(`.row[data-id="${CSS.escape(focusRequest.id)}"] .content`);
+        if(el){
+          el.focus();
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          placeCaret(el, focusRequest.caret);
+        }
+        focusRequest = null;
       }
-      focusRequest = null;
+    } finally {
+      isRendering = false;
     }
   }
 
@@ -1430,7 +1481,6 @@
       range.selectNodeContents(el);
       range.collapse(true);
     } else {
-      // numeric offset within text
       let remaining = pos;
       let node = null, offset = 0;
       const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
@@ -1455,16 +1505,27 @@
 
   // ---------------- Editing / keyboard ----------------
   function attachEditingHandlers(el, nodeId){
+    let inputTimeout = null;
+    let lastKnownText = el.innerText;
+    let isInternalUpdate = false;
+    
     el.addEventListener('input', ()=>{
+      clearTimeout(inputTimeout);
+      if(isInternalUpdate) return;
+      
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
-      if(!node) return;
+      if(!node || isUndoing || isRendering) return;
+      
+      const currentText = el.innerText;
+      if(currentText === lastKnownText) return;
+      lastKnownText = currentText;
+      
       captureUndoPoint(doc, { coalesce: true });
-      node.text = el.innerText; touch(node);
+      node.text = currentText;
+      touch(node);
       scheduleSave();
-      // keep zoom title in sync if this node is currently zoomed as a breadcrumb ancestor label somewhere - re-render breadcrumb only (cheap)
       renderBreadcrumb(doc);
-      // update doc list order label not needed live
     });
 
     el.addEventListener('paste', (e)=>{
@@ -1494,7 +1555,7 @@
     el.addEventListener('keydown', (e)=>{
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
-      if(!node) return;
+      if(!node || isUndoing) return;
 
       if(e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey){
         e.preventDefault();
@@ -1535,7 +1596,6 @@
         const idx = arr.indexOf(node.id);
         node.text = el.innerText; touch(node);
         if(node.text === '' && node.children.length === 0){
-          // delete empty leaf, move focus to previous visible node
           const parent = doc.nodes[node.parentId];
           if(idx > 0){
             const prevId = arr[idx-1];
@@ -1562,7 +1622,6 @@
           }
           return;
         }
-        // merge into previous node (only if there IS a previous target and current has text or children)
         e.preventDefault();
         let targetId = null;
         if(idx > 0){
@@ -1575,7 +1634,6 @@
         const target = doc.nodes[targetId];
         const mergeAt = target.text.length;
         target.text = target.text + node.text;
-        // reparent node's children onto target
         node.children.forEach(cid=>{ doc.nodes[cid].parentId = target.id; });
         target.children = target.children.concat(node.children);
         target.collapsed = false;
@@ -1625,8 +1683,13 @@
         const moved = moveNode(doc, node, e.key === 'ArrowUp' ? -1 : 1);
         if(moved){
           scheduleSave();
+          const scrollContainer = document.getElementById('outlineScroll');
+          const scrollTop = scrollContainer.scrollTop;
           focusRequest = { id: node.id, caret: getCaretOffset(el) };
           renderTree();
+          requestAnimationFrame(() => {
+            scrollContainer.scrollTop = scrollTop;
+          });
         }
         return;
       }
@@ -1657,8 +1720,11 @@
     el.addEventListener('blur', ()=>{
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
-      if(node) node.text = el.innerText; touch(node);
-      scheduleSave();
+      if(node && !isUndoing && !isRendering) {
+        node.text = el.innerText;
+        touch(node);
+        scheduleSave();
+      }
     });
   }
 
@@ -1693,7 +1759,6 @@
     renderDocList();
   });
 
-  // dropping a document on empty sidebar space (not on a folder) un-files it
   docListEl.addEventListener('dragover', (e)=>{
     if(e.target !== docListEl) return;
     if(e.dataTransfer.types.includes('application/x-threadline-doc')){
@@ -1745,7 +1810,6 @@
   // ---------------- Undo / redo buttons ----------------
   document.getElementById('undoBtn').addEventListener('click', performUndo);
   document.getElementById('redoBtn').addEventListener('click', performRedo);
-  updateUndoButtons();
 
   // ---------------- Help panel ----------------
   const helpToggle = document.getElementById('helpToggle');
@@ -1847,6 +1911,9 @@
     const doc = activeDoc();
     const node = doc.nodes[nodeId];
     if(!node) return;
+    const scrollContainer = document.getElementById('outlineScroll');
+    const scrollTop = scrollContainer.scrollTop;
+    
     switch(action){
       case 'done':
         toggleNodeDone(doc, node);
@@ -1875,15 +1942,29 @@
         if(outdentNode(doc, node)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
         break;
       case 'moveup':
-        if(moveNode(doc, node, -1)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        if(moveNode(doc, node, -1)){ 
+          scheduleSave(); 
+          focusRequest = { id: node.id, caret: 'end' };
+          renderTree();
+          requestAnimationFrame(() => {
+            scrollContainer.scrollTop = scrollTop;
+          });
+        }
         break;
       case 'movedown':
-        if(moveNode(doc, node, 1)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        if(moveNode(doc, node, 1)){ 
+          scheduleSave(); 
+          focusRequest = { id: node.id, caret: 'end' };
+          renderTree();
+          requestAnimationFrame(() => {
+            scrollContainer.scrollTop = scrollTop;
+          });
+        }
         break;
       case 'copy':
         selectedIds = new Set([nodeId]);
         selectionAnchorId = nodeId;
-        document.execCommand('copy'); // fires the 'copy' event our document-level listener handles
+        document.execCommand('copy');
         selectedIds.clear();
         selectionAnchorId = null;
         renderTree();
@@ -1891,7 +1972,7 @@
       case 'cut':
         selectedIds = new Set([nodeId]);
         selectionAnchorId = nodeId;
-        document.execCommand('cut'); // our 'cut' listener copies, then deletes and clears selection itself
+        document.execCommand('cut');
         break;
       case 'delete':
         deleteNodeWithConfirm(doc, node);
@@ -1940,10 +2021,6 @@
   });
 
   // ---------------- Structured copy / cut / paste ----------------
-  // Selecting one or more bullets (shift/cmd-click on the bullet) lets you copy/cut them with
-  // their full nested structure intact, and paste that structure back in — here or in another
-  // document/tab. The structure rides along as a hidden payload in the HTML clipboard flavor,
-  // with a plain indented-text fallback so it also works pasting into (or from) other apps.
   function topLevelSelectedIds(doc){
     const ids = [...selectedIds].filter(id => doc.nodes[id]);
     const idSet = new Set(ids);
@@ -1975,13 +2052,11 @@
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  // Real nested <ul><li> so other apps (Word, Docs, Notion, Gmail, Slack...) render true indentation
-  // on paste, instead of a flat line — HTML collapses plain whitespace/tabs when rendered.
   function itemsToHtmlList(items){
     if(!items || !items.length) return '';
     let html = '<ul style="margin:0;padding-left:20px;">';
     items.forEach(it=>{
-      const mark = it.done ? '\u2611\u00A0' : ''; // ☑ + nbsp
+      const mark = it.done ? '\u2611\u00A0' : '';
       let text = escapeHtml(it.text || '').replace(/\n/g, '<br>');
       if(it.bold) text = '<b>' + text + '</b>';
       html += '<li>' + mark + text + itemsToHtmlList(it.children) + '</li>';
@@ -2025,7 +2100,7 @@
   }
 
   document.addEventListener('copy', (e)=>{
-    if(!selectedIds.size) return; // let normal in-field text copy behave normally
+    if(!selectedIds.size) return;
     if(copySelectionToClipboard(e.clipboardData)) e.preventDefault();
   });
   document.addEventListener('cut', (e)=>{
@@ -2042,9 +2117,6 @@
     }
   });
 
-  // Global undo/redo. We intercept and preventDefault unconditionally on the key combo (not just
-  // when there's something to undo) so the browser's native per-field contenteditable undo never
-  // fires instead — that would silently desync the DOM from our node.text model.
   document.addEventListener('keydown', (e)=>{
     const mod = e.ctrlKey || e.metaKey;
     if(!mod || e.altKey) return;
@@ -2058,8 +2130,6 @@
     }
   });
 
-  // insert a parsed/pasted item tree at the given node: fills an empty target line in place,
-  // otherwise inserts as new siblings right after it
   function insertStructuredPaste(nodeId, items){
     const doc = activeDoc();
     const node = doc.nodes[nodeId];
@@ -2144,8 +2214,6 @@
     exportMenu.classList.remove('open');
   });
 
-  // Shared by file import and paste-from-plain-text: turns indented/tabbed lines into a nested
-  // {text, done, children} tree, same shape used for clipboard structured copy/paste.
   function parseIndentedOutline(text){
     const rawLines = text.split('\n').filter(l => l.trim().length);
     const root = { text:'', done:false, children:[] };
@@ -2154,7 +2222,6 @@
       const match = line.match(/^(\s*)/);
       const leading = match[1].replace(/\t/g,'  ');
       const depth = Math.floor(leading.length/2);
-      // strip a leading bullet marker, but not the first * of a **bold** wrapper
       let clean = line.trim().replace(/^(?:[-•]|\*(?!\*))\s?/, '');
       let done = false;
       if(/^\[x\]\s?/i.test(clean)){ done = true; clean = clean.replace(/^\[x\]\s?/i,''); }
@@ -2201,8 +2268,7 @@
           const data = JSON.parse(reader.result);
           if(data.threadlineWorkspace && data.workspace){
             Object.values(data.workspace.documents).forEach(doc=>{
-              doc.id = uid(); // avoid collisions
-              Object.keys(doc.nodes).forEach(()=>{}); // ids inside stay consistent internally
+              doc.id = uid();
               workspace.documents[doc.id] = doc;
             });
             workspace.activeDocId = Object.keys(data.workspace.documents).length
@@ -2221,7 +2287,6 @@
           scheduleSave();
           renderAll();
         } else {
-          // plain text / markdown-ish import: tab or 2-space indentation -> nesting
           const text = reader.result;
           const doc = makeDoc(file.name.replace(/\.[^.]+$/, ''));
           doc.nodes = { [doc.rootId]: doc.nodes[doc.rootId] };
@@ -2245,7 +2310,6 @@
   });
 
   // ---------------- Firebase auth + Firestore sync + sharing ----------------
-  // Shared Firebase project across your app suite (qtodo-syn).
   const FIREBASE_CONFIG = {
     apiKey: "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
     authDomain: "qtodo-syn.firebaseapp.com",
@@ -2262,16 +2326,18 @@
 
   let userDocUnsub = null;
   let sharedIndexUnsub = null;
-  let sharedDocUnsubs = {};       // shareId -> unsub fn
+  let sharedDocUnsubs = {};
   let lastPrivateJSON = null;
-  let lastSharedJSON = {};        // shareId -> json string
-  let privateSaveTimer = null;
-  let sharedSaveTimers = {};      // shareId -> timer
+  let lastSharedJSON = {};
   let shareModalDocId = null;
-  let shareModalKind = 'doc'; // 'doc' | 'folder'
+  let shareModalKind = 'doc';
+  let initialSyncDone = false;
 
   let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl;
   let syncWatchdogTimer = null;
+  let cloudSyncScheduled = false;
+  let cloudSyncPending = false;
+  let cloudSyncQueue = new Set();
 
   function setSyncState(state, label){
     if(!syncDotEl) return;
@@ -2279,13 +2345,9 @@
     syncDotEl.title = label || state;
     clearTimeout(syncWatchdogTimer);
     if(state === 'syncing'){
-      // if nothing resolves this within a reasonable window, something is genuinely stuck
-      // (blocked connection, browser extension interfering, quota, etc.) — say so instead of
-      // leaving the dot silently orange forever with no way to tell it's actually broken.
       syncWatchdogTimer = setTimeout(()=>{
         if(syncDotEl.dataset.state === 'syncing'){
-          console.warn('Sync has been stuck on "syncing" for 15s+. This usually means a browser extension (ad blocker, privacy tool) is blocking requests to firestore.googleapis.com, or the network connection to Firestore is stalled. Check the Network tab for failed/pending requests to firestore.googleapis.com.');
-          setSyncState('error', 'Sync seems stuck — a browser extension may be blocking Firestore, or your connection is stalled. Check the console (F12) for details.');
+          setSyncState('error', 'Sync timeout — check your connection');
         }
       }, 15000);
     }
@@ -2301,7 +2363,6 @@
     if(typeof firebase === 'undefined'){
       setSyncState('offline', 'Firebase SDK failed to load — working offline');
       signInBtnEl.disabled = true;
-      signInBtnEl.title = 'Firebase SDK failed to load — check your network settings';
       return;
     }
     try{
@@ -2337,8 +2398,14 @@
         userChipEl.style.display = 'flex';
         userAvatarEl.src = user.photoURL || '';
         userNameEl.textContent = user.displayName || user.email || 'Signed in';
+        initialSyncDone = false;
         subscribeToUserDoc(user.uid);
         subscribeToSharedIndex((user.email || '').toLowerCase());
+        setTimeout(() => {
+          if(!applyingRemote && firebaseReady && currentUser) {
+            triggerCloudSync();
+          }
+        }, 1000);
       } else {
         signInBtnEl.style.display = 'flex';
         userChipEl.style.display = 'none';
@@ -2346,13 +2413,124 @@
         if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
         Object.values(sharedDocUnsubs).forEach(fn=>fn());
         sharedDocUnsubs = {};
+        lastPrivateJSON = null;
+        initialSyncDone = false;
         setSyncState('offline', 'Not signed in');
       }
       renderDocList();
     });
   }
 
-  // ---- private documents: mirrored whole-blob under users/{uid}, same pattern as your other apps ----
+  function triggerCloudSync(){
+    if(!firebaseReady || !currentUser || applyingRemote) return;
+    Object.keys(workspace.documents).forEach(id => {
+      cloudSyncQueue.add(id);
+    });
+    if(!cloudSyncScheduled) {
+      cloudSyncScheduled = true;
+      setTimeout(() => {
+        cloudSyncScheduled = false;
+        if(cloudSyncQueue.size > 0 && !cloudSyncPending) {
+          const ids = [...cloudSyncQueue];
+          cloudSyncQueue.clear();
+          cloudSyncPending = true;
+          performCloudSync(ids);
+        }
+      }, 300);
+    }
+  }
+
+  function performCloudSync(docIds){
+    if(!firebaseReady || !currentUser || applyingRemote) {
+      cloudSyncPending = false;
+      return;
+    }
+    
+    setSyncState('syncing', 'Saving…');
+    const promises = [];
+    const privateDocs = {};
+    const sharedDocs = {};
+    
+    docIds.forEach(id => {
+      const doc = workspace.documents[id];
+      if(!doc) return;
+      if(doc.shareId) {
+        sharedDocs[doc.shareId] = doc;
+      } else {
+        privateDocs[id] = doc;
+      }
+    });
+    
+    if(Object.keys(privateDocs).length > 0) {
+      const out = {};
+      Object.values(workspace.documents).forEach(d=>{ 
+        if(!d.shareId) out[d.id] = d; 
+      });
+      const folders = {};
+      Object.values(workspace.folders || {}).forEach(f=>{ 
+        if(!f.shareId) folders[f.id] = f; 
+      });
+      const json = stableStringify({ docs: out, folders });
+      if(json !== lastPrivateJSON) {
+        promises.push(
+          db.collection('users').doc(currentUser.uid).set({
+            threadlineDocs: out,
+            threadlineFolders: folders,
+            threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge:true }).then(() => {
+            lastPrivateJSON = json;
+          })
+        );
+      }
+    }
+    
+    Object.entries(sharedDocs).forEach(([shareId, doc]) => {
+      const json = stableStringify(doc);
+      if(json !== lastSharedJSON[shareId]) {
+        promises.push(
+          db.collection('shared_projects').doc(shareId).set({
+            doc: doc,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge:true }).then(() => {
+            lastSharedJSON[shareId] = json;
+          })
+        );
+      }
+    });
+    
+    if(promises.length === 0) {
+      cloudSyncPending = false;
+      setSyncState('synced', 'Synced');
+      return;
+    }
+    
+    Promise.all(promises).then(() => {
+      cloudSyncPending = false;
+      setSyncState('synced', 'Synced');
+    }).catch(err => {
+      cloudSyncPending = false;
+      console.error('Cloud sync failed', err);
+      setSyncState('error', 'Save failed: ' + err.message);
+      setTimeout(() => {
+        if(cloudSyncQueue.size === 0) {
+          cloudSyncQueue.add(workspace.activeDocId);
+        }
+        if(!cloudSyncScheduled) {
+          cloudSyncScheduled = true;
+          setTimeout(() => {
+            cloudSyncScheduled = false;
+            if(cloudSyncQueue.size > 0 && !cloudSyncPending) {
+              const ids = [...cloudSyncQueue];
+              cloudSyncQueue.clear();
+              cloudSyncPending = true;
+              performCloudSync(ids);
+            }
+          }, 5000);
+        }
+      }, 5000);
+    });
+  }
+
   function subscribeToUserDoc(uid){
     if(userDocUnsub) userDocUnsub();
     setSyncState('syncing', 'Connecting…');
@@ -2361,50 +2539,92 @@
       const remote = data.threadlineDocs;
       const remoteFolders = data.threadlineFolders || {};
       if(snap.metadata.hasPendingWrites){
-        // our own optimistic write echoing back — nothing new to merge, but getting a snapshot at
-        // all confirms we're connected, so don't leave the dot stuck on "Connecting…" over this
         setSyncState('synced', 'Synced');
         return;
       }
       if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
         setSyncState('synced', 'Synced');
-        pushPrivateDocs();
+        if(Object.keys(workspace.documents).length > 0 && !initialSyncDone) {
+          initialSyncDone = true;
+          triggerCloudSync();
+        }
         return;
       }
       const json = stableStringify({ docs: remote, folders: remoteFolders });
-      if(json === lastPrivateJSON){ setSyncState('synced', 'Synced'); return; }
+      if(json === lastPrivateJSON){ 
+        setSyncState('synced', 'Synced');
+        initialSyncDone = true;
+        return; 
+      }
 
       applyingRemote = true;
+      let changed = false;
       try{
-        Object.keys(workspace.documents).forEach(id=>{
-          if(!workspace.documents[id].shareId) delete workspace.documents[id];
+        const localDocIds = new Set(Object.keys(workspace.documents));
+        const remoteDocIds = new Set(Object.keys(remote));
+        
+        localDocIds.forEach(id => {
+          if(!workspace.documents[id].shareId && !remoteDocIds.has(id)) {
+            delete workspace.documents[id];
+            changed = true;
+          }
         });
+        
         Object.keys(remote).forEach(id=>{
           const merged = mergeDoc(workspace.documents[id], remote[id]);
-          workspace.documents[id] = merged;
+          if(!workspace.documents[id] || stableStringify(merged) !== stableStringify(workspace.documents[id])) {
+            workspace.documents[id] = merged;
+            changed = true;
+          }
         });
-        Object.keys(workspace.folders).forEach(id=>{
-          if(!workspace.folders[id].shareId) delete workspace.folders[id];
+        
+        const localFolderIds = new Set(Object.keys(workspace.folders || {}));
+        const remoteFolderIds = new Set(Object.keys(remoteFolders));
+        
+        localFolderIds.forEach(id => {
+          if(!workspace.folders[id].shareId && !remoteFolderIds.has(id)) {
+            delete workspace.folders[id];
+            changed = true;
+          }
         });
-        Object.keys(remoteFolders).forEach(id=>{ workspace.folders[id] = remoteFolders[id]; });
+        
+        Object.keys(remoteFolders).forEach(id=>{
+          if(workspace.folders[id]) {
+            if(stableStringify(workspace.folders[id]) !== stableStringify(remoteFolders[id])) {
+              Object.assign(workspace.folders[id], remoteFolders[id]);
+              changed = true;
+            }
+          } else {
+            workspace.folders[id] = remoteFolders[id];
+            changed = true;
+          }
+        });
+        
         if(!workspace.documents[workspace.activeDocId]){
           const ids = Object.keys(workspace.documents);
           workspace.activeDocId = ids.length ? ids[0] : null;
+          changed = true;
         }
         if(!workspace.activeDocId){
           const fresh = makeDoc('Untitled');
           workspace.documents[fresh.id] = fresh;
           workspace.activeDocId = fresh.id;
+          changed = true;
         }
         lastPrivateJSON = json;
-        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+        if(changed) {
+          try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+        }
       } catch(mergeErr){
         console.error('Private doc merge failed — keeping local copy as-is', mergeErr);
       } finally {
         applyingRemote = false;
       }
-      renderDocList();
-      renderTreePreservingFocus();
+      if(changed) {
+        renderDocList();
+        renderTreePreservingFocus();
+      }
+      initialSyncDone = true;
       setSyncState('synced', 'Synced');
     }, err=>{
       console.error('Cloud sync error', err);
@@ -2412,30 +2632,6 @@
     });
   }
 
-  function pushPrivateDocs(){
-    if(!firebaseReady || !currentUser) return;
-    const out = {};
-    Object.values(workspace.documents).forEach(d=>{ if(!d.shareId) out[d.id] = d; });
-    const folders = {};
-    Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
-    const json = stableStringify({ docs: out, folders });
-    if(json === lastPrivateJSON){ setSyncState('synced', 'Synced'); return; }
-    db.collection('users').doc(currentUser.uid).set({
-      threadlineDocs: out,
-      threadlineFolders: folders,
-      threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge:true }).then(()=>{
-      lastPrivateJSON = json;
-      setSyncState('synced', 'Synced');
-    }).catch(err=>{
-      console.error('Cloud save failed', err);
-      setSyncState('error', 'Save failed: ' + err.message);
-    });
-  }
-
-  // A plain merge:true write only adds/updates the keys you send — it never removes a key that's
-  // simply absent from the payload. So deleting a document (or folder) locally, or moving a document
-  // into shared_projects, needs an explicit dot-path field deletion or the old copy quietly comes back.
   function deletePrivateDocRemote(docId){
     if(!firebaseReady || !currentUser) return;
     const path = 'threadlineDocs.' + docId;
@@ -2452,7 +2648,6 @@
     }).catch(err=> console.error('Could not remove folder from cloud', err));
   }
 
-  // ---- shared documents: one doc per share under shared_projects/{shareId} ----
   function subscribeToSharedIndex(email){
     if(sharedIndexUnsub) sharedIndexUnsub();
     sharedIndexUnsub = db.collection('shared_projects')
@@ -2489,11 +2684,6 @@
       }, err=> console.error('shared index error', err));
   }
 
-  // ---- merge a locally-held copy of a shared doc with a freshly-arrived remote copy ----
-  // Whole-document last-write-wins (just replacing local with remote) will resurrect nodes the
-  // other person just deleted, if their edit happened to reach Firestore a moment earlier. This
-  // merges node-by-node using each node's own `updatedAt`, and treats `tombstones` as authoritative
-  // so a deletion can't be undone by a stale copy that doesn't know about it yet.
   function mergeDoc(local, remote){
     if(!local) return remote;
     if(!remote) return local;
@@ -2511,18 +2701,21 @@
       const winner = (ln && rn) ? ((rn.updatedAt || 0) >= (ln.updatedAt || 0) ? rn : ln) : (rn || ln);
       if(!winner) return;
       const deletedAt = tombstones[id] || 0;
-      if(deletedAt && deletedAt >= (winner.updatedAt || 0)) return; // deletion wins over a stale copy
+      if(deletedAt && deletedAt >= (winner.updatedAt || 0)) return;
       nodes[id] = Object.assign({}, winner);
     });
 
-    // drop dangling child references (deleted or otherwise missing nodes)
-    Object.values(nodes).forEach(n=>{ n.children = (n.children || []).filter(cid => nodes[cid]); });
+    Object.values(nodes).forEach(n=>{ 
+      n.children = (n.children || []).filter(cid => nodes[cid]); 
+    });
 
     const rootId = remote.rootId || local.rootId;
     if(!nodes[rootId]){
-      nodes[rootId] = (local.nodes||{})[rootId] || (remote.nodes||{})[rootId] || { id: rootId, text:'', children:[], collapsed:false, done:false, parentId:null, updatedAt: Date.now() };
+      nodes[rootId] = (local.nodes||{})[rootId] || (remote.nodes||{})[rootId] || { 
+        id: rootId, text:'', children:[], collapsed:false, done:false, parentId:null, updatedAt: Date.now() 
+      };
     }
-    // reattach any orphaned node (parent missing/deleted, or never referenced) under root
+
     const referenced = new Set();
     Object.values(nodes).forEach(n=> n.children.forEach(cid=>referenced.add(cid)));
     Object.keys(nodes).forEach(id=>{
@@ -2530,7 +2723,8 @@
       if(!referenced.has(id)) nodes[rootId].children.push(id);
     });
 
-    const nameWins = (remote.updatedAt || 0) >= (local.updatedAt || 0);
+    const nameWins = (remote.updatedAt || 0) < (local.updatedAt || 0);
+    
     return {
       id: remote.id || local.id,
       shareId: remote.shareId || local.shareId,
@@ -2538,16 +2732,15 @@
       ownerEmail: remote.ownerEmail || local.ownerEmail,
       createdAt: Math.min(local.createdAt || Date.now(), remote.createdAt || Date.now()),
       updatedAt: Math.max(local.updatedAt || 0, remote.updatedAt || 0),
-      name: nameWins ? remote.name : local.name,
+      name: nameWins ? local.name : remote.name,
       rootId,
-      zoomedId: (local.zoomedId && nodes[local.zoomedId]) ? local.zoomedId : rootId, // keep your own scroll position where possible
+      zoomedId: (local.zoomedId && nodes[local.zoomedId]) ? local.zoomedId : rootId,
       nodes,
-      tombstones
+      tombstones,
+      syncVersion: Math.max(local.syncVersion || 0, remote.syncVersion || 0)
     };
   }
 
-  // Rebuilding the whole tree on every remote snapshot would blow away focus/cursor mid-keystroke.
-  // Capture what's focused first, restore it after, so a collaborator's edit doesn't interrupt yours.
   function renderTreePreservingFocus(){
     const active = document.activeElement;
     if(active && active.classList && active.classList.contains('content')){
@@ -2593,19 +2786,15 @@
       if(workspace.activeDocId === shareId) renderTreePreservingFocus();
       setSyncState('synced', 'Synced');
 
-      // if the merge differs from what's on the server (e.g. it healed a conflict), push the
-      // reconciled version back so both sides converge quickly instead of fighting each other.
       const mergedJSON = stableStringify(merged);
       if(mergedJSON === json){
-        lastSharedJSON[shareId] = json; // merge matches the server as-is, nothing to push
+        lastSharedJSON[shareId] = json;
       } else {
-        scheduleCloudSave(shareId); // leave lastSharedJSON stale so pushSharedDoc detects the diff and writes
+        triggerCloudSync();
       }
     }, err=> console.error('shared doc error', err));
   }
 
-  // Folder metadata is lightweight (name + membership) and always written directly rather than
-  // through the debounced node-edit pipeline, so this just merges it in — no conflict resolution needed.
   function applyFolderSnapshot(shareId, data){
     const json = stableStringify({ name: data.name, collaboratorEmails: data.collaboratorEmails || [] });
     if(json === lastSharedJSON[shareId]) return;
@@ -2615,7 +2804,7 @@
       workspace.folders[shareId] = {
         id: shareId, shareId,
         name: data.name || 'New folder',
-        collapsed: existing ? existing.collapsed : false, // collapse state stays a personal, local preference
+        collapsed: existing ? existing.collapsed : false,
         ownerUid: data.ownerUid, ownerEmail: data.ownerEmail,
         collaboratorEmails: data.collaboratorEmails || [],
         createdAt: existing ? existing.createdAt : Date.now(),
@@ -2628,38 +2817,6 @@
     lastSharedJSON[shareId] = json;
     renderDocList();
     setSyncState('synced', 'Synced');
-  }
-
-  function pushSharedDoc(shareId){
-    const doc = workspace.documents[shareId];
-    if(!doc || !firebaseReady || !currentUser) return;
-    const json = stableStringify(doc);
-    if(json === lastSharedJSON[shareId]){ setSyncState('synced', 'Synced'); return; }
-    db.collection('shared_projects').doc(shareId).set({
-      doc: doc,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge:true }).then(()=>{
-      lastSharedJSON[shareId] = json;
-      setSyncState('synced', 'Synced');
-    }).catch(err=>{
-      console.error('Shared save failed', err);
-      setSyncState('error', 'Save failed: ' + err.message);
-    });
-  }
-
-  function scheduleCloudSave(docId){
-    if(!firebaseReady || !currentUser || applyingRemote) return;
-    const doc = workspace.documents[docId];
-    if(!doc) return;
-    if(doc.shareId){
-      clearTimeout(sharedSaveTimers[doc.shareId]);
-      setSyncState('syncing', 'Saving…');
-      sharedSaveTimers[doc.shareId] = setTimeout(()=>pushSharedDoc(doc.shareId), 700);
-    } else {
-      clearTimeout(privateSaveTimer);
-      setSyncState('syncing', 'Saving…');
-      privateSaveTimer = setTimeout(pushPrivateDocs, 700);
-    }
   }
 
   // ---- sharing UI ----
@@ -2764,8 +2921,8 @@
       if(workspace.activeDocId === oldDocId) workspace.activeDocId = shareId;
       lastSharedJSON[shareId] = stableStringify(payload);
       if(!sharedDocUnsubs[shareId]) subscribeToSharedDoc(shareId);
-      deletePrivateDocRemote(oldDocId); // otherwise the pre-share copy quietly reappears later
-      scheduleSave(shareId);
+      deletePrivateDocRemote(oldDocId);
+      scheduleSave();
       renderAll();
       if(openModal) openShareModal(shareId, 'doc');
     }).catch(err=>{
@@ -2774,10 +2931,6 @@
     });
   }
 
-  // A shared folder is just another shared_projects entry (kind:'folder', no `doc` payload) —
-  // reuses your existing shared_projects collection and security rules rather than needing a new one.
-  // Filing a document into a shared folder automatically shares that document with the folder's
-  // current members; adding/removing a folder member cascades to every document currently filed there.
   function createSharedFolder(folder, inviteEmail){
     const ref = db.collection('shared_projects').doc();
     const shareId = ref.id;
@@ -2804,7 +2957,6 @@
       lastSharedJSON[shareId] = stableStringify({ name: folder.name, collaboratorEmails });
       if(!sharedDocUnsubs[shareId]) subscribeToSharedDoc(shareId);
       deletePrivateFolderRemote(oldFolderId);
-      // existing documents in the folder become shared with the same members too
       docsInFolder.forEach(d => ensureDocSharedWithFolder(d, workspace.folders[shareId]));
       scheduleSave();
       renderAll();
@@ -2907,7 +3059,6 @@
       } else {
         op = !target.shareId ? createSharedDoc(target, email) : addMemberToExisting(target.shareId, email);
       }
-      // these helpers return a promise when there's Firestore work to wait on
       if(op && typeof op.then === 'function'){
         op.then(reset).catch((err)=>{ reset(); console.error(err); alert('Something went wrong: ' + (err && err.message || err)); });
       } else {
@@ -2960,6 +3111,7 @@
   });
 
   // ---------------- Init ----------------
+  loadUndoState();
   renderAll();
   initFirebase();
 })();
