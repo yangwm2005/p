@@ -594,9 +594,35 @@
   }
   input[type=file]{display:none;}
 
+  /* ---------- Print ---------- */
+  #printArea{display:none;}
+  #printHeader{margin-bottom:18px; border-bottom:2px solid #20262E; padding-bottom:10px;}
+  #printTitle{font-size:22px; font-weight:700; margin:0 0 4px; color:#20262E;}
+  #printMeta{font-size:11px; color:#5B6470; text-transform:uppercase; letter-spacing:0.4px;}
+  #printBody ul{margin:0; padding-left:22px; list-style:none;}
+  #printBody > ul{padding-left:0;}
+  #printBody li{margin:5px 0; position:relative; padding-left:14px; color:#20262E; font-size:13px; line-height:1.5;}
+  #printBody li::before{content:"–"; position:absolute; left:0; color:#98A0AA;}
+  #printBody li.p-done{color:#9AA5AE; text-decoration:line-through;}
+  #printBody .p-collapsed{
+    display:inline-block; margin-left:4px; font-size:11px; color:#98A0AA;
+    border:1px solid #CFC9B8; border-radius:8px; padding:0 5px; text-decoration:none;
+  }
+  .p-empty{color:#98A0AA; font-style:italic; font-size:13px;}
+
   @media (max-width: 720px){
     :root{--sidebar-w:0px;}
     #sidebar{display:none;}
+  }
+
+  @media print{
+    #topbar, #body, #helpPanel, #shareModalOverlay, #itemMenu{display:none !important;}
+    body{overflow:visible !important; height:auto !important; background:#fff !important;}
+    #printArea{
+      display:block !important;
+      max-width:100%;
+      font-family:'IBM Plex Sans', system-ui, sans-serif;
+    }
   }
 </style>
 </head>
@@ -617,6 +643,9 @@
   <div id="exportMenuWrap">
     <button class="topbtn" id="shareBtn">⇪ Share / Export</button>
     <div id="exportMenu">
+      <button id="printFullBtn">🖨 Print — full document</button>
+      <button id="printShownBtn">🖨 Print — current view (open/closed)</button>
+      <hr>
       <button id="expDocJson">Export this document (.json)</button>
       <button id="expDocMd">Export this document (.txt outline)</button>
       <hr>
@@ -735,6 +764,14 @@
   <button data-action="movedown">Move down</button>
   <hr>
   <button data-action="delete" class="danger">Delete</button>
+</div>
+
+<div id="printArea">
+  <div id="printHeader">
+    <h1 id="printTitle"></h1>
+    <div id="printMeta"></div>
+  </div>
+  <div id="printBody"></div>
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -2336,6 +2373,50 @@
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
+  function buildPrintTree(doc, id, mode){
+    const n = doc.nodes[id];
+    const expand = mode === 'full' || !n.collapsed;
+    const kids = n.children;
+    return {
+      text: n.text, done: !!n.done, bold: !!n.bold,
+      children: expand ? kids.map(cid => buildPrintTree(doc, cid, mode)) : [],
+      hiddenCount: (!expand && kids.length) ? kids.length : 0
+    };
+  }
+
+  function printItemsToHtml(items){
+    if(!items || !items.length) return '';
+    let html = '<ul>';
+    items.forEach(it=>{
+      const mark = it.done ? '\u2611\u00A0' : '\u2610\u00A0';
+      let text = escapeHtml(it.text || '(untitled)').replace(/\n/g, '<br>');
+      if(it.bold) text = '<b>' + text + '</b>';
+      const collapsedTag = it.hiddenCount
+        ? ` <span class="p-collapsed">+${it.hiddenCount} hidden</span>`
+        : '';
+      html += '<li class="' + (it.done ? 'p-done' : '') + '">' + mark + text + collapsedTag + printItemsToHtml(it.children) + '</li>';
+    });
+    html += '</ul>';
+    return html;
+  }
+
+  function openPrintView(mode){
+    const doc = activeDoc();
+    if(!doc) return;
+    const startId = mode === 'shown' ? doc.zoomedId : doc.rootId;
+    const startNode = doc.nodes[startId];
+    const title = (mode === 'shown' && startId !== doc.rootId) ? (startNode.text || 'Untitled') : (doc.name || 'Untitled document');
+    const items = startNode.children.map(cid => buildPrintTree(doc, cid, mode));
+    const printTitleEl = document.getElementById('printTitle');
+    const printMetaEl = document.getElementById('printMeta');
+    const printBodyEl = document.getElementById('printBody');
+    printTitleEl.textContent = title;
+    printMetaEl.textContent = (mode === 'full' ? 'Full document contents' : 'Current view — open items only')
+      + ' \u00B7 ' + new Date().toLocaleDateString();
+    printBodyEl.innerHTML = printItemsToHtml(items) || '<p class="p-empty">No items.</p>';
+    setTimeout(()=> window.print(), 50);
+  }
+
   function itemsToHtmlList(items){
     if(!items || !items.length) return '';
     let html = '<ul style="margin:0;padding-left:20px;">';
@@ -2483,6 +2564,14 @@
     return `${doc.name}\n${'='.repeat(doc.name.length)}\n\n` + lines.join('\n');
   }
 
+  document.getElementById('printFullBtn').addEventListener('click', ()=>{
+    exportMenu.classList.remove('open');
+    openPrintView('full');
+  });
+  document.getElementById('printShownBtn').addEventListener('click', ()=>{
+    exportMenu.classList.remove('open');
+    openPrintView('shown');
+  });
   document.getElementById('expDocJson').addEventListener('click', ()=>{
     const doc = activeDoc();
     download(`${safeFilename(doc.name)}.json`, JSON.stringify({ threadlineDoc: true, doc }, null, 2), 'application/json');
