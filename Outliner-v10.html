@@ -86,7 +86,7 @@
   }
   #searchInput{
     width:100%;
-    padding:6px 10px 6px 28px;
+    padding:6px 66px 6px 28px;
     border-radius:var(--radius);
     border:1px solid var(--line);
     background:var(--paper);
@@ -97,6 +97,69 @@
   }
   #searchInput:focus{border-color:var(--accent);}
   #searchWrap svg{position:absolute; left:8px; top:50%; transform:translateY(-50%); opacity:0.55; pointer-events:none;}
+  #searchScopeBtn{
+    position:absolute;
+    right:4px;
+    top:50%;
+    transform:translateY(-50%);
+    border:1px solid var(--line);
+    background:var(--paper-raised);
+    color:var(--ink-soft);
+    font-family:inherit;
+    font-size:11px;
+    font-weight:600;
+    letter-spacing:0.2px;
+    border-radius:4px;
+    padding:3px 7px;
+    cursor:pointer;
+    line-height:1.2;
+  }
+  #searchScopeBtn:hover{border-color:var(--line-strong); color:var(--ink);}
+  #searchScopeBtn.is-all{background:var(--accent-soft); color:var(--accent-ink); border-color:var(--accent-soft);}
+  #searchResultsPanel{
+    position:absolute;
+    top:calc(100% + 4px);
+    left:0;
+    right:0;
+    max-height:420px;
+    overflow-y:auto;
+    background:var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+    z-index:50;
+    padding:4px;
+  }
+  #searchResultsPanel.hidden{display:none;}
+  .srp-group{margin-bottom:2px;}
+  .srp-docname{
+    font-size:11px;
+    font-weight:600;
+    text-transform:uppercase;
+    letter-spacing:0.3px;
+    color:var(--ink-faint);
+    padding:6px 8px 2px;
+  }
+  .srp-item{
+    display:flex;
+    align-items:baseline;
+    gap:6px;
+    padding:6px 8px;
+    border-radius:4px;
+    cursor:pointer;
+    font-size:13px;
+    color:var(--ink-soft);
+    line-height:1.35;
+  }
+  .srp-item:hover{background:var(--accent-soft); color:var(--ink);}
+  .srp-item mark{background:var(--accent-soft); color:var(--accent-ink); border-radius:2px; padding:0 1px;}
+  .srp-empty{padding:10px 8px; font-size:13px; color:var(--ink-faint);}
+  .srp-more{padding:6px 8px; font-size:12px; color:var(--ink-faint);}
+  @keyframes srp-flash{
+    0%{background:var(--accent-soft);}
+    100%{background:transparent;}
+  }
+  .row.jump-flash > .row-main{animation:srp-flash 1.4s ease-out;}
   .topbtn{
     display:inline-flex;
     align-items:center;
@@ -181,6 +244,38 @@
     width:22px;height:22px; border-radius:5px; display:flex; align-items:center; justify-content:center;
   }
   #newDocBtn:hover, #newFolderBtn:hover{background:var(--accent-soft); color:var(--accent-ink);}
+  #sidebarSort{
+    display:flex;
+    align-items:center;
+    gap:5px;
+    padding:0 12px 8px;
+  }
+  #docSortSelect{
+    flex:1;
+    font-family:inherit;
+    font-size:11.5px;
+    color:var(--ink-soft);
+    background:var(--paper);
+    border:1px solid var(--line);
+    border-radius:5px;
+    padding:3px 6px;
+    outline:none;
+    cursor:pointer;
+  }
+  #docSortSelect:hover{border-color:var(--line-strong);}
+  #docSortSelect:focus{border-color:var(--accent);}
+  #docSortDirBtn{
+    background:var(--paper);
+    border:1px solid var(--line);
+    border-radius:5px;
+    color:var(--ink-soft);
+    cursor:pointer;
+    width:22px;height:22px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px;
+    flex-shrink:0;
+  }
+  #docSortDirBtn:hover{border-color:var(--line-strong); color:var(--ink);}
   #docList{flex:1; overflow-y:auto; padding:2px 6px 10px;}
   #docList.drop-root{background:var(--accent-soft); border-radius:6px;}
   .folderItem{
@@ -512,6 +607,8 @@
   <div id="searchWrap">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
     <input id="searchInput" placeholder="Search this document…" autocomplete="off">
+    <button id="searchScopeBtn" type="button" title="Toggle between searching this document or all documents">Doc</button>
+    <div id="searchResultsPanel" class="hidden"></div>
   </div>
   <div id="menuSpacer"></div>
   <button class="topbtn" id="undoBtn" title="Undo (Ctrl+Z)" disabled>↶</button>
@@ -554,6 +651,14 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
         </button>
       </div>
+    </div>
+    <div id="sidebarSort">
+      <select id="docSortSelect" title="Sort documents by">
+        <option value="updated">Updated</option>
+        <option value="created">Created</option>
+        <option value="name">Name</option>
+      </select>
+      <button id="docSortDirBtn" type="button" title="Toggle sort direction">↓</button>
     </div>
     <div id="docList"></div>
     <div id="sidebarFoot">Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.</div>
@@ -1175,17 +1280,56 @@
     return wrap;
   }
 
+  const docSortSelect = document.getElementById('docSortSelect');
+  const docSortDirBtn = document.getElementById('docSortDirBtn');
+  let docSortKey = localStorage.getItem('threadline_doc_sort_key') || 'updated';
+  if(!['updated','created','name'].includes(docSortKey)) docSortKey = 'updated';
+  let docSortDir = localStorage.getItem('threadline_doc_sort_dir') === 'asc' ? 'asc' : 'desc';
+  docSortSelect.value = docSortKey;
+
+  function updateSortDirBtn(){
+    docSortDirBtn.textContent = docSortDir === 'asc' ? '↑' : '↓';
+    docSortDirBtn.title = docSortDir === 'asc'
+      ? 'Ascending — click for descending'
+      : 'Descending — click for ascending';
+  }
+  updateSortDirBtn();
+
+  function compareDocs(a, b){
+    let result;
+    if(docSortKey === 'name'){
+      result = (a.name || 'Untitled').localeCompare(b.name || 'Untitled', undefined, { sensitivity: 'base', numeric: true });
+    } else if(docSortKey === 'created'){
+      result = (a.createdAt || 0) - (b.createdAt || 0);
+    } else {
+      result = (a.updatedAt || 0) - (b.updatedAt || 0);
+    }
+    return docSortDir === 'asc' ? result : -result;
+  }
+
+  docSortSelect.addEventListener('change', ()=>{
+    docSortKey = docSortSelect.value;
+    localStorage.setItem('threadline_doc_sort_key', docSortKey);
+    renderDocList();
+  });
+  docSortDirBtn.addEventListener('click', ()=>{
+    docSortDir = docSortDir === 'asc' ? 'desc' : 'asc';
+    localStorage.setItem('threadline_doc_sort_dir', docSortDir);
+    updateSortDirBtn();
+    renderDocList();
+  });
+
   function renderDocList(){
     docListEl.innerHTML = "";
     const allDocs = Object.values(workspace.documents);
     const folders = Object.values(workspace.folders || {}).sort((a,b)=> (a.name||'').localeCompare(b.name||''));
 
     folders.forEach(folder=>{
-      const docsInFolder = allDocs.filter(d => d.folderId === folder.id).sort((a,b)=>b.updatedAt-a.updatedAt);
+      const docsInFolder = allDocs.filter(d => d.folderId === folder.id).sort(compareDocs);
       docListEl.appendChild(buildFolderRowEl(folder, docsInFolder));
     });
 
-    const unfiled = allDocs.filter(d => !d.folderId || !workspace.folders[d.folderId]).sort((a,b)=>b.updatedAt-a.updatedAt);
+    const unfiled = allDocs.filter(d => !d.folderId || !workspace.folders[d.folderId]).sort(compareDocs);
     unfiled.forEach(doc => docListEl.appendChild(buildDocItemEl(doc)));
   }
 
@@ -1730,12 +1874,152 @@
 
   // ---------------- Search ----------------
   let searchDebounce = null;
+  const searchResultsPanel = document.getElementById('searchResultsPanel');
+  const searchScopeBtn = document.getElementById('searchScopeBtn');
+  const SRP_MAX_PER_DOC = 6;
+  const SRP_MAX_TOTAL = 40;
+  let searchScope = localStorage.getItem('threadline_search_scope') === 'all' ? 'all' : 'doc';
+
+  function updateSearchScopeUI(){
+    const isAll = searchScope === 'all';
+    searchScopeBtn.textContent = isAll ? 'All' : 'Doc';
+    searchScopeBtn.classList.toggle('is-all', isAll);
+    searchScopeBtn.title = isAll
+      ? 'Searching all documents — click to search this document only'
+      : 'Searching this document — click to search all documents';
+    searchInput.placeholder = isAll ? 'Search all documents…' : 'Search this document…';
+  }
+  updateSearchScopeUI();
+  searchScopeBtn.addEventListener('click', ()=>{
+    searchScope = searchScope === 'all' ? 'doc' : 'all';
+    localStorage.setItem('threadline_search_scope', searchScope);
+    updateSearchScopeUI();
+    if(searchInput.value.trim()){
+      renderSearchResultsPanel();
+      searchInput.focus();
+    }
+  });
+
+  function escapeHtmlText(s){
+    return (s || "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function makeSnippet(text, query){
+    const idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if(idx === -1) return escapeHtmlText(text.slice(0, 80));
+    const start = Math.max(0, idx - 24);
+    const end = Math.min(text.length, idx + query.length + 40);
+    let snippet = text.slice(start, end);
+    const localIdx = idx - start;
+    const before = escapeHtmlText(snippet.slice(0, localIdx));
+    const match = escapeHtmlText(snippet.slice(localIdx, localIdx + query.length));
+    const after = escapeHtmlText(snippet.slice(localIdx + query.length));
+    return (start > 0 ? '…' : '') + before + '<mark>' + match + '</mark>' + after + (end < text.length ? '…' : '');
+  }
+
+  function computeGlobalMatches(query){
+    const q = query.toLowerCase();
+    const results = [];
+    Object.values(workspace.documents).forEach(doc=>{
+      const docMatches = [];
+      Object.values(doc.nodes).forEach(n=>{
+        if(n.id !== doc.rootId && n.text && n.text.toLowerCase().includes(q)){
+          docMatches.push(n);
+        }
+      });
+      if(docMatches.length){
+        results.push({ doc, nodes: docMatches.slice(0, SRP_MAX_PER_DOC), total: docMatches.length });
+      }
+    });
+    // Show the active document's matches first, then others by most recently updated.
+    results.sort((a,b)=>{
+      if(a.doc.id === workspace.activeDocId) return -1;
+      if(b.doc.id === workspace.activeDocId) return 1;
+      return (b.doc.updatedAt||0) - (a.doc.updatedAt||0);
+    });
+    return results;
+  }
+
+  function jumpToSearchResult(docId, nodeId){
+    const targetDoc = workspace.documents[docId];
+    if(!targetDoc) return;
+    workspace.activeDocId = docId;
+    // Make sure the node isn't hidden behind a zoom on an unrelated branch.
+    targetDoc.zoomedId = targetDoc.rootId;
+    closeSearchResultsPanel();
+    scheduleSave();
+    renderAll();
+    requestAnimationFrame(()=>{
+      const row = treeRootEl.querySelector(`.row[data-id="${nodeId}"]`);
+      if(row){
+        row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        row.classList.add('jump-flash');
+        setTimeout(()=> row.classList.remove('jump-flash'), 1400);
+      }
+    });
+  }
+
+  function renderSearchResultsPanel(){
+    const query = searchInput.value.trim();
+    if(!query || searchScope !== 'all'){
+      closeSearchResultsPanel();
+      return;
+    }
+    const grouped = computeGlobalMatches(query);
+    searchResultsPanel.innerHTML = "";
+    if(!grouped.length){
+      searchResultsPanel.innerHTML = `<div class="srp-empty">No matches for "${escapeHtmlText(query)}"</div>`;
+    } else {
+      let shown = 0;
+      outer:
+      for(const group of grouped){
+        const groupEl = document.createElement('div');
+        groupEl.className = 'srp-group';
+        const label = document.createElement('div');
+        label.className = 'srp-docname';
+        label.textContent = (group.doc.name || 'Untitled') + (group.total > group.nodes.length ? ` (${group.total} matches)` : '');
+        groupEl.appendChild(label);
+        for(const node of group.nodes){
+          if(shown >= SRP_MAX_TOTAL) break outer;
+          const item = document.createElement('div');
+          item.className = 'srp-item';
+          item.innerHTML = `<span>${makeSnippet(node.text, query)}</span>`;
+          item.addEventListener('mousedown', (e)=>{
+            e.preventDefault();
+            jumpToSearchResult(group.doc.id, node.id);
+          });
+          groupEl.appendChild(item);
+          shown++;
+        }
+        searchResultsPanel.appendChild(groupEl);
+      }
+    }
+    searchResultsPanel.classList.remove('hidden');
+  }
+
+  function closeSearchResultsPanel(){
+    searchResultsPanel.classList.add('hidden');
+  }
+
   searchInput.addEventListener('input', ()=>{
     clearTimeout(searchDebounce);
     searchDebounce = setTimeout(()=>{
       searchQuery = searchInput.value.trim();
       renderTree();
+      renderSearchResultsPanel();
     }, 120);
+  });
+  searchInput.addEventListener('focus', ()=>{
+    if(searchInput.value.trim()) renderSearchResultsPanel();
+  });
+  searchInput.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape'){
+      closeSearchResultsPanel();
+      searchInput.blur();
+    }
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('#searchWrap')) closeSearchResultsPanel();
   });
 
   // ---------------- New document / add first line ----------------
