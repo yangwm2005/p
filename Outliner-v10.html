@@ -2271,11 +2271,24 @@
   let shareModalKind = 'doc'; // 'doc' | 'folder'
 
   let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl;
+  let syncWatchdogTimer = null;
 
   function setSyncState(state, label){
     if(!syncDotEl) return;
     syncDotEl.dataset.state = state;
     syncDotEl.title = label || state;
+    clearTimeout(syncWatchdogTimer);
+    if(state === 'syncing'){
+      // if nothing resolves this within a reasonable window, something is genuinely stuck
+      // (blocked connection, browser extension interfering, quota, etc.) — say so instead of
+      // leaving the dot silently orange forever with no way to tell it's actually broken.
+      syncWatchdogTimer = setTimeout(()=>{
+        if(syncDotEl.dataset.state === 'syncing'){
+          console.warn('Sync has been stuck on "syncing" for 15s+. This usually means a browser extension (ad blocker, privacy tool) is blocking requests to firestore.googleapis.com, or the network connection to Firestore is stalled. Check the Network tab for failed/pending requests to firestore.googleapis.com.');
+          setSyncState('error', 'Sync seems stuck — a browser extension may be blocking Firestore, or your connection is stalled. Check the console (F12) for details.');
+        }
+      }, 15000);
+    }
   }
 
   function initFirebase(){
@@ -2344,10 +2357,15 @@
     if(userDocUnsub) userDocUnsub();
     setSyncState('syncing', 'Connecting…');
     userDocUnsub = db.collection('users').doc(uid).onSnapshot(snap=>{
-      if(snap.metadata.hasPendingWrites) return; // ignore our own optimistic echo
       const data = snap.data() || {};
       const remote = data.threadlineDocs;
       const remoteFolders = data.threadlineFolders || {};
+      if(snap.metadata.hasPendingWrites){
+        // our own optimistic write echoing back — nothing new to merge, but getting a snapshot at
+        // all confirms we're connected, so don't leave the dot stuck on "Connecting…" over this
+        setSyncState('synced', 'Synced');
+        return;
+      }
       if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
         setSyncState('synced', 'Synced');
         pushPrivateDocs();
