@@ -219,6 +219,7 @@
     cursor:pointer;
   }
   #exportMenu button:hover{background:var(--accent-soft); color:var(--accent-ink);}
+  #exportMenu button.copied{background:var(--accent-soft); color:var(--accent-ink);}
   #exportMenu hr{border:none; border-top:1px solid var(--line); margin:4px 2px;}
 
   /* ---------- Layout ---------- */
@@ -645,6 +646,9 @@
     <div id="exportMenu">
       <button id="printFullBtn">🖨 Print — full document</button>
       <button id="printShownBtn">🖨 Print — current view (open/closed)</button>
+      <hr>
+      <button id="copyFullBtn">📋 Copy — full document</button>
+      <button id="copyShownBtn">📋 Copy — current view (open/closed)</button>
       <hr>
       <button id="expDocJson">Export this document (.json)</button>
       <button id="expDocMd">Export this document (.txt outline)</button>
@@ -2445,6 +2449,71 @@
     return true;
   }
 
+  function exportNodeForClipboardMode(doc, id, mode){
+    const n = doc.nodes[id];
+    const expand = mode === 'full' || !n.collapsed;
+    return {
+      text: n.text, done: !!n.done, bold: !!n.bold, bgColor: n.bgColor || null,
+      children: expand ? n.children.map(cid => exportNodeForClipboardMode(doc, cid, mode)) : []
+    };
+  }
+
+  function flashCopiedLabel(btn){
+    if(!btn) return;
+    const original = btn.textContent;
+    btn.textContent = '✓ Copied to clipboard';
+    btn.classList.add('copied');
+    setTimeout(()=>{
+      btn.textContent = original;
+      btn.classList.remove('copied');
+    }, 1300);
+  }
+
+  async function copyWholeDocument(mode, btn){
+    const doc = activeDoc();
+    if(!doc) return;
+    const startId = mode === 'shown' ? doc.zoomedId : doc.rootId;
+    const startNode = doc.nodes[startId];
+    const items = startNode.children.map(cid => exportNodeForClipboardMode(doc, cid, mode));
+    if(!items.length){
+      alert('There\'s nothing to copy yet.');
+      return;
+    }
+    const plain = itemsToPlainText(items, 0);
+    const jsonPayload = JSON.stringify({ threadlineClip: true, items });
+    const b64 = btoa(unescape(encodeURIComponent(jsonPayload)));
+    const htmlPayload = '<!--threadline-clip:' + b64 + '-->' + itemsToHtmlList(items);
+
+    try{
+      if(navigator.clipboard && window.ClipboardItem){
+        const item = new ClipboardItem({
+          'text/plain': new Blob([plain], { type: 'text/plain' }),
+          'text/html': new Blob([htmlPayload], { type: 'text/html' })
+        });
+        await navigator.clipboard.write([item]);
+      } else if(navigator.clipboard && navigator.clipboard.writeText){
+        await navigator.clipboard.writeText(plain);
+      } else {
+        throw new Error('no-clipboard-api');
+      }
+      flashCopiedLabel(btn);
+    } catch(err){
+      // Legacy fallback: override a synthetic copy event.
+      let ok = false;
+      const handler = (e)=>{
+        e.clipboardData.setData('text/plain', plain);
+        e.clipboardData.setData('text/html', htmlPayload);
+        e.preventDefault();
+        ok = true;
+      };
+      document.addEventListener('copy', handler);
+      try{ document.execCommand('copy'); }catch(e2){}
+      document.removeEventListener('copy', handler);
+      if(ok) flashCopiedLabel(btn);
+      else alert('Copy failed — your browser blocked clipboard access here.');
+    }
+  }
+
   function deleteSelection(){
     const doc = activeDoc();
     const topIds = topLevelSelectedIds(doc);
@@ -2571,6 +2640,12 @@
   document.getElementById('printShownBtn').addEventListener('click', ()=>{
     exportMenu.classList.remove('open');
     openPrintView('shown');
+  });
+  document.getElementById('copyFullBtn').addEventListener('click', (e)=>{
+    copyWholeDocument('full', e.currentTarget);
+  });
+  document.getElementById('copyShownBtn').addEventListener('click', (e)=>{
+    copyWholeDocument('shown', e.currentTarget);
   });
   document.getElementById('expDocJson').addEventListener('click', ()=>{
     const doc = activeDoc();
