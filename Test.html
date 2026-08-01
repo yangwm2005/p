@@ -641,7 +641,6 @@
 
   const STORAGE_KEY = "threadline_outliner_v1";
   const UNDO_STORAGE_KEY = "threadline_undo_v1";
-  const SYNC_LOCK_KEY = "threadline_sync_lock";
   
   function stableStringify(obj){
     if(obj === null || typeof obj !== 'object') return JSON.stringify(obj);
@@ -782,7 +781,6 @@
     } catch(e) { 
       console.warn("Failed to load undo state", e);
     }
-    // Build initial undo points for existing docs
     try {
       Object.values(workspace.documents).forEach(doc => {
         if(doc && doc.id) {
@@ -918,7 +916,6 @@
       }
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
       catch(e){ console.warn("save failed", e); }
-      // Trigger cloud sync if available
       if(firebaseReady && currentUser && !applyingRemote) {
         scheduleCloudSync();
       }
@@ -1439,6 +1436,8 @@
       const el = treeRootEl.querySelector(`.row[data-id="${CSS.escape(focusRequest.id)}"] .content`);
       if(el){
         el.focus();
+        // Scroll the element into view smoothly without jumping to top
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
         placeCaret(el, focusRequest.caret);
       }
       focusRequest = null;
@@ -1671,8 +1670,15 @@
         const moved = moveNode(doc, node, e.key === 'ArrowUp' ? -1 : 1);
         if(moved){
           scheduleSave();
+          // Store the current scroll position before re-render
+          const scrollContainer = document.getElementById('outlineScroll');
+          const scrollTop = scrollContainer.scrollTop;
           focusRequest = { id: node.id, caret: getCaretOffset(el) };
           renderTree();
+          // Restore scroll position after re-render
+          requestAnimationFrame(() => {
+            scrollContainer.scrollTop = scrollTop;
+          });
         }
         return;
       }
@@ -1894,6 +1900,9 @@
     const doc = activeDoc();
     const node = doc.nodes[nodeId];
     if(!node) return;
+    const scrollContainer = document.getElementById('outlineScroll');
+    const scrollTop = scrollContainer.scrollTop;
+    
     switch(action){
       case 'done':
         toggleNodeDone(doc, node);
@@ -1922,10 +1931,26 @@
         if(outdentNode(doc, node)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
         break;
       case 'moveup':
-        if(moveNode(doc, node, -1)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        if(moveNode(doc, node, -1)){ 
+          scheduleSave(); 
+          focusRequest = { id: node.id, caret: 'end' };
+          renderTree();
+          // Restore scroll position
+          requestAnimationFrame(() => {
+            scrollContainer.scrollTop = scrollTop;
+          });
+        }
         break;
       case 'movedown':
-        if(moveNode(doc, node, 1)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        if(moveNode(doc, node, 1)){ 
+          scheduleSave(); 
+          focusRequest = { id: node.id, caret: 'end' };
+          renderTree();
+          // Restore scroll position
+          requestAnimationFrame(() => {
+            scrollContainer.scrollTop = scrollTop;
+          });
+        }
         break;
       case 'copy':
         selectedIds = new Set([nodeId]);
@@ -2414,7 +2439,6 @@
       }
     });
     
-    // Save private docs
     if(Object.keys(privateDocs).length > 0) {
       const out = {};
       Object.values(workspace.documents).forEach(d=>{ if(!d.shareId) out[d.id] = d; });
@@ -2434,7 +2458,6 @@
       }
     }
     
-    // Save shared docs
     Object.entries(sharedDocs).forEach(([shareId, doc]) => {
       const json = stableStringify(doc);
       if(json !== lastSharedJSON[shareId]) {
@@ -2462,7 +2485,6 @@
       cloudSyncPending = false;
       console.error('Cloud sync failed', err);
       setSyncState('error', 'Save failed: ' + err.message);
-      // Retry after a delay
       setTimeout(() => {
         if(cloudSyncQueue.size === 0) {
           cloudSyncQueue.add(workspace.activeDocId);
@@ -2493,24 +2515,20 @@
 
       applyingRemote = true;
       try{
-        // Merge remote private docs with local ones
         const localDocIds = new Set(Object.keys(workspace.documents));
         const remoteDocIds = new Set(Object.keys(remote));
         
-        // Remove local docs that are gone on remote (unless they're shared)
         localDocIds.forEach(id => {
           if(!workspace.documents[id].shareId && !remoteDocIds.has(id)) {
             delete workspace.documents[id];
           }
         });
         
-        // Merge remote docs into local
         Object.keys(remote).forEach(id=>{
           const merged = mergeDoc(workspace.documents[id], remote[id]);
           workspace.documents[id] = merged;
         });
         
-        // Merge folders
         const localFolderIds = new Set(Object.keys(workspace.folders || {}));
         const remoteFolderIds = new Set(Object.keys(remoteFolders));
         
