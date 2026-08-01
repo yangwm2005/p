@@ -905,10 +905,14 @@
   function activeDoc(){ return workspace.documents[workspace.activeDocId]; }
 
   let saveTimer = null;
+  let savePending = false;
   
   function scheduleSave(){
+    if(savePending) return;
+    savePending = true;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(()=>{
+      savePending = false;
       const d = activeDoc();
       if(d) {
         d.updatedAt = Date.now();
@@ -916,10 +920,11 @@
       }
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
       catch(e){ console.warn("save failed", e); }
+      // Always trigger cloud sync if signed in
       if(firebaseReady && currentUser && !applyingRemote) {
-        scheduleCloudSync();
+        triggerCloudSync();
       }
-    }, 300);
+    }, 200);
   }
 
   // ---------------- Node helpers ----------------
@@ -1436,7 +1441,6 @@
       const el = treeRootEl.querySelector(`.row[data-id="${CSS.escape(focusRequest.id)}"] .content`);
       if(el){
         el.focus();
-        // Scroll the element into view smoothly without jumping to top
         el.scrollIntoView({ block: 'center', behavior: 'smooth' });
         placeCaret(el, focusRequest.caret);
       }
@@ -1670,12 +1674,10 @@
         const moved = moveNode(doc, node, e.key === 'ArrowUp' ? -1 : 1);
         if(moved){
           scheduleSave();
-          // Store the current scroll position before re-render
           const scrollContainer = document.getElementById('outlineScroll');
           const scrollTop = scrollContainer.scrollTop;
           focusRequest = { id: node.id, caret: getCaretOffset(el) };
           renderTree();
-          // Restore scroll position after re-render
           requestAnimationFrame(() => {
             scrollContainer.scrollTop = scrollTop;
           });
@@ -1935,7 +1937,6 @@
           scheduleSave(); 
           focusRequest = { id: node.id, caret: 'end' };
           renderTree();
-          // Restore scroll position
           requestAnimationFrame(() => {
             scrollContainer.scrollTop = scrollTop;
           });
@@ -1946,7 +1947,6 @@
           scheduleSave(); 
           focusRequest = { id: node.id, caret: 'end' };
           renderTree();
-          // Restore scroll position
           requestAnimationFrame(() => {
             scrollContainer.scrollTop = scrollTop;
           });
@@ -2322,12 +2322,14 @@
   let lastSharedJSON = {};
   let shareModalDocId = null;
   let shareModalKind = 'doc';
+  let initialSyncDone = false;
 
   let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl;
   let syncWatchdogTimer = null;
   let cloudSyncScheduled = false;
   let cloudSyncPending = false;
   let cloudSyncQueue = new Set();
+  let forceSyncTimer = null;
 
   function setSyncState(state, label){
     if(!syncDotEl) return;
@@ -2353,7 +2355,6 @@
     if(typeof firebase === 'undefined'){
       setSyncState('offline', 'Firebase SDK failed to load — working offline');
       signInBtnEl.disabled = true;
-      signInBtnEl.title = 'Firebase SDK failed to load — check your network settings';
       return;
     }
     try{
@@ -2389,8 +2390,15 @@
         userChipEl.style.display = 'flex';
         userAvatarEl.src = user.photoURL || '';
         userNameEl.textContent = user.displayName || user.email || 'Signed in';
+        initialSyncDone = false;
         subscribeToUserDoc(user.uid);
         subscribeToSharedIndex((user.email || '').toLowerCase());
+        // Force an immediate push of local data to cloud on login
+        setTimeout(() => {
+          if(!applyingRemote && firebaseReady && currentUser) {
+            triggerCloudSync();
+          }
+        }, 1000);
       } else {
         signInBtnEl.style.display = 'flex';
         userChipEl.style.display = 'none';
@@ -2398,24 +2406,32 @@
         if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
         Object.values(sharedDocUnsubs).forEach(fn=>fn());
         sharedDocUnsubs = {};
+        lastPrivateJSON = null;
+        initialSyncDone = false;
         setSyncState('offline', 'Not signed in');
       }
       renderDocList();
     });
   }
 
-  function scheduleCloudSync(){
-    if(cloudSyncScheduled) return;
-    cloudSyncScheduled = true;
-    setTimeout(() => {
-      cloudSyncScheduled = false;
-      if(cloudSyncQueue.size > 0 && !cloudSyncPending && !applyingRemote) {
-        const ids = [...cloudSyncQueue];
-        cloudSyncQueue.clear();
-        cloudSyncPending = true;
-        performCloudSync(ids);
-      }
-    }, 600);
+  function triggerCloudSync(){
+    if(!firebaseReady || !currentUser || applyingRemote) return;
+    // Add all documents to sync queue
+    Object.keys(workspace.documents).forEach(id => {
+      cloudSyncQueue.add(id);
+    });
+    if(!cloudSyncScheduled) {
+      cloudSyncScheduled = true;
+      setTimeout(() => {
+        cloudSyncScheduled = false;
+        if(cloudSyncQueue.size > 0 && !cloudSyncPending) {
+          const ids = [...cloudSyncQueue];
+          cloudSyncQueue.clear();
+          cloudSyncPending = true;
+          performCloudSync(ids);
+        }
+      }, 300);
+    }
   }
 
   function performCloudSync(docIds){
@@ -2439,11 +2455,16 @@
       }
     });
     
+    // Save private docs
     if(Object.keys(privateDocs).length > 0) {
       const out = {};
-      Object.values(workspace.documents).forEach(d=>{ if(!d.shareId) out[d.id] = d; });
+      Object.values(workspace.documents).forEach(d=>{ 
+        if(!d.shareId) out[d.id] = d; 
+      });
       const folders = {};
-      Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
+      Object.values(workspace.folders || {}).forEach(f=>{ 
+        if(!f.shareId) folders[f.id] = f; 
+      });
       const json = stableStringify({ docs: out, folders });
       if(json !== lastPrivateJSON) {
         promises.push(
@@ -2458,6 +2479,7 @@
       }
     }
     
+    // Save shared docs
     Object.entries(sharedDocs).forEach(([shareId, doc]) => {
       const json = stableStringify(doc);
       if(json !== lastSharedJSON[shareId]) {
@@ -2485,11 +2507,23 @@
       cloudSyncPending = false;
       console.error('Cloud sync failed', err);
       setSyncState('error', 'Save failed: ' + err.message);
+      // Retry after a delay
       setTimeout(() => {
         if(cloudSyncQueue.size === 0) {
           cloudSyncQueue.add(workspace.activeDocId);
         }
-        scheduleCloudSync();
+        if(!cloudSyncScheduled) {
+          cloudSyncScheduled = true;
+          setTimeout(() => {
+            cloudSyncScheduled = false;
+            if(cloudSyncQueue.size > 0 && !cloudSyncPending) {
+              const ids = [...cloudSyncQueue];
+              cloudSyncQueue.clear();
+              cloudSyncPending = true;
+              performCloudSync(ids);
+            }
+          }, 5000);
+        }
       }, 5000);
     });
   }
@@ -2507,63 +2541,91 @@
       }
       if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
         setSyncState('synced', 'Synced');
-        pushPrivateDocs();
+        // Push local docs to cloud if we have any and this is initial sync
+        if(Object.keys(workspace.documents).length > 0 && !initialSyncDone) {
+          initialSyncDone = true;
+          triggerCloudSync();
+        }
         return;
       }
       const json = stableStringify({ docs: remote, folders: remoteFolders });
-      if(json === lastPrivateJSON){ setSyncState('synced', 'Synced'); return; }
+      if(json === lastPrivateJSON){ 
+        setSyncState('synced', 'Synced');
+        initialSyncDone = true;
+        return; 
+      }
 
       applyingRemote = true;
+      let changed = false;
       try{
         const localDocIds = new Set(Object.keys(workspace.documents));
         const remoteDocIds = new Set(Object.keys(remote));
         
+        // Remove local docs that are gone on remote (unless they're shared)
         localDocIds.forEach(id => {
           if(!workspace.documents[id].shareId && !remoteDocIds.has(id)) {
             delete workspace.documents[id];
+            changed = true;
           }
         });
         
+        // Merge remote docs into local
         Object.keys(remote).forEach(id=>{
           const merged = mergeDoc(workspace.documents[id], remote[id]);
-          workspace.documents[id] = merged;
+          if(!workspace.documents[id] || stableStringify(merged) !== stableStringify(workspace.documents[id])) {
+            workspace.documents[id] = merged;
+            changed = true;
+          }
         });
         
+        // Merge folders
         const localFolderIds = new Set(Object.keys(workspace.folders || {}));
         const remoteFolderIds = new Set(Object.keys(remoteFolders));
         
         localFolderIds.forEach(id => {
           if(!workspace.folders[id].shareId && !remoteFolderIds.has(id)) {
             delete workspace.folders[id];
+            changed = true;
           }
         });
         
         Object.keys(remoteFolders).forEach(id=>{
           if(workspace.folders[id]) {
-            Object.assign(workspace.folders[id], remoteFolders[id]);
+            if(stableStringify(workspace.folders[id]) !== stableStringify(remoteFolders[id])) {
+              Object.assign(workspace.folders[id], remoteFolders[id]);
+              changed = true;
+            }
           } else {
             workspace.folders[id] = remoteFolders[id];
+            changed = true;
           }
         });
         
         if(!workspace.documents[workspace.activeDocId]){
           const ids = Object.keys(workspace.documents);
           workspace.activeDocId = ids.length ? ids[0] : null;
+          changed = true;
         }
         if(!workspace.activeDocId){
           const fresh = makeDoc('Untitled');
           workspace.documents[fresh.id] = fresh;
           workspace.activeDocId = fresh.id;
+          changed = true;
         }
         lastPrivateJSON = json;
-        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+        if(changed) {
+          try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+        }
       } catch(mergeErr){
         console.error('Private doc merge failed — keeping local copy as-is', mergeErr);
       } finally {
         applyingRemote = false;
       }
-      renderDocList();
-      renderTreePreservingFocus();
+      if(changed) {
+        renderDocList();
+        renderTreePreservingFocus();
+      }
+      initialSyncDone = true;
       setSyncState('synced', 'Synced');
     }, err=>{
       console.error('Cloud sync error', err);
@@ -2750,7 +2812,7 @@
       if(mergedJSON === json){
         lastSharedJSON[shareId] = json;
       } else {
-        scheduleCloudSync();
+        triggerCloudSync();
       }
     }, err=> console.error('shared doc error', err));
   }
