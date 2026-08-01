@@ -641,6 +641,7 @@
 
   const STORAGE_KEY = "threadline_outliner_v1";
   const UNDO_STORAGE_KEY = "threadline_undo_v1";
+  const SYNC_LOCK_KEY = "threadline_sync_lock";
   
   function stableStringify(obj){
     if(obj === null || typeof obj !== 'object') return JSON.stringify(obj);
@@ -664,6 +665,7 @@
   let redoStack = [];
   let pendingUndoSnapshot = null;
   let undoDebounceTimer = null;
+  let isUndoing = false;
 
   function cloneDocState(doc){
     if (!doc) return null;
@@ -688,7 +690,7 @@
   }
 
   function captureUndoPoint(doc, opts){
-    if(!doc) return;
+    if(!doc || isUndoing) return;
     const coalesce = opts && opts.coalesce;
     if(coalesce){
       if(!pendingUndoSnapshot || pendingUndoSnapshot.docId !== doc.id){
@@ -710,13 +712,18 @@
   function restoreSnapshot(snap){
     const targetDoc = workspace.documents[snap.docId];
     if(!targetDoc) return null;
-    targetDoc.nodes = snap.nodes;
-    targetDoc.tombstones = snap.tombstones || {};
-    targetDoc.zoomedId = (snap.zoomedId && targetDoc.nodes[snap.zoomedId]) ? snap.zoomedId : targetDoc.rootId;
-    targetDoc.name = snap.name || targetDoc.name;
-    Object.values(targetDoc.nodes).forEach(n => touch(n));
-    if(workspace.activeDocId !== snap.docId) workspace.activeDocId = snap.docId;
-    return targetDoc;
+    isUndoing = true;
+    try {
+      targetDoc.nodes = snap.nodes;
+      targetDoc.tombstones = snap.tombstones || {};
+      targetDoc.zoomedId = (snap.zoomedId && targetDoc.nodes[snap.zoomedId]) ? snap.zoomedId : targetDoc.rootId;
+      targetDoc.name = snap.name || targetDoc.name;
+      Object.values(targetDoc.nodes).forEach(n => touch(n));
+      if(workspace.activeDocId !== snap.docId) workspace.activeDocId = snap.docId;
+      return targetDoc;
+    } finally {
+      isUndoing = false;
+    }
   }
 
   function performUndo(){
@@ -764,38 +771,28 @@
       if(raw) {
         const state = JSON.parse(raw);
         if(state.undoStack && Array.isArray(state.undoStack)) {
-          undoStack = state.undoStack;
+          undoStack = state.undoStack.filter(snap => workspace.documents[snap.docId]);
         }
         if(state.redoStack && Array.isArray(state.redoStack)) {
-          redoStack = state.redoStack;
+          redoStack = state.redoStack.filter(snap => workspace.documents[snap.docId]);
         }
-        // Filter out snapshots for docs that no longer exist
-        undoStack = undoStack.filter(snap => workspace.documents[snap.docId]);
-        redoStack = redoStack.filter(snap => workspace.documents[snap.docId]);
         updateUndoButtons();
         return;
       }
     } catch(e) { 
       console.warn("Failed to load undo state", e);
     }
-    // Rebuild undo stack from document history if needed
+    // Build initial undo points for existing docs
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if(raw) {
-        const ws = JSON.parse(raw);
-        if(ws && ws.documents) {
-          // Add one initial undo point per document
-          Object.values(ws.documents).forEach(doc => {
-            if(doc && doc.id) {
-              const snap = cloneDocState(doc);
-              if(snap) undoStack.push(snap);
-            }
-          });
-          if(undoStack.length > MAX_UNDO) undoStack = undoStack.slice(-MAX_UNDO);
-          saveUndoState();
-          updateUndoButtons();
+      Object.values(workspace.documents).forEach(doc => {
+        if(doc && doc.id) {
+          const snap = cloneDocState(doc);
+          if(snap) undoStack.push(snap);
         }
-      }
+      });
+      if(undoStack.length > MAX_UNDO) undoStack = undoStack.slice(-MAX_UNDO);
+      saveUndoState();
+      updateUndoButtons();
     } catch(e) {
       console.warn("Could not rebuild undo state", e);
     }
@@ -840,7 +837,8 @@
       shareId: null,
       ownerUid: null,
       ownerEmail: null,
-      folderId: null
+      folderId: null,
+      syncVersion: 0
     };
     const first = makeNode(rootId, "");
     doc.nodes[first.id] = first;
@@ -862,7 +860,10 @@
         const ws = JSON.parse(raw);
         if(ws && ws.documents && Object.keys(ws.documents).length){
           if(!ws.folders) ws.folders = {};
-          Object.values(ws.documents).forEach(d=>{ if(d.folderId === undefined) d.folderId = null; });
+          Object.values(ws.documents).forEach(d=>{ 
+            if(d.folderId === undefined) d.folderId = null;
+            if(d.syncVersion === undefined) d.syncVersion = 0;
+          });
           Object.values(ws.folders).forEach(f=>{
             if(f.shareId === undefined) f.shareId = null;
             if(f.ownerUid === undefined) f.ownerUid = null;
@@ -906,118 +907,22 @@
   function activeDoc(){ return workspace.documents[workspace.activeDocId]; }
 
   let saveTimer = null;
-  let cloudSaveQueued = new Set();
   
-  function scheduleSave(docId){
+  function scheduleSave(){
     clearTimeout(saveTimer);
     saveTimer = setTimeout(()=>{
       const d = activeDoc();
-      if(d) d.updatedAt = Date.now();
+      if(d) {
+        d.updatedAt = Date.now();
+        d.syncVersion = (d.syncVersion || 0) + 1;
+      }
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
       catch(e){ console.warn("save failed", e); }
-    }, 200);
-    if(docId) {
-      cloudSaveQueued.add(docId);
-    } else if(workspace.activeDocId) {
-      cloudSaveQueued.add(workspace.activeDocId);
-    }
-    scheduleCloudSave();
-  }
-
-  let cloudSaveScheduled = false;
-  let cloudSavePending = false;
-
-  function scheduleCloudSave(){
-    if(cloudSaveScheduled) return;
-    cloudSaveScheduled = true;
-    setTimeout(() => {
-      cloudSaveScheduled = false;
-      if(cloudSaveQueued.size > 0 && !cloudSavePending) {
-        const ids = [...cloudSaveQueued];
-        cloudSaveQueued.clear();
-        cloudSavePending = true;
-        performCloudSave(ids);
+      // Trigger cloud sync if available
+      if(firebaseReady && currentUser && !applyingRemote) {
+        scheduleCloudSync();
       }
-    }, 500);
-  }
-
-  function performCloudSave(docIds){
-    if(!firebaseReady || !currentUser || applyingRemote) {
-      cloudSavePending = false;
-      return;
-    }
-    
-    setSyncState('syncing', 'Saving…');
-    const promises = [];
-    const privateDocs = {};
-    const sharedDocs = {};
-    
-    docIds.forEach(id => {
-      const doc = workspace.documents[id];
-      if(!doc) return;
-      if(doc.shareId) {
-        sharedDocs[doc.shareId] = doc;
-      } else {
-        privateDocs[id] = doc;
-      }
-    });
-    
-    // Save private docs
-    if(Object.keys(privateDocs).length > 0) {
-      const out = {};
-      Object.values(workspace.documents).forEach(d=>{ if(!d.shareId) out[d.id] = d; });
-      const folders = {};
-      Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
-      const json = stableStringify({ docs: out, folders });
-      if(json !== lastPrivateJSON) {
-        promises.push(
-          db.collection('users').doc(currentUser.uid).set({
-            threadlineDocs: out,
-            threadlineFolders: folders,
-            threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge:true }).then(() => {
-            lastPrivateJSON = json;
-          })
-        );
-      }
-    }
-    
-    // Save shared docs
-    Object.entries(sharedDocs).forEach(([shareId, doc]) => {
-      const json = stableStringify(doc);
-      if(json !== lastSharedJSON[shareId]) {
-        promises.push(
-          db.collection('shared_projects').doc(shareId).set({
-            doc: doc,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge:true }).then(() => {
-            lastSharedJSON[shareId] = json;
-          })
-        );
-      }
-    });
-    
-    if(promises.length === 0) {
-      cloudSavePending = false;
-      setSyncState('synced', 'Synced');
-      return;
-    }
-    
-    Promise.all(promises).then(() => {
-      cloudSavePending = false;
-      setSyncState('synced', 'Synced');
-    }).catch(err => {
-      cloudSavePending = false;
-      console.error('Cloud save failed', err);
-      setSyncState('error', 'Save failed: ' + err.message);
-      // Retry after a delay
-      setTimeout(() => {
-        if(cloudSaveQueued.size === 0) {
-          cloudSaveQueued.add(workspace.activeDocId);
-        }
-        scheduleCloudSave();
-      }, 5000);
-    });
+    }, 300);
   }
 
   // ---------------- Node helpers ----------------
@@ -1293,7 +1198,6 @@
       deletePrivateDocRemote(docId);
     }
     delete workspace.documents[docId];
-    // Remove from undo stacks
     undoStack = undoStack.filter(snap => snap.docId !== docId);
     redoStack = redoStack.filter(snap => snap.docId !== docId);
     saveUndoState();
@@ -1593,14 +1497,20 @@
   // ---------------- Editing / keyboard ----------------
   function attachEditingHandlers(el, nodeId){
     let inputTimeout = null;
+    let lastKnownText = el.innerText;
     
     el.addEventListener('input', ()=>{
       clearTimeout(inputTimeout);
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
-      if(!node) return;
+      if(!node || isUndoing) return;
+      
+      const currentText = el.innerText;
+      if(currentText === lastKnownText) return;
+      lastKnownText = currentText;
+      
       captureUndoPoint(doc, { coalesce: true });
-      node.text = el.innerText;
+      node.text = currentText;
       touch(node);
       scheduleSave();
       renderBreadcrumb(doc);
@@ -1633,7 +1543,7 @@
     el.addEventListener('keydown', (e)=>{
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
-      if(!node) return;
+      if(!node || isUndoing) return;
 
       if(e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey){
         e.preventDefault();
@@ -1793,8 +1703,11 @@
     el.addEventListener('blur', ()=>{
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
-      if(node) node.text = el.innerText; touch(node);
-      scheduleSave();
+      if(node && !isUndoing) {
+        node.text = el.innerText;
+        touch(node);
+        scheduleSave();
+      }
     });
   }
 
@@ -2387,6 +2300,9 @@
 
   let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl;
   let syncWatchdogTimer = null;
+  let cloudSyncScheduled = false;
+  let cloudSyncPending = false;
+  let cloudSyncQueue = new Set();
 
   function setSyncState(state, label){
     if(!syncDotEl) return;
@@ -2396,8 +2312,7 @@
     if(state === 'syncing'){
       syncWatchdogTimer = setTimeout(()=>{
         if(syncDotEl.dataset.state === 'syncing'){
-          console.warn('Sync has been stuck on "syncing" for 15s+. This usually means a browser extension (ad blocker, privacy tool) is blocking requests to firestore.googleapis.com, or the network connection to Firestore is stalled. Check the Network tab for failed/pending requests to firestore.googleapis.com.');
-          setSyncState('error', 'Sync seems stuck — a browser extension may be blocking Firestore, or your connection is stalled. Check the console (F12) for details.');
+          setSyncState('error', 'Sync timeout — check your connection');
         }
       }, 15000);
     }
@@ -2461,6 +2376,99 @@
         setSyncState('offline', 'Not signed in');
       }
       renderDocList();
+    });
+  }
+
+  function scheduleCloudSync(){
+    if(cloudSyncScheduled) return;
+    cloudSyncScheduled = true;
+    setTimeout(() => {
+      cloudSyncScheduled = false;
+      if(cloudSyncQueue.size > 0 && !cloudSyncPending && !applyingRemote) {
+        const ids = [...cloudSyncQueue];
+        cloudSyncQueue.clear();
+        cloudSyncPending = true;
+        performCloudSync(ids);
+      }
+    }, 600);
+  }
+
+  function performCloudSync(docIds){
+    if(!firebaseReady || !currentUser || applyingRemote) {
+      cloudSyncPending = false;
+      return;
+    }
+    
+    setSyncState('syncing', 'Saving…');
+    const promises = [];
+    const privateDocs = {};
+    const sharedDocs = {};
+    
+    docIds.forEach(id => {
+      const doc = workspace.documents[id];
+      if(!doc) return;
+      if(doc.shareId) {
+        sharedDocs[doc.shareId] = doc;
+      } else {
+        privateDocs[id] = doc;
+      }
+    });
+    
+    // Save private docs
+    if(Object.keys(privateDocs).length > 0) {
+      const out = {};
+      Object.values(workspace.documents).forEach(d=>{ if(!d.shareId) out[d.id] = d; });
+      const folders = {};
+      Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
+      const json = stableStringify({ docs: out, folders });
+      if(json !== lastPrivateJSON) {
+        promises.push(
+          db.collection('users').doc(currentUser.uid).set({
+            threadlineDocs: out,
+            threadlineFolders: folders,
+            threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge:true }).then(() => {
+            lastPrivateJSON = json;
+          })
+        );
+      }
+    }
+    
+    // Save shared docs
+    Object.entries(sharedDocs).forEach(([shareId, doc]) => {
+      const json = stableStringify(doc);
+      if(json !== lastSharedJSON[shareId]) {
+        promises.push(
+          db.collection('shared_projects').doc(shareId).set({
+            doc: doc,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge:true }).then(() => {
+            lastSharedJSON[shareId] = json;
+          })
+        );
+      }
+    });
+    
+    if(promises.length === 0) {
+      cloudSyncPending = false;
+      setSyncState('synced', 'Synced');
+      return;
+    }
+    
+    Promise.all(promises).then(() => {
+      cloudSyncPending = false;
+      setSyncState('synced', 'Synced');
+    }).catch(err => {
+      cloudSyncPending = false;
+      console.error('Cloud sync failed', err);
+      setSyncState('error', 'Save failed: ' + err.message);
+      // Retry after a delay
+      setTimeout(() => {
+        if(cloudSyncQueue.size === 0) {
+          cloudSyncQueue.add(workspace.activeDocId);
+        }
+        scheduleCloudSync();
+      }, 5000);
     });
   }
 
@@ -2632,8 +2640,6 @@
     allIds.forEach(id=>{
       const ln = (local.nodes || {})[id];
       const rn = (remote.nodes || {})[id];
-      // If both have it, take the one with higher updatedAt
-      // If only one has it, take that one (unless it's tombstoned)
       const winner = (ln && rn) ? ((rn.updatedAt || 0) >= (ln.updatedAt || 0) ? rn : ln) : (rn || ln);
       if(!winner) return;
       const deletedAt = tombstones[id] || 0;
@@ -2641,12 +2647,10 @@
       nodes[id] = Object.assign({}, winner);
     });
 
-    // Clean up dangling child references
     Object.values(nodes).forEach(n=>{ 
       n.children = (n.children || []).filter(cid => nodes[cid]); 
     });
 
-    // Ensure root exists
     const rootId = remote.rootId || local.rootId;
     if(!nodes[rootId]){
       nodes[rootId] = (local.nodes||{})[rootId] || (remote.nodes||{})[rootId] || { 
@@ -2654,7 +2658,6 @@
       };
     }
 
-    // Reattach orphaned nodes
     const referenced = new Set();
     Object.values(nodes).forEach(n=> n.children.forEach(cid=>referenced.add(cid)));
     Object.keys(nodes).forEach(id=>{
@@ -2662,7 +2665,6 @@
       if(!referenced.has(id)) nodes[rootId].children.push(id);
     });
 
-    // Merge name (keep local if newer)
     const nameWins = (remote.updatedAt || 0) < (local.updatedAt || 0);
     
     return {
@@ -2676,7 +2678,8 @@
       rootId,
       zoomedId: (local.zoomedId && nodes[local.zoomedId]) ? local.zoomedId : rootId,
       nodes,
-      tombstones
+      tombstones,
+      syncVersion: Math.max(local.syncVersion || 0, remote.syncVersion || 0)
     };
   }
 
@@ -2729,7 +2732,7 @@
       if(mergedJSON === json){
         lastSharedJSON[shareId] = json;
       } else {
-        scheduleCloudSave();
+        scheduleCloudSync();
       }
     }, err=> console.error('shared doc error', err));
   }
@@ -2861,7 +2864,7 @@
       lastSharedJSON[shareId] = stableStringify(payload);
       if(!sharedDocUnsubs[shareId]) subscribeToSharedDoc(shareId);
       deletePrivateDocRemote(oldDocId);
-      scheduleSave(shareId);
+      scheduleSave();
       renderAll();
       if(openModal) openShareModal(shareId, 'doc');
     }).catch(err=>{
@@ -3050,7 +3053,6 @@
   });
 
   // ---------------- Init ----------------
-  // Load undo state before rendering
   loadUndoState();
   renderAll();
   initFirebase();
