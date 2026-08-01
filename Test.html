@@ -657,6 +657,7 @@
   let focusRequest = null;
   let selectedIds = new Set();
   let selectionAnchorId = null;
+  let isRendering = false;
 
   // ---- undo / redo ----
   const MAX_UNDO = 100;
@@ -689,7 +690,7 @@
   }
 
   function captureUndoPoint(doc, opts){
-    if(!doc || isUndoing) return;
+    if(!doc || isUndoing || isRendering) return;
     const coalesce = opts && opts.coalesce;
     if(coalesce){
       if(!pendingUndoSnapshot || pendingUndoSnapshot.docId !== doc.id){
@@ -920,7 +921,6 @@
       }
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
       catch(e){ console.warn("save failed", e); }
-      // Always trigger cloud sync if signed in
       if(firebaseReady && currentUser && !applyingRemote) {
         triggerCloudSync();
       }
@@ -1257,194 +1257,200 @@
   }
 
   function renderTree(){
-    const doc = activeDoc();
-    if(!doc) return;
-    renderBreadcrumb(doc);
+    if(isRendering) return;
+    isRendering = true;
+    try {
+      const doc = activeDoc();
+      if(!doc) { isRendering = false; return; }
+      renderBreadcrumb(doc);
 
-    const zoomNode = doc.nodes[doc.zoomedId];
-    if(doc.zoomedId === doc.rootId){
-      zoomTitleEl.classList.remove('hidden');
-      zoomTitleEl.setAttribute('data-placeholder', 'Untitled document');
-      if(zoomTitleEl.innerText !== doc.name) zoomTitleEl.innerText = doc.name;
-      zoomTitleEl.oninput = ()=>{ doc.name = zoomTitleEl.innerText.trim(); scheduleSave(); renderDocList(); renderBreadcrumb(doc); };
-    } else {
-      zoomTitleEl.classList.remove('hidden');
-      zoomTitleEl.setAttribute('data-placeholder', 'Untitled');
-      if(zoomTitleEl.innerText !== zoomNode.text) zoomTitleEl.innerText = zoomNode.text;
-      zoomTitleEl.oninput = ()=>{ zoomNode.text = zoomTitleEl.innerText; scheduleSave(); renderBreadcrumb(doc); };
-    }
+      const zoomNode = doc.nodes[doc.zoomedId];
+      if(doc.zoomedId === doc.rootId){
+        zoomTitleEl.classList.remove('hidden');
+        zoomTitleEl.setAttribute('data-placeholder', 'Untitled document');
+        if(zoomTitleEl.innerText !== doc.name) zoomTitleEl.innerText = doc.name;
+        zoomTitleEl.oninput = ()=>{ doc.name = zoomTitleEl.innerText.trim(); scheduleSave(); renderDocList(); renderBreadcrumb(doc); };
+      } else {
+        zoomTitleEl.classList.remove('hidden');
+        zoomTitleEl.setAttribute('data-placeholder', 'Untitled');
+        if(zoomTitleEl.innerText !== zoomNode.text) zoomTitleEl.innerText = zoomNode.text;
+        zoomTitleEl.oninput = ()=>{ zoomNode.text = zoomTitleEl.innerText; scheduleSave(); renderBreadcrumb(doc); };
+      }
 
-    const searchInfo = computeSearchVisibleSet(doc, searchQuery);
-    treeRootEl.innerHTML = "";
+      const searchInfo = computeSearchVisibleSet(doc, searchQuery);
+      treeRootEl.innerHTML = "";
 
-    const topIds = zoomNode.children;
-    if(topIds.length === 0 && !searchQuery){
-      emptyStateEl.style.display = 'block';
-    } else {
-      emptyStateEl.style.display = 'none';
-    }
+      const topIds = zoomNode.children;
+      if(topIds.length === 0 && !searchQuery){
+        emptyStateEl.style.display = 'block';
+      } else {
+        emptyStateEl.style.display = 'none';
+      }
 
-    function buildRow(id, depth){
-      const doc2 = activeDoc();
-      const node = doc2.nodes[id];
-      if(!node) return null;
-      if(searchInfo && !searchInfo.visible.has(id)) return null;
+      function buildRow(id, depth){
+        const doc2 = activeDoc();
+        const node = doc2.nodes[id];
+        if(!node) return null;
+        if(searchInfo && !searchInfo.visible.has(id)) return null;
 
-      const row = document.createElement('div');
-      row.className = 'row' + (node.done ? ' done' : '') + (selectedIds.has(id) ? ' selected' : '');
-      row.dataset.id = id;
+        const row = document.createElement('div');
+        row.className = 'row' + (node.done ? ' done' : '') + (selectedIds.has(id) ? ' selected' : '');
+        row.dataset.id = id;
 
-      const rowMain = document.createElement('div');
-      rowMain.className = 'row-main';
+        const rowMain = document.createElement('div');
+        rowMain.className = 'row-main';
 
-      const hasChildren = node.children.length > 0;
-      const isCollapsed = !!node.collapsed && !searchInfo;
+        const hasChildren = node.children.length > 0;
+        const isCollapsed = !!node.collapsed && !searchInfo;
 
-      const gutter = document.createElement('div');
-      gutter.className = 'gutter';
-      const toggle = document.createElement('div');
-      toggle.className = 'toggle' + (hasChildren ? ' has-children' : '') + (isCollapsed ? ' collapsed' : '');
-      toggle.innerHTML = icon('chevron');
-      toggle.title = hasChildren ? (isCollapsed ? 'Expand' : 'Collapse') : '';
-      toggle.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        if(!hasChildren) return;
-        node.collapsed = !node.collapsed;
-        scheduleSave();
-        renderTree();
-      });
-      gutter.appendChild(toggle);
-
-      const check = document.createElement('div');
-      check.className = 'check';
-      check.innerHTML = icon('check');
-      check.title = 'Toggle done';
-      check.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        toggleNodeDone(doc2, node);
-      });
-
-      const bulletWrap = document.createElement('div');
-      bulletWrap.className = 'bullet-wrap';
-      bulletWrap.title = 'Click to zoom in · Shift/Cmd-click to select for copy · drag to reorder';
-      bulletWrap.draggable = true;
-      const bullet = document.createElement('div');
-      bullet.className = 'bullet' + (hasChildren ? ' has-children' : '');
-      bulletWrap.appendChild(bullet);
-      bulletWrap.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        if(e.shiftKey){
-          const visible = flattenVisible(doc2, doc2.zoomedId);
-          if(!selectionAnchorId) selectionAnchorId = id;
-          const aIdx = visible.indexOf(selectionAnchorId);
-          const bIdx = visible.indexOf(id);
-          if(aIdx > -1 && bIdx > -1){
-            const from = Math.min(aIdx, bIdx), to = Math.max(aIdx, bIdx);
-            selectedIds = new Set(visible.slice(from, to + 1));
-          } else {
-            selectedIds = new Set([id]);
-            selectionAnchorId = id;
-          }
+        const gutter = document.createElement('div');
+        gutter.className = 'gutter';
+        const toggle = document.createElement('div');
+        toggle.className = 'toggle' + (hasChildren ? ' has-children' : '') + (isCollapsed ? ' collapsed' : '');
+        toggle.innerHTML = icon('chevron');
+        toggle.title = hasChildren ? (isCollapsed ? 'Expand' : 'Collapse') : '';
+        toggle.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          if(!hasChildren) return;
+          node.collapsed = !node.collapsed;
+          scheduleSave();
           renderTree();
-          return;
-        }
-        if(e.ctrlKey || e.metaKey){
-          if(selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
-          selectionAnchorId = id;
-          renderTree();
-          return;
-        }
-        selectedIds.clear();
-        selectionAnchorId = null;
-        doc2.zoomedId = id;
-        scheduleSave();
-        renderTree();
-        setTimeout(()=>zoomTitleEl.focus(), 0);
-      });
-
-      const content = document.createElement('div');
-      content.className = 'content' + (node.bold ? ' bold-text' : '');
-      content.contentEditable = 'true';
-      content.spellcheck = false;
-      content.dataset.placeholder = 'Type something…';
-      content.innerText = node.text;
-      attachEditingHandlers(content, id);
-      if(HIGHLIGHT_COLORS.includes(node.bgColor)) rowMain.classList.add('bg-' + node.bgColor);
-
-      const menuBtn = document.createElement('div');
-      menuBtn.className = 'menu-btn';
-      menuBtn.title = 'Item options';
-      menuBtn.innerHTML = icon('menu');
-      menuBtn.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        openItemMenu(id, menuBtn);
-      });
-
-      rowMain.appendChild(gutter);
-      rowMain.appendChild(check);
-      rowMain.appendChild(bulletWrap);
-      rowMain.appendChild(content);
-      rowMain.appendChild(menuBtn);
-      row.appendChild(rowMain);
-
-      bulletWrap.addEventListener('dragstart', (e)=>{
-        e.dataTransfer.setData('text/plain', id);
-        rowMain.classList.add('drag-ghost');
-      });
-      bulletWrap.addEventListener('dragend', ()=> rowMain.classList.remove('drag-ghost'));
-      rowMain.addEventListener('dragover', (e)=>{ e.preventDefault(); rowMain.classList.add('dragover'); });
-      rowMain.addEventListener('dragleave', ()=> rowMain.classList.remove('dragover'));
-      rowMain.addEventListener('drop', (e)=>{
-        e.preventDefault();
-        rowMain.classList.remove('dragover');
-        const draggedId = e.dataTransfer.getData('text/plain');
-        if(!draggedId || draggedId === id) return;
-        const d = activeDoc();
-        const draggedNode = d.nodes[draggedId];
-        const targetNode = d.nodes[id];
-        if(!draggedNode || !targetNode) return;
-        let p = targetNode;
-        while(p){ if(p.id === draggedId) return; p = p.parentId ? d.nodes[p.parentId] : null; }
-        captureUndoPoint(d);
-        const oldParent = d.nodes[draggedNode.parentId];
-        removeFromParent(d, draggedNode);
-        draggedNode.parentId = targetNode.parentId;
-        const arr = siblingsOf(d, targetNode);
-        const idx = arr.indexOf(id);
-        arr.splice(idx, 0, draggedId);
-        touch(draggedNode); touch(oldParent); touch(d.nodes[targetNode.parentId]);
-        scheduleSave();
-        renderTree();
-      });
-
-      const kids = document.createElement('div');
-      kids.className = 'children' + (hasChildren && !isCollapsed ? '' : ' empty');
-      if(hasChildren && !isCollapsed){
-        node.children.forEach(cid=>{
-          const childRow = buildRow(cid, depth+1);
-          if(childRow) kids.appendChild(childRow);
         });
+        gutter.appendChild(toggle);
+
+        const check = document.createElement('div');
+        check.className = 'check';
+        check.innerHTML = icon('check');
+        check.title = 'Toggle done';
+        check.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          toggleNodeDone(doc2, node);
+        });
+
+        const bulletWrap = document.createElement('div');
+        bulletWrap.className = 'bullet-wrap';
+        bulletWrap.title = 'Click to zoom in · Shift/Cmd-click to select for copy · drag to reorder';
+        bulletWrap.draggable = true;
+        const bullet = document.createElement('div');
+        bullet.className = 'bullet' + (hasChildren ? ' has-children' : '');
+        bulletWrap.appendChild(bullet);
+        bulletWrap.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          if(e.shiftKey){
+            const visible = flattenVisible(doc2, doc2.zoomedId);
+            if(!selectionAnchorId) selectionAnchorId = id;
+            const aIdx = visible.indexOf(selectionAnchorId);
+            const bIdx = visible.indexOf(id);
+            if(aIdx > -1 && bIdx > -1){
+              const from = Math.min(aIdx, bIdx), to = Math.max(aIdx, bIdx);
+              selectedIds = new Set(visible.slice(from, to + 1));
+            } else {
+              selectedIds = new Set([id]);
+              selectionAnchorId = id;
+            }
+            renderTree();
+            return;
+          }
+          if(e.ctrlKey || e.metaKey){
+            if(selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+            selectionAnchorId = id;
+            renderTree();
+            return;
+          }
+          selectedIds.clear();
+          selectionAnchorId = null;
+          doc2.zoomedId = id;
+          scheduleSave();
+          renderTree();
+          setTimeout(()=>zoomTitleEl.focus(), 0);
+        });
+
+        const content = document.createElement('div');
+        content.className = 'content' + (node.bold ? ' bold-text' : '');
+        content.contentEditable = 'true';
+        content.spellcheck = false;
+        content.dataset.placeholder = 'Type something…';
+        content.innerText = node.text;
+        attachEditingHandlers(content, id);
+        if(HIGHLIGHT_COLORS.includes(node.bgColor)) rowMain.classList.add('bg-' + node.bgColor);
+
+        const menuBtn = document.createElement('div');
+        menuBtn.className = 'menu-btn';
+        menuBtn.title = 'Item options';
+        menuBtn.innerHTML = icon('menu');
+        menuBtn.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          openItemMenu(id, menuBtn);
+        });
+
+        rowMain.appendChild(gutter);
+        rowMain.appendChild(check);
+        rowMain.appendChild(bulletWrap);
+        rowMain.appendChild(content);
+        rowMain.appendChild(menuBtn);
+        row.appendChild(rowMain);
+
+        bulletWrap.addEventListener('dragstart', (e)=>{
+          e.dataTransfer.setData('text/plain', id);
+          rowMain.classList.add('drag-ghost');
+        });
+        bulletWrap.addEventListener('dragend', ()=> rowMain.classList.remove('drag-ghost'));
+        rowMain.addEventListener('dragover', (e)=>{ e.preventDefault(); rowMain.classList.add('dragover'); });
+        rowMain.addEventListener('dragleave', ()=> rowMain.classList.remove('dragover'));
+        rowMain.addEventListener('drop', (e)=>{
+          e.preventDefault();
+          rowMain.classList.remove('dragover');
+          const draggedId = e.dataTransfer.getData('text/plain');
+          if(!draggedId || draggedId === id) return;
+          const d = activeDoc();
+          const draggedNode = d.nodes[draggedId];
+          const targetNode = d.nodes[id];
+          if(!draggedNode || !targetNode) return;
+          let p = targetNode;
+          while(p){ if(p.id === draggedId) return; p = p.parentId ? d.nodes[p.parentId] : null; }
+          captureUndoPoint(d);
+          const oldParent = d.nodes[draggedNode.parentId];
+          removeFromParent(d, draggedNode);
+          draggedNode.parentId = targetNode.parentId;
+          const arr = siblingsOf(d, targetNode);
+          const idx = arr.indexOf(id);
+          arr.splice(idx, 0, draggedId);
+          touch(draggedNode); touch(oldParent); touch(d.nodes[targetNode.parentId]);
+          scheduleSave();
+          renderTree();
+        });
+
+        const kids = document.createElement('div');
+        kids.className = 'children' + (hasChildren && !isCollapsed ? '' : ' empty');
+        if(hasChildren && !isCollapsed){
+          node.children.forEach(cid=>{
+            const childRow = buildRow(cid, depth+1);
+            if(childRow) kids.appendChild(childRow);
+          });
+        }
+
+        const container = document.createElement('div');
+        container.appendChild(row);
+        container.appendChild(kids);
+        return container;
       }
 
-      const container = document.createElement('div');
-      container.appendChild(row);
-      container.appendChild(kids);
-      return container;
-    }
+      topIds.forEach(id=>{
+        const r = buildRow(id, 0);
+        if(r) treeRootEl.appendChild(r);
+      });
 
-    topIds.forEach(id=>{
-      const r = buildRow(id, 0);
-      if(r) treeRootEl.appendChild(r);
-    });
-
-    if(focusRequest){
-      const el = treeRootEl.querySelector(`.row[data-id="${CSS.escape(focusRequest.id)}"] .content`);
-      if(el){
-        el.focus();
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        placeCaret(el, focusRequest.caret);
+      if(focusRequest){
+        const el = treeRootEl.querySelector(`.row[data-id="${CSS.escape(focusRequest.id)}"] .content`);
+        if(el){
+          el.focus();
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          placeCaret(el, focusRequest.caret);
+        }
+        focusRequest = null;
       }
-      focusRequest = null;
+    } finally {
+      isRendering = false;
     }
   }
 
@@ -1501,12 +1507,15 @@
   function attachEditingHandlers(el, nodeId){
     let inputTimeout = null;
     let lastKnownText = el.innerText;
+    let isInternalUpdate = false;
     
     el.addEventListener('input', ()=>{
       clearTimeout(inputTimeout);
+      if(isInternalUpdate) return;
+      
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
-      if(!node || isUndoing) return;
+      if(!node || isUndoing || isRendering) return;
       
       const currentText = el.innerText;
       if(currentText === lastKnownText) return;
@@ -1711,7 +1720,7 @@
     el.addEventListener('blur', ()=>{
       const doc = activeDoc();
       const node = doc.nodes[nodeId];
-      if(node && !isUndoing) {
+      if(node && !isUndoing && !isRendering) {
         node.text = el.innerText;
         touch(node);
         scheduleSave();
@@ -2329,7 +2338,6 @@
   let cloudSyncScheduled = false;
   let cloudSyncPending = false;
   let cloudSyncQueue = new Set();
-  let forceSyncTimer = null;
 
   function setSyncState(state, label){
     if(!syncDotEl) return;
@@ -2393,7 +2401,6 @@
         initialSyncDone = false;
         subscribeToUserDoc(user.uid);
         subscribeToSharedIndex((user.email || '').toLowerCase());
-        // Force an immediate push of local data to cloud on login
         setTimeout(() => {
           if(!applyingRemote && firebaseReady && currentUser) {
             triggerCloudSync();
@@ -2416,7 +2423,6 @@
 
   function triggerCloudSync(){
     if(!firebaseReady || !currentUser || applyingRemote) return;
-    // Add all documents to sync queue
     Object.keys(workspace.documents).forEach(id => {
       cloudSyncQueue.add(id);
     });
@@ -2455,7 +2461,6 @@
       }
     });
     
-    // Save private docs
     if(Object.keys(privateDocs).length > 0) {
       const out = {};
       Object.values(workspace.documents).forEach(d=>{ 
@@ -2479,7 +2484,6 @@
       }
     }
     
-    // Save shared docs
     Object.entries(sharedDocs).forEach(([shareId, doc]) => {
       const json = stableStringify(doc);
       if(json !== lastSharedJSON[shareId]) {
@@ -2507,7 +2511,6 @@
       cloudSyncPending = false;
       console.error('Cloud sync failed', err);
       setSyncState('error', 'Save failed: ' + err.message);
-      // Retry after a delay
       setTimeout(() => {
         if(cloudSyncQueue.size === 0) {
           cloudSyncQueue.add(workspace.activeDocId);
@@ -2541,7 +2544,6 @@
       }
       if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
         setSyncState('synced', 'Synced');
-        // Push local docs to cloud if we have any and this is initial sync
         if(Object.keys(workspace.documents).length > 0 && !initialSyncDone) {
           initialSyncDone = true;
           triggerCloudSync();
@@ -2561,7 +2563,6 @@
         const localDocIds = new Set(Object.keys(workspace.documents));
         const remoteDocIds = new Set(Object.keys(remote));
         
-        // Remove local docs that are gone on remote (unless they're shared)
         localDocIds.forEach(id => {
           if(!workspace.documents[id].shareId && !remoteDocIds.has(id)) {
             delete workspace.documents[id];
@@ -2569,7 +2570,6 @@
           }
         });
         
-        // Merge remote docs into local
         Object.keys(remote).forEach(id=>{
           const merged = mergeDoc(workspace.documents[id], remote[id]);
           if(!workspace.documents[id] || stableStringify(merged) !== stableStringify(workspace.documents[id])) {
@@ -2578,7 +2578,6 @@
           }
         });
         
-        // Merge folders
         const localFolderIds = new Set(Object.keys(workspace.folders || {}));
         const remoteFolderIds = new Set(Object.keys(remoteFolders));
         
@@ -2630,27 +2629,6 @@
     }, err=>{
       console.error('Cloud sync error', err);
       setSyncState('error', 'Sync error: ' + err.message);
-    });
-  }
-
-  function pushPrivateDocs(){
-    if(!firebaseReady || !currentUser || applyingRemote) return;
-    const out = {};
-    Object.values(workspace.documents).forEach(d=>{ if(!d.shareId) out[d.id] = d; });
-    const folders = {};
-    Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
-    const json = stableStringify({ docs: out, folders });
-    if(json === lastPrivateJSON){ setSyncState('synced', 'Synced'); return; }
-    db.collection('users').doc(currentUser.uid).set({
-      threadlineDocs: out,
-      threadlineFolders: folders,
-      threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge:true }).then(()=>{
-      lastPrivateJSON = json;
-      setSyncState('synced', 'Synced');
-    }).catch(err=>{
-      console.error('Cloud save failed', err);
-      setSyncState('error', 'Save failed: ' + err.message);
     });
   }
 
