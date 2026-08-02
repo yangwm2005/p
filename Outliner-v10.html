@@ -280,7 +280,7 @@
   #docList{flex:1; overflow-y:auto; padding:2px 6px 10px;}
   #docList.drop-root{background:var(--accent-soft); border-radius:6px;}
   .folderItem{
-    display:flex; align-items:center; gap:6px;
+    display:flex; align-items:center; gap:4px;
     padding:7px 8px; border-radius:5px; cursor:pointer;
     font-size:12.5px; font-weight:600; color:var(--ink-soft);
     margin-top:4px;
@@ -292,6 +292,10 @@
     color:var(--ink-faint); flex-shrink:0; transition:transform .1s ease;
   }
   .folderItem.collapsed .toggle{transform:rotate(-90deg);}
+  .folderItem .folder-icon{
+    width:14px; height:14px; display:flex; align-items:center; justify-content:center;
+    color:#C9A54A; flex-shrink:0; margin-left:-3px; margin-right:2px;
+  }
   .folderItem .name{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .folderItem .count{font-size:10.5px; color:var(--ink-faint); font-weight:400; font-family:'IBM Plex Mono',monospace;}
   .folderItem .iconbtn{opacity:0; background:none; border:none; cursor:pointer; color:var(--ink-faint); width:18px; height:18px; display:flex; align-items:center; justify-content:center; border-radius:4px; flex-shrink:0;}
@@ -452,9 +456,8 @@
     cursor:pointer;
     flex-shrink:0;
     display:flex; align-items:center; justify-content:center;
-    opacity:0;
+    opacity:1;
   }
-  .row-main:hover .check, .row.done .check{opacity:1;}
   .row.done .check{background:var(--accent); border-color:var(--accent);}
   .row.done .check svg{display:block;}
   .check svg{display:none; width:9px; height:9px; stroke:#fff;}
@@ -483,6 +486,7 @@
   .menu-btn{
     flex-shrink:0;
     width:22px; height:26px;
+    margin-right:2px;
     display:flex; align-items:center; justify-content:center;
     cursor:pointer;
     color:var(--ink-faint);
@@ -499,6 +503,8 @@
     border-radius:8px;
     box-shadow:var(--shadow);
     min-width:170px;
+    max-height:calc(100vh - 16px);
+    overflow-y:auto;
     padding:5px;
     display:none;
     flex-direction:column;
@@ -745,6 +751,7 @@
 <div id="itemMenu">
   <button data-action="done" id="itemMenuDoneBtn">Mark as complete</button>
   <button data-action="bold" id="itemMenuBoldBtn">Bold</button>
+  <button data-action="checkbox" id="itemMenuCheckboxBtn">Hide checkbox</button>
   <button data-action="zoom">Zoom in</button>
   <button data-action="duplicate">Duplicate</button>
   <hr>
@@ -964,7 +971,7 @@
   }
 
   function makeNode(parentId, text){
-    return { id: uid(), text: text || "", children: [], collapsed:false, done:false, bold:false, bgColor:null, parentId, updatedAt: Date.now() };
+    return { id: uid(), text: text || "", children: [], collapsed:false, done:false, bold:false, bgColor:null, checkboxOn:false, parentId, updatedAt: Date.now() };
   }
 
   function makeDoc(name){
@@ -1186,6 +1193,7 @@
     if(name === 'share') return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.5l6.8-3.9M8.6 13.5l6.8 3.9"/></svg>';
     if(name === 'menu') return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>';
     if(name === 'edit') return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+    if(name === 'folder') return '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h4.6a1.5 1.5 0 0 1 1.2.6l1.2 1.6a1.5 1.5 0 0 0 1.2.6H19.5A1.5 1.5 0 0 1 21 8.3v10.2A1.5 1.5 0 0 1 19.5 20h-15A1.5 1.5 0 0 1 3 18.5v-13Z"/></svg>';
     return '';
   }
 
@@ -1240,7 +1248,7 @@
     const row = document.createElement('div');
     const isShared = !!folder.shareId;
     row.className = 'folderItem' + (folder.collapsed ? ' collapsed' : '');
-    row.innerHTML = `<span class="toggle">${icon('chevron')}</span><span class="name"></span>`
+    row.innerHTML = `<span class="toggle">${icon('chevron')}</span><span class="folder-icon">${icon('folder')}</span><span class="name"></span>`
       + (isShared ? `<span class="share-badge" title="${folder.ownerUid && currentUser && folder.ownerUid===currentUser.uid ? 'Shared by you' : 'Shared with you'}"></span>` : '')
       + `<span class="count">${docsInFolder.length}</span>`
       + `<button class="iconbtn share${isShared ? ' is-shared' : ''}" title="Share this folder — documents filed here share automatically">${icon('share')}</button>`
@@ -1494,6 +1502,7 @@
 
         const hasChildren = node.children.length > 0;
         const isCollapsed = !!node.collapsed && !searchInfo;
+        const checkboxOn = node.checkboxOn !== false;
 
         const gutter = document.createElement('div');
         gutter.className = 'gutter';
@@ -1576,10 +1585,10 @@
         });
 
         rowMain.appendChild(gutter);
-        rowMain.appendChild(check);
-        rowMain.appendChild(bulletWrap);
-        rowMain.appendChild(content);
         rowMain.appendChild(menuBtn);
+        rowMain.appendChild(bulletWrap);
+        if(checkboxOn) rowMain.appendChild(check);
+        rowMain.appendChild(content);
         row.appendChild(rowMain);
 
         bulletWrap.addEventListener('dragstart', (e)=>{
@@ -1760,6 +1769,7 @@
         touch(node);
 
         const newNode = makeNode(node.parentId, after);
+        newNode.checkboxOn = node.checkboxOn !== false;
         if(node.children.length > 0 && !node.collapsed){
           newNode.parentId = node.id;
           doc.nodes[newNode.id] = newNode;
@@ -2162,6 +2172,7 @@
   const itemMenuEl = document.getElementById('itemMenu');
   const itemMenuDoneBtn = document.getElementById('itemMenuDoneBtn');
   const itemMenuBoldBtn = document.getElementById('itemMenuBoldBtn');
+  const itemMenuCheckboxBtn = document.getElementById('itemMenuCheckboxBtn');
   let itemMenuNodeId = null;
   let itemMenuBtnEl = null;
 
@@ -2177,6 +2188,7 @@
     itemMenuBtnEl = btnEl;
     itemMenuDoneBtn.textContent = node.done ? 'Mark as not complete' : 'Mark as complete';
     itemMenuBoldBtn.textContent = node.bold ? 'Remove bold' : 'Bold';
+    itemMenuCheckboxBtn.textContent = (node.checkboxOn !== false) ? 'Hide checkbox' : 'Show checkbox';
     itemMenuEl.querySelectorAll('.swatch').forEach(sw=>{
       sw.classList.toggle('active', (sw.dataset.color || null) === (node.bgColor || null));
     });
@@ -2185,10 +2197,28 @@
 
     const rect = btnEl.getBoundingClientRect();
     const menuRect = itemMenuEl.getBoundingClientRect();
+    const margin = 8;
+
     let left = rect.right - menuRect.width;
+    if(left < margin) left = margin;
+    if(left + menuRect.width > window.innerWidth - margin){
+      left = Math.max(margin, window.innerWidth - menuRect.width - margin);
+    }
+
     let top = rect.bottom + 4;
-    if(left < 8) left = 8;
-    if(top + menuRect.height > window.innerHeight - 8) top = rect.top - menuRect.height - 4;
+    const fitsBelow = top + menuRect.height <= window.innerHeight - margin;
+    if(!fitsBelow){
+      const above = rect.top - menuRect.height - 4;
+      // Prefer whichever side (above/below) actually has more room.
+      const roomBelow = window.innerHeight - rect.bottom;
+      const roomAbove = rect.top;
+      top = (roomAbove > roomBelow) ? above : top;
+    }
+    if(top < margin) top = margin;
+    if(top + menuRect.height > window.innerHeight - margin){
+      top = Math.max(margin, window.innerHeight - menuRect.height - margin);
+    }
+
     itemMenuEl.style.left = left + 'px';
     itemMenuEl.style.top = top + 'px';
   }
@@ -2214,6 +2244,7 @@
       copy.collapsed = n.collapsed;
       copy.bold = n.bold;
       copy.bgColor = n.bgColor;
+      copy.checkboxOn = n.checkboxOn;
       doc.nodes[copy.id] = copy;
       n.children.forEach(cid=>{
         const child = doc.nodes[cid];
@@ -2254,6 +2285,13 @@
       case 'bold':
         captureUndoPoint(doc);
         node.bold = !node.bold;
+        touch(node);
+        scheduleSave();
+        renderTree();
+        break;
+      case 'checkbox':
+        captureUndoPoint(doc);
+        node.checkboxOn = (node.checkboxOn === false) ? true : false;
         touch(node);
         scheduleSave();
         renderTree();
@@ -2363,7 +2401,7 @@
   function exportNodeForClipboard(doc, id){
     const n = doc.nodes[id];
     return {
-      text: n.text, done: !!n.done, bold: !!n.bold, bgColor: n.bgColor || null,
+      text: n.text, done: !!n.done, bold: !!n.bold, bgColor: n.bgColor || null, checkboxOn: n.checkboxOn !== false,
       children: n.children.map(cid => exportNodeForClipboard(doc, cid))
     };
   }
@@ -2461,7 +2499,7 @@
     const n = doc.nodes[id];
     const expand = mode === 'full' || !n.collapsed;
     return {
-      text: n.text, done: !!n.done, bold: !!n.bold, bgColor: n.bgColor || null,
+      text: n.text, done: !!n.done, bold: !!n.bold, bgColor: n.bgColor || null, checkboxOn: n.checkboxOn !== false,
       children: expand ? n.children.map(cid => exportNodeForClipboardMode(doc, cid, mode)) : []
     };
   }
@@ -2700,6 +2738,7 @@
     n.done = !!item.done;
     n.bold = !!item.bold;
     n.bgColor = item.bgColor || null;
+    n.checkboxOn = item.checkboxOn !== false;
     doc.nodes[n.id] = n;
     (item.children || []).forEach(child=>{
       const c = buildNodeFromExport(doc, n.id, child);
