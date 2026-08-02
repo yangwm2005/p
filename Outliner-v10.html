@@ -753,6 +753,7 @@
     <div id="exportMenu">
       <button id="printFullBtn">🖨 Print — full document</button>
       <button id="printShownBtn">🖨 Print — current view (open/closed)</button>
+      <button id="printSelectionBtn">🖨 Print — selection</button>
       <hr>
       <button id="copyFullBtn">📋 Copy — full document</button>
       <button id="copyShownBtn">📋 Copy — current view (open/closed)</button>
@@ -855,7 +856,7 @@
 
     <h4>Share, print &amp; export</h4>
     <ul>
-      <li>Use <b>Share / Export</b> (top right) to invite others, print the full document or just what's currently open/closed, copy the whole document, or export as .json / .txt</li>
+      <li>Use <b>Share / Export</b> (top right) to invite others, print the full document, just what's currently open/closed, or just your current selection, copy the whole document, or export as .json / .txt</li>
     </ul>
 
     <h4>On phone &amp; tablet</h4>
@@ -2707,7 +2708,7 @@
     const expand = mode === 'full' || !n.collapsed;
     const kids = n.children;
     return {
-      text: n.text, done: !!n.done, bold: !!n.bold,
+      text: n.text, done: !!n.done, bold: !!n.bold, checkboxOn: n.checkboxOn !== false,
       children: expand ? kids.map(cid => buildPrintTree(doc, cid, mode)) : [],
       hiddenCount: (!expand && kids.length) ? kids.length : 0
     };
@@ -2717,7 +2718,7 @@
     if(!items || !items.length) return '';
     let html = '<ul>';
     items.forEach(it=>{
-      const mark = it.done ? '\u2611\u00A0' : '\u2610\u00A0';
+      const mark = it.checkboxOn ? (it.done ? '\u2611\u00A0' : '\u2610\u00A0') : '';
       let text = escapeHtml(it.text || '(untitled)').replace(/\n/g, '<br>');
       if(it.bold) text = '<b>' + text + '</b>';
       const collapsedTag = it.hiddenCount
@@ -2732,6 +2733,27 @@
   function openPrintView(mode){
     const doc = activeDoc();
     if(!doc) return;
+
+    if(mode === 'selection'){
+      const topIds = topLevelSelectedIds(doc);
+      if(!topIds.length){
+        alert('Select one or more items first (Shift-click or drag-select), then try printing the selection.');
+        return;
+      }
+      const visible = flattenVisible(doc, doc.zoomedId);
+      topIds.sort((a,b)=> visible.indexOf(a) - visible.indexOf(b));
+      const items = topIds.map(id => buildPrintTree(doc, id, 'full'));
+      const printTitleEl = document.getElementById('printTitle');
+      const printMetaEl = document.getElementById('printMeta');
+      const printBodyEl = document.getElementById('printBody');
+      printTitleEl.textContent = (doc.name || 'Untitled document') + ' — selection';
+      printMetaEl.textContent = topIds.length + (topIds.length === 1 ? ' item selected' : ' items selected')
+        + ' \u00B7 ' + new Date().toLocaleDateString();
+      printBodyEl.innerHTML = printItemsToHtml(items) || '<p class="p-empty">No items.</p>';
+      setTimeout(()=> window.print(), 50);
+      return;
+    }
+
     const startId = mode === 'shown' ? doc.zoomedId : doc.rootId;
     const startNode = doc.nodes[startId];
     const title = (mode === 'shown' && startId !== doc.rootId) ? (startNode.text || 'Untitled') : (doc.name || 'Untitled document');
@@ -2965,6 +2987,10 @@
   document.getElementById('printShownBtn').addEventListener('click', ()=>{
     exportMenu.classList.remove('open');
     openPrintView('shown');
+  });
+  document.getElementById('printSelectionBtn').addEventListener('click', ()=>{
+    exportMenu.classList.remove('open');
+    openPrintView('selection');
   });
   document.getElementById('copyFullBtn').addEventListener('click', (e)=>{
     copyWholeDocument('full', e.currentTarget);
