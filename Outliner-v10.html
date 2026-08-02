@@ -387,7 +387,18 @@
   #breadcrumb .crumb:hover{background:var(--accent-soft); color:var(--accent-ink);}
   #breadcrumb .crumb.current{color:var(--ink); font-weight:600;}
   #breadcrumb .sep{color:var(--line-strong); margin:0 1px;}
-  #outlineScroll{flex:1; overflow-y:auto; padding:6px 20px 120px;}
+  #outlineScroll{flex:1; overflow-y:auto; padding:6px 20px 120px; position:relative;}
+  #marqueeBox{
+    position:absolute;
+    border:1.5px solid var(--accent);
+    background:var(--accent-soft);
+    opacity:0.55;
+    pointer-events:none;
+    display:none;
+    z-index:5;
+    border-radius:2px;
+  }
+  body.marquee-active, body.marquee-active *{ user-select:none !important; }
   #outlineTree{max-width:900px; margin:0 auto; padding:10px 14px;}
   #zoomTitle{
     font-size:26px;
@@ -529,6 +540,8 @@
   #itemMenu button.danger:hover{background:rgba(181,83,60,0.12); color:var(--danger);}
   #itemMenu hr{border:none; border-top:1px solid var(--line); margin:4px 2px; width:100%;}
   #itemMenu .menu-label{font-size:10.5px; text-transform:uppercase; letter-spacing:0.5px; color:var(--ink-faint); padding:4px 9px 2px;}
+  #itemMenuSelCount{color:var(--accent-ink); background:var(--accent-soft); border-radius:5px; padding:5px 9px; margin-bottom:3px; text-transform:none; font-weight:600; font-size:11.5px; letter-spacing:0;}
+  #itemMenu.multi .single-only{display:none;}
   #itemMenu .colorRow{display:flex; gap:6px; padding:4px 9px 6px;}
   #itemMenu .swatch{
     width:20px; height:20px; border-radius:50%;
@@ -706,6 +719,7 @@
   <div id="main">
     <div id="breadcrumb"></div>
     <div id="outlineScroll">
+      <div id="marqueeBox"></div>
       <div id="outlineTree">
         <div id="zoomTitle" contenteditable="true" data-placeholder="Untitled"></div>
         <div id="treeRoot"></div>
@@ -749,11 +763,12 @@
 </div>
 
 <div id="itemMenu">
+  <div class="menu-label" id="itemMenuSelCount" style="display:none;"></div>
   <button data-action="done" id="itemMenuDoneBtn">Mark as complete</button>
   <button data-action="bold" id="itemMenuBoldBtn">Bold</button>
   <button data-action="checkbox" id="itemMenuCheckboxBtn">Hide checkbox</button>
-  <button data-action="zoom">Zoom in</button>
-  <button data-action="duplicate">Duplicate</button>
+  <button data-action="zoom" class="single-only">Zoom in</button>
+  <button data-action="duplicate" class="single-only">Duplicate</button>
   <hr>
   <div class="menu-label">Highlight</div>
   <div class="colorRow">
@@ -769,10 +784,10 @@
   <button data-action="copy">Copy (with sub-items)</button>
   <button data-action="cut">Cut (with sub-items)</button>
   <hr>
-  <button data-action="indent">Indent</button>
-  <button data-action="outdent">Outdent</button>
-  <button data-action="moveup">Move up</button>
-  <button data-action="movedown">Move down</button>
+  <button data-action="indent" class="single-only">Indent</button>
+  <button data-action="outdent" class="single-only">Outdent</button>
+  <button data-action="moveup" class="single-only">Move up</button>
+  <button data-action="movedown" class="single-only">Move down</button>
   <hr>
   <button data-action="delete" class="danger">Delete</button>
 </div>
@@ -2173,6 +2188,7 @@
   const itemMenuDoneBtn = document.getElementById('itemMenuDoneBtn');
   const itemMenuBoldBtn = document.getElementById('itemMenuBoldBtn');
   const itemMenuCheckboxBtn = document.getElementById('itemMenuCheckboxBtn');
+  const itemMenuSelCount = document.getElementById('itemMenuSelCount');
   let itemMenuNodeId = null;
   let itemMenuBtnEl = null;
 
@@ -2186,11 +2202,20 @@
     }
     itemMenuNodeId = nodeId;
     itemMenuBtnEl = btnEl;
+    const scopeIds = (selectedIds.has(nodeId) && selectedIds.size > 1) ? [...selectedIds] : [nodeId];
+    const isMulti = scopeIds.length > 1;
+    itemMenuEl.classList.toggle('multi', isMulti);
+    if(isMulti){
+      itemMenuSelCount.style.display = 'block';
+      itemMenuSelCount.textContent = scopeIds.length + ' items selected';
+    } else {
+      itemMenuSelCount.style.display = 'none';
+    }
     itemMenuDoneBtn.textContent = node.done ? 'Mark as not complete' : 'Mark as complete';
     itemMenuBoldBtn.textContent = node.bold ? 'Remove bold' : 'Bold';
     itemMenuCheckboxBtn.textContent = (node.checkboxOn !== false) ? 'Hide checkbox' : 'Show checkbox';
     itemMenuEl.querySelectorAll('.swatch').forEach(sw=>{
-      sw.classList.toggle('active', (sw.dataset.color || null) === (node.bgColor || null));
+      sw.classList.toggle('active', !isMulti && (sw.dataset.color || null) === (node.bgColor || null));
     });
     itemMenuEl.classList.add('open');
     btnEl.classList.add('open');
@@ -2225,6 +2250,7 @@
 
   function closeItemMenu(){
     itemMenuEl.classList.remove('open');
+    itemMenuEl.classList.remove('multi');
     if(itemMenuBtnEl) itemMenuBtnEl.classList.remove('open');
     itemMenuNodeId = null;
     itemMenuBtnEl = null;
@@ -2277,22 +2303,39 @@
     if(!node) return;
     const scrollContainer = document.getElementById('outlineScroll');
     const scrollTop = scrollContainer.scrollTop;
-    
+    const scopeIds = (selectedIds.has(nodeId) && selectedIds.size > 1) ? [...selectedIds] : [nodeId];
+    const isMulti = scopeIds.length > 1;
+
     switch(action){
       case 'done':
-        toggleNodeDone(doc, node);
+        if(isMulti){
+          captureUndoPoint(doc);
+          const target = !node.done;
+          scopeIds.forEach(id=>{ const n = doc.nodes[id]; if(n){ n.done = target; touch(n); } });
+          scheduleSave();
+          renderTree();
+        } else {
+          toggleNodeDone(doc, node);
+        }
         break;
       case 'bold':
         captureUndoPoint(doc);
-        node.bold = !node.bold;
-        touch(node);
+        if(isMulti){
+          const target = !node.bold;
+          scopeIds.forEach(id=>{ const n = doc.nodes[id]; if(n){ n.bold = target; touch(n); } });
+        } else {
+          node.bold = !node.bold;
+          touch(node);
+        }
         scheduleSave();
         renderTree();
         break;
       case 'checkbox':
         captureUndoPoint(doc);
-        node.checkboxOn = (node.checkboxOn === false) ? true : false;
-        touch(node);
+        {
+          const target = (node.checkboxOn === false) ? true : false;
+          scopeIds.forEach(id=>{ const n = doc.nodes[id]; if(n){ n.checkboxOn = target; touch(n); } });
+        }
         scheduleSave();
         renderTree();
         break;
@@ -2333,20 +2376,30 @@
         }
         break;
       case 'copy':
-        selectedIds = new Set([nodeId]);
-        selectionAnchorId = nodeId;
+        if(!isMulti){
+          selectedIds = new Set([nodeId]);
+          selectionAnchorId = nodeId;
+        }
         document.execCommand('copy');
-        selectedIds.clear();
-        selectionAnchorId = null;
-        renderTree();
+        if(!isMulti){
+          selectedIds.clear();
+          selectionAnchorId = null;
+          renderTree();
+        }
         break;
       case 'cut':
-        selectedIds = new Set([nodeId]);
-        selectionAnchorId = nodeId;
+        if(!isMulti){
+          selectedIds = new Set([nodeId]);
+          selectionAnchorId = nodeId;
+        }
         document.execCommand('cut');
         break;
       case 'delete':
-        deleteNodeWithConfirm(doc, node);
+        if(isMulti){
+          deleteSelection();
+        } else {
+          deleteNodeWithConfirm(doc, node);
+        }
         break;
     }
   }
@@ -2357,9 +2410,12 @@
       const doc = activeDoc();
       const node = doc.nodes[itemMenuNodeId];
       if(node){
+        const scopeIds = (selectedIds.has(itemMenuNodeId) && selectedIds.size > 1) ? [...selectedIds] : [itemMenuNodeId];
         captureUndoPoint(doc);
-        node.bgColor = swatch.dataset.color || null;
-        touch(node);
+        scopeIds.forEach(id=>{
+          const n = doc.nodes[id];
+          if(n){ n.bgColor = swatch.dataset.color || null; touch(n); }
+        });
         scheduleSave();
         renderTree();
       }
@@ -2383,12 +2439,83 @@
     }
   });
   document.getElementById('outlineScroll').addEventListener('scroll', closeItemMenu);
-  document.getElementById('outlineScroll').addEventListener('mousedown', (e)=>{
-    if(selectedIds.size && !e.target.closest('.row-main')){
+
+  // ---------------- Marquee (drag) multi-select ----------------
+  let marqueeState = null;
+  const marqueeBox = document.getElementById('marqueeBox');
+  const outlineScrollEl = document.getElementById('outlineScroll');
+
+  outlineScrollEl.addEventListener('mousedown', (e)=>{
+    if(e.button !== 0) return;
+    if(e.target.closest('.row-main') || e.target.closest('button') || e.target.closest('#zoomTitle')) return;
+    const containerRect = outlineScrollEl.getBoundingClientRect();
+    marqueeState = {
+      startX: e.clientX - containerRect.left + outlineScrollEl.scrollLeft,
+      startY: e.clientY - containerRect.top + outlineScrollEl.scrollTop,
+      moved: false,
+      additive: e.shiftKey || e.ctrlKey || e.metaKey,
+      baseSelection: new Set(selectedIds),
+      currentSet: new Set(selectedIds)
+    };
+  });
+
+  document.addEventListener('mousemove', (e)=>{
+    if(!marqueeState) return;
+    const containerRect = outlineScrollEl.getBoundingClientRect();
+    const curX = e.clientX - containerRect.left + outlineScrollEl.scrollLeft;
+    const curY = e.clientY - containerRect.top + outlineScrollEl.scrollTop;
+
+    if(!marqueeState.moved){
+      if(Math.abs(curX - marqueeState.startX) < 4 && Math.abs(curY - marqueeState.startY) < 4) return;
+      marqueeState.moved = true;
+      document.body.classList.add('marquee-active');
+      marqueeBox.style.display = 'block';
+    }
+
+    const left = Math.min(curX, marqueeState.startX);
+    const top = Math.min(curY, marqueeState.startY);
+    const width = Math.abs(curX - marqueeState.startX);
+    const height = Math.abs(curY - marqueeState.startY);
+    marqueeBox.style.left = left + 'px';
+    marqueeBox.style.top = top + 'px';
+    marqueeBox.style.width = width + 'px';
+    marqueeBox.style.height = height + 'px';
+
+    const mLeft = left, mTop = top, mRight = left + width, mBottom = top + height;
+    const hit = new Set();
+    treeRootEl.querySelectorAll('.row-main').forEach(rm=>{
+      const r = rm.getBoundingClientRect();
+      const rTop = r.top - containerRect.top + outlineScrollEl.scrollTop;
+      const rBottom = r.bottom - containerRect.top + outlineScrollEl.scrollTop;
+      const rLeft = r.left - containerRect.left + outlineScrollEl.scrollLeft;
+      const rRight = r.right - containerRect.left + outlineScrollEl.scrollLeft;
+      if(rLeft < mRight && rRight > mLeft && rTop < mBottom && rBottom > mTop){
+        const rowEl = rm.closest('.row');
+        if(rowEl) hit.add(rowEl.dataset.id);
+      }
+    });
+
+    const combined = marqueeState.additive ? new Set([...marqueeState.baseSelection, ...hit]) : hit;
+    marqueeState.currentSet = combined;
+    treeRootEl.querySelectorAll('.row').forEach(rowEl=>{
+      rowEl.classList.toggle('selected', combined.has(rowEl.dataset.id));
+    });
+  });
+
+  document.addEventListener('mouseup', ()=>{
+    if(!marqueeState) return;
+    if(marqueeState.moved){
+      selectedIds = marqueeState.currentSet;
+      selectionAnchorId = selectedIds.size ? [...selectedIds][selectedIds.size - 1] : null;
+      document.body.classList.remove('marquee-active');
+      marqueeBox.style.display = 'none';
+      renderTree();
+    } else if(!marqueeState.additive && selectedIds.size){
       selectedIds.clear();
       selectionAnchorId = null;
       renderTree();
     }
+    marqueeState = null;
   });
 
   // ---------------- Structured copy / cut / paste ----------------
