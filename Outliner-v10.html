@@ -1054,6 +1054,12 @@
   let saveTimer = null;
   let savePending = false;
   
+  function touchDoc(d){
+    if(!d) return;
+    d.updatedAt = Date.now();
+    d.syncVersion = (d.syncVersion || 0) + 1;
+  }
+
   function scheduleSave(){
     if(savePending) return;
     savePending = true;
@@ -1274,7 +1280,7 @@
       if(isMemberNotOwner){
         if(!confirm(`Leave "${folder.name}"? You'll lose access to this folder grouping; documents already shared with you stay shared.`)) return;
         leaveSharedDoc(folder.shareId);
-        docsInFolder.forEach(d => { d.folderId = null; });
+        docsInFolder.forEach(d => { d.folderId = null; touchDoc(d); });
         delete workspace.folders[folder.id];
         scheduleSave();
         renderDocList();
@@ -1284,7 +1290,7 @@
         ? `Delete folder "${folder.name}"? Its ${docsInFolder.length} document(s) move back to the top level — nothing is deleted, and any of them already shared stay shared.`
         : `Delete folder "${folder.name}"?`;
       if(!confirm(msg)) return;
-      docsInFolder.forEach(d => { d.folderId = null; });
+      docsInFolder.forEach(d => { d.folderId = null; touchDoc(d); });
       if(folder.shareId) deleteSharedDoc(folder.shareId);
       delete workspace.folders[folder.id];
       deletePrivateFolderRemote(folder.id);
@@ -1306,6 +1312,7 @@
       const d = workspace.documents[docId];
       if(!d) return;
       d.folderId = folder.id;
+      touchDoc(d);
       if(folder.shareId) ensureDocSharedWithFolder(d, folder);
       scheduleSave();
       renderDocList();
@@ -2103,6 +2110,7 @@
     const d = workspace.documents[docId];
     if(!d || !d.folderId) return;
     d.folderId = null;
+    touchDoc(d);
     scheduleSave();
     renderDocList();
   });
@@ -3172,7 +3180,9 @@
     });
 
     const nameWins = (remote.updatedAt || 0) < (local.updatedAt || 0);
-    
+    const localFolderId = local.folderId !== undefined ? local.folderId : null;
+    const remoteFolderId = remote.folderId !== undefined ? remote.folderId : null;
+
     return {
       id: remote.id || local.id,
       shareId: remote.shareId || local.shareId,
@@ -3181,6 +3191,7 @@
       createdAt: Math.min(local.createdAt || Date.now(), remote.createdAt || Date.now()),
       updatedAt: Math.max(local.updatedAt || 0, remote.updatedAt || 0),
       name: nameWins ? local.name : remote.name,
+      folderId: nameWins ? localFolderId : remoteFolderId,
       rootId,
       zoomedId: (local.zoomedId && nodes[local.zoomedId]) ? local.zoomedId : rootId,
       nodes,
