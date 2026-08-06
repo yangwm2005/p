@@ -434,18 +434,17 @@
   #columnViewWrap{display:none; flex-direction:column; flex:1; min-height:0;}
   #main.col-mode #columnViewWrap{display:flex;}
   #colModeBar{
-    display:flex; align-items:center; gap:8px; padding:8px 20px;
+    display:flex; align-items:center; gap:8px; padding:5px 20px;
     border-bottom:1px solid var(--line); flex:0 0 auto;
   }
-  #colModeBar .col-mode-label{font-size:12px; color:var(--ink-faint);}
-  #colModeSwitch{
-    display:flex; border:1px solid var(--line-strong); border-radius:6px; overflow:hidden;
+  .col-mode-toggle{
+    display:flex; align-items:center; gap:5px;
+    border:1px solid var(--line-strong); border-radius:6px; background:var(--paper);
+    color:var(--ink-soft); font-size:11.5px; padding:4px 9px 4px 7px;
+    cursor:pointer; font-family:inherit; line-height:1.2;
   }
-  #colModeSwitch button{
-    border:none; background:var(--paper); color:var(--ink-soft); font-size:12px;
-    padding:5px 10px; cursor:pointer; font-family:inherit;
-  }
-  #colModeSwitch button.active{background:var(--accent); color:#fff;}
+  .col-mode-toggle:hover{border-color:var(--accent); color:var(--accent);}
+  .col-mode-toggle-icon{font-size:12px;}
 
   /* ---------------- Branch tree (always-visible horizontal tree) ---------------- */
   #branchView{display:none; flex-direction:column; flex:1; min-height:0; overflow:hidden;}
@@ -510,6 +509,7 @@
   .branch-content .col-item-text{flex:0 0 auto; width:170px; font-size:13px;}
   .branch-content .col-item-bullet{width:5px; height:5px; margin-top:5px;}
   .branch-content .col-item-arrow{width:10px; font-size:10px; margin-top:1px;}
+  .branch-content .col-item-combotoggle{width:12px; font-size:11px; margin-top:1px;}
   .branch-content .col-item-add, .branch-content .col-item-del{
     width:13px; font-size:11px;
   }
@@ -519,6 +519,15 @@
     display:inline-block;
   }
   #branchAddRoot:hover{color:var(--accent); border-color:var(--accent);}
+  .col-item-combotoggle{
+    flex:0 0 auto; font-size:11px; width:13px; text-align:center;
+    cursor:pointer; color:var(--ink-faint); margin-top:2px;
+  }
+  .col-item-combotoggle:hover{color:var(--accent);}
+  .col-item-combotoggle.state-inline{color:var(--accent);}
+  .col-item-combotoggle.state-collapsed{color:var(--ink-soft);}
+  .branch-inline-below{display:flex; flex-direction:column; margin-top:1px; margin-left:4px;}
+  .branch-inline-below .col-item{padding:3px 6px; gap:4px;}
   #columnView{
     display:flex; flex:1; overflow-x:auto; overflow-y:hidden;
     padding:14px 20px; gap:0; height:100%; min-height:0;
@@ -1138,11 +1147,9 @@
     </div>
     <div id="columnViewWrap">
       <div id="colModeBar">
-        <span class="col-mode-label">Layout:</span>
-        <div id="colModeSwitch">
-          <button type="button" id="colModeBranchBtn" class="active" title="Whole tree as a horizontal branch diagram, resizable per level">Full branch</button>
-          <button type="button" id="colModeInlineBtn" title="Children expand indented below the item">Below item</button>
-        </div>
+        <button type="button" id="colModeToggleBtn" class="col-mode-toggle" title="Full branch — click to switch to Below item">
+          <span class="col-mode-toggle-icon">⑃</span><span class="col-mode-toggle-label">Full branch</span>
+        </button>
       </div>
       <div id="columnView"></div>
       <div id="branchView">
@@ -1196,7 +1203,7 @@
       <li>Click a bullet to zoom into it like a folder; click the ▸ arrow to collapse it</li>
       <li>Drag a bullet to reorder items, or drag a document onto a folder in the sidebar to file it</li>
       <li>Use the <b>Lines</b> button (top right) to show or hide the connector lines between bullets</li>
-      <li>Use the <b>Tree</b> button (top right) to view the outline as a diagram. Double-click text to edit, ✕ to delete, + to add a child, <b>Enter</b> to add a new item right below it. Use the <b>Full branch / Below item</b> switch at the top of Tree view: "Full branch" shows the whole tree at once as a horizontal branching diagram — like the classic Mac Tree app — with a resizable, renamable column per depth level (drag the handle on the left edge of a level's ruler band to resize it, click the label to rename it). "Below item" instead expands children indented directly under an item, one branch open at a time</li>
+      <li>Use the <b>Tree</b> button (top right) to view the outline as a diagram. Double-click text to edit, ✕ to delete, + to add a child, <b>Enter</b> to add a new item right below it. Use the small <b>⑃ Full branch / ▾ Below item</b> button at the top of Tree view to switch layouts — click it to toggle back and forth. "Full branch" shows the whole tree at once as a horizontal branching diagram — like the classic Mac Tree app — with a resizable, renamable column per depth level (drag the handle on the right edge of a level's ruler band to resize it, double-click it to auto-fit, click the label to rename it). "Below item" instead expands children indented directly under an item, one branch open at a time. In Full branch, each item with children shows a small ⑃/▾/▸ icon in place of the bullet's expand arrow — click it (or the bullet) to cycle that item's subitems through fanning out as branches, nesting below it, and collapsing — mix all three freely in the same tree, and it works recursively: a sub-item nested "below" a branch item can itself be toggled back to fanning out its own branches</li>
     </ul>
 
     <h4>Checkboxes, bold &amp; highlights</h4>
@@ -3506,12 +3513,15 @@
   let branchCollapsed = new Set(); // node ids collapsed in the full-branch diagram (independent of outline collapse state)
   let branchLevelWidths = {}; // depth -> px width
   let branchLevelNames = {}; // depth -> label
+  let branchNodeMode = new Map(); // node id -> 'inline' (absent = default 'branch'), per-item override within Full branch view
+  let branchInlineExpanded = new Map(); // node id -> 'inline' | 'branch' (absent = collapsed), state within a branch-item's "below item" sub-tree
 
   const colViewBtn = document.getElementById('colViewBtn');
   const columnViewEl = document.getElementById('columnView');
   const columnViewWrapEl = document.getElementById('columnViewWrap');
-  const colModeInlineBtn = document.getElementById('colModeInlineBtn');
-  const colModeBranchBtn = document.getElementById('colModeBranchBtn');
+  const colModeToggleBtn = document.getElementById('colModeToggleBtn');
+  const colModeToggleIcon = colModeToggleBtn.querySelector('.col-mode-toggle-icon');
+  const colModeToggleLabel = colModeToggleBtn.querySelector('.col-mode-toggle-label');
   const branchResizeBarEl = document.getElementById('branchResizeBar');
   const branchResizeBarInnerEl = document.getElementById('branchResizeBarInner');
   const branchTreeEl = document.getElementById('branchTree');
@@ -3537,8 +3547,9 @@
     columnExpandMode = mode;
     renderColumnView();
   }
-  colModeInlineBtn.addEventListener('click', ()=> setColumnExpandMode('inline'));
-  colModeBranchBtn.addEventListener('click', ()=> setColumnExpandMode('branches'));
+  colModeToggleBtn.addEventListener('click', ()=>{
+    setColumnExpandMode(columnExpandMode === 'branches' ? 'inline' : 'branches');
+  });
 
   // Builds one item row (bullet, text, arrow, add/delete controls) shared by both modes.
   function buildColItem(doc, node, opts){
@@ -3561,10 +3572,31 @@
     textEl.textContent = node.text || '(empty)';
     item.appendChild(textEl);
 
-    const arrow = document.createElement('div');
-    arrow.className = 'col-item-arrow' + (opts.arrowClickable ? ' clickable' : '') + (opts.expanded ? ' expanded' : '');
-    arrow.textContent = hasChildren ? '▸' : '';
-    item.appendChild(arrow);
+    let arrow = null;
+    let comboBtn = null;
+    if(opts.combinedToggle && hasChildren){
+      // Single 3-way button replacing the separate expand-arrow + mode-toggle:
+      // cycles branch (fan out) -> inline (nest below) -> collapsed -> branch ...
+      comboBtn = document.createElement('div');
+      const state = opts.combinedState || 'branch';
+      comboBtn.className = 'col-item-combotoggle state-' + state;
+      comboBtn.textContent = state === 'inline' ? '▾' : (state === 'collapsed' ? '▸' : '⑃');
+      comboBtn.title = state === 'branch'
+        ? 'Fanned out as branches — click to nest below the item instead'
+        : state === 'inline'
+          ? 'Nested below the item — click to collapse'
+          : 'Collapsed — click to fan out as branches';
+      comboBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        opts.onCombinedToggle && opts.onCombinedToggle();
+      });
+      item.appendChild(comboBtn);
+    } else {
+      arrow = document.createElement('div');
+      arrow.className = 'col-item-arrow' + (opts.arrowClickable ? ' clickable' : '') + (opts.expanded ? ' expanded' : '');
+      arrow.textContent = hasChildren ? '▸' : '';
+      item.appendChild(arrow);
+    }
 
     const addBtn = document.createElement('div');
     addBtn.className = 'col-item-add';
@@ -3594,7 +3626,10 @@
       });
       textEl.addEventListener('click', opts.onRowClick);
     }
-    if(opts.arrowClickable){
+    if(opts.combinedToggle && hasChildren){
+      bullet.style.cursor = 'pointer';
+      bullet.addEventListener('click', (e)=>{ e.stopPropagation(); opts.onCombinedToggle && opts.onCombinedToggle(); });
+    } else if(opts.arrowClickable){
       arrow.addEventListener('click', (e)=>{ e.stopPropagation(); opts.onToggle && opts.onToggle(); });
       bullet.style.cursor = 'pointer';
       bullet.addEventListener('click', (e)=>{ e.stopPropagation(); opts.onToggle && opts.onToggle(); });
@@ -3654,8 +3689,12 @@
     if(!columnViewOn) return;
     columnViewEl.classList.toggle('inline-mode', columnExpandMode === 'inline');
     columnViewWrapEl.classList.toggle('mode-branches', columnExpandMode === 'branches');
-    colModeInlineBtn.classList.toggle('active', columnExpandMode === 'inline');
-    colModeBranchBtn.classList.toggle('active', columnExpandMode === 'branches');
+    const isBranches = columnExpandMode === 'branches';
+    colModeToggleIcon.textContent = isBranches ? '⑃' : '▾';
+    colModeToggleLabel.textContent = isBranches ? 'Full branch' : 'Below item';
+    colModeToggleBtn.title = isBranches
+      ? 'Full branch — click to switch to Below item'
+      : 'Below item — click to switch to Full branch';
     const doc = activeDoc();
     if(!doc){ columnViewEl.innerHTML = ''; branchTreeEl.innerHTML = ''; return; }
     if(columnExpandMode === 'inline') renderInlineTree(doc);
@@ -3745,7 +3784,10 @@
     const diff = e.pageX - branchResizeStartX;
     const newW = Math.max(100, branchResizeStartW + diff);
     branchLevelWidths[branchResizing] = newW;
-    branchTreeEl.querySelectorAll(`.col-item-text[data-depth="${branchResizing}"]`).forEach(el => el.style.width = newW + 'px');
+    branchTreeEl.querySelectorAll(`.col-item-text[data-depth="${branchResizing}"]`).forEach(el => {
+      const indent = parseInt(el.dataset.indent || '0', 10);
+      el.style.width = Math.max(60, newW - indent) + 'px';
+    });
     syncBranchResizeBarPositions(branchMaxDepthCache);
   }
   function onBranchResizeUp(){
@@ -3768,15 +3810,24 @@
       maxDepth = Math.max(maxDepth, depth);
       const hasChildren = !!(node.children && node.children.length);
       const collapsed = branchCollapsed.has(node.id);
+      const mode = branchNodeMode.get(node.id) || 'branch'; // 'branch' | 'inline', per-item override
+      const state = collapsed ? 'collapsed' : mode; // combined 3-way state
       const wrap = document.createElement('div');
       wrap.className = 'branch-item';
 
       const content = buildColItem(doc, node, {
-        arrowClickable: hasChildren,
-        expanded: hasChildren && !collapsed,
-        onToggle: ()=>{
-          if(branchCollapsed.has(node.id)) branchCollapsed.delete(node.id);
-          else branchCollapsed.add(node.id);
+        combinedToggle: true,
+        combinedState: state,
+        onCombinedToggle: ()=>{
+          if(state === 'branch'){
+            branchCollapsed.delete(node.id);
+            branchNodeMode.set(node.id, 'inline');
+          } else if(state === 'inline'){
+            branchCollapsed.add(node.id);
+          } else {
+            branchCollapsed.delete(node.id);
+            branchNodeMode.delete(node.id);
+          }
           renderColumnView();
         },
         onAddChild: ()=> addChildNode(doc, node, (newId)=>{
@@ -3801,20 +3852,96 @@
       });
       content.classList.add('branch-content');
       content.dataset.depth = depth;
-      if(hasChildren) content.classList.add('has-children');
+      if(hasChildren && mode !== 'inline') content.classList.add('has-children');
       const textEl = content.querySelector('.col-item-text');
       textEl.dataset.depth = depth;
       textEl.style.width = getBranchWidth(depth) + 'px';
       wrap.appendChild(content);
 
       if(hasChildren && !collapsed){
-        const childrenEl = document.createElement('div');
-        childrenEl.className = 'branch-children';
-        node.children.forEach(cid => { const c = doc.nodes[cid]; if(c) renderNode(c, depth + 1, childrenEl); });
-        wrap.appendChild(childrenEl);
+        if(mode === 'inline'){
+          wrap.style.flexDirection = 'column';
+          const belowEl = document.createElement('div');
+          belowEl.className = 'branch-inline-below';
+          renderInlineBelow(node, 1, belowEl, depth + 1);
+          wrap.appendChild(belowEl);
+        } else {
+          const childrenEl = document.createElement('div');
+          childrenEl.className = 'branch-children';
+          node.children.forEach(cid => { const c = doc.nodes[cid]; if(c) renderNode(c, depth + 1, childrenEl); });
+          wrap.appendChild(childrenEl);
+        }
       }
       container.appendChild(wrap);
     }
+
+    // Nested indented list (like the "Below item" mode) rendered under a single
+    // branch node whose per-item toggle has been switched to "below" style.
+    // Each sub-item gets the same 3-way toggle as top-level branch items, so a
+    // sub-item can itself fan back out into a horizontal branch diagram
+    // (state 'branch'), stay nested inline (state 'inline'), or stay collapsed.
+    function renderInlineBelow(parentNode, indentDepth, cont, trueDepth){
+      (parentNode.children || []).forEach(cid => {
+        const cNode = doc.nodes[cid];
+        if(!cNode) return;
+        const cHasChildren = !!(cNode.children && cNode.children.length);
+        const cState = cHasChildren ? (branchInlineExpanded.get(cid) || 'collapsed') : 'collapsed';
+        const cItem = buildColItem(doc, cNode, {
+          indent: indentDepth * 18,
+          combinedToggle: cHasChildren,
+          combinedState: cState,
+          onCombinedToggle: ()=>{
+            if(cState === 'collapsed') branchInlineExpanded.set(cid, 'branch');
+            else if(cState === 'branch') branchInlineExpanded.set(cid, 'inline');
+            else branchInlineExpanded.delete(cid);
+            renderColumnView();
+          },
+          onAddChild: ()=> addChildNode(doc, cNode, (newId)=>{
+            if(!branchInlineExpanded.has(cid)) branchInlineExpanded.set(cid, 'inline');
+            renderColumnView();
+            focusColItemText(newId);
+          }),
+          onDeleted: ()=>{ branchInlineExpanded.delete(cid); renderColumnView(); },
+          onEnterNewSibling: ()=>{
+            captureUndoPoint(doc);
+            const idx = parentNode.children.indexOf(cid);
+            const n = makeNode(parentNode.id, '');
+            doc.nodes[n.id] = n;
+            parentNode.children.splice(idx + 1, 0, n.id);
+            touch(parentNode);
+            scheduleSave();
+            renderColumnView();
+            focusColItemText(n.id);
+          }
+        });
+        const cTextEl = cItem.querySelector('.col-item-text');
+        if(cTextEl){
+          cTextEl.dataset.depth = trueDepth;
+          cTextEl.dataset.indent = indentDepth * 18;
+          cTextEl.style.width = Math.max(60, getBranchWidth(trueDepth) - indentDepth * 18) + 'px';
+        }
+        if(cHasChildren && cState === 'branch'){
+          // Branch out into the next column, same as a top-level item: put the
+          // item's own row and its branch-children side by side in a row wrapper
+          // (instead of stacking children below it), so it steps into the next
+          // depth's column rather than just indenting further down the list.
+          const rowWrap = document.createElement('div');
+          rowWrap.className = 'branch-item';
+          rowWrap.appendChild(cItem);
+          const childrenEl = document.createElement('div');
+          childrenEl.className = 'branch-children';
+          cNode.children.forEach(gcid => { const g = doc.nodes[gcid]; if(g) renderNode(g, trueDepth + 1, childrenEl); });
+          rowWrap.appendChild(childrenEl);
+          cont.appendChild(rowWrap);
+        } else {
+          cont.appendChild(cItem);
+          if(cHasChildren && cState === 'inline'){
+            renderInlineBelow(cNode, indentDepth + 1, cont, trueDepth + 1);
+          }
+        }
+      });
+    }
+
 
     if(!root.children || root.children.length === 0){
       const empty = document.createElement('div');
