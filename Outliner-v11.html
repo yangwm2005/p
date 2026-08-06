@@ -2132,7 +2132,7 @@
         content.contentEditable = 'true';
         content.spellcheck = false;
         content.dataset.placeholder = 'Type something…';
-        content.innerHTML = renderContentInline(node.text);
+        content.innerHTML = renderContentInline(node.text, node);
         attachEditingHandlers(content, id);
         content.addEventListener('mousedown', (e)=>{
           const chip = e.target.closest('.tag-chip');
@@ -2289,6 +2289,82 @@
     return getCaretOffset(el) === 0;
   }
 
+  // ---------------- Inline formatting (selection-based bold/italic ranges) ----------------
+  function getSelectionOffsets(el){
+    const sel = window.getSelection();
+    if(!sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    if(!el.contains(range.commonAncestorContainer)) return null;
+    const preStart = range.cloneRange();
+    preStart.selectNodeContents(el);
+    preStart.setEnd(range.startContainer, range.startOffset);
+    const preEnd = range.cloneRange();
+    preEnd.selectNodeContents(el);
+    preEnd.setEnd(range.endContainer, range.endOffset);
+    const start = preStart.toString().length, end = preEnd.toString().length;
+    return { start: Math.min(start, end), end: Math.max(start, end) };
+  }
+
+  function isRangeFullyCovered(ranges, start, end){
+    let pos = start;
+    for(const [s, e] of ranges.slice().sort((a, b) => a[0] - b[0])){
+      if(s > pos) return false;
+      if(e > pos) pos = e;
+      if(pos >= end) return true;
+    }
+    return pos >= end;
+  }
+
+  function addRange(ranges, start, end){
+    const merged = ranges.concat([[start, end]]).sort((a, b) => a[0] - b[0]);
+    const out = [];
+    for(const r of merged){
+      if(out.length && r[0] <= out[out.length - 1][1]){
+        out[out.length - 1][1] = Math.max(out[out.length - 1][1], r[1]);
+      } else {
+        out.push(r.slice());
+      }
+    }
+    return out;
+  }
+
+  function subtractRange(ranges, start, end){
+    const out = [];
+    for(const [s, e] of ranges){
+      if(e <= start || s >= end){ out.push([s, e]); continue; }
+      if(s < start) out.push([s, start]);
+      if(e > end) out.push([end, e]);
+    }
+    return out;
+  }
+
+  function toggleFormatRange(node, field, start, end){
+    if(start === end) return;
+    if(!node[field]) node[field] = [];
+    node[field] = isRangeFullyCovered(node[field], start, end)
+      ? subtractRange(node[field], start, end)
+      : addRange(node[field], start, end);
+  }
+
+  function diffText(oldText, newText){
+    let start = 0;
+    const max = Math.min(oldText.length, newText.length);
+    while(start < max && oldText[start] === newText[start]) start++;
+    let oldEnd = oldText.length, newEnd = newText.length;
+    while(oldEnd > start && newEnd > start && oldText[oldEnd - 1] === newText[newEnd - 1]){ oldEnd--; newEnd--; }
+    return { editStart: start, removedLen: oldEnd - start, insertedLen: newEnd - start };
+  }
+
+  function shiftRangesForEdit(ranges, editStart, removedLen, insertedLen){
+    if(!ranges || !ranges.length) return ranges;
+    const delta = insertedLen - removedLen, editEnd = editStart + removedLen;
+    return ranges.map(([s, e]) => {
+      const ns = s >= editEnd ? s + delta : (s > editStart ? editStart : s);
+      const ne = e >= editEnd ? e + delta : (e > editStart ? editStart : e);
+      return [ns, ne];
+    }).filter(([s, e]) => e > s);
+  }
+
   // ---------------- Editing / keyboard ----------------
   // ---------------- Tag autocomplete ----------------
   const tagAutocompleteEl = document.getElementById('tagAutocomplete');
@@ -2403,6 +2479,9 @@
       
       const currentText = el.innerText;
       if(currentText === lastKnownText) return;
+      const diff = diffText(lastKnownText, currentText);
+      node.boldRanges = shiftRangesForEdit(node.boldRanges, diff.editStart, diff.removedLen, diff.insertedLen);
+      node.italicRanges = shiftRangesForEdit(node.italicRanges, diff.editStart, diff.removedLen, diff.insertedLen);
       lastKnownText = currentText;
       
       captureUndoPoint(doc, { coalesce: true });
@@ -2417,7 +2496,7 @@
       highlightTimeout = setTimeout(()=>{
         if(document.activeElement !== el) return;
         const offset = getCaretOffset(el);
-        const html = renderContentInline(el.innerText);
+        const html = renderContentInline(el.innerText, node);
         if(el.innerHTML === html) return;
         isInternalUpdate = true;
         el.innerHTML = html;
@@ -2630,11 +2709,30 @@
       if((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'b'){
         e.preventDefault();
         captureUndoPoint(doc);
+        const offsets = getSelectionOffsets(el);
         node.text = el.innerText; touch(node);
-        node.bold = !node.bold;
+        if(offsets && offsets.start !== offsets.end){
+          toggleFormatRange(node, 'boldRanges', offsets.start, offsets.end);
+        } else {
+          node.bold = !node.bold;
+        }
         scheduleSave();
-        focusRequest = { id: node.id, caret: getCaretOffset(el) };
+        focusRequest = { id: node.id, caret: offsets ? offsets.end : getCaretOffset(el) };
         renderTree();
+        return;
+      }
+
+      if((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'i'){
+        const offsets = getSelectionOffsets(el);
+        if(offsets && offsets.start !== offsets.end){
+          e.preventDefault();
+          captureUndoPoint(doc);
+          node.text = el.innerText; touch(node);
+          toggleFormatRange(node, 'italicRanges', offsets.start, offsets.end);
+          scheduleSave();
+          focusRequest = { id: node.id, caret: offsets.end };
+          renderTree();
+        }
         return;
       }
     });
@@ -2650,7 +2748,7 @@
         scheduleSave();
       }
       if(node && !isRendering){
-        const html = renderContentInline(node.text);
+        const html = renderContentInline(node.text, node);
         if(el.innerHTML !== html) el.innerHTML = html;
       }
     });
@@ -3027,18 +3125,35 @@
     return out;
   }
 
-  function renderContentInline(text){
+  function renderContentInline(text, node){
+    node = node || {};
     const tags = extractTags(text);
-    if(!tags.length) return escapeHtmlText(text);
+    const boldRanges = node.boldRanges || [];
+    const italicRanges = node.italicRanges || [];
+    if(!tags.length && !boldRanges.length && !italicRanges.length) return escapeHtmlText(text);
+
+    const points = new Set([0, text.length]);
+    tags.forEach(t=>{ points.add(t.index); points.add(t.index + t.length); });
+    boldRanges.forEach(([s, e])=>{ points.add(s); points.add(e); });
+    italicRanges.forEach(([s, e])=>{ points.add(s); points.add(e); });
+    const sorted = Array.from(points).filter(p => p >= 0 && p <= text.length).sort((a, b) => a - b);
+
+    const isActive = (ranges, pos) => ranges.some(([s, e]) => pos >= s && pos < e);
+    const activeTag = pos => tags.find(t => pos >= t.index && pos < t.index + t.length);
+
     let out = '';
-    let pos = 0;
-    tags.forEach(t=>{
-      out += escapeHtmlText(text.slice(pos, t.index));
-      const raw = text.slice(t.index, t.index + t.length);
-      out += '<span class="tag-chip" data-tag="' + escapeHtmlText(t.canon) + '" data-tag-display="' + escapeHtmlText(t.display) + '">' + escapeHtmlText(raw) + '</span>';
-      pos = t.index + t.length;
-    });
-    out += escapeHtmlText(text.slice(pos));
+    for(let i = 0; i < sorted.length - 1; i++){
+      const segStart = sorted[i], segEnd = sorted[i + 1];
+      if(segStart >= segEnd) continue;
+      let seg = escapeHtmlText(text.slice(segStart, segEnd));
+      const tag = activeTag(segStart);
+      if(tag){
+        seg = '<span class="tag-chip" data-tag="' + escapeHtmlText(tag.canon) + '" data-tag-display="' + escapeHtmlText(tag.display) + '">' + seg + '</span>';
+      }
+      if(isActive(italicRanges, segStart)) seg = '<i>' + seg + '</i>';
+      if(isActive(boldRanges, segStart)) seg = '<b>' + seg + '</b>';
+      out += seg;
+    }
     return out;
   }
 
