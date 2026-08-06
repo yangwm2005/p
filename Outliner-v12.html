@@ -342,6 +342,7 @@
   .folderItem .iconbtn{opacity:0; background:none; border:none; cursor:pointer; color:var(--ink-faint); width:18px; height:18px; display:flex; align-items:center; justify-content:center; border-radius:4px; flex-shrink:0;}
   .folderItem:hover .iconbtn{opacity:1;}
   .folderItem .iconbtn.share.is-shared{opacity:1; color:var(--accent);}
+  .folderItem .iconbtn.add:hover{color:var(--accent-ink); background:var(--accent-soft);}
   .folderItem .iconbtn.share:hover, .folderItem .iconbtn.rename:hover{color:var(--accent-ink); background:var(--accent-soft);}
   .folderItem .iconbtn.del:hover{color:var(--danger); background:rgba(181,83,60,0.12);}
   .folderItem .share-badge{width:5px; height:5px; border-radius:50%; background:var(--accent); flex-shrink:0; margin-left:-2px;}
@@ -1714,6 +1715,7 @@
     if(name === 'edit') return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
     if(name === 'folder') return '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h4.6a1.5 1.5 0 0 1 1.2.6l1.2 1.6a1.5 1.5 0 0 0 1.2.6H19.5A1.5 1.5 0 0 1 21 8.3v10.2A1.5 1.5 0 0 1 19.5 20h-15A1.5 1.5 0 0 1 3 18.5v-13Z"/></svg>';
     if(name === 'calendar') return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M16 2.5v4M8 2.5v4M3 9.5h18"/></svg>';
+    if(name === 'add') return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
     return '';
   }
 
@@ -1772,16 +1774,31 @@
     row.innerHTML = `<span class="toggle">${icon('chevron')}</span><span class="folder-icon">${icon('folder')}</span><span class="name"></span>`
       + (isShared ? `<span class="share-badge" title="${folder.ownerUid && currentUser && folder.ownerUid===currentUser.uid ? 'Shared by you' : 'Shared with you'}"></span>` : '')
       + `<span class="count">${docsInFolder.length}</span>`
+      + `<button class="iconbtn add" title="New document in this folder">${icon('add')}</button>`
       + `<button class="iconbtn share${isShared ? ' is-shared' : ''}" title="Share this folder — documents filed here share automatically">${icon('share')}</button>`
       + `<button class="iconbtn rename" title="Rename folder">${icon('edit')}</button>`
       + `<button class="iconbtn del" title="Delete folder (documents move back to Documents)">${icon('trash')}</button>`;
     row.querySelector('.name').textContent = folder.name || 'New folder';
     row.addEventListener('click', (e)=>{
-      if(e.target.closest('.del') || e.target.closest('.rename') || e.target.closest('.share')) return;
+      if(e.target.closest('.del') || e.target.closest('.rename') || e.target.closest('.share') || e.target.closest('.add')) return;
       folder.collapsed = !folder.collapsed;
       folder.updatedAt = Date.now();
       scheduleSave();
       renderDocList();
+    });
+    row.querySelector('.add').addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const doc = makeDoc('Untitled');
+      doc.folderId = folder.id;
+      workspace.documents[doc.id] = doc;
+      workspace.activeDocId = doc.id;
+      if(folder.shareId) ensureDocSharedWithFolder(doc, folder);
+      folder.collapsed = false;
+      searchQuery = ""; searchInput.value = "";
+      scheduleSave();
+      renderAll();
+      if(typeof closeMobileSidebar === 'function') closeMobileSidebar();
+      setTimeout(()=>zoomTitleEl.focus(), 0);
     });
     row.querySelector('.share').addEventListener('click', (e)=>{
       e.stopPropagation();
