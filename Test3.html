@@ -938,6 +938,12 @@
   var cloudSaveTimer = null;
   var lastSyncedJSON = null;
   var applyingRemote = false;
+  var recentlyRemovedIds = {}; // id -> timestamp, prevents a stale cloud snapshot from resurrecting a just-deleted project
+  function markRemoved(id){ recentlyRemovedIds[id] = Date.now(); }
+  function isRecentlyRemoved(id){
+    var t = recentlyRemovedIds[id];
+    return !!t && (Date.now() - t) < 20000;
+  }
 
   // ---------- date helpers (local-time safe) ----------
   function parseDate(str){
@@ -1254,6 +1260,7 @@
     }
     if(!confirm('Delete project "' + p.name + '" and all its tasks? This cannot be undone.')) return;
     delete projects[id];
+    markRemoved(id);
     if(activeProjectId === id){
       var nextId = Object.keys(projects)[0];
       activeProjectId = nextId;
@@ -1261,7 +1268,7 @@
       closeInspector();
     }
     saveProjectsLocal();
-    if(!applyingRemote) scheduleCloudSave();
+    if(!applyingRemote) pushToCloud(); // immediate, not debounced — avoids losing the race with the live cloud listener
     render();
     renderProjectPicker();
   }
@@ -1390,6 +1397,7 @@
         if(projects[id].shareId) newProjects[id] = projects[id]; // keep shared projects, they live outside this blob
       });
       Object.keys(remote).forEach(function(id){
+        if(isRecentlyRemoved(id)) return; // we just deleted this locally — don't let a stale snapshot bring it back
         newProjects[id] = {
           id: id,
           name: remote[id].name || "Untitled project",
@@ -1486,6 +1494,7 @@
         var liveIds = new Set();
         snap.forEach(function(docSnap){
           var shareId = docSnap.id;
+          if(isRecentlyRemoved(shareId)) return;
           liveIds.add(shareId);
           if(!sharedProjectUnsubs[shareId]) subscribeToSharedGanttProject(shareId);
         });
@@ -1635,6 +1644,7 @@
     });
     if(sharedProjectUnsubs[shareId]){ sharedProjectUnsubs[shareId](); delete sharedProjectUnsubs[shareId]; }
     delete lastSharedProjectJSON[shareId];
+    markRemoved(shareId);
     var newId = uid();
     projects[newId] = { id:newId, name:p.name, tasks:p.tasks, linkedPmProjectId:p.linkedPmProjectId||null, pmReturnUrl:p.pmReturnUrl||null };
     delete projects[shareId];
@@ -1656,6 +1666,7 @@
     }).catch(function(err){ console.error(err); });
     if(sharedProjectUnsubs[shareId]){ sharedProjectUnsubs[shareId](); delete sharedProjectUnsubs[shareId]; }
     delete lastSharedProjectJSON[shareId];
+    markRemoved(shareId);
     delete projects[shareId];
     if(activeProjectId === shareId){
       var ids = Object.keys(projects);
@@ -1663,6 +1674,7 @@
       else { var freshId = uid(); projects[freshId] = { id:freshId, name:"My Gantt Chart", tasks: [] }; activeProjectId = freshId; tasks = []; }
     }
     saveProjectsLocal();
+    if(!applyingRemote) pushToCloud(); // in case this shareId also lingers in the private blob
     closeShareModal();
     render();
     renderProjectPicker();
