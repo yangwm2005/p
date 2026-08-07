@@ -1244,9 +1244,8 @@
     if(!p) return;
     if(p.shareId){
       var isOwner = currentUser && p.ownerUid === currentUser.uid;
-      alert(isOwner
-        ? 'This project is shared. Open Share (🔗) and use "Stop sharing" before deleting it.'
-        : 'This project is shared with you. Open Share (🔗) and use "Leave" instead of deleting.');
+      if(isOwner) stopSharingGanttProject(id);
+      else leaveSharedGanttProject(id);
       return;
     }
     if(Object.keys(projects).length <= 1){
@@ -1490,22 +1489,39 @@
           liveIds.add(shareId);
           if(!sharedProjectUnsubs[shareId]) subscribeToSharedGanttProject(shareId);
         });
+
+        var staleIds = [];
         Object.keys(sharedProjectUnsubs).forEach(function(shareId){
-          if(!liveIds.has(shareId)){
-            sharedProjectUnsubs[shareId](); delete sharedProjectUnsubs[shareId];
+          if(!liveIds.has(shareId)) staleIds.push(shareId);
+        });
+        // Also catch shared projects sitting in local cache (e.g. from localStorage) that
+        // this session never actively subscribed to, but that no longer exist/aren't shared with us.
+        Object.keys(projects).forEach(function(id){
+          if(projects[id].shareId && !liveIds.has(id) && staleIds.indexOf(id) === -1) staleIds.push(id);
+        });
+
+        if(staleIds.length){
+          staleIds.forEach(function(shareId){
+            if(sharedProjectUnsubs[shareId]){ sharedProjectUnsubs[shareId](); delete sharedProjectUnsubs[shareId]; }
             delete lastSharedProjectJSON[shareId];
-            if(projects[shareId]){
-              delete projects[shareId];
-              if(activeProjectId === shareId){
-                var ids = Object.keys(projects);
-                if(ids.length){ activeProjectId = ids[0]; tasks = projects[ids[0]].tasks; }
-              }
-              saveProjectsLocal();
-              render();
-              renderProjectPicker();
+            delete projects[shareId];
+          });
+          if(!projects[activeProjectId]){
+            var ids = Object.keys(projects);
+            if(ids.length){
+              activeProjectId = ids[0];
+              tasks = projects[ids[0]].tasks;
+            } else {
+              var freshId = uid();
+              projects[freshId] = { id:freshId, name:"My Gantt Chart", tasks: [] };
+              activeProjectId = freshId;
+              tasks = [];
             }
           }
-        });
+          saveProjectsLocal();
+          render();
+          renderProjectPicker();
+        }
       }, function(err){ console.error("shared gantt index error", err); });
   }
 
@@ -1592,7 +1608,7 @@
       lastSharedProjectJSON[shareId] = JSON.stringify(proj);
       if(!sharedProjectUnsubs[shareId]) subscribeToSharedGanttProject(shareId);
       saveProjectsLocal();
-      if(!applyingRemote) scheduleCloudSave(); // also drops the old private id from users/{uid} on next push
+      if(!applyingRemote) pushToCloud(); // immediate, not debounced — closes the race that could resurrect the old private id
       render();
       renderProjectPicker();
       openShareModal(shareId);
@@ -1613,7 +1629,10 @@
     var p = projects[shareId];
     if(!p) return;
     if(!confirm('Stop sharing "' + p.name + '"? Everyone else loses access; your copy stays private.')) return;
-    db.collection("shared_gantt_projects").doc(shareId).delete().catch(function(err){ console.error(err); });
+    db.collection("shared_gantt_projects").doc(shareId).delete().catch(function(err){
+      console.error(err);
+      alert('Removed from your list, but the shared record on the server could not be deleted (' + err.message + '). It may reappear after a refresh — check your Firestore rules.');
+    });
     if(sharedProjectUnsubs[shareId]){ sharedProjectUnsubs[shareId](); delete sharedProjectUnsubs[shareId]; }
     delete lastSharedProjectJSON[shareId];
     var newId = uid();
@@ -1621,7 +1640,7 @@
     delete projects[shareId];
     if(activeProjectId === shareId){ activeProjectId = newId; tasks = projects[newId].tasks; }
     saveProjectsLocal();
-    if(!applyingRemote) scheduleCloudSave();
+    if(!applyingRemote) pushToCloud(); // immediate, not debounced
     closeShareModal();
     render();
     renderProjectPicker();
@@ -2702,8 +2721,8 @@
 
   function populateInspector(t){
     inspNum.textContent = (allFlattenIds().indexOf(t.id)+1);
-    inspTitle.value = t.name;
-    inspPred.value = idsToNumbers(t.pred);
+    if(document.activeElement !== inspTitle) inspTitle.value = t.name;
+    if(document.activeElement !== inspPred) inspPred.value = idsToNumbers(t.pred);
 
     var s = parseDate(t.start), e = parseDate(t.end);
     var dur = daysBetween(s,e)+1;
