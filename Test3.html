@@ -1477,12 +1477,26 @@
     var payload = {};
     payload[CLOUD_FIELD] = out;
     payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
-    db.collection("users").doc(currentUser.uid).set(payload, { merge:true })
+    var userRef = db.collection("users").doc(currentUser.uid);
+    // update() fully REPLACES the ganttProjects field (so deleted project keys actually
+    // disappear); set(..., {merge:true}) recursively merges nested maps and never removes
+    // a key just because it's missing from the new write — that was the real bug.
+    userRef.update(payload)
       .then(function(){
         lastSyncedJSON = json;
         setSyncState("synced", "Synced");
       })
       .catch(function(err){
+        if(err && err.code === "not-found"){
+          // brand new user doc — nothing to merge into yet, a plain set is safe here
+          userRef.set(payload, { merge:true })
+            .then(function(){ lastSyncedJSON = json; setSyncState("synced", "Synced"); })
+            .catch(function(err2){
+              console.error("Cloud save failed", err2);
+              setSyncState("error", "Save failed: " + err2.message);
+            });
+          return;
+        }
         console.error("Cloud save failed", err);
         setSyncState("error", "Save failed: " + err.message);
       });
