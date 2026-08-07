@@ -245,6 +245,16 @@
   .po-actions{display:flex; gap:8px; padding:14px 18px; border-top:1px solid var(--line);}
   .po-actions button{flex:1;}
 
+  #shareEmailInput{
+    flex:1; padding:8px 10px; border:1px solid var(--line-strong); border-radius:6px;
+    font-family:inherit; font-size:13px;
+  }
+  .share-member-row{display:flex; align-items:center; justify-content:space-between; padding:6px 10px; background:var(--accent-fill); border-radius:6px; font-size:12.5px;}
+  .share-member-row .tag{color:var(--ink-faint); font-size:10.5px; margin-left:4px;}
+  .share-member-row button{flex:none; padding:3px 8px; font-size:11.5px;}
+  #shareStopBtn{color:#b5493d; border-color:#b5493d;}
+  .proj-share-badge{color:var(--accent); font-size:11px; margin-left:2px;}
+
   /* ---------- outliner ---------- */
   .ol-backdrop{position:fixed; inset:0; background:rgba(28,36,48,0.4); z-index:45; display:none;}
   .ol-backdrop.show{display:block;}
@@ -829,6 +839,27 @@
   </div>
 </div>
 
+<!-- Share Project modal -->
+<div class="po-backdrop" id="shareBackdrop"></div>
+<div class="po-panel" id="sharePanel" aria-hidden="true">
+  <div class="po-header">
+    <span class="po-title" id="shareModalTitle">🔗 Share project</span>
+    <button class="po-close" id="shareCloseBtn" title="Close">✕</button>
+  </div>
+  <div class="po-body">
+    <p class="po-hint" id="shareModalSub" style="margin:0 0 14px;"></p>
+    <div id="shareAddRow" style="display:flex; gap:8px; margin-bottom:14px;">
+      <input type="email" id="shareEmailInput" placeholder="name@gmail.com">
+      <button id="shareAddBtn" class="primary" style="flex:none; padding:8px 14px;">Invite</button>
+    </div>
+    <ul id="shareMemberList" style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px;"></ul>
+  </div>
+  <div class="po-actions">
+    <button id="shareStopBtn" class="ghost" style="display:none;">Stop sharing</button>
+    <button id="shareDoneBtn" class="primary">Done</button>
+  </div>
+</div>
+
 <!-- Outliner window -->
 <div class="ol-backdrop" id="olBackdrop"></div>
 <div class="ol-panel" id="olPanel" aria-hidden="true">
@@ -907,6 +938,12 @@
   var cloudSaveTimer = null;
   var lastSyncedJSON = null;
   var applyingRemote = false;
+  var recentlyRemovedIds = {}; // id -> timestamp, prevents a stale cloud snapshot from resurrecting a just-deleted project
+  function markRemoved(id){ recentlyRemovedIds[id] = Date.now(); }
+  function isRecentlyRemoved(id){
+    var t = recentlyRemovedIds[id];
+    return !!t && (Date.now() - t) < 20000;
+  }
 
   // ---------- date helpers (local-time safe) ----------
   function parseDate(str){
@@ -982,7 +1019,11 @@
               name: parsed[id].name || "Untitled project",
               tasks: Array.isArray(parsed[id].tasks) ? parsed[id].tasks.map(normalizeTask) : [],
               linkedPmProjectId: parsed[id].linkedPmProjectId || null,
-              pmReturnUrl: parsed[id].pmReturnUrl || null
+              pmReturnUrl: parsed[id].pmReturnUrl || null,
+              shareId: parsed[id].shareId || null,
+              ownerUid: parsed[id].ownerUid || null,
+              ownerEmail: parsed[id].ownerEmail || null,
+              collaboratorEmails: Array.isArray(parsed[id].collaboratorEmails) ? parsed[id].collaboratorEmails : []
             };
           });
           activeProjectId = localStorage.getItem(ACTIVE_PROJECT_KEY);
@@ -1019,7 +1060,11 @@
           name: projects[id].name,
           tasks: projects[id].tasks,
           linkedPmProjectId: projects[id].linkedPmProjectId || null,
-          pmReturnUrl: projects[id].pmReturnUrl || null
+          pmReturnUrl: projects[id].pmReturnUrl || null,
+          shareId: projects[id].shareId || null,
+          ownerUid: projects[id].ownerUid || null,
+          ownerEmail: projects[id].ownerEmail || null,
+          collaboratorEmails: Array.isArray(projects[id].collaboratorEmails) ? projects[id].collaboratorEmails : null
         };
       });
       localStorage.setItem(PROJECTS_KEY, JSON.stringify(out));
@@ -1066,11 +1111,27 @@
 
       var name = document.createElement("div");
       name.className = "proj-name";
-      name.textContent = p.name;
+      name.textContent = p.name + (p.shareId ? "" : "");
+      if(p.shareId){
+        var badge = document.createElement("span");
+        badge.className = "proj-share-badge";
+        badge.textContent = "🔗";
+        badge.title = (currentUser && p.ownerUid === currentUser.uid) ? "Shared by you" : "Shared with you";
+        name.appendChild(badge);
+      }
       row.appendChild(name);
 
       var actions = document.createElement("div");
       actions.className = "proj-actions";
+
+      var shareBtn = document.createElement("button");
+      shareBtn.textContent = "🔗";
+      shareBtn.title = "Share this project";
+      shareBtn.addEventListener("click", function(ev){
+        ev.stopPropagation();
+        openShareModal(id);
+      });
+      actions.appendChild(shareBtn);
 
       var renameBtn = document.createElement("button");
       renameBtn.textContent = "✎";
@@ -1195,12 +1256,19 @@
   function deleteProject(id){
     var p = projects[id];
     if(!p) return;
+    if(p.shareId){
+      var isOwner = currentUser && p.ownerUid === currentUser.uid;
+      if(isOwner) stopSharingGanttProject(id);
+      else leaveSharedGanttProject(id);
+      return;
+    }
     if(Object.keys(projects).length <= 1){
       alert("You need at least one project — create a new one before deleting this.");
       return;
     }
     if(!confirm('Delete project "' + p.name + '" and all its tasks? This cannot be undone.')) return;
     delete projects[id];
+    markRemoved(id);
     if(activeProjectId === id){
       var nextId = Object.keys(projects)[0];
       activeProjectId = nextId;
@@ -1208,7 +1276,7 @@
       closeInspector();
     }
     saveProjectsLocal();
-    if(!applyingRemote) scheduleCloudSave();
+    if(!applyingRemote) pushToCloud(); // immediate, not debounced — avoids losing the race with the live cloud listener
     render();
     renderProjectPicker();
   }
@@ -1299,12 +1367,14 @@
         userAvatarEl.src = user.photoURL || "";
         userNameEl.textContent = user.displayName || user.email || "Signed in";
         subscribeToCloud(user.uid);
+        subscribeToSharedGanttIndex((user.email || "").toLowerCase());
         sharedTaskSubscribedPmId = null; // force re-evaluation now that we're signed in
         refreshSharedTaskSubscription();
       } else {
         signInBtnEl.style.display = "flex";
         userChipEl.style.display = "none";
         unsubscribeCloud();
+        unsubscribeSharedGanttIndex();
         unsubscribeSharedTasks();
         setSyncState("offline", "Not signed in");
       }
@@ -1331,7 +1401,11 @@
       }
       applyingRemote = true;
       var newProjects = {};
+      Object.keys(projects).forEach(function(id){
+        if(projects[id].shareId) newProjects[id] = projects[id]; // keep shared projects, they live outside this blob
+      });
       Object.keys(remote).forEach(function(id){
+        if(isRecentlyRemoved(id)) return; // we just deleted this locally — don't let a stale snapshot bring it back
         newProjects[id] = {
           id: id,
           name: remote[id].name || "Untitled project",
@@ -1378,13 +1452,19 @@
     if(!firebaseReady || !currentUser) return;
     if(cloudSaveTimer) clearTimeout(cloudSaveTimer);
     setSyncState("syncing", "Saving…");
-    cloudSaveTimer = setTimeout(pushToCloud, 700);
+    cloudSaveTimer = setTimeout(function(){
+      pushToCloud();
+      Object.keys(projects).forEach(function(id){
+        if(projects[id].shareId) pushSharedGanttProjectUpdate(id);
+      });
+    }, 700);
   }
 
   function pushToCloud(){
     if(!firebaseReady || !currentUser) return;
     var out = {};
     Object.keys(projects).forEach(function(id){
+      if(projects[id].shareId) return; // shared projects live in shared_gantt_projects, not the private blob
       out[id] = {
         name: projects[id].name,
         tasks: projects[id].tasks,
@@ -1397,16 +1477,304 @@
     var payload = {};
     payload[CLOUD_FIELD] = out;
     payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
-    db.collection("users").doc(currentUser.uid).set(payload, { merge:true })
+    var userRef = db.collection("users").doc(currentUser.uid);
+    // update() fully REPLACES the ganttProjects field (so deleted project keys actually
+    // disappear); set(..., {merge:true}) recursively merges nested maps and never removes
+    // a key just because it's missing from the new write — that was the real bug.
+    userRef.update(payload)
       .then(function(){
         lastSyncedJSON = json;
         setSyncState("synced", "Synced");
       })
       .catch(function(err){
+        if(err && err.code === "not-found"){
+          // brand new user doc — nothing to merge into yet, a plain set is safe here
+          userRef.set(payload, { merge:true })
+            .then(function(){ lastSyncedJSON = json; setSyncState("synced", "Synced"); })
+            .catch(function(err2){
+              console.error("Cloud save failed", err2);
+              setSyncState("error", "Save failed: " + err2.message);
+            });
+          return;
+        }
         console.error("Cloud save failed", err);
         setSyncState("error", "Save failed: " + err.message);
       });
   }
+
+  // ---------- project sharing (Google-account collaborators, mirrors Threadline's model) ----------
+  var sharedProjectUnsubs = {};
+  var lastSharedProjectJSON = {};
+  var sharedProjectIndexUnsub = null;
+  var shareModalProjectId = null;
+
+  function subscribeToSharedGanttIndex(email){
+    if(sharedProjectIndexUnsub) sharedProjectIndexUnsub();
+    sharedProjectIndexUnsub = db.collection("shared_gantt_projects")
+      .where("collaboratorEmails", "array-contains", email)
+      .onSnapshot(function(snap){
+        var liveIds = new Set();
+        snap.forEach(function(docSnap){
+          var shareId = docSnap.id;
+          if(isRecentlyRemoved(shareId)) return;
+          liveIds.add(shareId);
+          if(!sharedProjectUnsubs[shareId]) subscribeToSharedGanttProject(shareId);
+        });
+
+        var staleIds = [];
+        Object.keys(sharedProjectUnsubs).forEach(function(shareId){
+          if(!liveIds.has(shareId)) staleIds.push(shareId);
+        });
+        // Also catch shared projects sitting in local cache (e.g. from localStorage) that
+        // this session never actively subscribed to, but that no longer exist/aren't shared with us.
+        Object.keys(projects).forEach(function(id){
+          if(projects[id].shareId && !liveIds.has(id) && staleIds.indexOf(id) === -1) staleIds.push(id);
+        });
+
+        if(staleIds.length){
+          staleIds.forEach(function(shareId){
+            if(sharedProjectUnsubs[shareId]){ sharedProjectUnsubs[shareId](); delete sharedProjectUnsubs[shareId]; }
+            delete lastSharedProjectJSON[shareId];
+            delete projects[shareId];
+          });
+          if(!projects[activeProjectId]){
+            var ids = Object.keys(projects);
+            if(ids.length){
+              activeProjectId = ids[0];
+              tasks = projects[ids[0]].tasks;
+            } else {
+              var freshId = uid();
+              projects[freshId] = { id:freshId, name:"My Gantt Chart", tasks: [] };
+              activeProjectId = freshId;
+              tasks = [];
+            }
+          }
+          saveProjectsLocal();
+          render();
+          renderProjectPicker();
+        }
+      }, function(err){ console.error("shared gantt index error", err); });
+  }
+
+  function unsubscribeSharedGanttIndex(){
+    if(sharedProjectIndexUnsub){ sharedProjectIndexUnsub(); sharedProjectIndexUnsub = null; }
+    Object.keys(sharedProjectUnsubs).forEach(function(shareId){ sharedProjectUnsubs[shareId](); });
+    sharedProjectUnsubs = {};
+    lastSharedProjectJSON = {};
+  }
+
+  function subscribeToSharedGanttProject(shareId){
+    sharedProjectUnsubs[shareId] = db.collection("shared_gantt_projects").doc(shareId).onSnapshot(function(snap){
+      if(!snap.exists) return;
+      if(snap.metadata.hasPendingWrites) return;
+      var data = snap.data();
+      var proj = data.project || {};
+      var json = JSON.stringify(proj);
+      if(json === lastSharedProjectJSON[shareId]) return;
+      applyingRemote = true;
+      projects[shareId] = {
+        id: shareId, shareId: shareId,
+        ownerUid: data.ownerUid, ownerEmail: data.ownerEmail,
+        collaboratorEmails: data.collaboratorEmails || [],
+        name: proj.name || "Shared project",
+        tasks: Array.isArray(proj.tasks) ? proj.tasks.map(normalizeTask) : [],
+        linkedPmProjectId: proj.linkedPmProjectId || null,
+        pmReturnUrl: proj.pmReturnUrl || null
+      };
+      if(activeProjectId === shareId) tasks = projects[shareId].tasks;
+      lastSharedProjectJSON[shareId] = json;
+      applyingRemote = false;
+      saveProjectsLocal();
+      render();
+      if(currentInspectId){
+        var stillOpenTask = tasks.find(function(t){ return t.id === currentInspectId; });
+        if(stillOpenTask) populateInspector(stillOpenTask);
+      }
+      renderProjectPicker();
+    }, function(err){ console.error("shared gantt project error", err); });
+  }
+
+  function pushSharedGanttProjectUpdate(shareId){
+    if(!firebaseReady || !currentUser) return;
+    var p = projects[shareId];
+    if(!p || !p.shareId) return;
+    var proj = { name: p.name, tasks: p.tasks, linkedPmProjectId: p.linkedPmProjectId || null, pmReturnUrl: p.pmReturnUrl || null };
+    var json = JSON.stringify(proj);
+    if(json === lastSharedProjectJSON[shareId]) return;
+    db.collection("shared_gantt_projects").doc(shareId).set({
+      kind: "gantt-project",
+      project: proj,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge:true }).then(function(){
+      lastSharedProjectJSON[shareId] = json;
+    }).catch(function(err){ console.error("Could not save shared project", err); });
+  }
+
+  function createSharedGanttProject(id, inviteEmail){
+    var p = projects[id];
+    if(!p || !currentUser) return;
+    var ref = db.collection("shared_gantt_projects").doc();
+    var shareId = ref.id;
+    var ownerEmail = (currentUser.email || "").toLowerCase();
+    var invite = (inviteEmail || "").trim().toLowerCase();
+    var collaboratorEmails = [ownerEmail];
+    if(invite && invite !== ownerEmail) collaboratorEmails.push(invite);
+    var proj = { name: p.name, tasks: p.tasks, linkedPmProjectId: p.linkedPmProjectId || null, pmReturnUrl: p.pmReturnUrl || null };
+    ref.set({
+      kind: "gantt-project",
+      ownerUid: currentUser.uid,
+      ownerEmail: ownerEmail,
+      collaboratorEmails: collaboratorEmails,
+      project: proj,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(function(){
+      var oldId = id;
+      delete projects[oldId];
+      projects[shareId] = {
+        id: shareId, shareId: shareId, ownerUid: currentUser.uid, ownerEmail: ownerEmail,
+        collaboratorEmails: collaboratorEmails,
+        name: proj.name, tasks: proj.tasks, linkedPmProjectId: proj.linkedPmProjectId, pmReturnUrl: proj.pmReturnUrl
+      };
+      if(activeProjectId === oldId){ activeProjectId = shareId; tasks = projects[shareId].tasks; }
+      lastSharedProjectJSON[shareId] = JSON.stringify(proj);
+      if(!sharedProjectUnsubs[shareId]) subscribeToSharedGanttProject(shareId);
+      saveProjectsLocal();
+      if(!applyingRemote) pushToCloud(); // immediate, not debounced — closes the race that could resurrect the old private id
+      render();
+      renderProjectPicker();
+      openShareModal(shareId);
+    }).catch(function(err){
+      console.error(err);
+      alert("Could not share this project: " + err.message + "\n\nMake sure your Firestore rules allow writes to shared_gantt_projects.");
+    });
+  }
+
+  function removeMemberFromGanttProject(shareId, email){
+    db.collection("shared_gantt_projects").doc(shareId).update({
+      collaboratorEmails: firebase.firestore.FieldValue.arrayRemove(email)
+    }).then(function(){ openShareModal(shareId); })
+      .catch(function(err){ console.error(err); alert("Could not remove " + email + ": " + err.message); });
+  }
+
+  function stopSharingGanttProject(shareId){
+    var p = projects[shareId];
+    if(!p) return;
+    if(!confirm('Stop sharing "' + p.name + '"? Everyone else loses access; your copy stays private.')) return;
+    db.collection("shared_gantt_projects").doc(shareId).delete().catch(function(err){
+      console.error(err);
+      alert('Removed from your list, but the shared record on the server could not be deleted (' + err.message + '). It may reappear after a refresh — check your Firestore rules.');
+    });
+    if(sharedProjectUnsubs[shareId]){ sharedProjectUnsubs[shareId](); delete sharedProjectUnsubs[shareId]; }
+    delete lastSharedProjectJSON[shareId];
+    markRemoved(shareId);
+    var newId = uid();
+    projects[newId] = { id:newId, name:p.name, tasks:p.tasks, linkedPmProjectId:p.linkedPmProjectId||null, pmReturnUrl:p.pmReturnUrl||null };
+    delete projects[shareId];
+    if(activeProjectId === shareId){ activeProjectId = newId; tasks = projects[newId].tasks; }
+    saveProjectsLocal();
+    if(!applyingRemote) pushToCloud(); // immediate, not debounced
+    closeShareModal();
+    render();
+    renderProjectPicker();
+  }
+
+  function leaveSharedGanttProject(shareId){
+    var p = projects[shareId];
+    if(!p || !currentUser) return;
+    var email = (currentUser.email || "").toLowerCase();
+    if(!confirm('Leave "' + p.name + '"? You will lose access to this shared project.')) return;
+    db.collection("shared_gantt_projects").doc(shareId).update({
+      collaboratorEmails: firebase.firestore.FieldValue.arrayRemove(email)
+    }).catch(function(err){ console.error(err); });
+    if(sharedProjectUnsubs[shareId]){ sharedProjectUnsubs[shareId](); delete sharedProjectUnsubs[shareId]; }
+    delete lastSharedProjectJSON[shareId];
+    markRemoved(shareId);
+    delete projects[shareId];
+    if(activeProjectId === shareId){
+      var ids = Object.keys(projects);
+      if(ids.length){ activeProjectId = ids[0]; tasks = projects[ids[0]].tasks; }
+      else { var freshId = uid(); projects[freshId] = { id:freshId, name:"My Gantt Chart", tasks: [] }; activeProjectId = freshId; tasks = []; }
+    }
+    saveProjectsLocal();
+    if(!applyingRemote) pushToCloud(); // in case this shareId also lingers in the private blob
+    closeShareModal();
+    render();
+    renderProjectPicker();
+  }
+
+  function openShareModal(id){
+    var p = projects[id];
+    if(!p) return;
+    shareModalProjectId = id;
+    var backdrop = document.getElementById("shareBackdrop");
+    var panel = document.getElementById("sharePanel");
+    var sub = document.getElementById("shareModalSub");
+    var addRow = document.getElementById("shareAddRow");
+    var stopBtn = document.getElementById("shareStopBtn");
+    var list = document.getElementById("shareMemberList");
+    document.getElementById("shareModalTitle").textContent = 'Share "' + (p.name || "Untitled project") + '"';
+    list.innerHTML = "";
+
+    if(!currentUser || !firebaseReady){
+      sub.textContent = "Sign in with Google (top right) to share this project with other accounts.";
+      addRow.style.display = "none";
+      stopBtn.style.display = "none";
+      backdrop.classList.add("show"); panel.classList.add("show");
+      return;
+    }
+
+    var isOwner = !p.shareId || p.ownerUid === currentUser.uid;
+    addRow.style.display = isOwner ? "flex" : "none";
+    stopBtn.style.display = p.shareId ? "inline-block" : "none";
+    stopBtn.textContent = isOwner ? "Stop sharing" : "Leave";
+
+    if(!p.shareId){
+      sub.textContent = "Not shared yet. Add a Google account email to start sharing this project.";
+      backdrop.classList.add("show"); panel.classList.add("show");
+      return;
+    }
+
+    sub.textContent = isOwner
+      ? "Anyone below can view and edit this project in real time."
+      : "Shared by " + (p.ownerEmail || "the owner") + ". You can view and edit.";
+
+    db.collection("shared_gantt_projects").doc(p.shareId).get().then(function(snap){
+      var data = snap.data() || {};
+      var members = data.collaboratorEmails || [];
+      list.innerHTML = "";
+      members.forEach(function(email){
+        var li = document.createElement("li");
+        li.className = "share-member-row";
+        var span = document.createElement("span");
+        span.textContent = email;
+        var isOwnerEmail = email === data.ownerEmail;
+        if(isOwnerEmail){
+          var tag = document.createElement("span");
+          tag.className = "tag";
+          tag.textContent = "owner";
+          span.appendChild(tag);
+        }
+        li.appendChild(span);
+        if(isOwner && !isOwnerEmail){
+          var btn = document.createElement("button");
+          btn.textContent = "Remove";
+          btn.className = "ghost";
+          btn.addEventListener("click", function(){ removeMemberFromGanttProject(p.shareId, email); });
+          li.appendChild(btn);
+        }
+        list.appendChild(li);
+      });
+    });
+
+    backdrop.classList.add("show"); panel.classList.add("show");
+  }
+
+  function closeShareModal(){
+    document.getElementById("shareBackdrop").classList.remove("show");
+    document.getElementById("sharePanel").classList.remove("show");
+    shareModalProjectId = null;
+  }
+
 
   // ---------- shared task sync (Q-PM link) ----------
   var SHARED_FIELD = "sharedPmGanttTasks";
@@ -2387,8 +2755,8 @@
 
   function populateInspector(t){
     inspNum.textContent = (allFlattenIds().indexOf(t.id)+1);
-    inspTitle.value = t.name;
-    inspPred.value = idsToNumbers(t.pred);
+    if(document.activeElement !== inspTitle) inspTitle.value = t.name;
+    if(document.activeElement !== inspPred) inspPred.value = idsToNumbers(t.pred);
 
     var s = parseDate(t.start), e = parseDate(t.end);
     var dur = daysBetween(s,e)+1;
@@ -3576,6 +3944,56 @@
     var name = poProjectNameEl.value.trim() || "Pasted Outline";
     closePasteOutlineModal();
     createProject(name, parsed);
+  });
+
+  // ---------- share modal wiring ----------
+  var shareBackdropEl = document.getElementById("shareBackdrop");
+  document.getElementById("shareCloseBtn").addEventListener("click", closeShareModal);
+  document.getElementById("shareDoneBtn").addEventListener("click", closeShareModal);
+  shareBackdropEl.addEventListener("click", closeShareModal);
+
+  document.getElementById("shareAddBtn").addEventListener("click", function(){
+    if(!shareModalProjectId) return;
+    var emailInput = document.getElementById("shareEmailInput");
+    var email = emailInput.value.trim().toLowerCase();
+    if(!email){ return; }
+    var p = projects[shareModalProjectId];
+    if(!p) return;
+    emailInput.value = "";
+    if(!p.shareId){
+      createSharedGanttProject(shareModalProjectId, email);
+    } else {
+      db.collection("shared_gantt_projects").doc(p.shareId).update({
+        collaboratorEmails: firebase.firestore.FieldValue.arrayUnion(email)
+      }).then(function(){ openShareModal(p.shareId); })
+        .catch(function(err){ console.error(err); alert("Could not add " + email + ": " + err.message); });
+    }
+  });
+  document.getElementById("shareEmailInput").addEventListener("keydown", function(e){
+    if(e.key === "Enter"){ e.preventDefault(); document.getElementById("shareAddBtn").click(); }
+  });
+
+  document.getElementById("shareStopBtn").addEventListener("click", function(){
+    if(!shareModalProjectId) return;
+    var p = projects[shareModalProjectId];
+    if(!p) return;
+    var isOwner = currentUser && p.ownerUid === currentUser.uid;
+    if(isOwner) stopSharingGanttProject(shareModalProjectId);
+    else leaveSharedGanttProject(shareModalProjectId);
+  });
+
+  // ---------- receive an outline sent from Threadline's "Send selection to Gantt" pop-out ----------
+  window.addEventListener("message", function(e){
+    var data = e.data;
+    if(!data || data.type !== "threadline-outline-import") return;
+    var parsed = parseOutlineText(data.outline || "");
+    if(parsed.length){
+      var name = (data.name || "").trim() || "Outline";
+      createProject(name, parsed);
+    }
+    if(e.source && typeof e.source.postMessage === "function"){
+      e.source.postMessage({ type: "threadline-outline-import-ack" }, "*");
+    }
   });
 
   // ---------- outliner window ----------
