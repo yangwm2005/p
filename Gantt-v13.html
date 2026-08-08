@@ -288,6 +288,7 @@
   .ol-panel.show{display:flex;}
   .ol-header{display:flex; align-items:center; gap:12px; padding:12px 18px; border-bottom:1px solid var(--line); flex-shrink:0;}
   .ol-header .ol-title{font-weight:700; font-size:14px; flex-shrink:0;}
+  .ol-header #olToggleAllBtn{flex-shrink:0;}
   .ol-header .ol-hint-header{font-size:11px; color:var(--ink-faint); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .ol-close{border:none; background:none; font-size:14px; color:var(--ink-faint); cursor:pointer; padding:4px 8px; border-radius:4px; flex-shrink:0;}
   .ol-close:hover{background:var(--accent-fill);}
@@ -938,6 +939,7 @@
 <div class="ol-panel" id="olPanel" aria-hidden="true">
   <div class="ol-header">
     <span class="ol-title">📝 Outliner</span>
+    <button id="olToggleAllBtn" class="ghost" title="Expand/collapse all">▾ Collapse all</button>
     <span class="ol-hint-header">Enter: new task · Tab/Shift+Tab: indent/outdent · ↑↓: move · Backspace on empty: delete · ⠿ drag to reorder/nest</span>
     <button class="ol-close" id="olCloseBtn" title="Close">✕</button>
   </div>
@@ -4467,6 +4469,7 @@
   }
 
   function renderOutliner(focusTaskId, cursorAtEnd){
+    updateOlToggleAllBtnLabel();
     var flat = visibleFlatten(); // respects each task's collapsed state, same as the main sidebar
     olBodyEl.innerHTML = "";
 
@@ -4601,6 +4604,22 @@
   document.getElementById("outlinerBtn").addEventListener("click", openOutliner);
   document.getElementById("olCloseBtn").addEventListener("click", closeOutliner);
   olBackdropEl.addEventListener("click", closeOutliner);
+
+  function updateOlToggleAllBtnLabel(){
+    var btn = document.getElementById("olToggleAllBtn");
+    if(!btn) return;
+    var parentIds = {};
+    tasks.forEach(function(t){ if(t.parentId) parentIds[t.parentId] = true; });
+    var parentTasks = tasks.filter(function(t){ return parentIds[t.id]; });
+    if(!parentTasks.length){ btn.style.display = "none"; return; }
+    btn.style.display = "";
+    var anyExpanded = parentTasks.some(function(t){ return !t.collapsed; });
+    btn.textContent = anyExpanded ? "▾ Collapse all" : "▸ Expand all";
+  }
+  document.getElementById("olToggleAllBtn").addEventListener("click", function(){
+    toggleAllTasks(); // updates collapsed state + re-renders the main chart/sidebar
+    renderOutliner(); // mirror the new collapsed state in the outliner's own rows
+  });
 
   // ---------- paste an outline directly into the current project ----------
   var toastEl = null;
