@@ -1011,6 +1011,30 @@
   var cloudSaveTimer = null;
   var lastSyncedJSON = null;
   var applyingRemote = false;
+  var lastLocalEditAt = 0;
+  var cloudPushInFlight = false;
+  var cloudSaveFailCount = 0;
+  var syncErrorBannerEl = null;
+  function maybeShowSyncErrorBanner(err){
+    // Only surface a banner after repeated failures, so one transient network blip doesn't
+    // interrupt anyone — but a Chrome extension/shield silently blocking Firestore requests
+    // (a real cause of "edits don't take" reports) won't just look like a missed dot color.
+    if(cloudSaveFailCount < 2) return;
+    if(!syncErrorBannerEl){
+      syncErrorBannerEl = document.createElement("div");
+      syncErrorBannerEl.style.cssText = "position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:9999;"+
+        "background:#3a1f1f;color:#f2c9c2;border:1px solid #b5493d;border-radius:8px;padding:8px 14px;"+
+        "font:13px/1.4 system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.3);max-width:min(90vw,480px);";
+      document.body.appendChild(syncErrorBannerEl);
+    }
+    syncErrorBannerEl.textContent = "Cloud sync keeps failing (" + cloudSaveFailCount + "×). Your edits are saved on this device, but not to the cloud yet. " +
+      "If you're on Chrome/Arc, check the browser's shield/tracker-blocking icon in the address bar and any ad-blocker extensions — " +
+      "they sometimes block Google's Firestore requests. (" + ((err && err.message) || "unknown error") + ")";
+    syncErrorBannerEl.style.display = "block";
+  }
+  function hideSyncErrorBanner(){
+    if(syncErrorBannerEl) syncErrorBannerEl.style.display = "none";
+  }
   var recentlyRemovedIds = {}; // id -> timestamp, prevents a stale cloud snapshot from resurrecting a just-deleted project
   function markRemoved(id){ recentlyRemovedIds[id] = Date.now(); }
   function isRecentlyRemoved(id){
@@ -1161,6 +1185,7 @@
     }
     saveProjectsLocal();
     if(!applyingRemote){
+      lastLocalEditAt = Date.now(); // remote snapshots arriving right after a real edit get held back until our own push lands — see canApplyRemoteNow()
       scheduleCloudSave();
       if(projects[activeProjectId] && projects[activeProjectId].linkedPmProjectId) scheduleSharedTaskPush();
     }
@@ -1460,6 +1485,82 @@
     });
   }
 
+  // Returns true while it's safe to let an incoming remote snapshot overwrite local state:
+  // not mid-drag/mid-typing, no local save currently queued or in flight, and no edit made
+  // in roughly the last second (gives our own pending push a moment to land first). Skipping
+  // any of these was why a bar drag would visually move, then snap back the instant you let
+  // go: a remote snapshot that arrived slightly earlier — often the very first one right after
+  // sign-in, reflecting whatever was in the cloud before this edit — was queued and fired the
+  // moment the drag ended, before our own push had a chance to overwrite it.
+  function isUserInteracting(){
+    if(POINTER.id !== null) return true;
+    var ae = document.activeElement;
+    if(!ae) return false;
+    var tag = ae.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || ae.isContentEditable;
+  }
+  function canApplyRemoteNow(){
+    if(isUserInteracting()) return false;
+    if(cloudSaveTimer) return false;
+    if(cloudPushInFlight) return false;
+    if(Date.now() - lastLocalEditAt < 1200) return false;
+    return true;
+  }
+  // Waits for canApplyRemoteNow(), then calls checkAndApply — which should re-fetch the
+  // freshest server truth (never trust a payload captured earlier) and re-check it's still
+  // actually different before touching local state, since our own push may have landed
+  // during the wait and already made this snapshot moot.
+  function scheduleRemoteApply(checkAndApply, attemptsLeft){
+    attemptsLeft = (attemptsLeft == null) ? 30 : attemptsLeft; // ~12s max wait, then apply anyway
+    if(!canApplyRemoteNow() && attemptsLeft > 0){
+      setTimeout(function(){ scheduleRemoteApply(checkAndApply, attemptsLeft - 1); }, 400);
+      return;
+    }
+    checkAndApply();
+  }
+
+  function applyRemoteCloudSnapshot(remote, remoteJSON){
+    applyingRemote = true;
+    var newProjects = {};
+    Object.keys(projects).forEach(function(id){
+      if(projects[id].shareId) newProjects[id] = projects[id]; // keep shared projects, they live outside this blob
+    });
+    Object.keys(remote).forEach(function(id){
+      if(isRecentlyRemoved(id)) return; // we just deleted this locally — don't let a stale snapshot bring it back
+      newProjects[id] = {
+        id: id,
+        name: remote[id].name || "Untitled project",
+        tasks: Array.isArray(remote[id].tasks) ? remote[id].tasks.map(normalizeTask) : [],
+        linkedPmProjectId: remote[id].linkedPmProjectId || null,
+        pmReturnUrl: remote[id].pmReturnUrl || null
+      };
+    });
+    projects = newProjects;
+    if(!projects[activeProjectId]){
+      var ids = Object.keys(projects);
+      if(ids.length){
+        activeProjectId = ids[0];
+      } else {
+        var freshId = uid();
+        projects[freshId] = { id:freshId, name:"My Gantt Chart", tasks: [] };
+        activeProjectId = freshId;
+      }
+    }
+    tasks = projects[activeProjectId].tasks;
+    lastSyncedJSON = remoteJSON;
+    saveProjectsLocal();
+    render(); // render() only closes the inspector if the open task genuinely no longer exists
+    if(currentInspectId){
+      var stillOpenTask = tasks.find(function(t){ return t.id === currentInspectId; });
+      if(stillOpenTask) populateInspector(stillOpenTask); // keep panel open, just refresh its content
+    }
+    renderProjectPicker();
+    applyingRemote = false;
+    setSyncState("synced", "Synced");
+    cloudSaveFailCount = 0;
+    hideSyncErrorBanner();
+  }
+
   function subscribeToCloud(firebaseUid){
     unsubscribeCloud();
     setSyncState("syncing", "Connecting…");
@@ -1478,46 +1579,23 @@
         setSyncState("synced", "Synced");
         return;
       }
-      applyingRemote = true;
-      var newProjects = {};
-      Object.keys(projects).forEach(function(id){
-        if(projects[id].shareId) newProjects[id] = projects[id]; // keep shared projects, they live outside this blob
+      scheduleRemoteApply(function(){
+        // Re-fetch instead of trusting the payload captured when this event first fired —
+        // that payload can be stale by the time we're actually allowed to apply it.
+        db.collection("users").doc(firebaseUid).get().then(function(freshSnap){
+          var freshData = freshSnap.data() || {};
+          var freshRemote = freshData[CLOUD_FIELD];
+          if(!freshRemote || typeof freshRemote !== "object" || !Object.keys(freshRemote).length) return;
+          var freshJSON = JSON.stringify(freshRemote);
+          if(freshJSON === lastSyncedJSON) return; // our own push already landed while we waited
+          applyRemoteCloudSnapshot(freshRemote, freshJSON);
+        }).catch(function(err){ console.error("Cloud re-check failed", err); });
       });
-      Object.keys(remote).forEach(function(id){
-        if(isRecentlyRemoved(id)) return; // we just deleted this locally — don't let a stale snapshot bring it back
-        newProjects[id] = {
-          id: id,
-          name: remote[id].name || "Untitled project",
-          tasks: Array.isArray(remote[id].tasks) ? remote[id].tasks.map(normalizeTask) : [],
-          linkedPmProjectId: remote[id].linkedPmProjectId || null,
-          pmReturnUrl: remote[id].pmReturnUrl || null
-        };
-      });
-      projects = newProjects;
-      if(!projects[activeProjectId]){
-        var ids = Object.keys(projects);
-        if(ids.length){
-          activeProjectId = ids[0];
-        } else {
-          var freshId = uid();
-          projects[freshId] = { id:freshId, name:"My Gantt Chart", tasks: [] };
-          activeProjectId = freshId;
-        }
-      }
-      tasks = projects[activeProjectId].tasks;
-      lastSyncedJSON = remoteJSON;
-      saveProjectsLocal();
-      render(); // render() only closes the inspector if the open task genuinely no longer exists
-      if(currentInspectId){
-        var stillOpenTask = tasks.find(function(t){ return t.id === currentInspectId; });
-        if(stillOpenTask) populateInspector(stillOpenTask); // keep panel open, just refresh its content
-      }
-      renderProjectPicker();
-      applyingRemote = false;
-      setSyncState("synced", "Synced");
     }, function(err){
       console.error("Cloud sync error", err);
       setSyncState("error", "Sync error: " + err.message);
+      cloudSaveFailCount++;
+      maybeShowSyncErrorBanner(err);
     });
   }
 
@@ -1527,20 +1605,11 @@
     lastSyncedJSON = null;
   }
 
-  function scheduleCloudSave(){
-    if(!firebaseReady || !currentUser) return;
-    if(cloudSaveTimer) clearTimeout(cloudSaveTimer);
-    setSyncState("syncing", "Saving…");
-    cloudSaveTimer = setTimeout(function(){
-      pushToCloud();
-      Object.keys(projects).forEach(function(id){
-        if(projects[id].shareId) pushSharedGanttProjectUpdate(id);
-      });
-    }, 700);
-  }
-
-  function pushToCloud(){
-    if(!firebaseReady || !currentUser) return;
+  // Builds the private-blob payload without touching Firestore. render() calls saveTasks()
+  // on literally every re-render (opening a panel, toggling a checkbox, zooming — not just
+  // real edits), so scheduleCloudSave() used to flip the dot to "syncing" every single time
+  // that happened. Checking the actual diff up front is what stops the constant flashing.
+  function buildCloudPayload(){
     var out = {};
     Object.keys(projects).forEach(function(id){
       if(projects[id].shareId) return; // shared projects live in shared_gantt_projects, not the private blob
@@ -1551,8 +1620,29 @@
         pmReturnUrl: projects[id].pmReturnUrl || null
       };
     });
+    return out;
+  }
+
+  function scheduleCloudSave(){
+    if(!firebaseReady || !currentUser) return;
+    if(cloudSaveTimer) clearTimeout(cloudSaveTimer);
+    if(JSON.stringify(buildCloudPayload()) === lastSyncedJSON) return; // nothing actually changed — don't flash the dot
+    setSyncState("syncing", "Saving…");
+    cloudSaveTimer = setTimeout(function(){
+      cloudSaveTimer = null; // must clear before pushing, or canApplyRemoteNow() would stay blocked forever
+      pushToCloud();
+      Object.keys(projects).forEach(function(id){
+        if(projects[id].shareId) pushSharedGanttProjectUpdate(id);
+      });
+    }, 700);
+  }
+
+  function pushToCloud(){
+    if(!firebaseReady || !currentUser) return;
+    var out = buildCloudPayload();
     var json = JSON.stringify(out);
     if(json === lastSyncedJSON){ setSyncState("synced", "Synced"); return; }
+    cloudPushInFlight = true;
     var payload = {};
     payload[CLOUD_FIELD] = out;
     payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
@@ -1563,20 +1653,35 @@
     userRef.update(payload)
       .then(function(){
         lastSyncedJSON = json;
+        cloudPushInFlight = false;
         setSyncState("synced", "Synced");
+        cloudSaveFailCount = 0;
+        hideSyncErrorBanner();
       })
       .catch(function(err){
         if(err && err.code === "not-found"){
           // brand new user doc — nothing to merge into yet, a plain set is safe here
           userRef.set(payload, { merge:true })
-            .then(function(){ lastSyncedJSON = json; setSyncState("synced", "Synced"); })
+            .then(function(){
+              lastSyncedJSON = json;
+              cloudPushInFlight = false;
+              setSyncState("synced", "Synced");
+              cloudSaveFailCount = 0;
+              hideSyncErrorBanner();
+            })
             .catch(function(err2){
               console.error("Cloud save failed", err2);
+              cloudPushInFlight = false;
               setSyncState("error", "Save failed: " + err2.message);
+              cloudSaveFailCount++;
+              maybeShowSyncErrorBanner(err2);
             });
           return;
         }
         console.error("Cloud save failed", err);
+        cloudPushInFlight = false;
+        cloudSaveFailCount++;
+        maybeShowSyncErrorBanner(err);
         setSyncState("error", "Save failed: " + err.message);
       });
   }
@@ -1646,30 +1751,38 @@
     sharedProjectUnsubs[shareId] = db.collection("shared_gantt_projects").doc(shareId).onSnapshot(function(snap){
       if(!snap.exists) return;
       if(snap.metadata.hasPendingWrites) return;
-      var data = snap.data();
-      var proj = data.project || {};
-      var json = JSON.stringify(proj);
+      var json = JSON.stringify(snap.data().project || {});
       if(json === lastSharedProjectJSON[shareId]) return;
-      applyingRemote = true;
-      projects[shareId] = {
-        id: shareId, shareId: shareId,
-        ownerUid: data.ownerUid, ownerEmail: data.ownerEmail,
-        collaboratorEmails: data.collaboratorEmails || [],
-        name: proj.name || "Shared project",
-        tasks: Array.isArray(proj.tasks) ? proj.tasks.map(normalizeTask) : [],
-        linkedPmProjectId: proj.linkedPmProjectId || null,
-        pmReturnUrl: proj.pmReturnUrl || null
-      };
-      if(activeProjectId === shareId) tasks = projects[shareId].tasks;
-      lastSharedProjectJSON[shareId] = json;
-      applyingRemote = false;
-      saveProjectsLocal();
-      render();
-      if(currentInspectId){
-        var stillOpenTask = tasks.find(function(t){ return t.id === currentInspectId; });
-        if(stillOpenTask) populateInspector(stillOpenTask);
-      }
-      renderProjectPicker();
+      scheduleRemoteApply(function(){
+        // Re-fetch fresh rather than trusting the payload captured when this event fired.
+        db.collection("shared_gantt_projects").doc(shareId).get().then(function(freshSnap){
+          if(!freshSnap.exists) return;
+          var data = freshSnap.data();
+          var proj = data.project || {};
+          var freshJson = JSON.stringify(proj);
+          if(freshJson === lastSharedProjectJSON[shareId]) return; // our own push already landed while we waited
+          applyingRemote = true;
+          projects[shareId] = {
+            id: shareId, shareId: shareId,
+            ownerUid: data.ownerUid, ownerEmail: data.ownerEmail,
+            collaboratorEmails: data.collaboratorEmails || [],
+            name: proj.name || "Shared project",
+            tasks: Array.isArray(proj.tasks) ? proj.tasks.map(normalizeTask) : [],
+            linkedPmProjectId: proj.linkedPmProjectId || null,
+            pmReturnUrl: proj.pmReturnUrl || null
+          };
+          if(activeProjectId === shareId) tasks = projects[shareId].tasks;
+          lastSharedProjectJSON[shareId] = freshJson;
+          applyingRemote = false;
+          saveProjectsLocal();
+          render();
+          if(currentInspectId){
+            var stillOpenTask = tasks.find(function(t){ return t.id === currentInspectId; });
+            if(stillOpenTask) populateInspector(stillOpenTask);
+          }
+          renderProjectPicker();
+        }).catch(function(err){ console.error("shared gantt project re-check failed", err); });
+      });
     }, function(err){ console.error("shared gantt project error", err); });
   }
 
