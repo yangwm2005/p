@@ -665,6 +665,10 @@
           <label><input type="radio" name="inspMilestoneStyle" value="diamond" id="inspMilestoneStyleDiamond"> ◆ Diamond marker</label>
           <label><input type="radio" name="inspMilestoneStyle" value="bar" id="inspMilestoneStyleBar"> ▭ Light bar with checkbox</label>
         </div>
+        <label class="milestone-check" for="inspShowCheckbox" id="inspShowCheckboxRow" style="display:none;">
+          <input type="checkbox" id="inspShowCheckbox">
+          <span>Show checkbox in bar</span>
+        </label>
         <div class="date-block">
           <span class="date-block-label">Start date</span>
           <div class="date-selects" id="inspStartSelects"></div>
@@ -1028,6 +1032,8 @@
       milestoneAt: t.milestoneAt === "start" ? "start" : "end",
       milestoneStyle: t.milestoneStyle === "diamond" ? "diamond" : "bar",
       milestoneDone: !!t.milestoneDone,
+      hasCheckbox: !!t.hasCheckbox,
+      taskDone: !!t.taskDone,
       // Q-PM-owned fields — Gantt preserves these untouched, only mirrors title/dueDate for linked projects
       title: t.title || t.name,
       status: t.status || "todo",
@@ -2481,7 +2487,7 @@
     visList.forEach(function(entry, i){
       var t = entry.task;
 
-      if(t.milestone && t.milestoneStyle !== "bar"){
+      if(t.milestone && t.milestoneStyle === "diamond"){
         var ms = parseDate(t.milestoneAt === "start" ? t.start : t.end);
         var size = 14;
         var cx = dayX(ms) + pxPerDay/2;
@@ -2512,7 +2518,7 @@
       var left = dayX(s);
       var width = Math.max(pxPerDay - 2, (daysBetween(s,e)+1)*pxPerDay - 4);
 
-      if(t.milestone && t.milestoneStyle === "bar"){
+      if(t.milestone && t.milestoneStyle !== "diamond"){
         var flatBar = document.createElement("div");
         var flatLocked = isRollupParent(t.id);
         flatBar.className = "bar bar-milestone-flat" + (t.milestoneDone ? " done" : "");
@@ -2573,8 +2579,25 @@
       bar.style.width = width + "px";
       bar.title = t.name + "  (" + t.start + " → " + t.end + ")" + (locked ? "  — spans its sub-tasks (Auto-size is on)" : "");
 
+      if(t.hasCheckbox){
+        var taskCheck = document.createElement("input");
+        taskCheck.type = "checkbox";
+        taskCheck.className = "ms-check";
+        taskCheck.checked = !!t.taskDone;
+        taskCheck.addEventListener("pointerdown", function(ev){ ev.stopPropagation(); });
+        taskCheck.addEventListener("click", function(ev){
+          ev.stopPropagation();
+          t.taskDone = taskCheck.checked;
+          saveTasks();
+          render();
+          if(currentInspectId === t.id) populateInspector(t);
+        });
+        bar.appendChild(taskCheck);
+      }
+
       var label = document.createElement("div");
       label.className = "bar-label";
+      if(t.hasCheckbox && t.taskDone) label.style.textDecoration = "line-through";
       label.textContent = t.name;
       bar.appendChild(label);
 
@@ -2875,11 +2898,23 @@
   var inspMilestoneStyleRow = document.getElementById("inspMilestoneStyleRow");
   var inspMilestoneStyleDiamond = document.getElementById("inspMilestoneStyleDiamond");
   var inspMilestoneStyleBar = document.getElementById("inspMilestoneStyleBar");
+  var inspShowCheckboxRow = document.getElementById("inspShowCheckboxRow");
+  var inspShowCheckbox = document.getElementById("inspShowCheckbox");
+
+  inspShowCheckbox.addEventListener("change", function(){
+    var t = tasks.find(function(x){ return x.id===currentInspectId; });
+    if(!t) return;
+    t.hasCheckbox = inspShowCheckbox.checked;
+    saveTasks();
+    render();
+    populateInspector(t);
+  });
 
   inspMilestone.addEventListener("change", function(){
     var t = tasks.find(function(x){ return x.id===currentInspectId; });
     if(!t) return;
     t.milestone = inspMilestone.checked; // start/end dates are left untouched either way
+    if(t.milestone && t.milestoneStyle !== "diamond") t.milestoneStyle = "bar";
     saveTasks();
     render();
     populateInspector(t);
@@ -2911,18 +2946,20 @@
     if(document.activeElement !== inspPred) inspPred.value = idsToNumbers(t.pred);
     inspMilestone.checked = !!t.milestone;
     inspMilestoneStyleRow.style.display = t.milestone ? "flex" : "none";
-    inspMilestoneStyleDiamond.checked = t.milestoneStyle !== "bar";
-    inspMilestoneStyleBar.checked = t.milestoneStyle === "bar";
-    inspMilestoneAnchorRow.style.display = (t.milestone && t.milestoneStyle !== "bar") ? "flex" : "none";
+    inspMilestoneStyleDiamond.checked = t.milestoneStyle === "diamond";
+    inspMilestoneStyleBar.checked = t.milestoneStyle !== "diamond";
+    inspMilestoneAnchorRow.style.display = (t.milestone && t.milestoneStyle === "diamond") ? "flex" : "none";
     inspMilestoneAtStart.checked = t.milestoneAt === "start";
     inspMilestoneAtEnd.checked = t.milestoneAt !== "start";
+    inspShowCheckboxRow.style.display = t.milestone ? "none" : "flex";
+    inspShowCheckbox.checked = !!t.hasCheckbox;
 
     var s = parseDate(t.start), e = parseDate(t.end);
     var dur = daysBetween(s,e)+1;
     inspDuration.textContent = t.milestone
-      ? (t.milestoneStyle === "bar"
-          ? ("Milestone bar  ·  " + dur + (dur===1?" day":" days") + "  ·  " + shortLabel(s) + " – " + shortLabel(e))
-          : ("Milestone marker on " + (t.milestoneAt === "start" ? "start" : "end") + " date  ·  " + shortLabel(t.milestoneAt === "start" ? s : e)))
+      ? (t.milestoneStyle === "diamond"
+          ? ("Milestone marker on " + (t.milestoneAt === "start" ? "start" : "end") + " date  ·  " + shortLabel(t.milestoneAt === "start" ? s : e))
+          : ("Milestone bar  ·  " + dur + (dur===1?" day":" days") + "  ·  " + shortLabel(s) + " – " + shortLabel(e)))
       : (dur + (dur===1?" day":" days") + "  ·  " + shortLabel(s) + " – " + shortLabel(e));
 
     var logCount = (t.thinkLog || []).filter(function(x){ return !x.section && !x.isSubtitle; }).length;
@@ -3181,6 +3218,8 @@
     var end = formatDate(addDays(t,3));
     return {
       id:uid(), name:"New task", start:formatDate(t), end:end, pred:[], parentId:parentId, collapsed:false, thinkLog:[], color:null,
+      milestone:false, milestoneStyle:"bar", milestoneAt:"end", milestoneDone:false,
+      hasCheckbox:false, taskDone:false,
       title:"New task", status:"todo", priority:"medium", note:"", dueDate:end
     };
   }
