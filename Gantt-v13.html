@@ -158,10 +158,30 @@
   .tl-close{border:none; background:none; font-size:14px; color:var(--ink-faint); cursor:pointer; padding:4px 7px; border-radius:4px; flex-shrink:0;}
   .tl-close:hover{background:var(--accent-fill);}
   .tl-chat{flex:1; overflow-y:auto; padding:12px 14px; display:flex; flex-direction:column; gap:8px; background:var(--paper);}
-  .tl-entry{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:12.5px;}
+  .tl-entry{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:12.5px; position:relative;}
   .tl-entry .tl-ts{font-size:10px; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace; margin-bottom:3px;}
-  .tl-entry .tl-text{white-space:pre-wrap; word-break:break-word; line-height:1.4;}
-  .tl-section{text-align:center; font-size:10.5px; color:var(--ink-soft); font-weight:600; letter-spacing:0.4px; margin:6px 0 2px;}
+  .tl-entry .tl-text{white-space:pre-wrap; word-break:break-word; line-height:1.4; padding-right:44px;}
+  .tl-entry .tl-actions{position:absolute; top:6px; right:8px; display:flex; gap:3px; opacity:0; transition:opacity .12s;}
+  .tl-entry:hover .tl-actions{opacity:1;}
+  .tl-entry .tl-actions button{
+    border:none; background:var(--panel); box-shadow:0 0 0 1px var(--line-strong) inset; border-radius:4px;
+    padding:2px 5px; font-size:10.5px; cursor:pointer; color:var(--ink-faint); line-height:1.5;
+  }
+  .tl-entry .tl-actions button:hover{color:var(--ink); background:var(--accent-soft);}
+  .tl-edit-textarea{
+    width:100%; font:inherit; font-size:12.5px; border:1px solid var(--accent); border-radius:6px;
+    padding:6px 8px; resize:vertical; min-height:52px; font-family:inherit; box-sizing:border-box;
+  }
+  .tl-edit-actions{display:flex; gap:6px; margin-top:6px;}
+  .tl-edit-actions button{font-size:11px; padding:4px 10px; border-radius:4px; border:1px solid var(--line-strong); background:var(--panel); cursor:pointer;}
+  .tl-edit-actions button.primary{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .tl-section{text-align:center; font-size:10.5px; color:var(--ink-soft); font-weight:600; letter-spacing:0.4px; margin:6px 0 2px; position:relative;}
+  .tl-section-del{
+    position:absolute; right:2px; top:50%; transform:translateY(-50%); border:none; background:none;
+    color:var(--ink-faint); font-size:10px; cursor:pointer; opacity:0; transition:opacity .12s; padding:2px 4px;
+  }
+  .tl-section:hover .tl-section-del{opacity:1;}
+  .tl-section-del:hover{color:var(--rust);}
   .tl-empty{text-align:center; color:var(--ink-faint); font-size:12.5px; padding:36px 14px; line-height:1.5;}
   .tl-inputrow{display:flex; gap:8px; padding:10px 14px; border-top:1px solid var(--line); flex-shrink:0;}
   .tl-inputrow textarea{
@@ -321,10 +341,16 @@
   .sidebar{width:var(--sidebar-w); flex-shrink:0; border-right:1px solid var(--line); background:var(--panel);}
   .sidebar-header{
     position:sticky; top:0; z-index:3; background:var(--panel);
-    height:var(--row-h); display:flex; align-items:center; padding:0 14px;
+    height:var(--row-h); display:flex; align-items:center; justify-content:space-between; padding:0 10px 0 14px;
     font-size:10.5px; text-transform:uppercase; letter-spacing:0.6px; color:var(--ink-faint);
     font-weight:600; border-bottom:1px solid var(--line-strong);
   }
+  .sidebar-header #toggleAllBtn{
+    text-transform:none; letter-spacing:normal; font-size:11px; font-weight:500;
+    color:var(--ink-soft); background:none; border:1px solid var(--line-strong); border-radius:4px;
+    padding:3px 8px; cursor:pointer;
+  }
+  .sidebar-header #toggleAllBtn:hover{background:var(--accent-soft); color:var(--ink); border-color:var(--accent-soft);}
   .tree-row{
     display:flex; align-items:center; gap:4px;
     height:var(--row-h); padding:0 8px 0 6px;
@@ -608,7 +634,10 @@
 
 <div class="board" id="board">
   <div class="sidebar">
-    <div class="sidebar-header">Tasks</div>
+    <div class="sidebar-header">
+      <span>Tasks</span>
+      <button id="toggleAllBtn" title="Expand/collapse all">▾ Collapse all</button>
+    </div>
     <div id="taskRows"></div>
     <div class="root-drop-zone" id="rootDropZone">Drop here to make top-level</div>
     <div class="addrow"><button id="addTaskBtn2">+ Add task</button></div>
@@ -2117,6 +2146,7 @@
     renderBars();
     renderDeps();
     renderToday();
+    updateToggleAllBtnLabel();
 
     var bodyHeight = Math.max(visList.length, 1) * ROW_H;
     timelineBody.style.height = bodyHeight + "px";
@@ -2136,6 +2166,29 @@
       closeInspector();
     }
   }
+
+  function toggleAllTasks(){
+    var parentIds = {};
+    tasks.forEach(function(t){ if(t.parentId) parentIds[t.parentId] = true; });
+    var parentTasks = tasks.filter(function(t){ return parentIds[t.id]; });
+    if(!parentTasks.length) return;
+    var anyExpanded = parentTasks.some(function(t){ return !t.collapsed; });
+    parentTasks.forEach(function(t){ t.collapsed = anyExpanded; }); // if any open, close all; else open all
+    render();
+  }
+
+  function updateToggleAllBtnLabel(){
+    var btn = document.getElementById("toggleAllBtn");
+    if(!btn) return;
+    var parentIds = {};
+    tasks.forEach(function(t){ if(t.parentId) parentIds[t.parentId] = true; });
+    var parentTasks = tasks.filter(function(t){ return parentIds[t.id]; });
+    if(!parentTasks.length){ btn.style.display = "none"; return; }
+    btn.style.display = "";
+    var anyExpanded = parentTasks.some(function(t){ return !t.collapsed; });
+    btn.textContent = anyExpanded ? "▾ Collapse all" : "▸ Expand all";
+  }
+  document.getElementById("toggleAllBtn").addEventListener("click", toggleAllTasks);
 
   function dayX(date){ return daysBetween(range.start, date) * pxPerDay; }
 
@@ -3046,6 +3099,7 @@
   // ---------- think log ----------
   var tlTaskId = null;
   var tlMsgs = [];
+  var tlEditingIndex = -1;
   var tlBackdropEl = document.getElementById("tlBackdrop");
   var tlPanelEl = document.getElementById("tlPanel");
   var tlChatEl = document.getElementById("tlChat");
@@ -3056,6 +3110,7 @@
   function openThinkLog(task){
     tlTaskId = task.id;
     tlMsgs = JSON.parse(JSON.stringify(task.thinkLog || []));
+    tlEditingIndex = -1;
     document.getElementById("tlTaskName").textContent = task.name;
     tlStatusEl.textContent = "Auto-saves after each entry";
     renderThinkLogChat();
@@ -3070,10 +3125,11 @@
     tlPanelEl.classList.remove("show");
     tlPanelEl.setAttribute("aria-hidden", "true");
     tlSectionMenuEl.classList.remove("show");
+    tlEditingIndex = -1;
     tlTaskId = null;
   }
 
-  function renderThinkLogEntries(containerEl, msgs, emptyMsg){
+  function renderThinkLogEntries(containerEl, msgs, emptyMsg, editable){
     containerEl.innerHTML = "";
     if(!msgs.length){
       var empty = document.createElement("div");
@@ -3082,30 +3138,110 @@
       containerEl.appendChild(empty);
       return;
     }
-    msgs.forEach(function(entry){
+    msgs.forEach(function(entry, idx){
       if(entry.section || entry.isSubtitle){
         var sec = document.createElement("div");
         sec.className = "tl-section";
         sec.textContent = "── " + (entry.section || entry.text || "") + " ──";
+        if(editable){
+          var delSec = document.createElement("button");
+          delSec.className = "tl-section-del";
+          delSec.title = "Delete this section marker";
+          delSec.textContent = "✕";
+          delSec.addEventListener("click", function(){
+            if(!confirm("Delete this section marker?")) return;
+            tlMsgs.splice(idx, 1);
+            renderThinkLogChat();
+            saveThinkLog();
+          });
+          sec.appendChild(delSec);
+        }
         containerEl.appendChild(sec);
         return;
       }
+
       var row = document.createElement("div");
       row.className = "tl-entry";
+
+      if(editable && idx === tlEditingIndex){
+        var tsEdit = document.createElement("div");
+        tsEdit.className = "tl-ts";
+        tsEdit.textContent = entry.timestamp || "";
+        row.appendChild(tsEdit);
+
+        var ta = document.createElement("textarea");
+        ta.className = "tl-edit-textarea";
+        ta.value = entry.text || "";
+        row.appendChild(ta);
+
+        var editActions = document.createElement("div");
+        editActions.className = "tl-edit-actions";
+        var saveBtn = document.createElement("button");
+        saveBtn.className = "primary";
+        saveBtn.textContent = "Save";
+        saveBtn.addEventListener("click", function(){
+          var newText = ta.value.trim();
+          if(!newText) return;
+          tlMsgs[idx].text = newText;
+          tlMsgs[idx].edited = true;
+          tlEditingIndex = -1;
+          renderThinkLogChat();
+          saveThinkLog();
+        });
+        var cancelBtn = document.createElement("button");
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.addEventListener("click", function(){
+          tlEditingIndex = -1;
+          renderThinkLogChat();
+        });
+        editActions.appendChild(saveBtn);
+        editActions.appendChild(cancelBtn);
+        row.appendChild(editActions);
+        containerEl.appendChild(row);
+        requestAnimationFrame(function(){ ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
+        return;
+      }
+
       var ts = document.createElement("div");
       ts.className = "tl-ts";
-      ts.textContent = entry.timestamp || "";
+      ts.textContent = (entry.timestamp || "") + (entry.edited ? "  ·  edited" : "");
       var txt = document.createElement("div");
       txt.className = "tl-text";
       txt.textContent = entry.text || "";
       row.appendChild(ts);
       row.appendChild(txt);
+
+      if(editable){
+        var actions = document.createElement("div");
+        actions.className = "tl-actions";
+        var editBtn = document.createElement("button");
+        editBtn.title = "Edit";
+        editBtn.textContent = "✏️";
+        editBtn.addEventListener("click", function(){
+          tlEditingIndex = idx;
+          renderThinkLogChat();
+        });
+        var delBtn = document.createElement("button");
+        delBtn.title = "Delete";
+        delBtn.textContent = "✕";
+        delBtn.addEventListener("click", function(){
+          if(!confirm("Delete this note?")) return;
+          tlMsgs.splice(idx, 1);
+          if(tlEditingIndex === idx) tlEditingIndex = -1;
+          renderThinkLogChat();
+          saveThinkLog();
+        });
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
+        row.appendChild(actions);
+      }
+
       containerEl.appendChild(row);
     });
   }
 
   function renderThinkLogChat(){
-    renderThinkLogEntries(tlChatEl, tlMsgs, "No notes yet — jot down thoughts, decisions, or reminders for this task.");
+    renderThinkLogEntries(tlChatEl, tlMsgs, "No notes yet — jot down thoughts, decisions, or reminders for this task.", true);
     tlChatEl.scrollTop = tlChatEl.scrollHeight;
   }
 
