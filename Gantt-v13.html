@@ -24,6 +24,7 @@
     --accent-soft:#bcd6e2;
     --accent-fill:#dcebf1;
     --amber:#c9882c;
+    --milestone:#7c5cbf;
     --rust:#b5493d;
     --rust-fill:#f6dfdb;
     --weekend:#f2f3f4;
@@ -447,6 +448,33 @@
   .bar .handle.r{right:0; border-radius:0 4px 4px 0;}
   .bar .handle:hover{background:rgba(255,255,255,0.25);}
 
+  .bar.bar-milestone{
+    border-radius:3px; background:var(--milestone); margin-top:0;
+    transform:rotate(45deg); box-shadow:0 1px 2px rgba(28,36,48,0.25);
+    display:block; cursor:pointer;
+  }
+  .bar.bar-milestone.selected{box-shadow:0 0 0 2px var(--ink);}
+  .milestone-label{
+    position:absolute; height:24px; margin-top:8px; display:flex; align-items:center;
+    font-size:14px; font-weight:600; color:var(--ink); white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; pointer-events:none; max-width:260px;
+  }
+  .milestone-anchor-row{display:flex; gap:16px; margin:-6px 0 14px 22px; font-size:12px; color:var(--ink-soft);}
+  .milestone-anchor-row label{display:flex; align-items:center; gap:5px; cursor:pointer;}
+  .milestone-anchor-row input{width:13px; height:13px; margin:0;}
+  .milestone-style-row{display:flex; gap:16px; margin:-6px 0 14px 22px; font-size:12px; color:var(--ink-soft);}
+  .milestone-style-row label{display:flex; align-items:center; gap:5px; cursor:pointer;}
+  .milestone-style-row input{width:13px; height:13px; margin:0;}
+
+  .bar.bar-milestone-flat{background:var(--line-strong);}
+  .bar.bar-milestone-flat.done{background:var(--accent-fill);}
+  .bar.bar-milestone-flat .bar-label{color:var(--ink); padding-left:4px;}
+  .bar.bar-milestone-flat .ms-check{
+    flex-shrink:0; width:15px; height:15px; margin:0 0 0 6px; cursor:pointer; touch-action:none;
+  }
+  .milestone-check{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--ink-soft); cursor:pointer; margin-bottom:14px;}
+  .milestone-check input{width:14px; height:14px; margin:0; flex-shrink:0;}
+
   footer{text-align:center; font-size:11px; color:var(--ink-faint); padding:8px; border-top:1px solid var(--line); background:var(--panel);}
 
   /* ---------- inspector ---------- */
@@ -625,11 +653,23 @@
       </div>
       <div class="inspector-col right">
         <label class="settings-label">Settings</label>
+        <label class="milestone-check" for="inspMilestone">
+          <input type="checkbox" id="inspMilestone">
+          <span>Milestone (single-date marker on the timeline)</span>
+        </label>
+        <div class="milestone-anchor-row" id="inspMilestoneAnchorRow" style="display:none;">
+          <label><input type="radio" name="inspMilestoneAt" value="start" id="inspMilestoneAtStart"> Mark at start date</label>
+          <label><input type="radio" name="inspMilestoneAt" value="end" id="inspMilestoneAtEnd"> Mark at end date</label>
+        </div>
+        <div class="milestone-style-row" id="inspMilestoneStyleRow" style="display:none;">
+          <label><input type="radio" name="inspMilestoneStyle" value="diamond" id="inspMilestoneStyleDiamond"> ◆ Diamond marker</label>
+          <label><input type="radio" name="inspMilestoneStyle" value="bar" id="inspMilestoneStyleBar"> ▭ Light bar with checkbox</label>
+        </div>
         <div class="date-block">
           <span class="date-block-label">Start date</span>
           <div class="date-selects" id="inspStartSelects"></div>
         </div>
-        <div class="date-block">
+        <div class="date-block" id="inspEndDateBlock">
           <span class="date-block-label">End date</span>
           <div class="date-selects" id="inspEndSelects"></div>
         </div>
@@ -984,6 +1024,10 @@
       collapsed: !!t.collapsed,
       thinkLog: Array.isArray(t.thinkLog) ? t.thinkLog : [],
       color: t.color || null,
+      milestone: !!t.milestone,
+      milestoneAt: t.milestoneAt === "start" ? "start" : "end",
+      milestoneStyle: t.milestoneStyle === "diamond" ? "diamond" : "bar",
+      milestoneDone: !!t.milestoneDone,
       // Q-PM-owned fields — Gantt preserves these untouched, only mirrors title/dueDate for linked projects
       title: t.title || t.name,
       status: t.status || "todo",
@@ -2436,9 +2480,80 @@
     var today = todayDate();
     visList.forEach(function(entry, i){
       var t = entry.task;
+
+      if(t.milestone && t.milestoneStyle !== "bar"){
+        var ms = parseDate(t.milestoneAt === "start" ? t.start : t.end);
+        var size = 14;
+        var cx = dayX(ms) + pxPerDay/2;
+        var dia = document.createElement("div");
+        dia.className = "bar bar-milestone";
+        if(t.id === currentInspectId) dia.classList.add("selected");
+        dia.style.left = (cx - size/2) + "px";
+        dia.style.top = (i*ROW_H + ROW_H/2 - size/2) + "px";
+        dia.style.width = size + "px";
+        dia.style.height = size + "px";
+        if(t.color) dia.style.background = t.color;
+        dia.title = t.name + "  (milestone: " + (t.milestoneAt === "start" ? t.start : t.end) + ")";
+        dia.addEventListener("click", function(ev){ ev.stopPropagation(); openInspector(t); });
+        barsLayer.appendChild(dia);
+
+        var mlabel = document.createElement("div");
+        mlabel.className = "milestone-label";
+        mlabel.textContent = "◆ " + t.name;
+        mlabel.style.left = (cx + size/2 + 8) + "px";
+        mlabel.style.top = (i*ROW_H) + "px";
+        barsLayer.appendChild(mlabel);
+
+        barElsById[t.id] = dia;
+        return;
+      }
+
       var s = parseDate(t.start), e = parseDate(t.end);
       var left = dayX(s);
       var width = Math.max(pxPerDay - 2, (daysBetween(s,e)+1)*pxPerDay - 4);
+
+      if(t.milestone && t.milestoneStyle === "bar"){
+        var flatBar = document.createElement("div");
+        var flatLocked = isRollupParent(t.id);
+        flatBar.className = "bar bar-milestone-flat" + (t.milestoneDone ? " done" : "");
+        if(t.id === currentInspectId) flatBar.classList.add("selected");
+        if(flatLocked) flatBar.classList.add("bar-rollup");
+        flatBar.style.left = left + "px";
+        flatBar.style.top = (i*ROW_H) + "px";
+        flatBar.style.width = width + "px";
+        flatBar.title = t.name + "  (" + t.start + " → " + t.end + ")";
+
+        var check = document.createElement("input");
+        check.type = "checkbox";
+        check.className = "ms-check";
+        check.checked = !!t.milestoneDone;
+        check.addEventListener("pointerdown", function(ev){ ev.stopPropagation(); });
+        check.addEventListener("click", function(ev){
+          ev.stopPropagation();
+          t.milestoneDone = check.checked;
+          saveTasks();
+          render();
+          if(currentInspectId === t.id) populateInspector(t);
+        });
+        flatBar.appendChild(check);
+
+        var flatLabel = document.createElement("div");
+        flatLabel.className = "bar-label";
+        flatLabel.textContent = t.name;
+        flatBar.appendChild(flatLabel);
+
+        if(!flatLocked){
+          var fhl = document.createElement("div"); fhl.className = "handle l"; flatBar.appendChild(fhl);
+          var fhr = document.createElement("div"); fhr.className = "handle r"; flatBar.appendChild(fhr);
+          attachDrag(fhl, t, "resize-l");
+          attachDrag(fhr, t, "resize-r");
+        }
+        attachDrag(flatBar, t, "move");
+
+        barElsById[t.id] = flatBar;
+        barsLayer.appendChild(flatBar);
+        return;
+      }
 
       var bar = document.createElement("div");
       var isOverdue = e.getTime() < today.getTime();
@@ -2752,15 +2867,63 @@
   var inspDuration = document.getElementById("inspDuration");
   var inspStartSelects = document.getElementById("inspStartSelects");
   var inspEndSelects = document.getElementById("inspEndSelects");
+  var inspEndDateBlock = document.getElementById("inspEndDateBlock");
+  var inspMilestone = document.getElementById("inspMilestone");
+  var inspMilestoneAnchorRow = document.getElementById("inspMilestoneAnchorRow");
+  var inspMilestoneAtStart = document.getElementById("inspMilestoneAtStart");
+  var inspMilestoneAtEnd = document.getElementById("inspMilestoneAtEnd");
+  var inspMilestoneStyleRow = document.getElementById("inspMilestoneStyleRow");
+  var inspMilestoneStyleDiamond = document.getElementById("inspMilestoneStyleDiamond");
+  var inspMilestoneStyleBar = document.getElementById("inspMilestoneStyleBar");
+
+  inspMilestone.addEventListener("change", function(){
+    var t = tasks.find(function(x){ return x.id===currentInspectId; });
+    if(!t) return;
+    t.milestone = inspMilestone.checked; // start/end dates are left untouched either way
+    saveTasks();
+    render();
+    populateInspector(t);
+  });
+  function onMilestoneAnchorChange(){
+    var t = tasks.find(function(x){ return x.id===currentInspectId; });
+    if(!t) return;
+    t.milestoneAt = inspMilestoneAtStart.checked ? "start" : "end";
+    saveTasks();
+    render();
+    populateInspector(t);
+  }
+  inspMilestoneAtStart.addEventListener("change", onMilestoneAnchorChange);
+  inspMilestoneAtEnd.addEventListener("change", onMilestoneAnchorChange);
+  function onMilestoneStyleChange(){
+    var t = tasks.find(function(x){ return x.id===currentInspectId; });
+    if(!t) return;
+    t.milestoneStyle = inspMilestoneStyleBar.checked ? "bar" : "diamond";
+    saveTasks();
+    render();
+    populateInspector(t);
+  }
+  inspMilestoneStyleDiamond.addEventListener("change", onMilestoneStyleChange);
+  inspMilestoneStyleBar.addEventListener("change", onMilestoneStyleChange);
 
   function populateInspector(t){
     inspNum.textContent = (allFlattenIds().indexOf(t.id)+1);
     if(document.activeElement !== inspTitle) inspTitle.value = t.name;
     if(document.activeElement !== inspPred) inspPred.value = idsToNumbers(t.pred);
+    inspMilestone.checked = !!t.milestone;
+    inspMilestoneStyleRow.style.display = t.milestone ? "flex" : "none";
+    inspMilestoneStyleDiamond.checked = t.milestoneStyle !== "bar";
+    inspMilestoneStyleBar.checked = t.milestoneStyle === "bar";
+    inspMilestoneAnchorRow.style.display = (t.milestone && t.milestoneStyle !== "bar") ? "flex" : "none";
+    inspMilestoneAtStart.checked = t.milestoneAt === "start";
+    inspMilestoneAtEnd.checked = t.milestoneAt !== "start";
 
     var s = parseDate(t.start), e = parseDate(t.end);
     var dur = daysBetween(s,e)+1;
-    inspDuration.textContent = dur + (dur===1?" day":" days") + "  ·  " + shortLabel(s) + " – " + shortLabel(e);
+    inspDuration.textContent = t.milestone
+      ? (t.milestoneStyle === "bar"
+          ? ("Milestone bar  ·  " + dur + (dur===1?" day":" days") + "  ·  " + shortLabel(s) + " – " + shortLabel(e))
+          : ("Milestone marker on " + (t.milestoneAt === "start" ? "start" : "end") + " date  ·  " + shortLabel(t.milestoneAt === "start" ? s : e)))
+      : (dur + (dur===1?" day":" days") + "  ·  " + shortLabel(s) + " – " + shortLabel(e));
 
     var logCount = (t.thinkLog || []).filter(function(x){ return !x.section && !x.isSubtitle; }).length;
     var badge = document.getElementById("inspThinkBadge");
@@ -2778,8 +2941,8 @@
 
     var locked = isRollupParent(t.id);
     buildDateSelects(inspStartSelects, t.start, function(newStart){
-      if(parseDate(newStart).getTime() > parseDate(t.end).getTime()) t.end = newStart;
       t.start = newStart;
+      if(!t.milestone && parseDate(newStart).getTime() > parseDate(t.end).getTime()) t.end = newStart;
       render();
       populateInspector(t);
     }, locked);
