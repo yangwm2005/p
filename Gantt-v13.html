@@ -1505,6 +1505,8 @@
     if(isUserInteracting()) return false;
     if(cloudSaveTimer) return false;
     if(cloudPushInFlight) return false;
+    if(sharedTaskSaveTimer) return false;
+    if(sharedPushInFlight) return false;
     if(Date.now() - lastLocalEditAt < 1200) return false;
     return true;
   }
@@ -1976,6 +1978,7 @@
   var sharedTaskSaveTimer = null;
   var sharedTaskSubscribedPmId = null;
   var lastSharedSyncedJSON = null;
+  var sharedPushInFlight = false;
 
   // shared task shape carries fields both apps understand; each app mirrors only the fields it owns.
   function toSharedTask(t){
@@ -2014,27 +2017,42 @@
     sharedTaskUnsub = db.collection("users").doc(currentUser.uid).onSnapshot(function(snap){
       if(snap.metadata.hasPendingWrites) return;
       setPmSyncState("subscribed");
-      var proj = projects[activeProjectId];
-      if(!proj || proj.linkedPmProjectId !== pmProjectId) return; // user switched away mid-flight
       var data = snap.data() || {};
       var shared = (data[SHARED_FIELD] || {})[pmProjectId];
       if(!shared || !Array.isArray(shared.tasks)) return;
 
       var json = JSON.stringify(shared.tasks);
       if(json === lastSharedSyncedJSON) return;
-      lastSharedSyncedJSON = json;
 
-      applyingRemote = true;
-      tasks = shared.tasks.map(normalizeTask);
-      proj.tasks = tasks;
-      saveProjectsLocal();
-      render(); // render() only closes the inspector if the open task genuinely no longer exists
-      if(currentInspectId){
-        var stillOpenSharedTask = tasks.find(function(t){ return t.id === currentInspectId; });
-        if(stillOpenSharedTask) populateInspector(stillOpenSharedTask); // keep panel open, refresh content
-      }
-      renderProjectPicker();
-      applyingRemote = false;
+      // Same race as the main cloud listener: this doc gets written every time saveTasks()
+      // runs (bar drags, edits, etc. via scheduleSharedTaskPush), so a snapshot can arrive
+      // reflecting a moment just before a local edit finished pushing. Wait until it's safe,
+      // then re-fetch fresh server truth and re-check before touching local state — otherwise
+      // a drag would visually move and then snap back a couple seconds later.
+      scheduleRemoteApply(function(){
+        db.collection("users").doc(currentUser.uid).get().then(function(freshSnap){
+          var proj = projects[activeProjectId];
+          if(!proj || proj.linkedPmProjectId !== pmProjectId) return; // user switched away mid-flight
+          var freshData = freshSnap.data() || {};
+          var freshShared = (freshData[SHARED_FIELD] || {})[pmProjectId];
+          if(!freshShared || !Array.isArray(freshShared.tasks)) return;
+          var freshJSON = JSON.stringify(freshShared.tasks);
+          if(freshJSON === lastSharedSyncedJSON) return; // our own push already landed while we waited
+          lastSharedSyncedJSON = freshJSON;
+
+          applyingRemote = true;
+          tasks = freshShared.tasks.map(normalizeTask);
+          proj.tasks = tasks;
+          saveProjectsLocal();
+          render(); // render() only closes the inspector if the open task genuinely no longer exists
+          if(currentInspectId){
+            var stillOpenSharedTask = tasks.find(function(t){ return t.id === currentInspectId; });
+            if(stillOpenSharedTask) populateInspector(stillOpenSharedTask); // keep panel open, refresh content
+          }
+          renderProjectPicker();
+          applyingRemote = false;
+        }).catch(function(err){ console.error("Shared task re-check failed", err); });
+      });
     }, function(err){
       console.error("Shared task sync error", err);
       setPmSyncState("error");
@@ -2046,6 +2064,7 @@
     if(sharedTaskSaveTimer){ clearTimeout(sharedTaskSaveTimer); sharedTaskSaveTimer = null; }
     sharedTaskSubscribedPmId = null;
     lastSharedSyncedJSON = null;
+    sharedPushInFlight = false;
   }
 
   function scheduleSharedTaskPush(){
@@ -2062,12 +2081,13 @@
     var json = JSON.stringify(sharedTasks);
     if(json === lastSharedSyncedJSON) return;
 
+    sharedPushInFlight = true;
     var payload = {};
     payload[SHARED_FIELD] = {};
     payload[SHARED_FIELD][pmId] = { tasks: sharedTasks, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
     db.collection("users").doc(currentUser.uid).set(payload, { merge:true })
-      .then(function(){ lastSharedSyncedJSON = json; setPmSyncState("subscribed"); })
-      .catch(function(err){ console.error("Shared task push failed", err); setPmSyncState("error"); });
+      .then(function(){ lastSharedSyncedJSON = json; sharedPushInFlight = false; setPmSyncState("subscribed"); })
+      .catch(function(err){ console.error("Shared task push failed", err); sharedPushInFlight = false; setPmSyncState("error"); });
   }
 
   // ---------- tree helpers ----------
