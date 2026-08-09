@@ -1289,8 +1289,8 @@
   <button data-action="copy">Copy (with sub-items)</button>
   <button data-action="cut">Cut (with sub-items)</button>
   <hr>
-  <button data-action="indent" class="single-only">Indent</button>
-  <button data-action="outdent" class="single-only">Outdent</button>
+  <button data-action="indent">Indent</button>
+  <button data-action="outdent">Outdent</button>
   <button data-action="moveup" class="single-only">Move up</button>
   <button data-action="movedown" class="single-only">Move down</button>
   <hr>
@@ -3681,6 +3681,19 @@
         textEl.blur();
       }
       if(e.key === 'Escape'){ e.preventDefault(); textEl.textContent = node.text || ''; textEl.blur(); }
+      if(e.key === 'Tab'){
+        e.preventDefault();
+        const doc = activeDoc();
+        const newText = textEl.textContent;
+        if(newText !== node.text){ node.text = newText; touch(node); }
+        const ok = e.shiftKey ? outdentNode(doc, node) : indentNode(doc, node);
+        if(ok){
+          scheduleSave();
+          textEl.contentEditable = 'false';
+          renderColumnView();
+          focusColItemText(node.id);
+        }
+      }
     });
 
     return item;
@@ -4238,10 +4251,20 @@
         renderTree();
         break;
       case 'indent':
-        if(indentNode(doc, node)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        if(isMulti){
+          const topIds = topLevelIds(doc, scopeIds);
+          if(indentSelectionIds(doc, topIds, false)){ scheduleSave(); renderTree(); }
+        } else {
+          if(indentNode(doc, node)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        }
         break;
       case 'outdent':
-        if(outdentNode(doc, node)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        if(isMulti){
+          const topIds = topLevelIds(doc, scopeIds);
+          if(indentSelectionIds(doc, topIds, true)){ scheduleSave(); renderTree(); }
+        } else {
+          if(outdentNode(doc, node)){ scheduleSave(); focusRequest = { id: node.id, caret: 'end' }; renderTree(); }
+        }
         break;
       case 'moveup':
         if(moveNode(doc, node, -1)){ 
@@ -4435,10 +4458,39 @@
   });
 
   // ---------------- Structured copy / cut / paste ----------------
-  function topLevelSelectedIds(doc){
-    const ids = [...selectedIds].filter(id => doc.nodes[id]);
+  function topLevelIds(doc, ids){
     const idSet = new Set(ids);
-    return ids.filter(id => !idSet.has(doc.nodes[id].parentId));
+    return ids.filter(id => doc.nodes[id] && !idSet.has(doc.nodes[id].parentId));
+  }
+
+  function topLevelSelectedIds(doc){
+    return topLevelIds(doc, [...selectedIds].filter(id => doc.nodes[id]));
+  }
+
+  // Indents/outdents a set of top-level ids together, keeping them in document
+  // order so indenting doesn't have items fight over the same sibling slot.
+  function indentSelectionIds(doc, topIds, outdent){
+    if(!topIds.length) return false;
+    captureUndoPoint(doc);
+    let changed = false;
+    if(outdent){
+      topIds.forEach(id=>{
+        const n = doc.nodes[id];
+        if(n && outdentNode(doc, n)) changed = true;
+      });
+    } else {
+      const ordered = topIds.slice().sort((a,b)=>{
+        const pa = doc.nodes[a].parentId, pb = doc.nodes[b].parentId;
+        const arrA = siblingsOf(doc, doc.nodes[a]), arrB = siblingsOf(doc, doc.nodes[b]);
+        if(pa === pb) return arrA.indexOf(a) - arrB.indexOf(b);
+        return 0;
+      });
+      ordered.forEach(id=>{
+        const n = doc.nodes[id];
+        if(n && indentNode(doc, n)) changed = true;
+      });
+    }
+    return changed;
   }
 
   function exportNodeForClipboard(doc, id){
@@ -4720,6 +4772,14 @@
       e.preventDefault();
       deleteSelection();
     }
+  });
+
+  document.addEventListener('keydown', (e)=>{
+    if(e.key !== 'Tab' || !selectedIds.size || e.target.classList.contains('content')) return;
+    e.preventDefault();
+    const doc = activeDoc();
+    const topIds = topLevelSelectedIds(doc);
+    if(indentSelectionIds(doc, topIds, e.shiftKey)){ scheduleSave(); renderTree(); }
   });
 
   document.addEventListener('keydown', (e)=>{
