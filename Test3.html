@@ -621,6 +621,7 @@
     <button id="addTaskBtn" class="primary">+ Add task</button>
     <div class="auth-group" id="authGroup">
       <span class="sync-dot" id="syncDot" data-state="offline" title="Not signed in"></span>
+      <button id="syncNowBtn" class="ghost" title="Force an immediate sync with the cloud" style="display:none;">⟳ Sync now</button>
       <button id="signInBtn" class="ghost signin-btn">
         <svg width="15" height="15" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.95v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.95A9 9 0 0 0 0 9c0 1.45.35 2.83.95 4.05l3.02-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .95 4.95L3.97 7.28C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
         Sign in
@@ -1421,7 +1422,7 @@ function saveTasks(){
   });
 
   // ---------- firebase auth + firestore sync ----------
-  var syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl;
+  var syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl;
 
   function setSyncState(state, label){
     if(!syncDotEl) return;
@@ -1435,6 +1436,7 @@ function saveTasks(){
     userChipEl = document.getElementById("userChip");
     userAvatarEl = document.getElementById("userAvatar");
     userNameEl = document.getElementById("userName");
+    syncNowBtnEl = document.getElementById("syncNowBtn");
 
     var looksUnconfigured = !FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey.indexOf("PASTE_") === 0;
     if(looksUnconfigured || typeof firebase === "undefined"){
@@ -1471,12 +1473,16 @@ function saveTasks(){
       if(!confirm("Sign out of Google? Your tasks stay saved on this device either way.")) return;
       auth.signOut();
     });
+    if(syncNowBtnEl){
+      syncNowBtnEl.addEventListener("click", function(){ syncNow(); });
+    }
 
     auth.onAuthStateChanged(function(user){
       currentUser = user;
       if(user){
         signInBtnEl.style.display = "none";
         userChipEl.style.display = "flex";
+        if(syncNowBtnEl) syncNowBtnEl.style.display = "inline-flex";
         userAvatarEl.src = user.photoURL || "";
         userNameEl.textContent = user.displayName || user.email || "Signed in";
         if(pendingPreAuthEdit){
@@ -1495,6 +1501,7 @@ function saveTasks(){
       } else {
         signInBtnEl.style.display = "flex";
         userChipEl.style.display = "none";
+        if(syncNowBtnEl) syncNowBtnEl.style.display = "none";
         unsubscribeCloud();
         unsubscribeSharedGanttIndex();
         unsubscribeSharedTasks();
@@ -1747,6 +1754,64 @@ function pushToCloud(){
       setSyncState("error", "Save failed: " + err.message);
     });
 }
+
+  // Manual "Sync now" — forces an immediate push of any local edits (bypassing the
+  // 700ms debounce), then does a fresh get() to pull in anything newer from another
+  // device/tab, applying it the same guarded way subscribeToCloud() would.
+  function syncNow(){
+    if(!firebaseReady){
+      alert("Cloud sync isn't configured in this copy of the app.");
+      return;
+    }
+    if(!currentUser){
+      alert("Sign in first to sync with the cloud.");
+      return;
+    }
+    if(syncNowBtnEl){
+      syncNowBtnEl.disabled = true;
+      syncNowBtnEl.textContent = "⟳ Syncing…";
+    }
+    if(cloudSaveTimer){ clearTimeout(cloudSaveTimer); cloudSaveTimer = null; }
+    setSyncState("syncing", "Syncing now…");
+
+    // Push whatever's local first (no-ops if nothing changed).
+    pushToCloud();
+    Object.keys(projects).forEach(function(id){
+      if(projects[id].shareId) pushSharedGanttProjectUpdate(id);
+    });
+
+    // Then re-fetch fresh from Firestore in case another device pushed something
+    // in the meantime, and apply it if it's actually newer than our last local edit.
+    db.collection("users").doc(currentUser.uid).get().then(function(freshSnap){
+      var freshData = freshSnap.data() || {};
+      var freshRemote = freshData[CLOUD_FIELD];
+      var freshTime = freshData[CLOUD_UPDATED_FIELD];
+      var applied = false;
+      if(freshRemote && typeof freshRemote === "object" && Object.keys(freshRemote).length){
+        var freshJSON = JSON.stringify(freshRemote);
+        if(freshJSON !== lastSyncedJSON){
+          if(!(freshTime && freshTime.toMillis && freshTime.toMillis() < lastLocalEditAt)){
+            applyRemoteCloudSnapshot(freshRemote, freshJSON);
+            applied = true;
+          }
+        }
+      }
+      setSyncState("synced", "Synced");
+      if(syncNowBtnEl){
+        syncNowBtnEl.disabled = false;
+        syncNowBtnEl.textContent = applied ? "✓ Updated" : "✓ Synced";
+        setTimeout(function(){ if(syncNowBtnEl) syncNowBtnEl.textContent = "⟳ Sync now"; }, 1800);
+      }
+    }).catch(function(err){
+      console.error("Manual sync failed", err);
+      setSyncState("error", "Sync failed: " + err.message);
+      if(syncNowBtnEl){
+        syncNowBtnEl.disabled = false;
+        syncNowBtnEl.textContent = "⟳ Sync now";
+      }
+      maybeShowSyncErrorBanner(err);
+    });
+  }
 
   // ---------- project sharing (Google-account collaborators, mirrors Threadline's model) ----------
   var sharedProjectUnsubs = {};
