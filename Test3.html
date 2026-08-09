@@ -1178,30 +1178,27 @@
     }catch(e){ console.error("Failed to save projects", e); }
   }
 
-  function saveTasks(){
-    if(activeProjectId && projects[activeProjectId]) projects[activeProjectId].tasks = tasks;
-    if(!applyingRemote){
-      tasks.forEach(function(t){
-        t.title = t.name;
-        t.dueDate = t.end;
-      });
-    }
-    saveProjectsLocal();
-    if(!applyingRemote){
-      lastLocalEditAt = Date.now(); // remote snapshots arriving right after a real edit get held back until our own push lands — see canApplyRemoteNow()
-      if(!firebaseReady || !currentUser){
-        // Sign-in isn't finished yet, so there's no user to save under — scheduleCloudSave()
-        // would just no-op. Remember this edit so the moment sign-in completes we push it out
-        // BEFORE the cloud listener gets a chance to pull down the (older, pre-edit) cloud
-        // data. Without this, an edit made mid-login can flash on screen and then get wiped
-        // by the incoming snapshot, since nothing was ever guarding it.
-        pendingPreAuthEdit = true;
-      } else {
-        scheduleCloudSave();
-        if(projects[activeProjectId] && projects[activeProjectId].linkedPmProjectId) scheduleSharedTaskPush();
-      }
+// Replace saveTasks:
+function saveTasks(){
+  if(activeProjectId && projects[activeProjectId]) projects[activeProjectId].tasks = tasks;
+  if(!applyingRemote){
+    tasks.forEach(function(t){
+      t.title = t.name;
+      t.dueDate = t.end;
+    });
+    // Update timestamp for every local edit
+    lastLocalEditAt = Date.now();
+  }
+  saveProjectsLocal();
+  if(!applyingRemote){
+    if(!firebaseReady || !currentUser){
+      pendingPreAuthEdit = true;
+    } else {
+      scheduleCloudSave();
+      if(projects[activeProjectId] && projects[activeProjectId].linkedPmProjectId) scheduleSharedTaskPush();
     }
   }
+}
 
   // ---------- project picker ----------
   var projectPickerEl = document.getElementById("projectPicker");
@@ -1520,27 +1517,38 @@
     var tag = ae.tagName;
     return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || ae.isContentEditable;
   }
-  function canApplyRemoteNow(){
-    if(isUserInteracting()) return false;
-    if(cloudSaveTimer) return false;
-    if(cloudPushInFlight) return false;
-    if(sharedTaskSaveTimer) return false;
-    if(sharedPushInFlight) return false;
-    if(Date.now() - lastLocalEditAt < 1200) return false;
-    return true;
+function canApplyRemoteNow(remoteData){
+  // First, do the existing checks
+  if(isUserInteracting()) return false;
+  if(cloudSaveTimer) return false;
+  if(cloudPushInFlight) return false;
+  if(sharedTaskSaveTimer) return false;
+  if(sharedPushInFlight) return false;
+  if(Date.now() - lastLocalEditAt < 1200) return false;
+  
+  // NEW: Check if the remote data is actually newer than our local data
+  // We compare timestamps from the remote data
+  if(remoteData && remoteData._updatedAt) {
+    var remoteTime = remoteData._updatedAt;
+    // If remote is older than our last edit, don't apply it
+    if(remoteTime < lastLocalEditAt) return false;
   }
+  
+  return true;
+}
   // Waits for canApplyRemoteNow(), then calls checkAndApply — which should re-fetch the
   // freshest server truth (never trust a payload captured earlier) and re-check it's still
   // actually different before touching local state, since our own push may have landed
   // during the wait and already made this snapshot moot.
-  function scheduleRemoteApply(checkAndApply, attemptsLeft){
-    attemptsLeft = (attemptsLeft == null) ? 30 : attemptsLeft; // ~12s max wait, then apply anyway
-    if(!canApplyRemoteNow() && attemptsLeft > 0){
-      setTimeout(function(){ scheduleRemoteApply(checkAndApply, attemptsLeft - 1); }, 400);
-      return;
-    }
-    checkAndApply();
+// Replace the scheduleRemoteApply function:
+function scheduleRemoteApply(checkAndApply, attemptsLeft){
+  attemptsLeft = (attemptsLeft == null) ? 30 : attemptsLeft;
+  if(!canApplyRemoteNow(null) && attemptsLeft > 0){
+    setTimeout(function(){ scheduleRemoteApply(checkAndApply, attemptsLeft - 1); }, 400);
+    return;
   }
+  checkAndApply();
+}
 
   function applyRemoteCloudSnapshot(remote, remoteJSON){
     applyingRemote = true;
@@ -1584,43 +1592,72 @@
     hideSyncErrorBanner();
   }
 
-  function subscribeToCloud(firebaseUid){
-    unsubscribeCloud();
-    setSyncState("syncing", "Connecting…");
-    cloudUnsub = db.collection("users").doc(firebaseUid).onSnapshot(function(snap){
-      if(snap.metadata.hasPendingWrites) return; // ignore our own optimistic echo
-      var data = snap.data() || {};
-      var remote = data[CLOUD_FIELD];
-      if(!remote || typeof remote !== "object" || !Object.keys(remote).length){
-        // nothing in the cloud yet for this app — push what we have locally
-        setSyncState("synced", "Synced");
+// Replace the subscribeToCloud function:
+function subscribeToCloud(firebaseUid){
+  unsubscribeCloud();
+  setSyncState("syncing", "Connecting…");
+  cloudUnsub = db.collection("users").doc(firebaseUid).onSnapshot(function(snap){
+    if(snap.metadata.hasPendingWrites) return;
+    var data = snap.data() || {};
+    var remote = data[CLOUD_FIELD];
+    var remoteTime = data[CLOUD_UPDATED_FIELD];
+    
+    // If remote is empty, push local
+    if(!remote || typeof remote !== "object" || !Object.keys(remote).length){
+      setSyncState("synced", "Synced");
+      pushToCloud();
+      return;
+    }
+    
+    var remoteJSON = JSON.stringify(remote);
+    if(remoteJSON === lastSyncedJSON){
+      setSyncState("synced", "Synced");
+      return;
+    }
+    
+    // Check if remote is newer than our last local edit
+    var shouldApply = true;
+    if(remoteTime && remoteTime.toMillis) {
+      var remoteTs = remoteTime.toMillis();
+      if(remoteTs < lastLocalEditAt) {
+        shouldApply = false;
+        console.log("Skipping remote snapshot - remote is older than local edit");
+        // Push our newer data to cloud
         pushToCloud();
         return;
       }
-      var remoteJSON = JSON.stringify(remote);
-      if(remoteJSON === lastSyncedJSON){
-        setSyncState("synced", "Synced");
-        return;
-      }
-      scheduleRemoteApply(function(){
-        // Re-fetch instead of trusting the payload captured when this event first fired —
-        // that payload can be stale by the time we're actually allowed to apply it.
-        db.collection("users").doc(firebaseUid).get().then(function(freshSnap){
-          var freshData = freshSnap.data() || {};
-          var freshRemote = freshData[CLOUD_FIELD];
-          if(!freshRemote || typeof freshRemote !== "object" || !Object.keys(freshRemote).length) return;
-          var freshJSON = JSON.stringify(freshRemote);
-          if(freshJSON === lastSyncedJSON) return; // our own push already landed while we waited
-          applyRemoteCloudSnapshot(freshRemote, freshJSON);
-        }).catch(function(err){ console.error("Cloud re-check failed", err); });
-      });
-    }, function(err){
-      console.error("Cloud sync error", err);
-      setSyncState("error", "Sync error: " + err.message);
-      cloudSaveFailCount++;
-      maybeShowSyncErrorBanner(err);
+    }
+    
+    if(!shouldApply) return;
+    
+    scheduleRemoteApply(function(){
+      db.collection("users").doc(firebaseUid).get().then(function(freshSnap){
+        var freshData = freshSnap.data() || {};
+        var freshRemote = freshData[CLOUD_FIELD];
+        var freshTime = freshData[CLOUD_UPDATED_FIELD];
+        if(!freshRemote || typeof freshRemote !== "object" || !Object.keys(freshRemote).length) return;
+        var freshJSON = JSON.stringify(freshRemote);
+        if(freshJSON === lastSyncedJSON) return;
+        
+        // Double-check timestamps before applying
+        if(freshTime && freshTime.toMillis) {
+          if(freshTime.toMillis() < lastLocalEditAt) {
+            console.log("Fresh remote is older than local edit - pushing local instead");
+            pushToCloud();
+            return;
+          }
+        }
+        
+        applyRemoteCloudSnapshot(freshRemote, freshJSON);
+      }).catch(function(err){ console.error("Cloud re-check failed", err); });
     });
-  }
+  }, function(err){
+    console.error("Cloud sync error", err);
+    setSyncState("error", "Sync error: " + err.message);
+    cloudSaveFailCount++;
+    maybeShowSyncErrorBanner(err);
+  });
+}
 
   function unsubscribeCloud(){
     if(cloudUnsub){ cloudUnsub(); cloudUnsub = null; }
@@ -1660,54 +1697,56 @@
     }, 700);
   }
 
-  function pushToCloud(){
-    if(!firebaseReady || !currentUser) return;
-    var out = buildCloudPayload();
-    var json = JSON.stringify(out);
-    if(json === lastSyncedJSON){ setSyncState("synced", "Synced"); return; }
-    cloudPushInFlight = true;
-    var payload = {};
-    payload[CLOUD_FIELD] = out;
-    payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
-    var userRef = db.collection("users").doc(currentUser.uid);
-    // update() fully REPLACES the ganttProjects field (so deleted project keys actually
-    // disappear); set(..., {merge:true}) recursively merges nested maps and never removes
-    // a key just because it's missing from the new write — that was the real bug.
-    userRef.update(payload)
-      .then(function(){
-        lastSyncedJSON = json;
-        cloudPushInFlight = false;
-        setSyncState("synced", "Synced");
-        cloudSaveFailCount = 0;
-        hideSyncErrorBanner();
-      })
-      .catch(function(err){
-        if(err && err.code === "not-found"){
-          // brand new user doc — nothing to merge into yet, a plain set is safe here
-          userRef.set(payload, { merge:true })
-            .then(function(){
-              lastSyncedJSON = json;
-              cloudPushInFlight = false;
-              setSyncState("synced", "Synced");
-              cloudSaveFailCount = 0;
-              hideSyncErrorBanner();
-            })
-            .catch(function(err2){
-              console.error("Cloud save failed", err2);
-              cloudPushInFlight = false;
-              setSyncState("error", "Save failed: " + err2.message);
-              cloudSaveFailCount++;
-              maybeShowSyncErrorBanner(err2);
-            });
-          return;
-        }
-        console.error("Cloud save failed", err);
-        cloudPushInFlight = false;
-        cloudSaveFailCount++;
-        maybeShowSyncErrorBanner(err);
-        setSyncState("error", "Save failed: " + err.message);
-      });
-  }
+// Replace pushToCloud:
+function pushToCloud(){
+  if(!firebaseReady || !currentUser) return;
+  var out = buildCloudPayload();
+  var json = JSON.stringify(out);
+  if(json === lastSyncedJSON){ setSyncState("synced", "Synced"); return; }
+  cloudPushInFlight = true;
+  var payload = {};
+  payload[CLOUD_FIELD] = out;
+  // Use serverTimestamp for reliable ordering
+  payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
+  var userRef = db.collection("users").doc(currentUser.uid);
+  
+  // Store the timestamp of our edit locally too
+  lastLocalEditAt = Date.now();
+  
+  userRef.update(payload)
+    .then(function(){
+      lastSyncedJSON = json;
+      cloudPushInFlight = false;
+      setSyncState("synced", "Synced");
+      cloudSaveFailCount = 0;
+      hideSyncErrorBanner();
+    })
+    .catch(function(err){
+      if(err && err.code === "not-found"){
+        userRef.set(payload, { merge:true })
+          .then(function(){
+            lastSyncedJSON = json;
+            cloudPushInFlight = false;
+            setSyncState("synced", "Synced");
+            cloudSaveFailCount = 0;
+            hideSyncErrorBanner();
+          })
+          .catch(function(err2){
+            console.error("Cloud save failed", err2);
+            cloudPushInFlight = false;
+            setSyncState("error", "Save failed: " + err2.message);
+            cloudSaveFailCount++;
+            maybeShowSyncErrorBanner(err2);
+          });
+        return;
+      }
+      console.error("Cloud save failed", err);
+      cloudPushInFlight = false;
+      cloudSaveFailCount++;
+      maybeShowSyncErrorBanner(err);
+      setSyncState("error", "Save failed: " + err.message);
+    });
+}
 
   // ---------- project sharing (Google-account collaborators, mirrors Threadline's model) ----------
   var sharedProjectUnsubs = {};
