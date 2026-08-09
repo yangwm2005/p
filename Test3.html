@@ -1014,6 +1014,7 @@
   var lastSyncedJSON = null;
   var applyingRemote = false;
   var lastLocalEditAt = 0;
+  var pendingPreAuthEdit = false; // set when an edit happens before sign-in finishes; see saveTasks()
   var cloudPushInFlight = false;
   var cloudSaveFailCount = 0;
   var syncErrorBannerEl = null;
@@ -1188,8 +1189,17 @@
     saveProjectsLocal();
     if(!applyingRemote){
       lastLocalEditAt = Date.now(); // remote snapshots arriving right after a real edit get held back until our own push lands — see canApplyRemoteNow()
-      scheduleCloudSave();
-      if(projects[activeProjectId] && projects[activeProjectId].linkedPmProjectId) scheduleSharedTaskPush();
+      if(!firebaseReady || !currentUser){
+        // Sign-in isn't finished yet, so there's no user to save under — scheduleCloudSave()
+        // would just no-op. Remember this edit so the moment sign-in completes we push it out
+        // BEFORE the cloud listener gets a chance to pull down the (older, pre-edit) cloud
+        // data. Without this, an edit made mid-login can flash on screen and then get wiped
+        // by the incoming snapshot, since nothing was ever guarding it.
+        pendingPreAuthEdit = true;
+      } else {
+        scheduleCloudSave();
+        if(projects[activeProjectId] && projects[activeProjectId].linkedPmProjectId) scheduleSharedTaskPush();
+      }
     }
   }
 
@@ -1472,6 +1482,15 @@
         userChipEl.style.display = "flex";
         userAvatarEl.src = user.photoURL || "";
         userNameEl.textContent = user.displayName || user.email || "Signed in";
+        if(pendingPreAuthEdit){
+          // An edit landed while we were still signing in and never got a chance to save —
+          // push it now, synchronously before subscribeToCloud()'s listener attaches, so the
+          // canApplyRemoteNow() guard is already up by the time any snapshot can arrive.
+          pendingPreAuthEdit = false;
+          lastLocalEditAt = Date.now();
+          scheduleCloudSave();
+          if(projects[activeProjectId] && projects[activeProjectId].linkedPmProjectId) scheduleSharedTaskPush();
+        }
         subscribeToCloud(user.uid);
         subscribeToSharedGanttIndex((user.email || "").toLowerCase());
         sharedTaskSubscribedPmId = null; // force re-evaluation now that we're signed in
