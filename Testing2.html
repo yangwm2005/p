@@ -2182,26 +2182,33 @@ function pushToCloud(){
     histSnapshots = {};
     histCurrentDateKey = null;
 
+    // Plain unordered .get() — no composite index required, unlike orderBy(documentId()).
+    // Sort client-side instead (the collection stays small: one doc per day used).
     db.collection("users").doc(currentUser.uid).collection("ganttSnapshots")
-      .orderBy(firebase.firestore.FieldPath.documentId(), "desc")
-      .limit(60)
       .get()
       .then(function(qs){
         if(qs.empty){
           listEl.innerHTML = '<p class="po-hint" style="padding:10px;">No history yet — a version is saved automatically each day you sync. Check back tomorrow.</p>';
           return;
         }
-        listEl.innerHTML = "";
+        var docIds = [];
         qs.forEach(function(doc){
           histSnapshots[doc.id] = doc.data();
+          docIds.push(doc.id);
+        });
+        docIds.sort().reverse(); // "YYYY-MM-DD" strings sort correctly lexicographically
+        docIds = docIds.slice(0, 60);
+
+        listEl.innerHTML = "";
+        docIds.forEach(function(dateKey){
           var item = document.createElement("div");
           item.className = "hist-date-item";
-          item.textContent = formatHistoryDateLabel(doc.id);
-          item.dataset.dateKey = doc.id;
-          item.addEventListener("click", function(){ selectHistoryDate(doc.id); });
+          item.textContent = formatHistoryDateLabel(dateKey);
+          item.dataset.dateKey = dateKey;
+          item.addEventListener("click", function(){ selectHistoryDate(dateKey); });
           listEl.appendChild(item);
         });
-        selectHistoryDate(qs.docs[0].id);
+        selectHistoryDate(docIds[0]);
       })
       .catch(function(err){
         console.error("Failed to load history", err);
