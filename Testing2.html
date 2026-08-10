@@ -278,6 +278,20 @@
   .hist-task{display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed var(--line); color:var(--ink-faint);}
   .hist-task.done{text-decoration:line-through; opacity:0.6;}
 
+  .ach-tabs{display:flex; align-items:center; gap:6px; padding:10px 18px; border-bottom:1px solid var(--line);}
+  .ach-tab{border:1px solid var(--line-strong); background:var(--panel); border-radius:6px; padding:6px 12px; font-size:12px; cursor:pointer; color:var(--ink-faint); font-family:inherit;}
+  .ach-tab.active{background:var(--accent-fill); color:var(--accent); border-color:var(--accent); font-weight:700;}
+  .ach-filter{margin-left:auto; font-size:12px; padding:5px 8px; border:1px solid var(--line-strong); border-radius:6px; font-family:inherit; max-width:180px;}
+  .ach-body{padding:14px 18px; height:52vh; overflow-y:auto;}
+  .ach-milestone-row{display:flex; align-items:baseline; gap:10px; padding:6px 0; border-bottom:1px dashed var(--line); font-size:12.5px;}
+  .ach-milestone-date{width:88px; flex:none; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace; font-size:11px;}
+  .ach-milestone-icon{flex:none;}
+  .ach-milestone-proj{color:var(--ink-faint); font-size:11px; flex:none;}
+  .ach-empty{color:var(--ink-faint); font-size:12.5px; padding:30px 0; text-align:center;}
+  .ach-trend-summary{display:flex; gap:22px; margin-bottom:14px; flex-wrap:wrap;}
+  .ach-trend-stat{font-size:11.5px; color:var(--ink-faint);}
+  .ach-trend-stat b{display:block; font-size:20px; color:var(--ink); font-weight:700; line-height:1.3;}
+
   #shareEmailInput{
     flex:1; padding:8px 10px; border:1px solid var(--line-strong); border-radius:6px;
     font-family:inherit; font-size:13px;
@@ -635,6 +649,7 @@
       <span class="sync-dot" id="syncDot" data-state="offline" title="Not signed in"></span>
       <button id="syncNowBtn" class="ghost" title="Force an immediate sync with the cloud" style="display:none;">⟳ Sync now</button>
       <button id="historyBtn" class="ghost" title="Review how your plan looked on past dates" style="display:none;">🕘 History</button>
+      <button id="achBtn" class="ghost" title="See milestones achieved and progress over time" style="display:none;">📈 Achievements</button>
       <button id="signInBtn" class="ghost signin-btn">
         <svg width="15" height="15" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.95v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.95A9 9 0 0 0 0 9c0 1.45.35 2.83.95 4.05l3.02-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .95 4.95L3.97 7.28C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
         Sign in
@@ -966,6 +981,27 @@
   </div>
 </div>
 
+<!-- Achievements & Progress modal -->
+<div class="po-backdrop" id="achBackdrop"></div>
+<div class="po-panel hist-panel" id="achPanel" aria-hidden="true">
+  <div class="po-header">
+    <span class="po-title">📈 Achievements &amp; Progress</span>
+    <button class="po-close" id="achCloseBtn" title="Close">✕</button>
+  </div>
+  <div class="ach-tabs">
+    <button class="ach-tab active" id="achTabMilestones" type="button">🏁 Milestones</button>
+    <button class="ach-tab" id="achTabTrend" type="button">📈 Progress Trend</button>
+    <select id="achProjectFilter" class="ach-filter"><option value="all">All projects</option></select>
+  </div>
+  <div class="ach-body">
+    <div id="achMilestonesView"></div>
+    <div id="achTrendView" style="display:none;"></div>
+  </div>
+  <div class="po-actions">
+    <button id="achDoneBtn" class="ghost">Close</button>
+  </div>
+</div>
+
 <!-- Outliner window -->
 <div class="ol-backdrop" id="olBackdrop"></div>
 <div class="ol-panel" id="olPanel" aria-hidden="true">
@@ -1124,6 +1160,7 @@
       milestoneDone: !!t.milestoneDone,
       hasCheckbox: !!t.hasCheckbox,
       taskDone: !!t.taskDone,
+      completedAt: t.completedAt || null,
       // Q-PM-owned fields — Gantt preserves these untouched, only mirrors title/dueDate for linked projects
       title: t.title || t.name,
       status: t.status || "todo",
@@ -1455,7 +1492,7 @@ function saveTasks(){
   });
 
   // ---------- firebase auth + firestore sync ----------
-  var syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, historyBtnEl;
+  var syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, historyBtnEl, achBtnEl;
 
   function setSyncState(state, label){
     if(!syncDotEl) return;
@@ -1471,6 +1508,7 @@ function saveTasks(){
     userNameEl = document.getElementById("userName");
     syncNowBtnEl = document.getElementById("syncNowBtn");
     historyBtnEl = document.getElementById("historyBtn");
+    achBtnEl = document.getElementById("achBtn");
 
     var looksUnconfigured = !FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey.indexOf("PASTE_") === 0;
     if(looksUnconfigured || typeof firebase === "undefined"){
@@ -1518,6 +1556,7 @@ function saveTasks(){
         userChipEl.style.display = "flex";
         if(syncNowBtnEl) syncNowBtnEl.style.display = "inline-flex";
         if(historyBtnEl) historyBtnEl.style.display = "inline-flex";
+        if(achBtnEl) achBtnEl.style.display = "inline-flex";
         userAvatarEl.src = user.photoURL || "";
         userNameEl.textContent = user.displayName || user.email || "Signed in";
         if(pendingPreAuthEdit){
@@ -1538,6 +1577,7 @@ function saveTasks(){
         userChipEl.style.display = "none";
         if(syncNowBtnEl) syncNowBtnEl.style.display = "none";
         if(historyBtnEl) historyBtnEl.style.display = "none";
+        if(achBtnEl) achBtnEl.style.display = "none";
         unsubscribeCloud();
         unsubscribeSharedGanttIndex();
         unsubscribeSharedTasks();
@@ -2339,6 +2379,197 @@ function pushToCloud(){
     });
   }
 
+  // ---------- achievements & progress trend ----------
+  var achCurrentTab = "milestones";
+
+  function openAchievementsModal(){
+    if(!currentUser){ alert("Sign in first to see achievements and progress."); return; }
+    document.getElementById("achBackdrop").classList.add("show");
+    document.getElementById("achPanel").classList.add("show");
+    document.getElementById("achPanel").setAttribute("aria-hidden", "false");
+    populateAchProjectFilter();
+    switchAchTab("milestones");
+  }
+  function closeAchievementsModal(){
+    document.getElementById("achBackdrop").classList.remove("show");
+    document.getElementById("achPanel").classList.remove("show");
+    document.getElementById("achPanel").setAttribute("aria-hidden", "true");
+  }
+
+  function populateAchProjectFilter(){
+    var sel = document.getElementById("achProjectFilter");
+    var prev = sel.value || "all";
+    sel.innerHTML = '<option value="all">All projects</option>';
+    Object.keys(projects).forEach(function(id){
+      var opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = projects[id].name || "Untitled project";
+      sel.appendChild(opt);
+    });
+    sel.value = (prev === "all" || Object.prototype.hasOwnProperty.call(projects, prev)) ? prev : "all";
+  }
+
+  function switchAchTab(tab){
+    achCurrentTab = tab;
+    document.getElementById("achTabMilestones").classList.toggle("active", tab === "milestones");
+    document.getElementById("achTabTrend").classList.toggle("active", tab === "trend");
+    document.getElementById("achMilestonesView").style.display = tab === "milestones" ? "" : "none";
+    document.getElementById("achTrendView").style.display = tab === "trend" ? "" : "none";
+    if(tab === "milestones") renderMilestonesView();
+    else renderTrendView();
+  }
+
+  // "Achieved" = a milestone task marked done, or a checkbox task checked off.
+  // Uses completedAt (recorded the moment it's checked) with a fallback to the
+  // task's end date for older items checked off before this field existed.
+  function renderMilestonesView(){
+    var container = document.getElementById("achMilestonesView");
+    var filterId = document.getElementById("achProjectFilter").value;
+    var rows = [];
+    Object.keys(projects).forEach(function(pid){
+      if(filterId !== "all" && pid !== filterId) return;
+      var p = projects[pid];
+      (p.tasks || []).forEach(function(t){
+        var isMilestoneDone = !!(t.milestone && t.milestoneDone);
+        var isTaskDone = !!(!t.milestone && t.hasCheckbox && t.taskDone);
+        if(!isMilestoneDone && !isTaskDone) return;
+        rows.push({
+          date: t.completedAt || t.end || t.start || "",
+          projectName: p.name || "Untitled project",
+          taskName: t.name || "Untitled task",
+          isMilestone: !!t.milestone
+        });
+      });
+    });
+    rows.sort(function(a,b){ return (b.date||"").localeCompare(a.date||""); });
+
+    if(!rows.length){
+      container.innerHTML = '<p class="ach-empty">No completed milestones or checked-off tasks yet' + (filterId!=="all" ? " in this project" : "") + '.</p>';
+      return;
+    }
+    container.innerHTML = "";
+    rows.forEach(function(r){
+      var row = document.createElement("div");
+      row.className = "ach-milestone-row";
+      var dateEl = document.createElement("span");
+      dateEl.className = "ach-milestone-date";
+      dateEl.textContent = r.date || "—";
+      var iconEl = document.createElement("span");
+      iconEl.className = "ach-milestone-icon";
+      iconEl.textContent = r.isMilestone ? "🏁" : "✓";
+      var nameEl = document.createElement("span");
+      nameEl.style.flex = "1";
+      nameEl.textContent = r.taskName;
+      var projEl = document.createElement("span");
+      projEl.className = "ach-milestone-proj";
+      projEl.textContent = r.projectName;
+      row.appendChild(dateEl); row.appendChild(iconEl); row.appendChild(nameEl); row.appendChild(projEl);
+      container.appendChild(row);
+    });
+  }
+
+  // "Trackable" units are tasks with a checkbox or a milestone flag — plain
+  // structural/parent tasks aren't counted, since they have no done/not-done state.
+  function computeAchCompletionPct(data, filterId){
+    var done = 0, total = 0;
+    Object.keys(data).forEach(function(pid){
+      if(filterId !== "all" && pid !== filterId) return;
+      var p = data[pid];
+      (p.tasks || []).forEach(function(t){
+        if(t.milestone){ total++; if(t.milestoneDone) done++; }
+        else if(t.hasCheckbox){ total++; if(t.taskDone) done++; }
+      });
+    });
+    return total ? Math.round((done/total)*100) : null;
+  }
+
+  function renderTrendView(){
+    var container = document.getElementById("achTrendView");
+    container.innerHTML = '<p class="ach-empty">Loading progress history…</p>';
+    var filterId = document.getElementById("achProjectFilter").value;
+
+    db.collection("users").doc(currentUser.uid).collection("ganttSnapshots").get().then(function(qs){
+      var points = [];
+      qs.forEach(function(doc){
+        var docData = doc.data();
+        var data;
+        try{ data = JSON.parse(docData.data); } catch(e){ return; }
+        var pct = computeAchCompletionPct(data, filterId);
+        if(pct === null) return;
+        points.push({ dateKey: doc.id, pct: pct });
+      });
+      // Fold in today's live (unsynced-yet) state so the trend feels current.
+      var livePct = computeAchCompletionPct(buildCloudPayload(), filterId);
+      var todayKey = getLocalDateKey(new Date());
+      if(livePct !== null){
+        var existingToday = points.filter(function(p){ return p.dateKey === todayKey; })[0];
+        if(existingToday) existingToday.pct = livePct;
+        else points.push({ dateKey: todayKey, pct: livePct });
+      }
+      points.sort(function(a,b){ return a.dateKey.localeCompare(b.dateKey); });
+      points = points.slice(-60);
+
+      if(!points.length){
+        container.innerHTML = '<p class="ach-empty">No progress data yet — mark some milestones or checkbox tasks done and let history accumulate day to day.</p>';
+        return;
+      }
+      renderTrendChart(points, container);
+    }).catch(function(err){
+      console.error("Failed to load progress trend", err);
+      container.innerHTML = '<p class="ach-empty" style="color:#c0392b;">Couldn\'t load progress trend: ' + err.message + '</p>';
+    });
+  }
+
+  function renderTrendChart(points, container){
+    var w = 640, h = 220, padL = 34, padR = 12, padT = 14, padB = 28;
+    var chartW = w - padL - padR, chartH = h - padT - padB;
+    var n = points.length;
+    var xStep = n > 1 ? chartW / (n-1) : 0;
+
+    function xFor(i){ return padL + i*xStep; }
+    function yFor(pct){ return padT + chartH - (pct/100)*chartH; }
+
+    var pathD = points.map(function(p,i){ return (i===0?"M":"L") + xFor(i).toFixed(1) + "," + yFor(p.pct).toFixed(1); }).join(" ");
+    var areaD = pathD + " L" + xFor(n-1).toFixed(1) + "," + (padT+chartH) + " L" + xFor(0).toFixed(1) + "," + (padT+chartH) + " Z";
+
+    var gridLines = [0,25,50,75,100].map(function(v){
+      var y = yFor(v);
+      return '<line x1="'+padL+'" y1="'+y+'" x2="'+(w-padR)+'" y2="'+y+'" stroke="var(--line)" stroke-width="1"/>' +
+             '<text x="2" y="'+(y+4)+'" font-size="9" fill="var(--ink-faint)">'+v+'%</text>';
+    }).join("");
+
+    var labelEvery = Math.max(1, Math.ceil(n/6));
+    var xLabels = points.map(function(p,i){
+      if(i % labelEvery !== 0 && i !== n-1) return "";
+      var d = p.dateKey.slice(5).replace("-", "/");
+      return '<text x="'+xFor(i)+'" y="'+(h-8)+'" font-size="9" fill="var(--ink-faint)" text-anchor="middle">'+d+'</text>';
+    }).join("");
+
+    var dots = points.map(function(p,i){
+      return '<circle cx="'+xFor(i)+'" cy="'+yFor(p.pct)+'" r="2.5" fill="var(--accent)"><title>'+p.dateKey+': '+p.pct+'%</title></circle>';
+    }).join("");
+
+    var latest = points[points.length-1];
+    var first = points[0];
+    var delta = latest.pct - first.pct;
+    var deltaLabel = (delta>0?"+":"") + delta + " pts since " + first.dateKey;
+
+    container.innerHTML =
+      '<div class="ach-trend-summary">' +
+        '<div class="ach-trend-stat"><b>' + latest.pct + '%</b>complete now</div>' +
+        '<div class="ach-trend-stat"><b>' + deltaLabel + '</b>trend</div>' +
+        '<div class="ach-trend-stat"><b>' + points.length + '</b>data points</div>' +
+      '</div>' +
+      '<svg viewBox="0 0 '+w+' '+h+'" style="width:100%; height:auto; max-height:220px;">' +
+        gridLines +
+        '<path d="'+areaD+'" fill="var(--accent-fill)" opacity="0.6"/>' +
+        '<path d="'+pathD+'" fill="none" stroke="var(--accent)" stroke-width="2"/>' +
+        dots +
+        xLabels +
+      '</svg>';
+  }
+
+
 
   // ---------- shared task sync (Q-PM link) ----------
   var SHARED_FIELD = "sharedPmGanttTasks";
@@ -3093,6 +3324,7 @@ function pushToCloud(){
         check.addEventListener("click", function(ev){
           ev.stopPropagation();
           t.milestoneDone = check.checked;
+          t.completedAt = check.checked ? formatDate(todayDate()) : null;
           saveTasks();
           render();
           if(currentInspectId === t.id) populateInspector(t);
@@ -3144,6 +3376,7 @@ function pushToCloud(){
         taskCheck.addEventListener("click", function(ev){
           ev.stopPropagation();
           t.taskDone = taskCheck.checked;
+          t.completedAt = taskCheck.checked ? formatDate(todayDate()) : null;
           saveTasks();
           render();
           if(currentInspectId === t.id) populateInspector(t);
@@ -4804,6 +5037,17 @@ function pushToCloud(){
   document.getElementById("histBackdrop").addEventListener("click", closeHistoryModal);
   document.getElementById("histRestoreBtn").addEventListener("click", restoreHistorySnapshot);
   document.getElementById("histClearBtn").addEventListener("click", clearOldHistory);
+
+  // ---------- achievements modal wiring ----------
+  document.getElementById("achBtn").addEventListener("click", openAchievementsModal);
+  document.getElementById("achCloseBtn").addEventListener("click", closeAchievementsModal);
+  document.getElementById("achDoneBtn").addEventListener("click", closeAchievementsModal);
+  document.getElementById("achBackdrop").addEventListener("click", closeAchievementsModal);
+  document.getElementById("achTabMilestones").addEventListener("click", function(){ switchAchTab("milestones"); });
+  document.getElementById("achTabTrend").addEventListener("click", function(){ switchAchTab("trend"); });
+  document.getElementById("achProjectFilter").addEventListener("change", function(){
+    if(achCurrentTab === "milestones") renderMilestonesView(); else renderTrendView();
+  });
 
   document.getElementById("shareAddBtn").addEventListener("click", function(){
     if(!shareModalProjectId) return;
