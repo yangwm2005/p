@@ -291,6 +291,10 @@
   .ach-trend-summary{display:flex; gap:22px; margin-bottom:14px; flex-wrap:wrap;}
   .ach-trend-stat{font-size:11.5px; color:var(--ink-faint);}
   .ach-trend-stat b{display:block; font-size:20px; color:var(--ink); font-weight:700; line-height:1.3;}
+  .ach-subtoolbar{display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;}
+  .ach-subgroup{display:flex; gap:4px;}
+  .ach-subtab{border:1px solid var(--line-strong); background:var(--panel); border-radius:5px; padding:4px 10px; font-size:11px; cursor:pointer; color:var(--ink-faint); font-family:inherit;}
+  .ach-subtab.active{background:var(--accent-fill); color:var(--accent); border-color:var(--accent); font-weight:700;}
 
   #shareEmailInput{
     flex:1; padding:8px 10px; border:1px solid var(--line-strong); border-radius:6px;
@@ -990,11 +994,25 @@
   </div>
   <div class="ach-tabs">
     <button class="ach-tab active" id="achTabMilestones" type="button">🏁 Milestones</button>
+    <button class="ach-tab" id="achTabPending" type="button">⏳ Not Finished</button>
     <button class="ach-tab" id="achTabTrend" type="button">📈 Progress Trend</button>
     <select id="achProjectFilter" class="ach-filter"><option value="all">All projects</option></select>
   </div>
   <div class="ach-body">
-    <div id="achMilestonesView"></div>
+    <div id="achMilestonesView">
+      <div class="ach-subtoolbar">
+        <div class="ach-subgroup">
+          <button class="ach-subtab active" id="achViewList" type="button">☰ List</button>
+          <button class="ach-subtab" id="achViewTimeline" type="button">📊 Timeline</button>
+        </div>
+        <div class="ach-subgroup" id="achGranularityGroup" style="display:none;">
+          <button class="ach-subtab active" id="achGranDay" type="button">Day</button>
+          <button class="ach-subtab" id="achGranWeek" type="button">Week</button>
+        </div>
+      </div>
+      <div id="achMilestonesContent"></div>
+    </div>
+    <div id="achPendingView" style="display:none;"></div>
     <div id="achTrendView" style="display:none;"></div>
   </div>
   <div class="po-actions">
@@ -2409,22 +2427,28 @@ function pushToCloud(){
     sel.value = (prev === "all" || Object.prototype.hasOwnProperty.call(projects, prev)) ? prev : "all";
   }
 
+  var achMilestonesViewMode = "list"; // "list" | "timeline"
+  var achGranularity = "day";         // "day" | "week"
+
   function switchAchTab(tab){
     achCurrentTab = tab;
     document.getElementById("achTabMilestones").classList.toggle("active", tab === "milestones");
+    document.getElementById("achTabPending").classList.toggle("active", tab === "pending");
     document.getElementById("achTabTrend").classList.toggle("active", tab === "trend");
     document.getElementById("achMilestonesView").style.display = tab === "milestones" ? "" : "none";
+    document.getElementById("achPendingView").style.display = tab === "pending" ? "" : "none";
     document.getElementById("achTrendView").style.display = tab === "trend" ? "" : "none";
     if(tab === "milestones") renderMilestonesView();
+    else if(tab === "pending") renderPendingView();
     else renderTrendView();
   }
 
   // "Achieved" = a milestone task marked done, or a checkbox task checked off.
   // Uses completedAt (recorded the moment it's checked) with a fallback to the
   // task's end date for older items checked off before this field existed.
-  function renderMilestonesView(){
-    var container = document.getElementById("achMilestonesView");
-    var filterId = document.getElementById("achProjectFilter").value;
+  // Returned sorted ascending by date (oldest first) — callers reverse for a
+  // newest-first list, or use ascending order directly for the timeline.
+  function getAchievedRows(filterId){
     var rows = [];
     Object.keys(projects).forEach(function(pid){
       if(filterId !== "all" && pid !== filterId) return;
@@ -2441,12 +2465,33 @@ function pushToCloud(){
         });
       });
     });
-    rows.sort(function(a,b){ return (b.date||"").localeCompare(a.date||""); });
+    rows.sort(function(a,b){ return (a.date||"").localeCompare(b.date||""); });
+    return rows;
+  }
+
+  function renderMilestonesView(){
+    var filterId = document.getElementById("achProjectFilter").value;
+    var content = document.getElementById("achMilestonesContent");
+    var rows = getAchievedRows(filterId);
+
+    document.getElementById("achViewList").classList.toggle("active", achMilestonesViewMode === "list");
+    document.getElementById("achViewTimeline").classList.toggle("active", achMilestonesViewMode === "timeline");
+    document.getElementById("achGranularityGroup").style.display = achMilestonesViewMode === "timeline" ? "flex" : "none";
+    document.getElementById("achGranDay").classList.toggle("active", achGranularity === "day");
+    document.getElementById("achGranWeek").classList.toggle("active", achGranularity === "week");
 
     if(!rows.length){
-      container.innerHTML = '<p class="ach-empty">No completed milestones or checked-off tasks yet' + (filterId!=="all" ? " in this project" : "") + '.</p>';
+      content.innerHTML = '<p class="ach-empty">No completed milestones or checked-off tasks yet' + (filterId!=="all" ? " in this project" : "") + '.</p>';
       return;
     }
+    if(achMilestonesViewMode === "timeline"){
+      renderMilestonesTimeline(rows, content, achGranularity);
+    } else {
+      renderMilestonesList(rows.slice().reverse(), content);
+    }
+  }
+
+  function renderMilestonesList(rows, container){
     container.innerHTML = "";
     rows.forEach(function(r){
       var row = document.createElement("div");
@@ -2468,9 +2513,147 @@ function pushToCloud(){
     });
   }
 
+  // Read-only, view-only mini Gantt-style axis: day or week ticks along the
+  // bottom, achievements plotted as dots at their date, stacked vertically
+  // when several land on the same day/week. No dragging, no editing.
+  function renderMilestonesTimeline(rows, container, granularity){
+    var validRows = rows.filter(function(r){ return !!r.date; });
+    if(!validRows.length){ container.innerHTML = '<p class="ach-empty">No dated achievements to plot.</p>'; return; }
+
+    var minDate = parseDate(validRows[0].date);
+    var maxDate = parseDate(validRows[validRows.length-1].date);
+    var rawSpanDays = daysBetween(minDate, maxDate);
+
+    var effGran = granularity;
+    if(granularity === "day" && rawSpanDays > 180) effGran = "week"; // avoid an unusably wide chart
+
+    function bucketKeyEff(dateStr){
+      if(effGran === "day") return dateStr;
+      var d = parseDate(dateStr);
+      var day = d.getDay();
+      var diffToMonday = (day === 0 ? -6 : 1 - day);
+      return formatDate(addDays(d, diffToMonday));
+    }
+
+    var bucketsMap = {};
+    validRows.forEach(function(r){
+      var key = bucketKeyEff(r.date);
+      if(!bucketsMap[key]) bucketsMap[key] = [];
+      bucketsMap[key].push(r);
+    });
+
+    var stepDays = effGran === "day" ? 1 : 7;
+    var startBucket = parseDate(bucketKeyEff(validRows[0].date));
+    var endBucket = parseDate(bucketKeyEff(validRows[validRows.length-1].date));
+    var buckets = [];
+    var cursor = startBucket;
+    while(cursor.getTime() <= endBucket.getTime()){
+      buckets.push(formatDate(cursor));
+      cursor = addDays(cursor, stepDays);
+    }
+
+    var unitW = effGran === "day" ? 42 : 84;
+    var laneH = 20;
+    var topPad = 30, axisY = topPad, bottomPad = 40;
+    var placed = buckets.map(function(bk){ return { bucket: bk, items: bucketsMap[bk] || [] }; });
+    var maxLane = placed.reduce(function(m,e){ return Math.max(m, e.items.length); }, 0);
+    var chartH = topPad + Math.max(1, maxLane) * laneH + bottomPad;
+    var chartW = Math.max(340, placed.length * unitW + 60);
+
+    var svgParts = [];
+    svgParts.push('<line x1="30" y1="'+axisY+'" x2="'+(chartW-20)+'" y2="'+axisY+'" stroke="var(--line-strong)" stroke-width="1.5"/>');
+
+    var labelEvery = effGran === "day" ? Math.max(1, Math.ceil(placed.length/12)) : 1;
+    placed.forEach(function(entry, bi){
+      var x = 40 + bi*unitW;
+      svgParts.push('<line x1="'+x+'" y1="'+(axisY-4)+'" x2="'+x+'" y2="'+(axisY+4)+'" stroke="var(--line-strong)" stroke-width="1"/>');
+      if(bi % labelEvery === 0 || bi === placed.length-1){
+        var labelText = effGran === "day" ? entry.bucket.slice(5).replace("-","/") : ("wk " + entry.bucket.slice(5).replace("-","/"));
+        svgParts.push('<text x="'+x+'" y="'+(axisY+16)+'" font-size="9" fill="var(--ink-faint)" text-anchor="middle">'+esc(labelText)+'</text>');
+      }
+      entry.items.forEach(function(item, li){
+        var y = axisY - 10 - li*laneH;
+        var color = item.isMilestone ? "var(--accent)" : "#4a9d5f";
+        svgParts.push('<circle cx="'+x+'" cy="'+y+'" r="4" fill="'+color+'"><title>'+esc(item.date+' — '+item.taskName+' ('+item.projectName+')')+'</title></circle>');
+        svgParts.push('<text x="'+(x+8)+'" y="'+(y+3)+'" font-size="9.5" fill="var(--ink)">'+(item.isMilestone?'🏁 ':'✓ ')+esc(item.taskName)+'</text>');
+      });
+    });
+
+    var note = effGran !== granularity ? '<p class="ach-empty" style="text-align:left; padding:6px 0 0; margin:0;">Range is wide, so showing weekly grouping instead of daily.</p>' : "";
+    container.innerHTML =
+      '<div style="overflow-x:auto; overflow-y:hidden; border:1px solid var(--line); border-radius:8px; padding:8px 4px;">' +
+        '<svg viewBox="0 0 '+chartW+' '+chartH+'" style="width:'+chartW+'px; height:'+chartH+'px; display:block;">' + svgParts.join("") + '</svg>' +
+      '</div>' + note;
+  }
+
+  // Trackable items (checkbox tasks + milestones) not yet marked done, sorted
+  // by due date so the most overdue / most urgent shows first.
+  function renderPendingView(){
+    var container = document.getElementById("achPendingView");
+    var filterId = document.getElementById("achProjectFilter").value;
+    var todayD = todayDate();
+    var rows = [];
+    Object.keys(projects).forEach(function(pid){
+      if(filterId !== "all" && pid !== filterId) return;
+      var p = projects[pid];
+      (p.tasks || []).forEach(function(t){
+        var isMilestoneItem = !!t.milestone;
+        var isCheckboxItem = !!(!t.milestone && t.hasCheckbox);
+        if(!isMilestoneItem && !isCheckboxItem) return;
+        var done = isMilestoneItem ? t.milestoneDone : t.taskDone;
+        if(done) return;
+        var dueDate = t.end || t.start || "";
+        var overdueDays = dueDate ? daysBetween(parseDate(dueDate), todayD) : null;
+        rows.push({
+          dueDate: dueDate,
+          projectName: p.name || "Untitled project",
+          taskName: t.name || "Untitled task",
+          isMilestone: isMilestoneItem,
+          overdueDays: overdueDays
+        });
+      });
+    });
+    rows.sort(function(a,b){ return (a.dueDate||"").localeCompare(b.dueDate||""); });
+
+    if(!rows.length){
+      container.innerHTML = '<p class="ach-empty">Nothing outstanding' + (filterId!=="all" ? " in this project" : "") + ' — everything trackable is checked off. 🎉</p>';
+      return;
+    }
+    container.innerHTML = "";
+    rows.forEach(function(r){
+      var row = document.createElement("div");
+      row.className = "ach-milestone-row";
+      var dateEl = document.createElement("span");
+      dateEl.className = "ach-milestone-date";
+      dateEl.textContent = r.dueDate || "—";
+      var iconEl = document.createElement("span");
+      iconEl.className = "ach-milestone-icon";
+      iconEl.textContent = r.isMilestone ? "🏁" : "☐";
+      var nameEl = document.createElement("span");
+      nameEl.style.flex = "1";
+      nameEl.textContent = r.taskName;
+      var statusEl = document.createElement("span");
+      statusEl.className = "ach-milestone-proj";
+      if(r.overdueDays === null){
+        statusEl.textContent = r.projectName;
+      } else if(r.overdueDays > 0){
+        statusEl.textContent = r.overdueDays + "d overdue · " + r.projectName;
+        statusEl.style.color = "#c0392b"; statusEl.style.fontWeight = "700";
+      } else if(r.overdueDays === 0){
+        statusEl.textContent = "due today · " + r.projectName;
+        statusEl.style.color = "#b8860b"; statusEl.style.fontWeight = "700";
+      } else {
+        statusEl.textContent = "due in " + (-r.overdueDays) + "d · " + r.projectName;
+      }
+      row.appendChild(dateEl); row.appendChild(iconEl); row.appendChild(nameEl); row.appendChild(statusEl);
+      container.appendChild(row);
+    });
+  }
+
   // "Trackable" units are tasks with a checkbox or a milestone flag — plain
   // structural/parent tasks aren't counted, since they have no done/not-done state.
   function computeAchCompletionPct(data, filterId){
+
     var done = 0, total = 0;
     Object.keys(data).forEach(function(pid){
       if(filterId !== "all" && pid !== filterId) return;
@@ -5044,10 +5227,17 @@ function pushToCloud(){
   document.getElementById("achDoneBtn").addEventListener("click", closeAchievementsModal);
   document.getElementById("achBackdrop").addEventListener("click", closeAchievementsModal);
   document.getElementById("achTabMilestones").addEventListener("click", function(){ switchAchTab("milestones"); });
+  document.getElementById("achTabPending").addEventListener("click", function(){ switchAchTab("pending"); });
   document.getElementById("achTabTrend").addEventListener("click", function(){ switchAchTab("trend"); });
   document.getElementById("achProjectFilter").addEventListener("change", function(){
-    if(achCurrentTab === "milestones") renderMilestonesView(); else renderTrendView();
+    if(achCurrentTab === "milestones") renderMilestonesView();
+    else if(achCurrentTab === "pending") renderPendingView();
+    else renderTrendView();
   });
+  document.getElementById("achViewList").addEventListener("click", function(){ achMilestonesViewMode = "list"; renderMilestonesView(); });
+  document.getElementById("achViewTimeline").addEventListener("click", function(){ achMilestonesViewMode = "timeline"; renderMilestonesView(); });
+  document.getElementById("achGranDay").addEventListener("click", function(){ achGranularity = "day"; renderMilestonesView(); });
+  document.getElementById("achGranWeek").addEventListener("click", function(){ achGranularity = "week"; renderMilestonesView(); });
 
   document.getElementById("shareAddBtn").addEventListener("click", function(){
     if(!shareModalProjectId) return;
