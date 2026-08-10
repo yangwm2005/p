@@ -960,6 +960,7 @@
     <div class="hist-preview" id="histPreview"><p class="po-hint">Select a date on the left to see how your plan looked then.</p></div>
   </div>
   <div class="po-actions">
+    <button id="histClearBtn" class="ghost" style="color:#c0392b;">Clear old history…</button>
     <button id="histRestoreBtn" class="primary" style="display:none;">Restore this version</button>
     <button id="histDoneBtn" class="ghost">Close</button>
   </div>
@@ -2294,6 +2295,48 @@ function pushToCloud(){
     renderProjectPicker();
     scheduleCloudSave();
     closeHistoryModal();
+  }
+
+  function clearOldHistory(){
+    if(!currentUser) return;
+    var daysStr = prompt("Delete snapshots older than how many days? (Today and this many days back are kept)", "90");
+    if(daysStr === null) return; // cancelled
+    var days = parseInt(daysStr, 10);
+    if(!days || days < 1){ alert("Enter a number of days greater than 0."); return; }
+
+    var cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    var cutoffKey = getLocalDateKey(cutoff);
+    var colRef = db.collection("users").doc(currentUser.uid).collection("ganttSnapshots");
+
+    colRef.get().then(function(qs){
+      var toDelete = [];
+      qs.forEach(function(doc){ if(doc.id < cutoffKey) toDelete.push(doc.ref); });
+      if(!toDelete.length){ alert("No snapshots older than " + days + " day(s) were found — nothing to delete."); return; }
+      if(!confirm("Delete " + toDelete.length + " snapshot(s) older than " + formatHistoryDateLabel(cutoffKey) + "? This can't be undone.")) return;
+
+      // Firestore batches cap at 500 writes, so chunk it.
+      var chunks = [];
+      for(var i=0; i<toDelete.length; i+=450) chunks.push(toDelete.slice(i, i+450));
+      var chain = Promise.resolve();
+      chunks.forEach(function(chunk){
+        chain = chain.then(function(){
+          var batch = db.batch();
+          chunk.forEach(function(ref){ batch.delete(ref); });
+          return batch.commit();
+        });
+      });
+      chain.then(function(){
+        alert("Deleted " + toDelete.length + " old snapshot(s).");
+        loadHistoryDates();
+      }).catch(function(err){
+        console.error("Failed to clear history", err);
+        alert("Couldn't delete old history: " + err.message);
+      });
+    }).catch(function(err){
+      console.error("Failed to load history for clearing", err);
+      alert("Couldn't check history: " + err.message);
+    });
   }
 
 
@@ -4403,7 +4446,11 @@ function pushToCloud(){
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
-    a.download = "gantt-tasks-" + formatDate(todayDate()) + ".json";
+    var proj = projects[activeProjectId];
+    var rawName = (proj && proj.name) ? proj.name : "project";
+    var safeName = rawName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "project";
+    var compactDate = formatDate(todayDate()).replace(/-/g, "");
+    a.download = safeName + "-gantt-" + compactDate + ".json";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -4756,6 +4803,7 @@ function pushToCloud(){
   document.getElementById("histDoneBtn").addEventListener("click", closeHistoryModal);
   document.getElementById("histBackdrop").addEventListener("click", closeHistoryModal);
   document.getElementById("histRestoreBtn").addEventListener("click", restoreHistorySnapshot);
+  document.getElementById("histClearBtn").addEventListener("click", clearOldHistory);
 
   document.getElementById("shareAddBtn").addEventListener("click", function(){
     if(!shareModalProjectId) return;
