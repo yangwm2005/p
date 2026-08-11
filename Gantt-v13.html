@@ -278,6 +278,22 @@
   .hist-task{display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px dashed var(--line); color:var(--ink-faint);}
   .hist-task.done{text-decoration:line-through; opacity:0.6;}
 
+  .bar-tooltip{
+    position:fixed; z-index:9999; max-width:300px;
+    background:var(--panel); border:1px solid var(--line-strong); border-radius:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,0.18);
+    padding:10px 12px; font-size:12px; line-height:1.45; color:var(--ink);
+    pointer-events:none;
+  }
+  .bar-tooltip .bt-name{font-weight:700; font-size:12.5px; margin-bottom:2px;}
+  .bar-tooltip .bt-meta{color:var(--ink-faint); font-size:11px; margin-bottom:2px;}
+  .bar-tooltip .bt-divider{border-top:1px solid var(--line); margin:6px 0;}
+  .bar-tooltip .bt-tl-header{font-weight:700; font-size:11px; color:var(--accent); margin-bottom:4px;}
+  .bar-tooltip .bt-tl-entry{margin-bottom:5px; font-size:11.5px; word-break:break-word;}
+  .bar-tooltip .bt-tl-entry:last-of-type{margin-bottom:0;}
+  .bar-tooltip .bt-tl-ts{font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--ink-faint);}
+  .bar-tooltip .bt-tl-more{font-size:10.5px; color:var(--ink-faint); font-style:italic; margin-top:4px;}
+
   .ach-tabs{display:flex; align-items:center; gap:6px; padding:10px 18px; border-bottom:1px solid var(--line);}
   .ach-tab{border:1px solid var(--line-strong); background:var(--panel); border-radius:6px; padding:6px 12px; font-size:12px; cursor:pointer; color:var(--ink-faint); font-family:inherit;}
   .ach-tab.active{background:var(--accent-fill); color:var(--accent); border-color:var(--accent); font-weight:700;}
@@ -1150,6 +1166,71 @@
   function daysInMonth(year, month){ return new Date(year, month+1, 0).getDate(); }
   function uid(){ return "t" + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
   function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+  // Builds the HTML shown in the custom hover popup for a task/milestone bar:
+  // full task name, the given date/status line, then the most recent Think Log
+  // entries. Uses esc() so any user text is safely escaped before insertion.
+  function buildBarTooltipHTML(t, extraLine){
+    var html = '<div class="bt-name">' + esc(t.name || "Untitled task") + '</div>';
+    if(extraLine) html += '<div class="bt-meta">' + esc(extraLine) + '</div>';
+    var entries = (t.thinkLog || []).filter(function(x){ return !x.section && !x.isSubtitle && x.text; });
+    if(entries.length){
+      html += '<div class="bt-divider"></div><div class="bt-tl-header">💭 Think Log</div>';
+      var MAX_SHOWN = 5;
+      var shown = entries.slice(-MAX_SHOWN);
+      shown.forEach(function(en){
+        var ts = en.timestamp ? '<span class="bt-tl-ts">[' + esc(en.timestamp) + ']</span> ' : '';
+        html += '<div class="bt-tl-entry">' + ts + esc(en.text).replace(/\n/g,'<br>') + '</div>';
+      });
+      if(entries.length > shown.length){
+        var more = entries.length - shown.length;
+        html += '<div class="bt-tl-more">+' + more + ' earlier entr' + (more===1?'y':'ies') + ' — open Think Log to see all</div>';
+      }
+    }
+    return html;
+  }
+
+  // ---------- custom hover popup for task/milestone bars ----------
+  var barTooltipEl = null;
+  function ensureBarTooltipEl(){
+    if(barTooltipEl) return barTooltipEl;
+    barTooltipEl = document.createElement("div");
+    barTooltipEl.className = "bar-tooltip";
+    barTooltipEl.style.display = "none";
+    document.body.appendChild(barTooltipEl);
+    return barTooltipEl;
+  }
+  function positionBarTooltip(evt){
+    if(!barTooltipEl || barTooltipEl.style.display === "none") return;
+    var pad = 14;
+    var x = evt.clientX + pad, y = evt.clientY + pad;
+    var rect = barTooltipEl.getBoundingClientRect();
+    var vw = window.innerWidth, vh = window.innerHeight;
+    if(x + rect.width > vw - 8) x = evt.clientX - rect.width - pad;
+    if(y + rect.height > vh - 8) y = evt.clientY - rect.height - pad;
+    if(x < 8) x = 8;
+    if(y < 8) y = 8;
+    barTooltipEl.style.left = x + "px";
+    barTooltipEl.style.top = y + "px";
+  }
+  function showBarTooltip(evt, html){
+    var el = ensureBarTooltipEl();
+    el.innerHTML = html;
+    el.style.display = "block";
+    positionBarTooltip(evt);
+  }
+  function hideBarTooltip(){
+    if(barTooltipEl) barTooltipEl.style.display = "none";
+  }
+  // Attaches the hover popup to a bar element. Also sets a plain aria-label
+  // for basic accessibility (screen readers ignore the popup's DOM otherwise).
+  function attachBarTooltip(el, t, extraLine){
+    el.setAttribute("aria-label", t.name || "Untitled task");
+    el.addEventListener("mouseenter", function(ev){ showBarTooltip(ev, buildBarTooltipHTML(t, extraLine)); });
+    el.addEventListener("mousemove", positionBarTooltip);
+    el.addEventListener("mouseleave", hideBarTooltip);
+    el.addEventListener("mousedown", hideBarTooltip);
+  }
 
   // ---------- state ----------
   var PROJECTS_KEY = "gantt_v2_projects";
@@ -3469,7 +3550,7 @@ function pushToCloud(){
         dia.style.width = size + "px";
         dia.style.height = size + "px";
         if(t.color) dia.style.background = t.color;
-        dia.title = t.name + "  (milestone: " + (t.milestoneAt === "start" ? t.start : t.end) + ")";
+        attachBarTooltip(dia, t, "Milestone: " + (t.milestoneAt === "start" ? t.start : t.end));
         dia.addEventListener("click", function(ev){ ev.stopPropagation(); openInspector(t); });
         barsLayer.appendChild(dia);
 
@@ -3497,7 +3578,7 @@ function pushToCloud(){
         flatBar.style.left = left + "px";
         flatBar.style.top = (i*ROW_H) + "px";
         flatBar.style.width = width + "px";
-        flatBar.title = t.name + "  (" + t.start + " → " + t.end + ")";
+        attachBarTooltip(flatBar, t, t.start + " → " + t.end);
 
         var check = document.createElement("input");
         check.type = "checkbox";
@@ -3548,7 +3629,7 @@ function pushToCloud(){
       bar.style.left = left + "px";
       bar.style.top = (i*ROW_H) + "px";
       bar.style.width = width + "px";
-      bar.title = t.name + "  (" + t.start + " → " + t.end + ")" + (locked ? "  — spans its sub-tasks (Auto-size is on)" : "");
+      attachBarTooltip(bar, t, t.start + " → " + t.end + (locked ? "  — spans its sub-tasks (Auto-size is on)" : ""));
 
       if(t.hasCheckbox){
         var taskCheck = document.createElement("input");
