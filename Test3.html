@@ -1489,7 +1489,7 @@ function subscribeToCloud(firebaseUid) {
     unsubscribeCloud();
     setSyncState('syncing', 'Connecting…');
     cloudUnsub = db.collection('users').doc(firebaseUid).onSnapshot((snap) => {
-        // CRITICAL: Skip our own local writes that haven't been confirmed by the server yet
+        // CRITICAL FIX: Skip our own local writes that haven't been confirmed by the server yet
         if (snap.metadata.hasPendingWrites) {
             return;
         }
@@ -1543,7 +1543,7 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
     
     // Check if the active project's data actually changed
     let activeProjectChanged = false;
-    const currentProjectId = activeProjectId;
+    let currentProjectId = activeProjectId;
     
     if (currentProjectId && projects[currentProjectId]) {
         const currentProject = projects[currentProjectId];
@@ -1561,20 +1561,28 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
         }
     }
     
-    // If the active project hasn't changed, just update the project list in the background
-    // without re-rendering the DOM
+    // If the active project hasn't changed, just update the project data in memory
+    // WITHOUT touching the DOM at all
     if (!activeProjectChanged && projects[currentProjectId]) {
-        // Still update the project data in memory
+        // Update all project data in memory
         Object.keys(remote).forEach(id => {
             if (isRecentlyRemoved(id)) return;
             if (projects[id]) {
-                // Only update if the data is different
                 const currentDataJSON = JSON.stringify(projects[id].data);
                 const remoteDataJSON = JSON.stringify(remote[id].data);
                 if (currentDataJSON !== remoteDataJSON) {
                     projects[id].data = remote[id].data;
                     projects[id].name = remote[id].name || 'Untitled Project';
                 }
+            } else {
+                // New project from cloud
+                projects[id] = {
+                    id,
+                    name: remote[id].name || 'Untitled Project',
+                    data: remote[id].data,
+                    history: [],
+                    historyIndex: -1
+                };
             }
         });
         saveProjectsToLocalStorageOnly();
@@ -1612,7 +1620,6 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
     
     // Find the new active project
     if (!projects[activeProjectId]) {
-        // Try to find by name match, or pick the first one
         const oldName = projects[activeProjectId] ? projects[activeProjectId].name : null;
         let found = null;
         if (oldName) {
@@ -1627,9 +1634,8 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
     }
     
     if (activeProjectId && projects[activeProjectId]) {
-        // Only apply if we're not currently editing (or if the change came from elsewhere)
-        const activeData = projects[activeProjectId].data;
-        applyOutlineState(activeData);
+        // Only re-apply if the active project data changed
+        applyOutlineState(projects[activeProjectId].data);
         history = [];
         historyIndex = -1;
         saveState('Synced from Cloud');
