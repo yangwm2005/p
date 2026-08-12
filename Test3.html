@@ -1120,6 +1120,20 @@
     }
 
     // ---------- Projects (multiple named outlines, switchable, synced privately per account) ----------
+    // Firestore doesn't guarantee it hands objects back with the same key order they were
+    // written with — it rebuilds them from its own internal format. Plain JSON.stringify()
+    // comparisons are therefore unreliable for "is this my own echo coming back?" checks:
+    // identical data with different key order looks like a change and triggers a needless,
+    // disruptive DOM rebuild mid-typing. stableStringify sorts keys recursively so the same
+    // data always produces the same string, regardless of which side (local or Firestore)
+    // it came from.
+    function stableStringify(obj) {
+        if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+        if (Array.isArray(obj)) return '[' + obj.map(stableStringify).join(',') + ']';
+        const keys = Object.keys(obj).sort();
+        return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
+    }
+
     const PROJECTS_KEY = 'treewm_projects_v1';
     const ACTIVE_PROJECT_KEY = 'treewm_active_project_v1';
     const CLOUD_FIELD = 'treewmProjects';
@@ -1439,7 +1453,7 @@
     function scheduleCloudSave() {
         if (!firebaseReady || !currentUser) return;
         if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
-        const payloadJSON = JSON.stringify(buildCloudPayload());
+        const payloadJSON = stableStringify(buildCloudPayload());
         if (payloadJSON === lastSyncedJSON) return;
         setSyncState('syncing', 'Saving…');
         cloudSaveTimer = setTimeout(() => {
@@ -1451,7 +1465,7 @@
     function pushToCloud() {
         if (!firebaseReady || !currentUser) return;
         const out = buildCloudPayload();
-        const json = JSON.stringify(out);
+        const json = stableStringify(out);
         if (json === lastSyncedJSON) {
             setSyncState('synced', 'Synced');
             return;
@@ -1492,7 +1506,7 @@
                 return;
             }
 
-            const remoteJSON = JSON.stringify(remote);
+            const remoteJSON = stableStringify(remote);
             if (remoteJSON === lastSyncedJSON) {
                 setSyncState('synced', 'Synced');
                 return;
@@ -1641,13 +1655,13 @@
         sharedProjectUnsubs[shareId] = db.collection(SHARED_COLLECTION).doc(shareId).onSnapshot((snap) => {
             if (!snap.exists) return;
             if (snap.metadata.hasPendingWrites) return;
-            const json = JSON.stringify(snap.data().project || {});
+            const json = stableStringify(snap.data().project || {});
             if (json === lastSharedProjectJSON[shareId]) return;
             db.collection(SHARED_COLLECTION).doc(shareId).get().then((freshSnap) => {
                 if (!freshSnap.exists) return;
                 const data = freshSnap.data();
                 const proj = data.project || {};
-                const freshJson = JSON.stringify(proj);
+                const freshJson = stableStringify(proj);
                 if (freshJson === lastSharedProjectJSON[shareId]) return; // our own push already landed while we waited
 
                 if (activeProjectId && projects[activeProjectId]) {
@@ -1683,7 +1697,7 @@
         const p = projects[shareId];
         if (!p || !p.shareId) return;
         const proj = { name: p.name, data: p.data };
-        const json = JSON.stringify(proj);
+        const json = stableStringify(proj);
         if (json === lastSharedProjectJSON[shareId]) return;
         // Same fix as pushToCloud: record this as synced BEFORE the write goes out so our
         // own echo through onSnapshot doesn't get misread as an incoming remote change.
@@ -1725,7 +1739,7 @@
                 name: proj.name, data: proj.data, history: [], historyIndex: -1
             };
             if (activeProjectId === oldId) activeProjectId = shareId;
-            lastSharedProjectJSON[shareId] = JSON.stringify(proj);
+            lastSharedProjectJSON[shareId] = stableStringify(proj);
             if (!sharedProjectUnsubs[shareId]) subscribeToSharedProject(shareId);
             saveProjectsToLocalStorageOnly();
             pushToCloud(); // immediate, not debounced — closes the race that could resurrect the old private id
