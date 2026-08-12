@@ -1164,33 +1164,24 @@
 
     // Called from saveState/undo/redo — keeps the active project's stored data, localStorage,
     // and (if signed in) the cloud all in sync with whatever's currently on screen.
-function persistActiveProject(state) {
-    if (!activeProjectId || !projects[activeProjectId]) return;
-    
-    // Check if the data actually changed
-    const currentData = projects[activeProjectId].data;
-    const stateJSON = JSON.stringify(state);
-    const currentJSON = JSON.stringify(currentData);
-    if (stateJSON === currentJSON) {
-        return; // No change, skip the save
+    function persistActiveProject(state) {
+        if (!activeProjectId || !projects[activeProjectId]) return;
+        projects[activeProjectId].data = {
+            title: state.title,
+            items: state.items,
+            hasCheckboxes: state.hasCheckboxes,
+            formattingEnabled: state.formattingEnabled,
+            levelNames: state.levelNames
+        };
+        projects[activeProjectId].name = state.title || 'Untitled Project';
+        saveProjectsToLocalStorageOnly();
+        renderProjectPicker();
+        if (projects[activeProjectId].shareId) {
+            pushSharedProjectUpdate(projects[activeProjectId].shareId);
+        } else {
+            scheduleCloudSave();
+        }
     }
-    
-    projects[activeProjectId].data = {
-        title: state.title,
-        items: state.items,
-        hasCheckboxes: state.hasCheckboxes,
-        formattingEnabled: state.formattingEnabled,
-        levelNames: state.levelNames
-    };
-    projects[activeProjectId].name = state.title || 'Untitled Project';
-    saveProjectsToLocalStorageOnly();
-    renderProjectPicker();
-    if (projects[activeProjectId].shareId) {
-        pushSharedProjectUpdate(projects[activeProjectId].shareId);
-    } else {
-        scheduleCloudSave();
-    }
-}
 
     function loadProjectsFromLocalStorage() {
         try {
@@ -1445,82 +1436,79 @@ function persistActiveProject(state) {
         return out;
     }
 
-// Replace the scheduleCloudSave function
-function scheduleCloudSave() {
-    if (!firebaseReady || !currentUser) return;
-    if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
-    const payloadJSON = JSON.stringify(buildCloudPayload());
-    if (payloadJSON === lastSyncedJSON) {
-        setSyncState('synced', 'Synced');
-        return;
+    function scheduleCloudSave() {
+        if (!firebaseReady || !currentUser) return;
+        if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
+        const payloadJSON = JSON.stringify(buildCloudPayload());
+        if (payloadJSON === lastSyncedJSON) return;
+        setSyncState('syncing', 'Saving…');
+        cloudSaveTimer = setTimeout(() => {
+            cloudSaveTimer = null;
+            pushToCloud();
+        }, 700);
     }
-    setSyncState('syncing', 'Saving…');
-    cloudSaveTimer = setTimeout(() => {
-        cloudSaveTimer = null;
-        pushToCloud();
-    }, 700);
-}
 
-function pushToCloud() {
-    if (!firebaseReady || !currentUser) return;
-    const out = buildCloudPayload();
-    const json = JSON.stringify(out);
-    if (json === lastSyncedJSON) {
-        setSyncState('synced', 'Synced');
-        return;
-    }
-    lastLocalEditAt = Date.now();
-    const payload = {};
-    payload[CLOUD_FIELD] = out;
-    payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
-    const userRef = db.collection('users').doc(currentUser.uid);
-    userRef.set(payload, { merge: true })
-        .then(() => {
-            lastSyncedJSON = json;
+    function pushToCloud() {
+        if (!firebaseReady || !currentUser) return;
+        const out = buildCloudPayload();
+        const json = JSON.stringify(out);
+        if (json === lastSyncedJSON) {
             setSyncState('synced', 'Synced');
-        })
-        .catch((err) => {
+            return;
+        }
+        lastLocalEditAt = Date.now();
+        // Mark this as "already synced" BEFORE the write goes out, not after it resolves.
+        // Firestore echoes every write back through onSnapshot (once optimistically, once
+        // server-confirmed) — if we only recorded lastSyncedJSON in the .then(), that echo
+        // could arrive and get misread as an external change, triggering a full DOM rebuild
+        // mid-keystroke and yanking focus back to the first item. Setting it first means our
+        // own echo is recognized and ignored, however the two events happen to interleave.
+        lastSyncedJSON = json;
+        const payload = {};
+        payload[CLOUD_FIELD] = out;
+        payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
+        const userRef = db.collection('users').doc(currentUser.uid);
+        userRef.set(payload, { merge: true }).then(() => {
+            setSyncState('synced', 'Synced');
+        }).catch((err) => {
             console.error('Cloud save failed', err);
+            if (lastSyncedJSON === json) lastSyncedJSON = null; // let the next save attempt retry
             setSyncState('error', 'Save failed: ' + err.message);
         });
-}
+    }
 
-function subscribeToCloud(firebaseUid) {
-    unsubscribeCloud();
-    setSyncState('syncing', 'Connecting…');
-    cloudUnsub = db.collection('users').doc(firebaseUid).onSnapshot((snap) => {
-        // CRITICAL: Skip our own local writes that haven't been confirmed by the server yet
-        if (snap.metadata.hasPendingWrites) {
-            return;
-        }
-        
-        const data = snap.data() || {};
-        const remote = data[CLOUD_FIELD];
-        const remoteTime = data[CLOUD_UPDATED_FIELD];
+    function subscribeToCloud(firebaseUid) {
+        unsubscribeCloud();
+        setSyncState('syncing', 'Connecting…');
+        cloudUnsub = db.collection('users').doc(firebaseUid).onSnapshot((snap) => {
+            if (snap.metadata.hasPendingWrites) return;
+            const data = snap.data() || {};
+            const remote = data[CLOUD_FIELD];
+            const remoteTime = data[CLOUD_UPDATED_FIELD];
 
-        if (!remote || typeof remote !== 'object' || !Object.keys(remote).length) {
-            setSyncState('synced', 'Synced');
-            return;
-        }
+            if (!remote || typeof remote !== 'object' || !Object.keys(remote).length) {
+                setSyncState('synced', 'Synced');
+                pushToCloud();
+                return;
+            }
 
-        const remoteJSON = JSON.stringify(remote);
-        if (remoteJSON === lastSyncedJSON) {
-            setSyncState('synced', 'Synced');
-            return;
-        }
+            const remoteJSON = JSON.stringify(remote);
+            if (remoteJSON === lastSyncedJSON) {
+                setSyncState('synced', 'Synced');
+                return;
+            }
 
-        // If the remote data is older than our last edit, push our changes instead
-        if (remoteTime && remoteTime.toMillis && remoteTime.toMillis() < lastLocalEditAt) {
-            pushToCloud();
-            return;
-        }
+            if (remoteTime && remoteTime.toMillis && remoteTime.toMillis() < lastLocalEditAt) {
+                pushToCloud();
+                return;
+            }
 
-        applyRemoteCloudSnapshot(remote, remoteJSON);
-    }, (err) => {
-        console.error('Cloud sync error', err);
-        setSyncState('error', 'Sync error: ' + err.message);
-    });
-}
+            applyRemoteCloudSnapshot(remote, remoteJSON);
+        }, (err) => {
+            console.error('Cloud sync error', err);
+            setSyncState('error', 'Sync error: ' + err.message);
+        });
+    }
 
     function unsubscribeCloud() {
         if (cloudUnsub) {
@@ -1534,122 +1522,43 @@ function subscribeToCloud(firebaseUid) {
         lastSyncedJSON = null;
     }
 
-// Replace the applyRemoteCloudSnapshot function with this version
-function applyRemoteCloudSnapshot(remote, remoteJSON) {
-    if (remoteJSON === lastSyncedJSON) {
-        setSyncState('synced', 'Synced');
-        return;
-    }
-    
-    // CRITICAL: Check if the active project's data actually changed
-    let activeProjectChanged = false;
-    let currentProjectId = activeProjectId;
-    
-    if (currentProjectId && projects[currentProjectId]) {
-        const currentProject = projects[currentProjectId];
-        const remoteProject = remote[currentProjectId];
-        
-        if (remoteProject) {
-            // Deep compare the data
-            const currentDataStr = JSON.stringify(currentProject.data);
-            const remoteDataStr = JSON.stringify(remoteProject.data);
-            if (currentDataStr !== remoteDataStr || currentProject.name !== remoteProject.name) {
-                activeProjectChanged = true;
-            }
-        } else {
-            // Remote doesn't have this project anymore
-            activeProjectChanged = true;
+    function applyRemoteCloudSnapshot(remote, remoteJSON) {
+        // Stash the on-screen project's live undo history before we rebuild the map,
+        // in case the item we're currently looking at isn't the one that changed remotely.
+        if (activeProjectId && projects[activeProjectId]) {
+            projects[activeProjectId].history = history;
+            projects[activeProjectId].historyIndex = historyIndex;
         }
-    } else {
-        // No active project or project data missing
-        activeProjectChanged = true;
-    }
-    
-    // If the active project hasn't changed, DO NOT touch the DOM
-    // Just update the project data in memory
-    if (!activeProjectChanged && projects[currentProjectId]) {
-        // Update all project data in memory
-        Object.keys(remote).forEach(id => {
-            if (isRecentlyRemoved(id)) return;
-            if (projects[id]) {
-                const currentDataJSON = JSON.stringify(projects[id].data);
-                const remoteDataJSON = JSON.stringify(remote[id].data);
-                if (currentDataJSON !== remoteDataJSON) {
-                    projects[id].data = remote[id].data;
-                    projects[id].name = remote[id].name || 'Untitled Project';
-                }
-            } else {
-                // New project from cloud
-                projects[id] = {
-                    id,
-                    name: remote[id].name || 'Untitled Project',
-                    data: remote[id].data,
-                    history: [],
-                    historyIndex: -1
-                };
-            }
+        const newProjects = {};
+        // Shared projects live outside this blob (in shared_treewm_projects) — keep them as-is.
+        Object.keys(projects).forEach(id => {
+            if (projects[id].shareId) newProjects[id] = projects[id];
         });
-        saveProjectsToLocalStorageOnly();
+        Object.keys(remote).forEach(id => {
+            if (isRecentlyRemoved(id)) return; // we just deleted this locally — don't let a stale snapshot bring it back
+            newProjects[id] = {
+                id,
+                name: remote[id].name || 'Untitled Project',
+                data: remote[id].data,
+                history: [],
+                historyIndex: -1
+            };
+        });
+        projects = newProjects;
+        if (!projects[activeProjectId]) {
+            activeProjectId = Object.keys(projects)[0] || null;
+        }
+        if (activeProjectId && projects[activeProjectId]) {
+            applyOutlineState(projects[activeProjectId].data);
+            history = [];
+            historyIndex = -1;
+            saveState('Synced from Cloud');
+        }
         renderProjectPicker();
+        saveProjectsToLocalStorageOnly();
         lastSyncedJSON = remoteJSON;
         setSyncState('synced', 'Synced');
-        return; // IMPORTANT: Exit without touching the DOM
     }
-    
-    // Only reach here if the active project actually changed
-    // Stash the on-screen project's live undo history
-    if (activeProjectId && projects[activeProjectId]) {
-        projects[activeProjectId].history = history;
-        projects[activeProjectId].historyIndex = historyIndex;
-    }
-    
-    const newProjects = {};
-    // Shared projects live outside this blob
-    Object.keys(projects).forEach(id => {
-        if (projects[id].shareId) newProjects[id] = projects[id];
-    });
-    
-    Object.keys(remote).forEach(id => {
-        if (isRecentlyRemoved(id)) return;
-        newProjects[id] = {
-            id,
-            name: remote[id].name || 'Untitled Project',
-            data: remote[id].data,
-            history: [],
-            historyIndex: -1
-        };
-    });
-    
-    projects = newProjects;
-    
-    // Find the new active project
-    if (!projects[activeProjectId]) {
-        const oldName = projects[activeProjectId] ? projects[activeProjectId].name : null;
-        let found = null;
-        if (oldName) {
-            for (const id of Object.keys(projects)) {
-                if (projects[id].name === oldName) {
-                    found = id;
-                    break;
-                }
-            }
-        }
-        activeProjectId = found || Object.keys(projects)[0] || null;
-    }
-    
-    if (activeProjectId && projects[activeProjectId]) {
-        // Only re-apply if the active project data changed
-        applyOutlineState(projects[activeProjectId].data);
-        history = [];
-        historyIndex = -1;
-        saveState('Synced from Cloud');
-    }
-    
-    renderProjectPicker();
-    saveProjectsToLocalStorageOnly();
-    lastSyncedJSON = remoteJSON;
-    setSyncState('synced', 'Synced');
-}
 
     // ---------- Sharing (live collaboration via a separate top-level Firestore collection) ----------
     function subscribeToSharedIndex(email) {
@@ -1776,13 +1685,17 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
         const proj = { name: p.name, data: p.data };
         const json = JSON.stringify(proj);
         if (json === lastSharedProjectJSON[shareId]) return;
+        // Same fix as pushToCloud: record this as synced BEFORE the write goes out so our
+        // own echo through onSnapshot doesn't get misread as an incoming remote change.
+        lastSharedProjectJSON[shareId] = json;
         db.collection(SHARED_COLLECTION).doc(shareId).set({
             kind: 'treewm-project',
             project: proj,
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true }).then(() => {
-            lastSharedProjectJSON[shareId] = json;
-        }).catch((err) => console.error('Could not save shared project', err));
+        }, { merge: true }).catch((err) => {
+            console.error('Could not save shared project', err);
+            if (lastSharedProjectJSON[shareId] === json) delete lastSharedProjectJSON[shareId]; // let the next edit retry
+        });
     }
 
     function createSharedProject(id, inviteEmail) {
@@ -2068,100 +1981,40 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
     // Restores the DOM/app state from a captured state object. Shared by undo/redo,
     // loading a file, switching projects, and applying a remote cloud snapshot — so all
     // of those stay in sync with exactly one code path instead of four copies drifting apart.
-function applyOutlineState(state) {
-    // Store the currently focused element
-    const focusedElement = document.activeElement;
-    const focusedContent = focusedElement?.closest?.('.content');
-    const focusedItem = focusedContent?.closest?.('.outline-item');
-    let selection = null;
-    
-    // Store selection info if we're in a contenteditable
-    if (focusedContent) {
-        const sel = window.getSelection();
-        if (sel.rangeCount > 0) {
-            selection = {
-                startContainer: sel.anchorNode,
-                startOffset: sel.anchorOffset,
-                endContainer: sel.focusNode,
-                endOffset: sel.focusOffset,
-                content: focusedContent
-            };
+    function applyOutlineState(state) {
+        outlineTitle.value = state.title || '';
+        hasCheckboxes = state.hasCheckboxes || false;
+        formattingEnabled = state.formattingEnabled || false;
+        if (state.levelNames && Array.isArray(state.levelNames)) {
+            levelNames.length = 0;
+            levelNames.push(...state.levelNames);
         }
-    }
-    
-    outlineTitle.value = state.title || '';
-    hasCheckboxes = state.hasCheckboxes || false;
-    formattingEnabled = state.formattingEnabled || false;
-    if (state.levelNames && Array.isArray(state.levelNames)) {
-        levelNames.length = 0;
-        levelNames.push(...state.levelNames);
-    }
-    outlineList.innerHTML = '';
-    deserializeItems(state.items || [], outlineList);
-    updateItemStates();
-    updateResizeBars();
-    updateFormattingMode();
-    
-    // Try to restore focus and selection
-    if (focusedItem && document.contains(focusedItem)) {
-        const content = focusedItem.querySelector('.content');
-        if (content) {
-            content.focus();
-            if (selection && selection.content === content) {
-                try {
-                    const sel = window.getSelection();
-                    const range = document.createRange();
-                    range.setStart(selection.startContainer, selection.startOffset);
-                    range.setEnd(selection.endContainer, selection.endOffset);
-                    sel.removeAllRanges();
-                    sel.addRange(range);
-                } catch (e) {
-                    // If selection restoration fails, put cursor at end
-                    placeCaretAtEnd(content);
-                }
-            } else {
-                placeCaretAtEnd(content);
-            }
-            currentItem = focusedItem;
-        }
-    } else {
+        outlineList.innerHTML = '';
+        deserializeItems(state.items || [], outlineList);
+        updateItemStates();
+        updateResizeBars();
+        updateFormattingMode();
         currentItem = outlineList.querySelector('.outline-item');
-        if (currentItem) {
-            const content = currentItem.querySelector('.content');
-            if (content) content.focus();
-        }
+        if (currentItem) currentItem.querySelector('.content').focus();
     }
-}
 
-function saveState(action) {
-    // Get the current state
-    const state = {
-        title: outlineTitle.value,
-        items: serializeItems(outlineList.children),
-        hasCheckboxes: hasCheckboxes,
-        formattingEnabled: formattingEnabled,
-        levelNames: [...levelNames],
-        action: action
-    };
-    
-    // Check if this state is actually different from the last one
-    if (historyIndex >= 0 && history[historyIndex]) {
-        const lastState = history[historyIndex];
-        const currentJSON = JSON.stringify(state);
-        const lastJSON = JSON.stringify(lastState);
-        if (currentJSON === lastJSON) {
-            return; // No actual change, skip
+    function saveState(action) {
+        const state = {
+            title: outlineTitle.value,
+            items: serializeItems(outlineList.children),
+            hasCheckboxes: hasCheckboxes,
+            formattingEnabled: formattingEnabled,
+            levelNames: [...levelNames],
+            action: action
+        };
+        if (historyIndex < history.length - 1) {
+            history = history.slice(0, historyIndex + 1);
         }
+        history.push(state);
+        historyIndex++;
+        updateStatus(action);
+        persistActiveProject(state);
     }
-    
-    if (historyIndex < history.length - 1) {
-        history = history.slice(0, historyIndex + 1);
-    }
-    history.push(state);
-    historyIndex++;
-    updateStatus(action);
-    persistActiveProject(state);
-}
 
     function undo() {
         if (historyIndex > 0) {
@@ -3856,8 +3709,8 @@ document.getElementById('pdfDownloadBtn').addEventListener('click', () => {
 
 </script>
 <footer style="text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px;">
-    Copyright © 2026 Dr. Wen-Ming Yang <br>
-    20260812: v2.2 Sharing with Google account.
+    Copyright © 2025 Dr. Wen-Ming Yang <br>
+    20250330: v2.15 PDF as the one we see in landscape or portal view option (popup).
         <img src="https://hitwebcounter.com/counter/counter.php?page=20090258&style=0002&nbdigits=5&type=page&initCount=0" title="Counter Widget" Alt="Visit counter For Websites"   border="0" /></a>   
 
 </footer> 
