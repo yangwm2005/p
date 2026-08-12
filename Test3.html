@@ -1164,24 +1164,33 @@
 
     // Called from saveState/undo/redo — keeps the active project's stored data, localStorage,
     // and (if signed in) the cloud all in sync with whatever's currently on screen.
-    function persistActiveProject(state) {
-        if (!activeProjectId || !projects[activeProjectId]) return;
-        projects[activeProjectId].data = {
-            title: state.title,
-            items: state.items,
-            hasCheckboxes: state.hasCheckboxes,
-            formattingEnabled: state.formattingEnabled,
-            levelNames: state.levelNames
-        };
-        projects[activeProjectId].name = state.title || 'Untitled Project';
-        saveProjectsToLocalStorageOnly();
-        renderProjectPicker();
-        if (projects[activeProjectId].shareId) {
-            pushSharedProjectUpdate(projects[activeProjectId].shareId);
-        } else {
-            scheduleCloudSave();
-        }
+function persistActiveProject(state) {
+    if (!activeProjectId || !projects[activeProjectId]) return;
+    
+    // Check if the data actually changed
+    const currentData = projects[activeProjectId].data;
+    const stateJSON = JSON.stringify(state);
+    const currentJSON = JSON.stringify(currentData);
+    if (stateJSON === currentJSON) {
+        return; // No change, skip the save
     }
+    
+    projects[activeProjectId].data = {
+        title: state.title,
+        items: state.items,
+        hasCheckboxes: state.hasCheckboxes,
+        formattingEnabled: state.formattingEnabled,
+        levelNames: state.levelNames
+    };
+    projects[activeProjectId].name = state.title || 'Untitled Project';
+    saveProjectsToLocalStorageOnly();
+    renderProjectPicker();
+    if (projects[activeProjectId].shareId) {
+        pushSharedProjectUpdate(projects[activeProjectId].shareId);
+    } else {
+        scheduleCloudSave();
+    }
+}
 
     function loadProjectsFromLocalStorage() {
         try {
@@ -1465,21 +1474,25 @@ function pushToCloud() {
     payload[CLOUD_FIELD] = out;
     payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
     const userRef = db.collection('users').doc(currentUser.uid);
-    userRef.set(payload, { merge: true }).then(() => {
-        lastSyncedJSON = json;
-        setSyncState('synced', 'Synced');
-    }).catch((err) => {
-        console.error('Cloud save failed', err);
-        setSyncState('error', 'Save failed: ' + err.message);
-    });
+    userRef.set(payload, { merge: true })
+        .then(() => {
+            lastSyncedJSON = json;
+            setSyncState('synced', 'Synced');
+        })
+        .catch((err) => {
+            console.error('Cloud save failed', err);
+            setSyncState('error', 'Save failed: ' + err.message);
+        });
 }
 
 function subscribeToCloud(firebaseUid) {
     unsubscribeCloud();
     setSyncState('syncing', 'Connecting…');
     cloudUnsub = db.collection('users').doc(firebaseUid).onSnapshot((snap) => {
-        // Skip our own local writes that haven't been confirmed by the server yet
-        if (snap.metadata.hasPendingWrites) return;
+        // CRITICAL: Skip our own local writes that haven't been confirmed by the server yet
+        if (snap.metadata.hasPendingWrites) {
+            return;
+        }
         
         const data = snap.data() || {};
         const remote = data[CLOUD_FIELD];
@@ -1487,10 +1500,6 @@ function subscribeToCloud(firebaseUid) {
 
         if (!remote || typeof remote !== 'object' || !Object.keys(remote).length) {
             setSyncState('synced', 'Synced');
-            // Only push if we have data to push
-            if (Object.keys(buildCloudPayload()).length > 0) {
-                pushToCloud();
-            }
             return;
         }
 
@@ -1527,76 +1536,105 @@ function subscribeToCloud(firebaseUid) {
 
 // Replace the applyRemoteCloudSnapshot function with this version
 function applyRemoteCloudSnapshot(remote, remoteJSON) {
-    // If we are already synced to this exact JSON, do nothing
     if (remoteJSON === lastSyncedJSON) {
         setSyncState('synced', 'Synced');
         return;
     }
     
-    // Stash the on-screen project's live undo history before we rebuild the map,
-    // in case the item we're currently looking at isn't the one that changed remotely.
+    // Check if the active project's data actually changed
+    let activeProjectChanged = false;
+    const currentProjectId = activeProjectId;
+    
+    if (currentProjectId && projects[currentProjectId]) {
+        const currentProject = projects[currentProjectId];
+        const remoteProject = remote[currentProjectId];
+        
+        if (remoteProject) {
+            const currentDataJSON = JSON.stringify(currentProject.data);
+            const remoteDataJSON = JSON.stringify(remoteProject.data);
+            if (currentDataJSON !== remoteDataJSON || currentProject.name !== remoteProject.name) {
+                activeProjectChanged = true;
+            }
+        } else {
+            // Remote doesn't have this project anymore
+            activeProjectChanged = true;
+        }
+    }
+    
+    // If the active project hasn't changed, just update the project list in the background
+    // without re-rendering the DOM
+    if (!activeProjectChanged && projects[currentProjectId]) {
+        // Still update the project data in memory
+        Object.keys(remote).forEach(id => {
+            if (isRecentlyRemoved(id)) return;
+            if (projects[id]) {
+                // Only update if the data is different
+                const currentDataJSON = JSON.stringify(projects[id].data);
+                const remoteDataJSON = JSON.stringify(remote[id].data);
+                if (currentDataJSON !== remoteDataJSON) {
+                    projects[id].data = remote[id].data;
+                    projects[id].name = remote[id].name || 'Untitled Project';
+                }
+            }
+        });
+        saveProjectsToLocalStorageOnly();
+        renderProjectPicker();
+        lastSyncedJSON = remoteJSON;
+        setSyncState('synced', 'Synced');
+        return;
+    }
+    
+    // Only reach here if the active project actually changed
+    // Stash the on-screen project's live undo history
     if (activeProjectId && projects[activeProjectId]) {
         projects[activeProjectId].history = history;
         projects[activeProjectId].historyIndex = historyIndex;
     }
     
     const newProjects = {};
-    // Shared projects live outside this blob (in shared_treewm_projects) — keep them as-is.
+    // Shared projects live outside this blob (in shared_treewm_projects)
     Object.keys(projects).forEach(id => {
         if (projects[id].shareId) newProjects[id] = projects[id];
     });
     
-    let changed = false;
     Object.keys(remote).forEach(id => {
         if (isRecentlyRemoved(id)) return;
-        // Check if this project's data has actually changed
-        const existing = projects[id];
-        const remoteData = remote[id].data;
-        const remoteName = remote[id].name || 'Untitled Project';
-        
-        if (!existing) {
-            changed = true;
-        } else {
-            // Compare data to see if it's actually different
-            const existingJSON = JSON.stringify(existing.data);
-            const newJSON = JSON.stringify(remoteData);
-            if (existingJSON !== newJSON || existing.name !== remoteName) {
-                changed = true;
-            }
-        }
-        
         newProjects[id] = {
             id,
-            name: remoteName,
-            data: remoteData,
+            name: remote[id].name || 'Untitled Project',
+            data: remote[id].data,
             history: [],
             historyIndex: -1
         };
     });
     
-    // If nothing changed and the active project still exists, just update sync state
-    if (!changed && projects[activeProjectId]) {
-        lastSyncedJSON = remoteJSON;
-        setSyncState('synced', 'Synced');
-        return;
+    projects = newProjects;
+    
+    // Find the new active project
+    if (!projects[activeProjectId]) {
+        // Try to find by name match, or pick the first one
+        const oldName = projects[activeProjectId] ? projects[activeProjectId].name : null;
+        let found = null;
+        if (oldName) {
+            for (const id of Object.keys(projects)) {
+                if (projects[id].name === oldName) {
+                    found = id;
+                    break;
+                }
+            }
+        }
+        activeProjectId = found || Object.keys(projects)[0] || null;
     }
     
-    projects = newProjects;
-    if (!projects[activeProjectId]) {
-        activeProjectId = Object.keys(projects)[0] || null;
-    }
     if (activeProjectId && projects[activeProjectId]) {
-        // Only re-apply if the active project data changed
+        // Only apply if we're not currently editing (or if the change came from elsewhere)
         const activeData = projects[activeProjectId].data;
-        // Don't re-apply if we're currently editing and the data is the same
-        const currentState = captureCurrentOutlineData();
-        if (JSON.stringify(currentState) !== JSON.stringify(activeData)) {
-            applyOutlineState(activeData);
-            history = [];
-            historyIndex = -1;
-            saveState('Synced from Cloud');
-        }
+        applyOutlineState(activeData);
+        history = [];
+        historyIndex = -1;
+        saveState('Synced from Cloud');
     }
+    
     renderProjectPicker();
     saveProjectsToLocalStorageOnly();
     lastSyncedJSON = remoteJSON;
