@@ -1436,72 +1436,82 @@
         return out;
     }
 
-    function scheduleCloudSave() {
-        if (!firebaseReady || !currentUser) return;
-        if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
-        const payloadJSON = JSON.stringify(buildCloudPayload());
-        if (payloadJSON === lastSyncedJSON) return;
-        setSyncState('syncing', 'Saving…');
-        cloudSaveTimer = setTimeout(() => {
-            cloudSaveTimer = null;
-            pushToCloud();
-        }, 700);
+// Replace the scheduleCloudSave function
+function scheduleCloudSave() {
+    if (!firebaseReady || !currentUser) return;
+    if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
+    const payloadJSON = JSON.stringify(buildCloudPayload());
+    if (payloadJSON === lastSyncedJSON) {
+        setSyncState('synced', 'Synced');
+        return;
     }
+    setSyncState('syncing', 'Saving…');
+    cloudSaveTimer = setTimeout(() => {
+        cloudSaveTimer = null;
+        pushToCloud();
+    }, 700);
+}
 
-    function pushToCloud() {
-        if (!firebaseReady || !currentUser) return;
-        const out = buildCloudPayload();
-        const json = JSON.stringify(out);
-        if (json === lastSyncedJSON) {
+function pushToCloud() {
+    if (!firebaseReady || !currentUser) return;
+    const out = buildCloudPayload();
+    const json = JSON.stringify(out);
+    if (json === lastSyncedJSON) {
+        setSyncState('synced', 'Synced');
+        return;
+    }
+    lastLocalEditAt = Date.now();
+    const payload = {};
+    payload[CLOUD_FIELD] = out;
+    payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
+    const userRef = db.collection('users').doc(currentUser.uid);
+    userRef.set(payload, { merge: true }).then(() => {
+        lastSyncedJSON = json;
+        setSyncState('synced', 'Synced');
+    }).catch((err) => {
+        console.error('Cloud save failed', err);
+        setSyncState('error', 'Save failed: ' + err.message);
+    });
+}
+
+function subscribeToCloud(firebaseUid) {
+    unsubscribeCloud();
+    setSyncState('syncing', 'Connecting…');
+    cloudUnsub = db.collection('users').doc(firebaseUid).onSnapshot((snap) => {
+        // Skip our own local writes that haven't been confirmed by the server yet
+        if (snap.metadata.hasPendingWrites) return;
+        
+        const data = snap.data() || {};
+        const remote = data[CLOUD_FIELD];
+        const remoteTime = data[CLOUD_UPDATED_FIELD];
+
+        if (!remote || typeof remote !== 'object' || !Object.keys(remote).length) {
+            setSyncState('synced', 'Synced');
+            // Only push if we have data to push
+            if (Object.keys(buildCloudPayload()).length > 0) {
+                pushToCloud();
+            }
+            return;
+        }
+
+        const remoteJSON = JSON.stringify(remote);
+        if (remoteJSON === lastSyncedJSON) {
             setSyncState('synced', 'Synced');
             return;
         }
-        lastLocalEditAt = Date.now();
-        const payload = {};
-        payload[CLOUD_FIELD] = out;
-        payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
-        const userRef = db.collection('users').doc(currentUser.uid);
-        userRef.set(payload, { merge: true }).then(() => {
-            lastSyncedJSON = json;
-            setSyncState('synced', 'Synced');
-        }).catch((err) => {
-            console.error('Cloud save failed', err);
-            setSyncState('error', 'Save failed: ' + err.message);
-        });
-    }
 
-    function subscribeToCloud(firebaseUid) {
-        unsubscribeCloud();
-        setSyncState('syncing', 'Connecting…');
-        cloudUnsub = db.collection('users').doc(firebaseUid).onSnapshot((snap) => {
-            if (snap.metadata.hasPendingWrites) return;
-            const data = snap.data() || {};
-            const remote = data[CLOUD_FIELD];
-            const remoteTime = data[CLOUD_UPDATED_FIELD];
+        // If the remote data is older than our last edit, push our changes instead
+        if (remoteTime && remoteTime.toMillis && remoteTime.toMillis() < lastLocalEditAt) {
+            pushToCloud();
+            return;
+        }
 
-            if (!remote || typeof remote !== 'object' || !Object.keys(remote).length) {
-                setSyncState('synced', 'Synced');
-                pushToCloud();
-                return;
-            }
-
-            const remoteJSON = JSON.stringify(remote);
-            if (remoteJSON === lastSyncedJSON) {
-                setSyncState('synced', 'Synced');
-                return;
-            }
-
-            if (remoteTime && remoteTime.toMillis && remoteTime.toMillis() < lastLocalEditAt) {
-                pushToCloud();
-                return;
-            }
-
-            applyRemoteCloudSnapshot(remote, remoteJSON);
-        }, (err) => {
-            console.error('Cloud sync error', err);
-            setSyncState('error', 'Sync error: ' + err.message);
-        });
-    }
+        applyRemoteCloudSnapshot(remote, remoteJSON);
+    }, (err) => {
+        console.error('Cloud sync error', err);
+        setSyncState('error', 'Sync error: ' + err.message);
+    });
+}
 
     function unsubscribeCloud() {
         if (cloudUnsub) {
@@ -1515,43 +1525,83 @@
         lastSyncedJSON = null;
     }
 
-    function applyRemoteCloudSnapshot(remote, remoteJSON) {
-        // Stash the on-screen project's live undo history before we rebuild the map,
-        // in case the item we're currently looking at isn't the one that changed remotely.
-        if (activeProjectId && projects[activeProjectId]) {
-            projects[activeProjectId].history = history;
-            projects[activeProjectId].historyIndex = historyIndex;
+// Replace the applyRemoteCloudSnapshot function with this version
+function applyRemoteCloudSnapshot(remote, remoteJSON) {
+    // If we are already synced to this exact JSON, do nothing
+    if (remoteJSON === lastSyncedJSON) {
+        setSyncState('synced', 'Synced');
+        return;
+    }
+    
+    // Stash the on-screen project's live undo history before we rebuild the map,
+    // in case the item we're currently looking at isn't the one that changed remotely.
+    if (activeProjectId && projects[activeProjectId]) {
+        projects[activeProjectId].history = history;
+        projects[activeProjectId].historyIndex = historyIndex;
+    }
+    
+    const newProjects = {};
+    // Shared projects live outside this blob (in shared_treewm_projects) — keep them as-is.
+    Object.keys(projects).forEach(id => {
+        if (projects[id].shareId) newProjects[id] = projects[id];
+    });
+    
+    let changed = false;
+    Object.keys(remote).forEach(id => {
+        if (isRecentlyRemoved(id)) return;
+        // Check if this project's data has actually changed
+        const existing = projects[id];
+        const remoteData = remote[id].data;
+        const remoteName = remote[id].name || 'Untitled Project';
+        
+        if (!existing) {
+            changed = true;
+        } else {
+            // Compare data to see if it's actually different
+            const existingJSON = JSON.stringify(existing.data);
+            const newJSON = JSON.stringify(remoteData);
+            if (existingJSON !== newJSON || existing.name !== remoteName) {
+                changed = true;
+            }
         }
-        const newProjects = {};
-        // Shared projects live outside this blob (in shared_treewm_projects) — keep them as-is.
-        Object.keys(projects).forEach(id => {
-            if (projects[id].shareId) newProjects[id] = projects[id];
-        });
-        Object.keys(remote).forEach(id => {
-            if (isRecentlyRemoved(id)) return; // we just deleted this locally — don't let a stale snapshot bring it back
-            newProjects[id] = {
-                id,
-                name: remote[id].name || 'Untitled Project',
-                data: remote[id].data,
-                history: [],
-                historyIndex: -1
-            };
-        });
-        projects = newProjects;
-        if (!projects[activeProjectId]) {
-            activeProjectId = Object.keys(projects)[0] || null;
-        }
-        if (activeProjectId && projects[activeProjectId]) {
-            applyOutlineState(projects[activeProjectId].data);
+        
+        newProjects[id] = {
+            id,
+            name: remoteName,
+            data: remoteData,
+            history: [],
+            historyIndex: -1
+        };
+    });
+    
+    // If nothing changed and the active project still exists, just update sync state
+    if (!changed && projects[activeProjectId]) {
+        lastSyncedJSON = remoteJSON;
+        setSyncState('synced', 'Synced');
+        return;
+    }
+    
+    projects = newProjects;
+    if (!projects[activeProjectId]) {
+        activeProjectId = Object.keys(projects)[0] || null;
+    }
+    if (activeProjectId && projects[activeProjectId]) {
+        // Only re-apply if the active project data changed
+        const activeData = projects[activeProjectId].data;
+        // Don't re-apply if we're currently editing and the data is the same
+        const currentState = captureCurrentOutlineData();
+        if (JSON.stringify(currentState) !== JSON.stringify(activeData)) {
+            applyOutlineState(activeData);
             history = [];
             historyIndex = -1;
             saveState('Synced from Cloud');
         }
-        renderProjectPicker();
-        saveProjectsToLocalStorageOnly();
-        lastSyncedJSON = remoteJSON;
-        setSyncState('synced', 'Synced');
     }
+    renderProjectPicker();
+    saveProjectsToLocalStorageOnly();
+    lastSyncedJSON = remoteJSON;
+    setSyncState('synced', 'Synced');
+}
 
     // ---------- Sharing (live collaboration via a separate top-level Firestore collection) ----------
     function subscribeToSharedIndex(email) {
