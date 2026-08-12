@@ -715,6 +715,98 @@
         text-overflow: ellipsis;
         white-space: nowrap;
     }
+    .project-picker {
+        position: relative;
+        display: inline-block;
+        margin-bottom: 8px;
+    }
+    .project-picker-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #fff;
+        background-image: none;
+        color: #1f2937;
+        border: 1px solid #d1d5db;
+        font-weight: 500;
+    }
+    .project-picker-btn:hover {
+        background: #f1f5f9;
+    }
+    .project-picker-btn .caret-down {
+        color: #9ca3af;
+        font-size: 10px;
+    }
+    .project-dropdown {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        background: #fff;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+        z-index: 1200;
+        width: 260px;
+        padding: 6px;
+    }
+    .project-list {
+        max-height: 280px;
+        overflow-y: auto;
+    }
+    .project-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        padding: 7px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        color: #1f2937;
+    }
+    .project-row:hover {
+        background: #f1f5f9;
+    }
+    .project-row.active {
+        background: #eff6ff;
+        color: #2563eb;
+        font-weight: 500;
+    }
+    .proj-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+    }
+    .proj-actions {
+        display: flex;
+        gap: 2px;
+        flex-shrink: 0;
+    }
+    .proj-actions button {
+        margin: 0;
+        padding: 2px 6px;
+        background: transparent;
+        background-image: none;
+        color: #9ca3af;
+        border: none;
+        box-shadow: none;
+        font-size: 12px;
+    }
+    .proj-actions button:hover {
+        color: #dc2626;
+        background: #fef2f2;
+    }
+    .project-new-row {
+        border-top: 1px solid #e5e7eb;
+        margin-top: 4px;
+        padding-top: 6px;
+    }
+    .project-new-row button {
+        width: 100%;
+        margin: 0;
+        background: linear-gradient(#3b82f6, #2563eb);
+    }
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -727,6 +819,17 @@
 <body>
 <div class="outline-container">
     <div class="controls-container">
+        <div class="project-picker" id="projectPicker">
+            <button class="project-picker-btn" id="projectPickerBtn" title="Switch between your projects">
+                📁 <span id="activeProjectName">Loading…</span> <span class="caret-down">▾</span>
+            </button>
+            <div class="project-dropdown" id="projectDropdown" style="display:none;">
+                <div class="project-list" id="projectList"></div>
+                <div class="project-new-row">
+                    <button id="newProjectBtn">+ New Project</button>
+                </div>
+            </div>
+        </div>
         <input type="text" class="outline-title" placeholder="Welcome to Dr. Yang's Tree organiztaion. Please Enter Outline Title" value="">
         <div>
             <button id="addMainBtn" title="Add a new main item">+ Main</button>
@@ -902,13 +1005,398 @@
                 userAvatar.src = user.photoURL || '';
                 userName.textContent = user.displayName || user.email || 'Signed in';
                 setSyncState('synced', 'Signed in as ' + (user.email || user.displayName || ''));
+                subscribeToCloud(user.uid);
             } else {
                 signInBtn.style.display = 'flex';
                 userChip.style.display = 'none';
                 setSyncState('offline', 'Not signed in');
+                unsubscribeCloud();
             }
         });
     }
+
+    // ---------- Projects (multiple named outlines, switchable, synced privately per account) ----------
+    const PROJECTS_KEY = 'treewm_projects_v1';
+    const ACTIVE_PROJECT_KEY = 'treewm_active_project_v1';
+    const CLOUD_FIELD = 'treewmProjects';
+    const CLOUD_UPDATED_FIELD = 'treewmProjectsUpdatedAt';
+    let projects = {};
+    let activeProjectId = null;
+    let cloudUnsub = null;
+    let cloudSaveTimer = null;
+    let lastSyncedJSON = null;
+    let lastLocalEditAt = 0;
+
+    function uid() {
+        return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    }
+
+    function captureCurrentOutlineData() {
+        return {
+            title: outlineTitle.value,
+            items: serializeItems(outlineList.children),
+            hasCheckboxes: hasCheckboxes,
+            formattingEnabled: formattingEnabled,
+            levelNames: [...levelNames]
+        };
+    }
+
+    // Called from saveState/undo/redo — keeps the active project's stored data, localStorage,
+    // and (if signed in) the cloud all in sync with whatever's currently on screen.
+    function persistActiveProject(state) {
+        if (!activeProjectId || !projects[activeProjectId]) return;
+        projects[activeProjectId].data = {
+            title: state.title,
+            items: state.items,
+            hasCheckboxes: state.hasCheckboxes,
+            formattingEnabled: state.formattingEnabled,
+            levelNames: state.levelNames
+        };
+        projects[activeProjectId].name = state.title || 'Untitled Project';
+        saveProjectsToLocalStorageOnly();
+        renderProjectPicker();
+        scheduleCloudSave();
+    }
+
+    function loadProjectsFromLocalStorage() {
+        try {
+            const raw = localStorage.getItem(PROJECTS_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                const ids = Object.keys(parsed);
+                if (ids.length) {
+                    ids.forEach(id => {
+                        projects[id] = {
+                            id,
+                            name: parsed[id].name || 'Untitled Project',
+                            data: parsed[id].data,
+                            history: [],
+                            historyIndex: -1
+                        };
+                    });
+                    activeProjectId = localStorage.getItem(ACTIVE_PROJECT_KEY);
+                    if (!activeProjectId || !projects[activeProjectId]) activeProjectId = ids[0];
+                    return;
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load projects', e);
+        }
+
+        // Brand-new install: migrate whatever shipped in the static HTML markup into a
+        // first project, exactly as it stands, so nothing is lost the first time this runs.
+        try {
+            const id = uid();
+            const title = outlineTitle.value || '';
+            projects[id] = {
+                id,
+                name: title || 'Untitled Project',
+                data: captureCurrentOutlineData(),
+                history: [],
+                historyIndex: -1
+            };
+            activeProjectId = id;
+        } catch (e) {
+            console.error('Failed to initialize first project', e);
+        }
+    }
+
+    function saveProjectsToLocalStorageOnly() {
+        try {
+            const out = {};
+            Object.keys(projects).forEach(id => {
+                out[id] = { name: projects[id].name, data: projects[id].data };
+            });
+            localStorage.setItem(PROJECTS_KEY, JSON.stringify(out));
+            if (activeProjectId) localStorage.setItem(ACTIVE_PROJECT_KEY, activeProjectId);
+        } catch (e) {
+            console.error('Failed to save projects', e);
+        }
+    }
+
+    function renderProjectPicker() {
+        const nameEl = document.getElementById('activeProjectName');
+        const active = projects[activeProjectId];
+        if (nameEl) nameEl.textContent = active ? (active.name || 'Untitled Project') : 'No project';
+
+        const listEl = document.getElementById('projectList');
+        if (!listEl) return;
+        listEl.innerHTML = '';
+        Object.keys(projects)
+            .sort((a, b) => (projects[a].name || '').localeCompare(projects[b].name || ''))
+            .forEach(id => {
+                const p = projects[id];
+                const row = document.createElement('div');
+                row.className = 'project-row' + (id === activeProjectId ? ' active' : '');
+
+                const name = document.createElement('div');
+                name.className = 'proj-name';
+                name.textContent = p.name || 'Untitled Project';
+                row.appendChild(name);
+
+                const actions = document.createElement('div');
+                actions.className = 'proj-actions';
+
+                const delBtn = document.createElement('button');
+                delBtn.textContent = '✕';
+                delBtn.title = 'Delete project';
+                delBtn.addEventListener('mousedown', (e) => e.preventDefault());
+                delBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteProjectLocal(id);
+                });
+                actions.appendChild(delBtn);
+
+                row.appendChild(actions);
+                row.addEventListener('click', () => switchProject(id));
+                listEl.appendChild(row);
+            });
+    }
+
+    function switchProject(id) {
+        if (!projects[id] || id === activeProjectId) {
+            closeProjectDropdown();
+            return;
+        }
+        if (activeProjectId && projects[activeProjectId]) {
+            projects[activeProjectId].history = history;
+            projects[activeProjectId].historyIndex = historyIndex;
+        }
+        activeProjectId = id;
+        const target = projects[id];
+        applyOutlineState(target.data);
+        if (target.history && target.history.length) {
+            history = target.history;
+            historyIndex = target.historyIndex;
+        } else {
+            history = [];
+            historyIndex = -1;
+            saveState('Opened Project');
+        }
+        saveProjectsToLocalStorageOnly();
+        renderProjectPicker();
+        closeProjectDropdown();
+        updateStatus(`Switched to "${target.name || 'Untitled Project'}"`);
+    }
+
+    function createProject(name) {
+        if (activeProjectId && projects[activeProjectId]) {
+            projects[activeProjectId].history = history;
+            projects[activeProjectId].historyIndex = historyIndex;
+        }
+        const id = uid();
+        const blankData = {
+            title: name || '',
+            items: [{ text: '', level: 0, width: `${levelWidths['0']}px`, hidden: false, bgColor: '', children: [] }],
+            hasCheckboxes: false,
+            formattingEnabled: false,
+            levelNames: ['Main Items', 'Level 1', 'Level 2', 'Level 3', 'Level 4']
+        };
+        projects[id] = { id, name: name || 'Untitled Project', data: blankData, history: [], historyIndex: -1 };
+        activeProjectId = id;
+        applyOutlineState(blankData);
+        history = [];
+        historyIndex = -1;
+        saveState('Created Project');
+        saveProjectsToLocalStorageOnly();
+        renderProjectPicker();
+        closeProjectDropdown();
+        scheduleCloudSave();
+        updateStatus(`Created Project "${name || 'Untitled Project'}"`);
+    }
+
+    function deleteProjectLocal(id) {
+        const p = projects[id];
+        if (!p) return;
+        if (Object.keys(projects).length <= 1) {
+            alert('You need at least one project — create a new one before deleting this.');
+            return;
+        }
+        if (!confirm(`Delete project "${p.name || 'Untitled Project'}"? This cannot be undone.`)) return;
+        delete projects[id];
+        if (activeProjectId === id) {
+            const nextId = Object.keys(projects)[0];
+            activeProjectId = nextId;
+            const target = projects[nextId];
+            applyOutlineState(target.data);
+            if (target.history && target.history.length) {
+                history = target.history;
+                historyIndex = target.historyIndex;
+            } else {
+                history = [];
+                historyIndex = -1;
+                saveState('Opened Project');
+            }
+        }
+        saveProjectsToLocalStorageOnly();
+        renderProjectPicker();
+        scheduleCloudSave();
+        updateStatus('Deleted Project');
+    }
+
+    // ---------- Cloud sync (private, per-account — mirrors the Gantt app's own sync engine) ----------
+    function buildCloudPayload() {
+        const out = {};
+        Object.keys(projects).forEach(id => {
+            out[id] = { name: projects[id].name, data: projects[id].data };
+        });
+        return out;
+    }
+
+    function scheduleCloudSave() {
+        if (!firebaseReady || !currentUser) return;
+        if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
+        const payloadJSON = JSON.stringify(buildCloudPayload());
+        if (payloadJSON === lastSyncedJSON) return;
+        setSyncState('syncing', 'Saving…');
+        cloudSaveTimer = setTimeout(() => {
+            cloudSaveTimer = null;
+            pushToCloud();
+        }, 700);
+    }
+
+    function pushToCloud() {
+        if (!firebaseReady || !currentUser) return;
+        const out = buildCloudPayload();
+        const json = JSON.stringify(out);
+        if (json === lastSyncedJSON) {
+            setSyncState('synced', 'Synced');
+            return;
+        }
+        lastLocalEditAt = Date.now();
+        const payload = {};
+        payload[CLOUD_FIELD] = out;
+        payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
+        const userRef = db.collection('users').doc(currentUser.uid);
+        userRef.set(payload, { merge: true }).then(() => {
+            lastSyncedJSON = json;
+            setSyncState('synced', 'Synced');
+        }).catch((err) => {
+            console.error('Cloud save failed', err);
+            setSyncState('error', 'Save failed: ' + err.message);
+        });
+    }
+
+    function subscribeToCloud(firebaseUid) {
+        unsubscribeCloud();
+        setSyncState('syncing', 'Connecting…');
+        cloudUnsub = db.collection('users').doc(firebaseUid).onSnapshot((snap) => {
+            if (snap.metadata.hasPendingWrites) return;
+            const data = snap.data() || {};
+            const remote = data[CLOUD_FIELD];
+            const remoteTime = data[CLOUD_UPDATED_FIELD];
+
+            if (!remote || typeof remote !== 'object' || !Object.keys(remote).length) {
+                setSyncState('synced', 'Synced');
+                pushToCloud();
+                return;
+            }
+
+            const remoteJSON = JSON.stringify(remote);
+            if (remoteJSON === lastSyncedJSON) {
+                setSyncState('synced', 'Synced');
+                return;
+            }
+
+            if (remoteTime && remoteTime.toMillis && remoteTime.toMillis() < lastLocalEditAt) {
+                pushToCloud();
+                return;
+            }
+
+            applyRemoteCloudSnapshot(remote, remoteJSON);
+        }, (err) => {
+            console.error('Cloud sync error', err);
+            setSyncState('error', 'Sync error: ' + err.message);
+        });
+    }
+
+    function unsubscribeCloud() {
+        if (cloudUnsub) {
+            cloudUnsub();
+            cloudUnsub = null;
+        }
+        if (cloudSaveTimer) {
+            clearTimeout(cloudSaveTimer);
+            cloudSaveTimer = null;
+        }
+        lastSyncedJSON = null;
+    }
+
+    function applyRemoteCloudSnapshot(remote, remoteJSON) {
+        // Stash the on-screen project's live undo history before we rebuild the whole map,
+        // in case the item we're currently looking at isn't the one that changed remotely.
+        if (activeProjectId && projects[activeProjectId]) {
+            projects[activeProjectId].history = history;
+            projects[activeProjectId].historyIndex = historyIndex;
+        }
+        projects = {};
+        Object.keys(remote).forEach(id => {
+            projects[id] = {
+                id,
+                name: remote[id].name || 'Untitled Project',
+                data: remote[id].data,
+                history: [],
+                historyIndex: -1
+            };
+        });
+        if (!projects[activeProjectId]) {
+            activeProjectId = Object.keys(projects)[0] || null;
+        }
+        if (activeProjectId && projects[activeProjectId]) {
+            applyOutlineState(projects[activeProjectId].data);
+            history = [];
+            historyIndex = -1;
+            saveState('Synced from Cloud');
+        }
+        renderProjectPicker();
+        saveProjectsToLocalStorageOnly();
+        lastSyncedJSON = remoteJSON;
+        setSyncState('synced', 'Synced');
+    }
+
+    const projectPicker = document.getElementById('projectPicker');
+    const projectPickerBtn = document.getElementById('projectPickerBtn');
+    const projectDropdown = document.getElementById('projectDropdown');
+    const newProjectBtn = document.getElementById('newProjectBtn');
+
+    function openProjectDropdown() {
+        renderProjectPicker();
+        projectDropdown.style.display = 'block';
+    }
+
+    function closeProjectDropdown() {
+        projectDropdown.style.display = 'none';
+    }
+
+    projectPickerBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    projectPickerBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (projectDropdown.style.display === 'block') {
+            closeProjectDropdown();
+        } else {
+            closeItemMenu();
+            if (activeDropdown) {
+                activeDropdown.remove();
+                activeDropdown = null;
+                activeDropdownTrigger = null;
+            }
+            openProjectDropdown();
+        }
+    });
+    projectDropdown.addEventListener('mousedown', (e) => e.preventDefault());
+    projectDropdown.addEventListener('click', (e) => e.stopPropagation());
+    newProjectBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    newProjectBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const name = prompt('New project name:', 'Untitled Project');
+        if (name === null) return;
+        createProject(name.trim());
+    });
+    document.addEventListener('click', (e) => {
+        if (projectDropdown.style.display === 'block' && !projectPicker.contains(e.target)) {
+            closeProjectDropdown();
+        }
+    });
 
     let draggedItem = null;
     let resizingLevel = null;
@@ -926,6 +1414,26 @@
     let activeDropdown = null;
     let activeDropdownTrigger = null;
 
+    // Restores the DOM/app state from a captured state object. Shared by undo/redo,
+    // loading a file, switching projects, and applying a remote cloud snapshot — so all
+    // of those stay in sync with exactly one code path instead of four copies drifting apart.
+    function applyOutlineState(state) {
+        outlineTitle.value = state.title || '';
+        hasCheckboxes = state.hasCheckboxes || false;
+        formattingEnabled = state.formattingEnabled || false;
+        if (state.levelNames && Array.isArray(state.levelNames)) {
+            levelNames.length = 0;
+            levelNames.push(...state.levelNames);
+        }
+        outlineList.innerHTML = '';
+        deserializeItems(state.items || [], outlineList);
+        updateItemStates();
+        updateResizeBars();
+        updateFormattingMode();
+        currentItem = outlineList.querySelector('.outline-item');
+        if (currentItem) currentItem.querySelector('.content').focus();
+    }
+
     function saveState(action) {
         const state = {
             title: outlineTitle.value,
@@ -941,27 +1449,16 @@
         history.push(state);
         historyIndex++;
         updateStatus(action);
+        persistActiveProject(state);
     }
 
     function undo() {
         if (historyIndex > 0) {
             historyIndex--;
             const state = history[historyIndex];
-            outlineTitle.value = state.title;
-            hasCheckboxes = state.hasCheckboxes;
-            formattingEnabled = state.formattingEnabled;
-            if (state.levelNames && Array.isArray(state.levelNames)) {
-                levelNames.length = 0;
-                levelNames.push(...state.levelNames);
-            }
-            outlineList.innerHTML = '';
-            deserializeItems(state.items, outlineList);
-            updateItemStates();
-            updateResizeBars();
-            updateFormattingMode();
-            currentItem = outlineList.querySelector('.outline-item');
-            if (currentItem) currentItem.querySelector('.content').focus();
+            applyOutlineState(state);
             updateStatus(`Undid ${state.action}`);
+            persistActiveProject(state);
         }
     }
 
@@ -969,21 +1466,9 @@
         if (historyIndex < history.length - 1) {
             historyIndex++;
             const state = history[historyIndex];
-            outlineTitle.value = state.title;
-            hasCheckboxes = state.hasCheckboxes;
-            formattingEnabled = state.formattingEnabled;
-            if (state.levelNames && Array.isArray(state.levelNames)) {
-                levelNames.length = 0;
-                levelNames.push(...state.levelNames);
-            }
-            outlineList.innerHTML = '';
-            deserializeItems(state.items, outlineList);
-            updateItemStates();
-            updateResizeBars();
-            updateFormattingMode();
-            currentItem = outlineList.querySelector('.outline-item');
-            if (currentItem) currentItem.querySelector('.content').focus();
+            applyOutlineState(state);
             updateStatus(`Redid ${state.action}`);
+            persistActiveProject(state);
         }
     }
 
@@ -991,6 +1476,10 @@
         const itemCount = outlineList.querySelectorAll('.outline-item').length;
         statusBar.textContent = `Items: ${itemCount} | Last Action: ${action}`;
     }
+
+    outlineTitle.addEventListener('input', () => {
+        saveState('Edited Title');
+    });
 
     let activeItemMenu = null;
     let activeItemMenuTrigger = null;
@@ -2592,20 +3081,7 @@ document.getElementById('pdfDownloadBtn').addEventListener('click', () => {
         const reader = new FileReader();
         reader.onload = (event) => {
             const data = JSON.parse(event.target.result);
-            outlineTitle.value = data.title || 'Untitled Outline';
-            hasCheckboxes = data.hasCheckboxes || false;
-            formattingEnabled = data.formattingEnabled || false;
-            if (data.levelNames && Array.isArray(data.levelNames)) {
-                levelNames.length = 0;
-                levelNames.push(...data.levelNames);
-            }
-            outlineList.innerHTML = '';
-            deserializeItems(data.items, outlineList);
-            updateItemStates();
-            updateResizeBars();
-            updateFormattingMode();
-            currentItem = outlineList.querySelector('.outline-item');
-            if (currentItem) currentItem.querySelector('.content').focus();
+            applyOutlineState(data);
             saveState('Loaded File');
         };
         reader.readAsText(file);
@@ -2644,23 +3120,33 @@ document.getElementById('pdfDownloadBtn').addEventListener('click', () => {
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-        const initialItem = outlineList.querySelector('.outline-item');
-        if (initialItem) {
-            attachItemListeners(initialItem);
-            currentItem = initialItem;
-            updateItemState(initialItem);
-            updateResizeBars();
-            updateFormattingMode();
-            saveState('Initial Load');
+        loadProjectsFromLocalStorage();
+        if (activeProjectId && projects[activeProjectId]) {
+            applyOutlineState(projects[activeProjectId].data);
+        } else {
+            // Defensive fallback: something went wrong loading/migrating projects — just
+            // wire up whatever static markup shipped in the HTML so the app still works.
+            const initialItem = outlineList.querySelector('.outline-item');
+            if (initialItem) {
+                attachItemListeners(initialItem);
+                currentItem = initialItem;
+                updateItemState(initialItem);
+            }
         }
+        updateResizeBars();
+        updateFormattingMode();
+        history = [];
+        historyIndex = -1;
+        saveState('Initial Load');
+        renderProjectPicker();
         updateStatus('Loaded');
         initFirebase();
     });
 
 </script>
 <footer style="text-align: center; color: #6b7280; font-size: 12px; margin-top: 20px;">
-    Copyright © 2025 Dr. Wen-Ming Yang <br>
-    20250330: v2.15 PDF as the one we see in landscape or portal view option (popup).
+    Copyright © 2026 Dr. Wen-Ming Yang <br>
+    20260812: v2.2 Google login and sharing.
         <img src="https://hitwebcounter.com/counter/counter.php?page=20090258&style=0002&nbdigits=5&type=page&initCount=0" title="Counter Widget" Alt="Visit counter For Websites"   border="0" /></a>   
 
 </footer> 
