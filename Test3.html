@@ -1489,7 +1489,7 @@ function subscribeToCloud(firebaseUid) {
     unsubscribeCloud();
     setSyncState('syncing', 'Connecting…');
     cloudUnsub = db.collection('users').doc(firebaseUid).onSnapshot((snap) => {
-        // CRITICAL FIX: Skip our own local writes that haven't been confirmed by the server yet
+        // CRITICAL: Skip our own local writes that haven't been confirmed by the server yet
         if (snap.metadata.hasPendingWrites) {
             return;
         }
@@ -1541,7 +1541,7 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
         return;
     }
     
-    // Check if the active project's data actually changed
+    // CRITICAL: Check if the active project's data actually changed
     let activeProjectChanged = false;
     let currentProjectId = activeProjectId;
     
@@ -1550,19 +1550,23 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
         const remoteProject = remote[currentProjectId];
         
         if (remoteProject) {
-            const currentDataJSON = JSON.stringify(currentProject.data);
-            const remoteDataJSON = JSON.stringify(remoteProject.data);
-            if (currentDataJSON !== remoteDataJSON || currentProject.name !== remoteProject.name) {
+            // Deep compare the data
+            const currentDataStr = JSON.stringify(currentProject.data);
+            const remoteDataStr = JSON.stringify(remoteProject.data);
+            if (currentDataStr !== remoteDataStr || currentProject.name !== remoteProject.name) {
                 activeProjectChanged = true;
             }
         } else {
             // Remote doesn't have this project anymore
             activeProjectChanged = true;
         }
+    } else {
+        // No active project or project data missing
+        activeProjectChanged = true;
     }
     
-    // If the active project hasn't changed, just update the project data in memory
-    // WITHOUT touching the DOM at all
+    // If the active project hasn't changed, DO NOT touch the DOM
+    // Just update the project data in memory
     if (!activeProjectChanged && projects[currentProjectId]) {
         // Update all project data in memory
         Object.keys(remote).forEach(id => {
@@ -1589,7 +1593,7 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
         renderProjectPicker();
         lastSyncedJSON = remoteJSON;
         setSyncState('synced', 'Synced');
-        return;
+        return; // IMPORTANT: Exit without touching the DOM
     }
     
     // Only reach here if the active project actually changed
@@ -1600,7 +1604,7 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
     }
     
     const newProjects = {};
-    // Shared projects live outside this blob (in shared_treewm_projects)
+    // Shared projects live outside this blob
     Object.keys(projects).forEach(id => {
         if (projects[id].shareId) newProjects[id] = projects[id];
     });
@@ -2064,40 +2068,100 @@ function applyRemoteCloudSnapshot(remote, remoteJSON) {
     // Restores the DOM/app state from a captured state object. Shared by undo/redo,
     // loading a file, switching projects, and applying a remote cloud snapshot — so all
     // of those stay in sync with exactly one code path instead of four copies drifting apart.
-    function applyOutlineState(state) {
-        outlineTitle.value = state.title || '';
-        hasCheckboxes = state.hasCheckboxes || false;
-        formattingEnabled = state.formattingEnabled || false;
-        if (state.levelNames && Array.isArray(state.levelNames)) {
-            levelNames.length = 0;
-            levelNames.push(...state.levelNames);
+function applyOutlineState(state) {
+    // Store the currently focused element
+    const focusedElement = document.activeElement;
+    const focusedContent = focusedElement?.closest?.('.content');
+    const focusedItem = focusedContent?.closest?.('.outline-item');
+    let selection = null;
+    
+    // Store selection info if we're in a contenteditable
+    if (focusedContent) {
+        const sel = window.getSelection();
+        if (sel.rangeCount > 0) {
+            selection = {
+                startContainer: sel.anchorNode,
+                startOffset: sel.anchorOffset,
+                endContainer: sel.focusNode,
+                endOffset: sel.focusOffset,
+                content: focusedContent
+            };
         }
-        outlineList.innerHTML = '';
-        deserializeItems(state.items || [], outlineList);
-        updateItemStates();
-        updateResizeBars();
-        updateFormattingMode();
+    }
+    
+    outlineTitle.value = state.title || '';
+    hasCheckboxes = state.hasCheckboxes || false;
+    formattingEnabled = state.formattingEnabled || false;
+    if (state.levelNames && Array.isArray(state.levelNames)) {
+        levelNames.length = 0;
+        levelNames.push(...state.levelNames);
+    }
+    outlineList.innerHTML = '';
+    deserializeItems(state.items || [], outlineList);
+    updateItemStates();
+    updateResizeBars();
+    updateFormattingMode();
+    
+    // Try to restore focus and selection
+    if (focusedItem && document.contains(focusedItem)) {
+        const content = focusedItem.querySelector('.content');
+        if (content) {
+            content.focus();
+            if (selection && selection.content === content) {
+                try {
+                    const sel = window.getSelection();
+                    const range = document.createRange();
+                    range.setStart(selection.startContainer, selection.startOffset);
+                    range.setEnd(selection.endContainer, selection.endOffset);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                } catch (e) {
+                    // If selection restoration fails, put cursor at end
+                    placeCaretAtEnd(content);
+                }
+            } else {
+                placeCaretAtEnd(content);
+            }
+            currentItem = focusedItem;
+        }
+    } else {
         currentItem = outlineList.querySelector('.outline-item');
-        if (currentItem) currentItem.querySelector('.content').focus();
-    }
-
-    function saveState(action) {
-        const state = {
-            title: outlineTitle.value,
-            items: serializeItems(outlineList.children),
-            hasCheckboxes: hasCheckboxes,
-            formattingEnabled: formattingEnabled,
-            levelNames: [...levelNames],
-            action: action
-        };
-        if (historyIndex < history.length - 1) {
-            history = history.slice(0, historyIndex + 1);
+        if (currentItem) {
+            const content = currentItem.querySelector('.content');
+            if (content) content.focus();
         }
-        history.push(state);
-        historyIndex++;
-        updateStatus(action);
-        persistActiveProject(state);
     }
+}
+
+function saveState(action) {
+    // Get the current state
+    const state = {
+        title: outlineTitle.value,
+        items: serializeItems(outlineList.children),
+        hasCheckboxes: hasCheckboxes,
+        formattingEnabled: formattingEnabled,
+        levelNames: [...levelNames],
+        action: action
+    };
+    
+    // Check if this state is actually different from the last one
+    if (historyIndex >= 0 && history[historyIndex]) {
+        const lastState = history[historyIndex];
+        const currentJSON = JSON.stringify(state);
+        const lastJSON = JSON.stringify(lastState);
+        if (currentJSON === lastJSON) {
+            return; // No actual change, skip
+        }
+    }
+    
+    if (historyIndex < history.length - 1) {
+        history = history.slice(0, historyIndex + 1);
+    }
+    history.push(state);
+    historyIndex++;
+    updateStatus(action);
+    persistActiveProject(state);
+}
 
     function undo() {
         if (historyIndex > 0) {
