@@ -1482,9 +1482,26 @@
         payload[CLOUD_FIELD] = out;
         payload[CLOUD_UPDATED_FIELD] = firebase.firestore.FieldValue.serverTimestamp();
         const userRef = db.collection('users').doc(currentUser.uid);
-        userRef.set(payload, { merge: true }).then(() => {
+        // IMPORTANT: use update(), not set(..., {merge:true}). Firestore's merge:true deep-merges
+        // nested map fields — any stale sub-field left over from an earlier write would silently
+        // persist underneath our new data forever, so the echo we read back would never quite
+        // match what we sent, causing an endless resync-and-rebuild loop. update() replaces the
+        // whole treewmProjects field with exactly what we pass, no leftover fields, ever.
+        userRef.update(payload).then(() => {
             setSyncState('synced', 'Synced');
         }).catch((err) => {
+            if (err && err.code === 'not-found') {
+                // Document doesn't exist yet (brand-new account) — merge is safe here since
+                // there's nothing existing to conflict-merge with.
+                userRef.set(payload, { merge: true }).then(() => {
+                    setSyncState('synced', 'Synced');
+                }).catch((err2) => {
+                    console.error('Cloud save failed', err2);
+                    if (lastSyncedJSON === json) lastSyncedJSON = null;
+                    setSyncState('error', 'Save failed: ' + err2.message);
+                });
+                return;
+            }
             console.error('Cloud save failed', err);
             if (lastSyncedJSON === json) lastSyncedJSON = null; // let the next save attempt retry
             setSyncState('error', 'Save failed: ' + err.message);
@@ -1702,11 +1719,23 @@
         // Same fix as pushToCloud: record this as synced BEFORE the write goes out so our
         // own echo through onSnapshot doesn't get misread as an incoming remote change.
         lastSharedProjectJSON[shareId] = json;
-        db.collection(SHARED_COLLECTION).doc(shareId).set({
+        const docRef = db.collection(SHARED_COLLECTION).doc(shareId);
+        const payload = {
             kind: 'treewm-project',
             project: proj,
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true }).catch((err) => {
+        };
+        // Same reasoning as pushToCloud: update() replaces the "project" field wholesale
+        // instead of deep-merging it, so no stale leftover sub-fields can linger and cause
+        // a permanent echo mismatch. Fall back to set()+merge only if the doc is brand new.
+        docRef.update(payload).catch((err) => {
+            if (err && err.code === 'not-found') {
+                docRef.set(payload, { merge: true }).catch((err2) => {
+                    console.error('Could not save shared project', err2);
+                    if (lastSharedProjectJSON[shareId] === json) delete lastSharedProjectJSON[shareId];
+                });
+                return;
+            }
             console.error('Could not save shared project', err);
             if (lastSharedProjectJSON[shareId] === json) delete lastSharedProjectJSON[shareId]; // let the next edit retry
         });
