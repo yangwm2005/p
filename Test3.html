@@ -892,6 +892,48 @@
     .share-stop-btn:hover {
         background: #fef2f2;
     }
+    .history-modal-content {
+        max-width: 520px;
+    }
+    .history-list {
+        max-height: 360px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .history-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 9px 12px;
+        background: #f8fafc;
+        border-radius: 6px;
+    }
+    .history-row-info {
+        min-width: 0;
+        flex: 1;
+    }
+    .history-row-time {
+        font-size: 12px;
+        font-weight: 500;
+        color: #1f2937;
+    }
+    .history-row-preview {
+        font-size: 12px;
+        color: #6b7280;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-top: 2px;
+    }
+    .history-row button {
+        margin: 0;
+        flex-shrink: 0;
+        padding: 5px 12px;
+        font-size: 12px;
+    }
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -943,6 +985,7 @@
             <button id="undoBtn" title="Undo last action (Ctrl + Z)">Undo</button>
             <button id="redoBtn" title="Redo last action (Ctrl + Y)">Redo</button>
             <button id="helpBtn" title="Show keyboard shortcuts">Help</button>
+            <button id="historyBtn" title="View and restore earlier versions of this project">History</button>
             <div class="auth-group" id="authGroup">
                 <span class="sync-dot" id="syncDot" data-state="offline" title="Not signed in"></span>
                 <button id="signInBtn" class="signin-btn" title="Sign in with Google">
@@ -1011,6 +1054,15 @@
             <button id="shareStopBtn" class="share-stop-btn" style="display:none;">Stop Sharing</button>
             <button id="shareDoneBtn">Done</button>
         </div>
+    </div>
+</div>
+
+<div class="modal" id="historyModal">
+    <div class="modal-content history-modal-content">
+        <span class="close-btn" id="historyCloseBtn">×</span>
+        <h2>🕐 Version History — <span id="historyModalProjectName"></span></h2>
+        <p class="share-modal-sub">Snapshots are captured automatically as you work — roughly once a minute locally, plus once a day in the cloud if you're signed in. Restoring saves your current content as a snapshot first, so a restore is never a dead end.</p>
+        <div class="history-list" id="historyList"></div>
     </div>
 </div>
 
@@ -1178,6 +1230,201 @@
 
     // Called from saveState/undo/redo — keeps the active project's stored data, localStorage,
     // and (if signed in) the cloud all in sync with whatever's currently on screen.
+    // ---------- Version history (local rolling snapshots + a once-daily cloud backup) ----------
+    // This exists as a safety net independent of the live sync engine above — even if a sync
+    // conflict or a stray tab overwrites what's on screen, nothing typed is ever a dead end.
+    const SNAPSHOTS_KEY = 'treewm_snapshots_v1';
+    const SNAPSHOT_MIN_INTERVAL_MS = 60 * 1000; // don't snapshot more than once a minute per project
+    const SNAPSHOT_MAX_PER_PROJECT = 40;
+    const SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000; // local snapshots roll off after a day
+    let lastLocalSnapshotAt = {}; // projectId -> timestamp of the last local snapshot taken
+    let lastCloudSnapshotDateKey = null;
+    let lastCloudSnapshotWriteAt = 0;
+
+    function loadAllSnapshots() {
+        try {
+            const raw = localStorage.getItem(SNAPSHOTS_KEY);
+            return raw ? JSON.parse(raw) : {};
+        } catch (e) {
+            console.error('Failed to load snapshot history', e);
+            return {};
+        }
+    }
+
+    function saveAllSnapshots(all) {
+        try {
+            localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(all));
+        } catch (e) {
+            console.error('Failed to save snapshot history', e);
+        }
+    }
+
+    function addLocalSnapshot(projectId, data) {
+        if (!projectId) return;
+        const all = loadAllSnapshots();
+        if (!all[projectId]) all[projectId] = [];
+        all[projectId].push({ ts: Date.now(), data: JSON.parse(JSON.stringify(data)) });
+        const cutoff = Date.now() - SNAPSHOT_MAX_AGE_MS;
+        all[projectId] = all[projectId].filter(s => s.ts >= cutoff);
+        if (all[projectId].length > SNAPSHOT_MAX_PER_PROJECT) {
+            all[projectId] = all[projectId].slice(all[projectId].length - SNAPSHOT_MAX_PER_PROJECT);
+        }
+        saveAllSnapshots(all);
+    }
+
+    function maybeTakeLocalSnapshot(projectId, data) {
+        if (!projectId) return;
+        const now = Date.now();
+        if (lastLocalSnapshotAt[projectId] && (now - lastLocalSnapshotAt[projectId]) < SNAPSHOT_MIN_INTERVAL_MS) return;
+        lastLocalSnapshotAt[projectId] = now;
+        addLocalSnapshot(projectId, data);
+    }
+
+    function pruneSnapshotsForDeletedProjects() {
+        const all = loadAllSnapshots();
+        let changed = false;
+        Object.keys(all).forEach(id => {
+            if (!projects[id]) { delete all[id]; changed = true; }
+        });
+        if (changed) saveAllSnapshots(all);
+    }
+
+    function getLocalDateKey(d) {
+        const y = d.getFullYear(), m = d.getMonth() + 1, day = d.getDate();
+        return `${y}-${m < 10 ? '0' : ''}${m}-${day < 10 ? '0' : ''}${day}`;
+    }
+
+    // Saves one snapshot per calendar day per project (overwriting today's doc as the day goes
+    // on, so it ends up capturing "how it looked at the end of that day"). Mirrors the Gantt
+    // app's own daily-snapshot pattern.
+    function maybeSaveDailyCloudSnapshot(projectId, data) {
+        if (!firebaseReady || !currentUser || !projectId) return;
+        const now = Date.now();
+        const dateKey = getLocalDateKey(new Date());
+        if (dateKey === lastCloudSnapshotDateKey && (now - lastCloudSnapshotWriteAt) < 3 * 60 * 1000) return;
+        db.collection('users').doc(currentUser.uid).collection('treewmSnapshots').doc(dateKey).set({
+            projectId: projectId,
+            data: JSON.stringify(data),
+            savedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true }).then(() => {
+            lastCloudSnapshotDateKey = dateKey;
+            lastCloudSnapshotWriteAt = now;
+        }).catch((err) => console.warn('Daily snapshot save failed', err));
+    }
+
+    function formatRelativeTime(ts) {
+        const mins = Math.round((Date.now() - ts) / 60000);
+        if (mins < 1) return 'Just now';
+        if (mins < 60) return `${mins} min ago`;
+        const hrs = Math.round(mins / 60);
+        if (hrs < 24) return `${hrs} hr${hrs > 1 ? 's' : ''} ago`;
+        const days = Math.round(hrs / 24);
+        return `${days} day${days > 1 ? 's' : ''} ago`;
+    }
+
+    function snapshotPreviewText(data) {
+        const firstItem = data && data.items && data.items[0];
+        if (!firstItem) return '(empty)';
+        const div = document.createElement('div');
+        div.innerHTML = firstItem.text || '';
+        const text = (div.textContent || '').trim();
+        return text ? (text.length > 70 ? text.slice(0, 70) + '…' : text) : '(untitled item)';
+    }
+
+    function openHistoryModal() {
+        if (!activeProjectId || !projects[activeProjectId]) return;
+        document.getElementById('historyModalProjectName').textContent = projects[activeProjectId].name || 'Untitled Project';
+        renderHistoryList();
+        document.getElementById('historyModal').style.display = 'flex';
+    }
+
+    function closeHistoryModal() {
+        document.getElementById('historyModal').style.display = 'none';
+    }
+
+    function renderHistoryList() {
+        const listEl = document.getElementById('historyList');
+        listEl.innerHTML = '<p class="share-modal-sub">Loading…</p>';
+
+        const all = loadAllSnapshots();
+        const localSnaps = (all[activeProjectId] || [])
+            .slice()
+            .sort((a, b) => b.ts - a.ts)
+            .map(s => ({ ts: s.ts, data: s.data, source: 'local' }));
+
+        function render(cloudSnaps) {
+            const combined = localSnaps.concat(cloudSnaps || []).sort((a, b) => b.ts - a.ts);
+            listEl.innerHTML = '';
+            if (!combined.length) {
+                listEl.innerHTML = '<p class="share-modal-sub">No history yet — snapshots are captured automatically about once a minute while you work.</p>';
+                return;
+            }
+            combined.forEach(snap => {
+                const row = document.createElement('div');
+                row.className = 'history-row';
+
+                const info = document.createElement('div');
+                info.className = 'history-row-info';
+
+                const time = document.createElement('div');
+                time.className = 'history-row-time';
+                time.textContent = formatRelativeTime(snap.ts) + (snap.source === 'cloud' ? ' · cloud daily backup' : '');
+
+                const preview = document.createElement('div');
+                preview.className = 'history-row-preview';
+                preview.textContent = snapshotPreviewText(snap.data);
+
+                info.appendChild(time);
+                info.appendChild(preview);
+
+                const restoreBtn = document.createElement('button');
+                restoreBtn.textContent = 'Restore';
+                restoreBtn.addEventListener('click', () => restoreSnapshot(snap.data));
+
+                row.appendChild(info);
+                row.appendChild(restoreBtn);
+                listEl.appendChild(row);
+            });
+        }
+
+        if (firebaseReady && currentUser) {
+            db.collection('users').doc(currentUser.uid).collection('treewmSnapshots').get().then((qs) => {
+                const cloudSnaps = [];
+                qs.forEach((docSnap) => {
+                    try {
+                        const docData = docSnap.data();
+                        if (docData.projectId !== activeProjectId) return;
+                        const proj = JSON.parse(docData.data);
+                        const ts = (docData.savedAt && docData.savedAt.toMillis) ? docData.savedAt.toMillis() : Date.parse(docSnap.id);
+                        cloudSnaps.push({ ts, data: proj, source: 'cloud' });
+                    } catch (e) { /* skip an unreadable entry rather than fail the whole list */ }
+                });
+                render(cloudSnaps);
+            }).catch((err) => {
+                console.error('Failed to load cloud history', err);
+                render([]);
+            });
+        } else {
+            render([]);
+        }
+    }
+
+    function restoreSnapshot(data) {
+        if (!confirm('Restore this version? Your current content will be saved as a snapshot first, so this is never a dead end.')) return;
+        addLocalSnapshot(activeProjectId, captureCurrentOutlineData());
+        applyOutlineState(data);
+        history = [];
+        historyIndex = -1;
+        saveState('Restored from History');
+        closeHistoryModal();
+    }
+
+    document.getElementById('historyBtn').addEventListener('click', openHistoryModal);
+    document.getElementById('historyCloseBtn').addEventListener('click', closeHistoryModal);
+    window.addEventListener('click', (e) => {
+        if (e.target === document.getElementById('historyModal')) closeHistoryModal();
+    });
+
     function persistActiveProject(state) {
         if (!activeProjectId || !projects[activeProjectId]) return;
         projects[activeProjectId].data = {
@@ -1190,6 +1437,8 @@
         projects[activeProjectId].name = state.title || 'Untitled Project';
         saveProjectsToLocalStorageOnly();
         renderProjectPicker();
+        maybeTakeLocalSnapshot(activeProjectId, projects[activeProjectId].data);
+        maybeSaveDailyCloudSnapshot(activeProjectId, projects[activeProjectId].data);
         if (projects[activeProjectId].shareId) {
             pushSharedProjectUpdate(projects[activeProjectId].shareId);
         } else {
@@ -1420,6 +1669,7 @@
         if (!confirm(`Delete project "${p.name || 'Untitled Project'}"? This cannot be undone.`)) return;
         delete projects[id];
         markRemoved(id);
+        pruneSnapshotsForDeletedProjects();
         if (activeProjectId === id) {
             const nextId = Object.keys(projects)[0];
             activeProjectId = nextId;
