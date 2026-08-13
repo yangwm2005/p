@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta charset="UTF-8">
+<title>TreeWM</title>
 <style>
     body { 
         font-family: 'Roboto', 'Segoe UI', 'Arial', sans-serif;
@@ -515,8 +517,8 @@
     }
     .item-menu-btn {
         position: absolute;
-        top: -7px;
-        right: -7px;
+        top: -9px;
+        right: 2px;
         width: 20px;
         height: 20px;
         padding: 0;
@@ -976,6 +978,7 @@
             <button id="addMainBtn" title="Add a new main item">+ Main</button>
             <button id="addSubBtn" title="Add a sub-item to selected item (Shift + Enter)">+ Sub</button>
             <button id="addSiblingBtn" title="Add a sibling item to selected item (Enter)">+ Sibling</button>
+            <button id="collapseAllBtn" title="Collapse or expand every item with sub-items">⊟ Collapse All</button>
             <button id="textColorBtn" title="Text color">A ▼</button>
             <button id="boldBtn" title="Toggle bold on selected text (Ctrl + B)">Bold</button>
             <button id="italicBtn" title="Toggle italic on selected text (Ctrl + I)">Italic</button>
@@ -1537,6 +1540,7 @@
         const nameEl = document.getElementById('activeProjectName');
         const active = projects[activeProjectId];
         if (nameEl) nameEl.textContent = active ? (active.name || 'Untitled Project') : 'No project';
+        document.title = active && active.name ? `${active.name} — TreeWM` : 'TreeWM';
 
         const listEl = document.getElementById('projectList');
         if (!listEl) return;
@@ -2372,6 +2376,10 @@
         updateFormattingMode();
         currentItem = outlineList.querySelector('.outline-item');
         if (currentItem) currentItem.querySelector('.content').focus();
+        // Individual items can carry mixed collapsed/expanded states, so there's no single
+        // "all collapsed" boolean to restore — reset the button to its default action label.
+        const collapseAllBtn = document.getElementById('collapseAllBtn');
+        if (collapseAllBtn) collapseAllBtn.textContent = '⊟ Collapse All';
     }
 
     function saveState(action) {
@@ -2709,6 +2717,30 @@
         } else {
             alert('Please select an item to add a sibling item.');
         }
+    });
+
+    function setAllCollapsed(collapsed) {
+        const itemsWithChildren = outlineList.querySelectorAll('.outline-item.has-children');
+        itemsWithChildren.forEach(item => {
+            item.classList.toggle('hidden', collapsed);
+            const toggle = item.querySelector(':scope > .toggle-btn');
+            if (toggle) toggle.textContent = collapsed ? '▶' : '▼';
+        });
+        const btn = document.getElementById('collapseAllBtn');
+        if (btn) btn.textContent = collapsed ? '⊞ Expand All' : '⊟ Collapse All';
+        updateResizeBars();
+        return itemsWithChildren.length;
+    }
+
+    document.getElementById('collapseAllBtn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const collapsing = document.getElementById('collapseAllBtn').textContent.includes('Collapse');
+        const count = setAllCollapsed(collapsing);
+        if (count === 0) {
+            alert('No items with sub-items to collapse yet.');
+            return;
+        }
+        saveState(collapsing ? 'Collapsed All' : 'Expanded All');
     });
 
     document.getElementById('toggleCheckboxesBtn').addEventListener('click', (e) => {
@@ -3948,7 +3980,12 @@ document.getElementById('pdfDownloadBtn').addEventListener('click', () => {
         const parentList = item.parentElement.closest('.outline-list');
         const parentItem = parentList?.parentElement.closest('.outline-item');
         const currentLevel = parentItem ? (parseInt(parentItem.className.match(/level-(\d)/)?.[1] || 0) + 1) : 0;
+        // className gets fully rebuilt below to recompute the level class — capture whether
+        // this item was collapsed first, since that's real persisted data (restored by undo/
+        // redo, project switches, file loads, and remote sync), not something to discard.
+        const wasHidden = item.classList.contains('hidden');
         item.className = `outline-item${currentLevel > 0 ? ` level-${currentLevel}` : ''}`;
+        if (wasHidden) item.classList.add('hidden');
         item.draggable = true;
         const hasChildren = item.querySelector('.outline-list').children.length > 0;
         item.classList.toggle('has-children', hasChildren);
@@ -3956,10 +3993,12 @@ document.getElementById('pdfDownloadBtn').addEventListener('click', () => {
         const toggle = item.querySelector('.no-toggle, .toggle-btn');
         if (hasChildren && toggle.classList.contains('no-toggle')) {
             toggle.className = 'toggle-btn';
-            toggle.textContent = item.classList.contains('hidden') ? '▶' : '▼';
+            toggle.textContent = wasHidden ? '▶' : '▼';
         } else if (!hasChildren && toggle.classList.contains('toggle-btn')) {
             toggle.className = 'no-toggle';
             toggle.textContent = '';
+        } else if (hasChildren && toggle.classList.contains('toggle-btn')) {
+            toggle.textContent = wasHidden ? '▶' : '▼';
         }
         updateItemHeight(item);
     }
