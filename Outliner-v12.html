@@ -23,6 +23,7 @@
     --sidebar-w:250px;
     --radius:6px;
     --shadow:0 1px 2px rgba(32,38,46,0.06), 0 4px 14px rgba(32,38,46,0.05);
+    --doc-font-size:15px;
     font-size:15px;
   }
   [data-theme="dark"]{
@@ -219,6 +220,18 @@
   .topbtn:disabled{opacity:0.35; cursor:default; pointer-events:none;}
   .topbtn.primary{background:var(--accent); color:#fff; border-color:var(--accent);}
   .topbtn.primary:hover{opacity:0.92;}
+  #fontSizeWrap{
+    display:inline-flex; align-items:center; gap:0; flex-shrink:0;
+    border:1px solid var(--line); border-radius:var(--radius); overflow:hidden;
+  }
+  #fontSizeWrap .fs-btn{
+    border:none; border-radius:0; padding:6px 9px; font-weight:600;
+  }
+  #fontSizeWrap .fs-btn:hover{background:var(--accent-soft); color:var(--accent-ink);}
+  #fontSizeLabel{
+    font-size:11px; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace;
+    padding:0 5px; min-width:18px; text-align:center; user-select:none;
+  }
   #menuSpacer{flex:1;}
   .auth-group{display:flex; align-items:center; gap:8px; padding-left:8px; margin-left:2px; border-left:1px solid var(--line);}
   .sync-dot{width:8px; height:8px; border-radius:50%; background:var(--line-strong); flex-shrink:0; transition:background .15s;}
@@ -515,7 +528,7 @@
     content:''; position:absolute; left:100%; width:12px; top:11px; height:1px;
     background:repeating-linear-gradient(90deg, var(--ink-faint) 0, var(--ink-faint) 2px, transparent 2px, transparent 4px);
   }
-  .branch-content .col-item-text{flex:0 0 auto; width:170px; font-size:13px;}
+  .branch-content .col-item-text{flex:0 0 auto; width:170px; font-size:calc(var(--doc-font-size) - 0.5px);}
   .branch-content .col-item-bullet{width:5px; height:5px; margin-top:5px;}
   .branch-content .col-item-arrow{width:10px; font-size:10px; margin-top:1px;}
   .branch-content .col-item-combotoggle{width:12px; font-size:11px; margin-top:1px;}
@@ -554,7 +567,7 @@
   }
   .col-item{
     display:flex; align-items:flex-start; gap:6px; padding:6px 8px;
-    border-radius:5px; cursor:pointer; font-size:13.5px; line-height:1.4;
+    border-radius:5px; cursor:pointer; font-size:var(--doc-font-size); line-height:1.4;
     color:var(--ink); position:relative; margin-bottom:1px;
   }
   .col-item:hover{background:var(--accent-soft);}
@@ -690,6 +703,7 @@
     white-space:pre-wrap;
     word-break:break-word;
     color:var(--ink);
+    font-size:var(--doc-font-size);
   }
   .content:empty:before{content:attr(data-placeholder); color:var(--ink-faint);}
   .row.done > .row-main > .content{color:var(--done); text-decoration:line-through;}
@@ -1141,6 +1155,11 @@
   <div id="menuSpacer"></div>
   <button class="topbtn" id="undoBtn" title="Undo (Ctrl+Z)" disabled>↶</button>
   <button class="topbtn" id="redoBtn" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
+  <div id="fontSizeWrap" title="Adjust document text size">
+    <button class="topbtn fs-btn" id="fontSizeDownBtn" title="Decrease text size">A−</button>
+    <span id="fontSizeLabel">14</span>
+    <button class="topbtn fs-btn" id="fontSizeUpBtn" title="Increase text size">A+</button>
+  </div>
   <button class="topbtn" id="themeBtn" title="Toggle theme">◐ Theme</button>
   <button class="topbtn" id="linesBtn" title="Show or hide connector lines">┆ Lines</button>
   <button class="topbtn" id="collapseAllBtn" title="Collapse every item">⊟ Collapse all</button>
@@ -3809,6 +3828,29 @@
     focusRequest = { id: n.id, caret: 'start' };
     renderTree();
   });
+
+  // ---------------- Document text size ----------------
+  const FONT_SIZES = [12, 13, 14, 15, 16, 17, 18, 20, 22];
+  const fontSizeLabel = document.getElementById('fontSizeLabel');
+  const fontSizeDownBtn = document.getElementById('fontSizeDownBtn');
+  const fontSizeUpBtn = document.getElementById('fontSizeUpBtn');
+  function applyDocFontSize(px){
+    px = Math.max(FONT_SIZES[0], Math.min(FONT_SIZES[FONT_SIZES.length - 1], px));
+    document.documentElement.style.setProperty('--doc-font-size', px + 'px');
+    fontSizeLabel.textContent = px;
+    fontSizeDownBtn.disabled = px <= FONT_SIZES[0];
+    fontSizeUpBtn.disabled = px >= FONT_SIZES[FONT_SIZES.length - 1];
+    localStorage.setItem('threadline_doc_font_size', String(px));
+  }
+  function stepDocFontSize(dir){
+    const cur = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--doc-font-size')) || 14;
+    let idx = FONT_SIZES.reduce((best, v, i) => Math.abs(v - cur) < Math.abs(FONT_SIZES[best] - cur) ? i : best, 0);
+    idx = Math.max(0, Math.min(FONT_SIZES.length - 1, idx + dir));
+    applyDocFontSize(FONT_SIZES[idx]);
+  }
+  fontSizeDownBtn.addEventListener('click', ()=> stepDocFontSize(-1));
+  fontSizeUpBtn.addEventListener('click', ()=> stepDocFontSize(1));
+  applyDocFontSize(parseFloat(localStorage.getItem('threadline_doc_font_size')) || 15);
 
   // ---------------- Theme ----------------
   const themeBtn = document.getElementById('themeBtn');
