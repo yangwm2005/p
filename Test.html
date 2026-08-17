@@ -3474,6 +3474,14 @@ function insertNewCheckboxLine(currentLine) {
             return true;
         };
 
+        // Used by the compact JSON save/load (see the Firebase script
+        // block near the end of the file) to read a root's current tree
+        // without needing direct access to this IIFE's private `roots`.
+        window.getOutlineTree = function (rootId) {
+            const st = roots[rootId];
+            return st ? st.tree : null;
+        };
+
         document.addEventListener('DOMContentLoaded', function () {
             document.querySelectorAll('.outline-root').forEach(function (el) {
                 window.initOutlineTable(el, '');
@@ -3556,17 +3564,125 @@ function insertNewCheckboxLine(currentLine) {
             auth.signOut();
         };
 
+        // --- Compact JSON serialization (replaces the earlier full-HTML
+        // dump). Only the essential data survives — cell titles and each
+        // outline root's tree (id/text/children/flags per node) — not
+        // rendered markup, wrapper divs, or inline styles. This is both
+        // much smaller and avoids Firestore's "no arrays nested inside
+        // arrays" restriction, which a raw rows-of-cells structure would
+        // otherwise hit — kept as a single JSON string field instead of
+        // native nested Firestore data. ---
+        function serializeTablesContainer() {
+            const container = document.getElementById('tablesContainer');
+            const tables = [];
+            Array.from(container.children).forEach(function (child) {
+                let table, wrapped;
+                if (child.tagName === 'TABLE') { table = child; wrapped = false; }
+                else if (child.classList.contains('table-wrapper')) { table = child.querySelector('table'); wrapped = true; }
+                else { return; }
+                if (!table) return;
+                const rows = [];
+                table.querySelectorAll('tr').forEach(function (tr) {
+                    const cells = [];
+                    tr.querySelectorAll('td').forEach(function (td) {
+                        const titleEl = td.querySelector('.cell-title');
+                        const outlineEl = td.querySelector('.outline-root');
+                        const tree = (outlineEl && outlineEl.id && window.getOutlineTree)
+                            ? (window.getOutlineTree(outlineEl.id) || []) : [];
+                        cells.push({
+                            title: titleEl ? titleEl.textContent : '',
+                            checkboxBtn: !!td.querySelector('.cell-action-button'),
+                            tree: tree
+                        });
+                    });
+                    rows.push(cells);
+                });
+                tables.push({ wrapped: wrapped, mainTableId: table.id === 'mainTable', rows: rows });
+            });
+            return { version: 1, tables: tables };
+        }
+
+        function buildCellElement(cellData) {
+            const td = document.createElement('td');
+            const h3 = document.createElement('h3');
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'cell-title';
+            titleSpan.contentEditable = 'true';
+            titleSpan.textContent = cellData.title || '';
+            h3.appendChild(titleSpan);
+            if (cellData.checkboxBtn) {
+                h3.appendChild(document.createTextNode(' '));
+                const btn = document.createElement('button');
+                btn.setAttribute('onclick', 'insertCheckboxInCell(this)');
+                btn.className = 'cell-action-button';
+                btn.style.backgroundColor = '#4CAF50';
+                btn.textContent = '+✓';
+                h3.appendChild(btn);
+            }
+            td.appendChild(h3);
+            const root = document.createElement('div');
+            root.className = 'outline-root';
+            root.dataset.tree = JSON.stringify(cellData.tree || []);
+            td.appendChild(root);
+            return td;
+        }
+
+        function rebuildTablesContainer(data) {
+            const container = document.getElementById('tablesContainer');
+            container.innerHTML = '';
+            (data.tables || []).forEach(function (tableData) {
+                const table = document.createElement('table');
+                if (tableData.mainTableId) table.id = 'mainTable';
+                (tableData.rows || []).forEach(function (rowCells) {
+                    const tr = document.createElement('tr');
+                    rowCells.forEach(function (cellData) { tr.appendChild(buildCellElement(cellData)); });
+                    table.appendChild(tr);
+                });
+                if (tableData.wrapped) {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'table-wrapper';
+                    const delBtn = document.createElement('button');
+                    delBtn.className = 'table-delete-btn';
+                    delBtn.title = 'Delete this table';
+                    delBtn.textContent = '×';
+                    delBtn.onclick = function () {
+                        if (confirm('Delete this table? This cannot be undone.')) {
+                            wrapper.remove();
+                            if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+                        }
+                    };
+                    wrapper.appendChild(table);
+                    wrapper.appendChild(delBtn);
+                    container.appendChild(wrapper);
+                } else {
+                    container.appendChild(table);
+                }
+            });
+            // Each root's tree was written to dataset.tree above, so
+            // initOutlineTable restores it directly — the same
+            // restore-from-data-tree path local file Open already uses.
+            container.querySelectorAll('.outline-root').forEach(function (el) {
+                window.initOutlineTable(el, '');
+            });
+        }
+
+        // Exposed for debugging/testing (e.g. inspecting exactly what a
+        // cloud save payload would contain without triggering a network
+        // call) — cloudSave/cloudLoad above are the normal entry points.
+        window.serializeTablesContainer = serializeTablesContainer;
+        window.rebuildTablesContainer = rebuildTablesContainer;
+
         window.cloudSave = function () {
             if (!currentUser) return;
             setStatus('Saving…');
-            const html = document.getElementById('tablesContainer').innerHTML;
+            const json = JSON.stringify(serializeTablesContainer());
             db.collection('users').doc(currentUser.uid).set({
                 weekgoal: {
-                    html: html,
+                    json: json,
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                 }
             }, { merge: true }).then(function () {
-                setStatus('Saved ' + new Date().toLocaleTimeString());
+                setStatus('Saved ' + new Date().toLocaleTimeString() + ' (' + (json.length / 1024).toFixed(1) + ' KB)');
             }).catch(function (err) {
                 console.error('Cloud save failed:', err);
                 setStatus('Save failed');
@@ -3579,20 +3695,21 @@ function insertNewCheckboxLine(currentLine) {
             setStatus('Loading…');
             db.collection('users').doc(currentUser.uid).get().then(function (doc) {
                 const data = doc.data();
-                if (!data || !data.weekgoal || !data.weekgoal.html) {
+                if (!data || !data.weekgoal || !data.weekgoal.json) {
                     setStatus('No cloud save found');
                     return;
                 }
                 suppressAutoSave = true;
-                const container = document.getElementById('tablesContainer');
-                container.innerHTML = data.weekgoal.html;
-                // Each .outline-root brings its own data-tree attribute
-                // along in that saved HTML (same mechanism as local file
-                // Save/Open), so re-initializing them restores content
-                // exactly — no separate schema needed for cloud vs local.
-                container.querySelectorAll('.outline-root').forEach(function (el) {
-                    window.initOutlineTable(el, '');
-                });
+                let parsed;
+                try {
+                    parsed = JSON.parse(data.weekgoal.json);
+                } catch (err) {
+                    console.error('Cloud data corrupt:', err);
+                    setStatus('Cloud data unreadable');
+                    suppressAutoSave = false;
+                    return;
+                }
+                rebuildTablesContainer(parsed);
                 suppressAutoSave = false;
                 setStatus('Loaded ' + new Date().toLocaleTimeString());
             }).catch(function (err) {
