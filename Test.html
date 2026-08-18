@@ -920,7 +920,7 @@
             <span id="cloudUserLabel" style="font-size:12px; color:#555; margin-right:4px;"></span>
             <div class="dropdown" style="display:inline-block;">
                 <button class="gray" onclick="toggleProjectsMenu()" title="Switch, rename, or delete projects">📁 <span id="currentProjectLabel">Project</span> ▾</button>
-                <div id="projectsMenu" class="dropdown-content" style="display:none; min-width:220px; padding:6px;">
+                <div id="projectsMenu" class="dropdown-content" style="min-width:220px; padding:6px;">
                     <div id="projectsList"></div>
                     <div style="margin-top:6px; padding-top:6px; border-top:1px solid #eee;">
                         <input id="newProjectNameInput" type="text" placeholder="New project name…" style="width:70%; font-size:12px;">
@@ -930,6 +930,7 @@
             </div>
             <button id="cloudSaveBtn" class="gray" onclick="cloudSave()" title="Save current project to cloud now">☁ Save</button>
             <button id="cloudLoadBtn" class="gray" onclick="cloudLoad()" title="Reload current project from cloud">☁ Load</button>
+            <button id="cloudSyncNowBtn" class="gray" onclick="syncNow()" title="Save immediately and refresh the project list, bypassing the normal delay">🔄 Sync Now</button>
             <span id="cloudStatusLabel" style="font-size:11px; color:#888; margin-left:4px;"></span>
             <button id="cloudSignOutBtn" class="gray" onclick="cloudSignOut()" title="Sign out">Sign out</button>
         </span>
@@ -3903,13 +3904,20 @@ function insertNewCheckboxLine(currentLine) {
 
         window.toggleProjectsMenu = function () {
             const menu = document.getElementById('projectsMenu');
-            menu.style.display = (menu.style.display === 'none' || !menu.style.display) ? 'block' : 'none';
+            // Match the app's existing dropdown pattern (see the
+            // DOMContentLoaded dropdown-toggle handler above): the
+            // opacity/scale transition on .dropdown-content only fires
+            // via the .show class. Toggling style.display directly (the
+            // previous version of this function) left it stuck at
+            // opacity:0 — technically "visible" in layout but invisible
+            // on screen.
+            menu.classList.toggle('show');
         };
         document.addEventListener('click', function (e) {
             const menu = document.getElementById('projectsMenu');
-            if (menu && menu.style.display === 'block' && !e.target.closest('#projectsMenu') &&
+            if (menu && menu.classList.contains('show') && !e.target.closest('#projectsMenu') &&
                 !e.target.closest('[onclick="toggleProjectsMenu()"]')) {
-                menu.style.display = 'none';
+                menu.classList.remove('show');
             }
         });
 
@@ -3943,6 +3951,31 @@ function insertNewCheckboxLine(currentLine) {
             if (!currentUser || !currentProjectId || suppressAutoSave) return;
             clearTimeout(cloudSaveTimer);
             cloudSaveTimer = setTimeout(function () { saveProjectNow(currentProjectId); }, 3000);
+        };
+
+        // "Sync Now" — cancels any pending debounced auto-save and pushes
+        // immediately, then also refreshes the project list (in case
+        // another device renamed/added/deleted a project since this tab
+        // loaded). A stronger guarantee than ☁ Save alone: "everything
+        // is caught up right now," not just "this project's content
+        // was written."
+        window.syncNow = function () {
+            if (!currentUser || !currentProjectId) return;
+            clearTimeout(cloudSaveTimer);
+            setStatus('Syncing…');
+            saveProjectNow(currentProjectId).then(function () {
+                return projectsCollection().get();
+            }).then(function (snap) {
+                projectsCache = snap.docs.map(function (d) {
+                    const data = d.data();
+                    return { id: d.id, name: data.name || 'Untitled', updatedAt: data.updatedAt };
+                });
+                renderProjectsList();
+                setStatus('Synced ' + new Date().toLocaleTimeString());
+            }).catch(function (err) {
+                console.error('Sync Now failed:', err);
+                setStatus('Sync failed');
+            });
         };
 
         // Also catch title edits and structural changes (add/delete
