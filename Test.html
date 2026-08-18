@@ -918,8 +918,18 @@
         <button id="cloudSignInBtn" class="gray" onclick="cloudSignIn()" title="Sign in with Google to sync across devices">☁ Sign in</button>
         <span id="cloudSignedInArea" style="display:none;">
             <span id="cloudUserLabel" style="font-size:12px; color:#555; margin-right:4px;"></span>
-            <button id="cloudSaveBtn" class="gray" onclick="cloudSave()" title="Save to cloud now">☁ Save</button>
-            <button id="cloudLoadBtn" class="gray" onclick="cloudLoad()" title="Load from cloud (replaces current tables)">☁ Load</button>
+            <div class="dropdown" style="display:inline-block;">
+                <button class="gray" onclick="toggleProjectsMenu()" title="Switch, rename, or delete projects">📁 <span id="currentProjectLabel">Project</span> ▾</button>
+                <div id="projectsMenu" class="dropdown-content" style="display:none; min-width:220px; padding:6px;">
+                    <div id="projectsList"></div>
+                    <div style="margin-top:6px; padding-top:6px; border-top:1px solid #eee;">
+                        <input id="newProjectNameInput" type="text" placeholder="New project name…" style="width:70%; font-size:12px;">
+                        <button class="gray" style="font-size:12px;" onclick="createProjectFromInput()">+ Add</button>
+                    </div>
+                </div>
+            </div>
+            <button id="cloudSaveBtn" class="gray" onclick="cloudSave()" title="Save current project to cloud now">☁ Save</button>
+            <button id="cloudLoadBtn" class="gray" onclick="cloudLoad()" title="Reload current project from cloud">☁ Load</button>
             <span id="cloudStatusLabel" style="font-size:11px; color:#888; margin-left:4px;"></span>
             <button id="cloudSignOutBtn" class="gray" onclick="cloudSignOut()" title="Sign out">Sign out</button>
         </span>
@@ -3507,7 +3517,9 @@ function insertNewCheckboxLine(currentLine) {
         let app, auth, db;
         let currentUser = null;
         let cloudSaveTimer = null;
-        let suppressAutoSave = false; // true while cloudLoad() is rewriting the DOM
+        let suppressAutoSave = false; // true while a project load is rewriting the DOM
+        let currentProjectId = null;
+        let projectsCache = []; // [{id, name, updatedAt}], list only — not full json
 
         function init() {
             try {
@@ -3523,6 +3535,7 @@ function insertNewCheckboxLine(currentLine) {
             auth.onAuthStateChanged(function (user) {
                 currentUser = user;
                 updateAuthUI();
+                if (user) initProjectsForUser();
             });
 
             // Safari's Intelligent Tracking Prevention breaks popup-based
@@ -3666,22 +3679,244 @@ function insertNewCheckboxLine(currentLine) {
             });
         }
 
+        // Same 6-cell layout the app ships with, but with empty trees —
+        // used as the starting point for any brand-new project.
+        function defaultProjectTablesData() {
+            return {
+                version: 1,
+                tables: [
+                    {
+                        wrapped: false, mainTableId: true,
+                        rows: [
+                            [{ title: 'Week Due', checkboxBtn: true, tree: [] }, { title: 'Projects', checkboxBtn: true, tree: [] }],
+                            [{ title: 'Social&Class', checkboxBtn: true, tree: [] }, { title: 'Chance&Remind&Inbox', checkboxBtn: true, tree: [] }]
+                        ]
+                    },
+                    {
+                        wrapped: false, mainTableId: false,
+                        rows: [[{ title: '2nd life', checkboxBtn: false, tree: [] }, { title: 'Month Goals', checkboxBtn: false, tree: [] }]]
+                    }
+                ]
+            };
+        }
+
         // Exposed for debugging/testing (e.g. inspecting exactly what a
         // cloud save payload would contain without triggering a network
         // call) — cloudSave/cloudLoad above are the normal entry points.
         window.serializeTablesContainer = serializeTablesContainer;
         window.rebuildTablesContainer = rebuildTablesContainer;
 
-        window.cloudSave = function () {
-            if (!currentUser) return;
-            setStatus('Saving…');
-            const json = JSON.stringify(serializeTablesContainer());
-            db.collection('users').doc(currentUser.uid).set({
-                weekgoal: {
-                    json: json,
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        // --- Multi-project system (users/{uid}/weekgoalProjects/{id}) ---
+        // Each project is a fully independent set of tables — its own
+        // named "page" you can switch between, rename, or delete. Mirrors
+        // the Projects concept from the other apps in this ecosystem,
+        // adapted to WeekGoal's compact JSON save format.
+        function projectsCollection() {
+            return db.collection('users').doc(currentUser.uid).collection('weekgoalProjects');
+        }
+
+        function initProjectsForUser() {
+            setStatus('Loading projects…');
+            projectsCollection().get().then(function (snap) {
+                projectsCache = snap.docs.map(function (d) {
+                    const data = d.data();
+                    return { id: d.id, name: data.name || 'Untitled', updatedAt: data.updatedAt };
+                });
+                if (projectsCache.length > 0) {
+                    return db.collection('users').doc(currentUser.uid).get().then(function (userDoc) {
+                        const savedCurrentId = userDoc.data() && userDoc.data().weekgoalCurrentProjectId;
+                        const targetId = (savedCurrentId && projectsCache.some(function (p) { return p.id === savedCurrentId; }))
+                            ? savedCurrentId : projectsCache[0].id;
+                        return switchProject(targetId, { skipSaveCurrent: true });
+                    });
                 }
-            }, { merge: true }).then(function () {
+                // No projects yet — check for data saved before the
+                // project system existed (the old flat weekgoal.json
+                // field) and migrate it into a first project instead of
+                // silently losing it.
+                return db.collection('users').doc(currentUser.uid).get().then(function (userDoc) {
+                    const legacy = userDoc.data() && userDoc.data().weekgoal;
+                    if (legacy && legacy.json) {
+                        return createProject('My Week', JSON.parse(legacy.json));
+                    }
+                    return createProject('My Week', defaultProjectTablesData());
+                });
+            }).then(function () {
+                renderProjectsList();
+                setStatus('');
+            }).catch(function (err) {
+                console.error('Loading projects failed:', err);
+                setStatus('Project list failed to load');
+            });
+        }
+
+        function createProject(name, initialData) {
+            return projectsCollection().add({
+                name: name,
+                json: JSON.stringify(initialData || defaultProjectTablesData()),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }).then(function (docRef) {
+                projectsCache.push({ id: docRef.id, name: name, updatedAt: null });
+                return switchProject(docRef.id, { skipSaveCurrent: true });
+            });
+        }
+
+        window.createProjectFromInput = function () {
+            const input = document.getElementById('newProjectNameInput');
+            const name = (input.value || '').trim();
+            if (!name) return;
+            input.value = '';
+            setStatus('Creating…');
+            createProject(name, defaultProjectTablesData()).then(function () {
+                renderProjectsList();
+                setStatus('Created "' + name + '"');
+            }).catch(function (err) {
+                console.error('Create project failed:', err);
+                setStatus('Create failed');
+            });
+        };
+
+        function switchProject(projectId, opts) {
+            opts = opts || {};
+            const doSwitch = function () {
+                return projectsCollection().doc(projectId).get().then(function (doc) {
+                    const data = doc.data();
+                    if (!data) throw new Error('Project not found');
+                    suppressAutoSave = true;
+                    let parsed;
+                    try { parsed = JSON.parse(data.json); }
+                    catch (err) { parsed = defaultProjectTablesData(); }
+                    rebuildTablesContainer(parsed);
+                    suppressAutoSave = false;
+                    currentProjectId = projectId;
+                    document.getElementById('currentProjectLabel').textContent = data.name || 'Project';
+                    return db.collection('users').doc(currentUser.uid)
+                        .set({ weekgoalCurrentProjectId: projectId }, { merge: true });
+                });
+            };
+            if (opts.skipSaveCurrent || !currentProjectId) return doSwitch();
+            return saveProjectNow(currentProjectId).then(doSwitch);
+        }
+
+        window.switchProjectFromMenu = function (projectId) {
+            if (projectId === currentProjectId) { toggleProjectsMenu(); return; }
+            setStatus('Switching…');
+            switchProject(projectId).then(function () {
+                renderProjectsList();
+                setStatus('');
+                toggleProjectsMenu();
+            }).catch(function (err) {
+                console.error('Switch project failed:', err);
+                setStatus('Switch failed');
+            });
+        };
+
+        function saveProjectNow(projectId) {
+            const json = JSON.stringify(serializeTablesContainer());
+            return projectsCollection().doc(projectId).set({
+                json: json,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true }).then(function () { return json; });
+        }
+
+        window.renameProject = function (projectId, newName) {
+            newName = (newName || '').trim();
+            if (!newName) return;
+            projectsCollection().doc(projectId).set({ name: newName }, { merge: true }).then(function () {
+                const p = projectsCache.find(function (x) { return x.id === projectId; });
+                if (p) p.name = newName;
+                if (projectId === currentProjectId) document.getElementById('currentProjectLabel').textContent = newName;
+            }).catch(function (err) {
+                console.error('Rename project failed:', err);
+                setStatus('Rename failed');
+            });
+        };
+
+        window.deleteProjectFromMenu = function (projectId, name) {
+            if (!confirm('Delete project "' + name + '"? This cannot be undone.')) return;
+            projectsCollection().doc(projectId).delete().then(function () {
+                projectsCache = projectsCache.filter(function (p) { return p.id !== projectId; });
+                if (projectId === currentProjectId) {
+                    currentProjectId = null;
+                    if (projectsCache.length > 0) {
+                        return switchProject(projectsCache[0].id, { skipSaveCurrent: true });
+                    }
+                    return createProject('My Week', defaultProjectTablesData());
+                }
+            }).then(function () {
+                renderProjectsList();
+                setStatus('Deleted "' + name + '"');
+            }).catch(function (err) {
+                console.error('Delete project failed:', err);
+                setStatus('Delete failed');
+            });
+        };
+
+        function renderProjectsList() {
+            const listEl = document.getElementById('projectsList');
+            listEl.innerHTML = '';
+            projectsCache.forEach(function (p) {
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex; align-items:center; padding:3px 2px; border-radius:3px;' +
+                    (p.id === currentProjectId ? 'background:rgba(0,0,0,0.08); font-weight:bold;' : '');
+
+                const nameSpan = document.createElement('span');
+                nameSpan.contentEditable = 'true';
+                nameSpan.textContent = p.name;
+                nameSpan.style.cssText = 'flex:1; font-size:13px; outline:none; padding:1px 3px; cursor:text;';
+                nameSpan.title = 'Click name to rename, or click elsewhere on the row to switch';
+                nameSpan.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+                nameSpan.addEventListener('keydown', function (e) {
+                    if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }
+                });
+                nameSpan.addEventListener('blur', function () {
+                    if (nameSpan.textContent.trim() !== p.name) window.renameProject(p.id, nameSpan.textContent);
+                });
+                row.appendChild(nameSpan);
+
+                const switchBtn = document.createElement('span');
+                switchBtn.textContent = p.id === currentProjectId ? '●' : '○';
+                switchBtn.title = p.id === currentProjectId ? 'Current project' : 'Switch to this project';
+                switchBtn.style.cssText = 'cursor:pointer; padding:0 6px; font-size:11px; color:#888;';
+                switchBtn.addEventListener('click', function () { window.switchProjectFromMenu(p.id); });
+                row.appendChild(switchBtn);
+
+                const delBtn = document.createElement('span');
+                delBtn.textContent = '×';
+                delBtn.title = 'Delete project';
+                delBtn.style.cssText = 'cursor:pointer; padding:0 4px; color:#c33; font-weight:bold;';
+                delBtn.addEventListener('click', function () { window.deleteProjectFromMenu(p.id, p.name); });
+                row.appendChild(delBtn);
+
+                listEl.appendChild(row);
+            });
+        }
+
+        // Test-only exposure (mirrors serializeTablesContainer/
+        // rebuildTablesContainer above) — lets projectsCache/renderProjectsList
+        // be exercised without a live Firestore connection.
+        window.__testSetProjectsCache = function (cache, currentId) {
+            projectsCache = cache;
+            currentProjectId = currentId;
+            renderProjectsList();
+        };
+
+        window.toggleProjectsMenu = function () {
+            const menu = document.getElementById('projectsMenu');
+            menu.style.display = (menu.style.display === 'none' || !menu.style.display) ? 'block' : 'none';
+        };
+        document.addEventListener('click', function (e) {
+            const menu = document.getElementById('projectsMenu');
+            if (menu && menu.style.display === 'block' && !e.target.closest('#projectsMenu') &&
+                !e.target.closest('[onclick="toggleProjectsMenu()"]')) {
+                menu.style.display = 'none';
+            }
+        });
+
+        window.cloudSave = function () {
+            if (!currentUser || !currentProjectId) return;
+            setStatus('Saving…');
+            saveProjectNow(currentProjectId).then(function (json) {
                 setStatus('Saved ' + new Date().toLocaleTimeString() + ' (' + (json.length / 1024).toFixed(1) + ' KB)');
             }).catch(function (err) {
                 console.error('Cloud save failed:', err);
@@ -3690,27 +3925,10 @@ function insertNewCheckboxLine(currentLine) {
         };
 
         window.cloudLoad = function () {
-            if (!currentUser) return;
-            if (!confirm('Load from cloud? This replaces all tables currently on screen with your last cloud save.')) return;
+            if (!currentUser || !currentProjectId) return;
+            if (!confirm('Reload current project from cloud? This replaces all tables currently on screen.')) return;
             setStatus('Loading…');
-            db.collection('users').doc(currentUser.uid).get().then(function (doc) {
-                const data = doc.data();
-                if (!data || !data.weekgoal || !data.weekgoal.json) {
-                    setStatus('No cloud save found');
-                    return;
-                }
-                suppressAutoSave = true;
-                let parsed;
-                try {
-                    parsed = JSON.parse(data.weekgoal.json);
-                } catch (err) {
-                    console.error('Cloud data corrupt:', err);
-                    setStatus('Cloud data unreadable');
-                    suppressAutoSave = false;
-                    return;
-                }
-                rebuildTablesContainer(parsed);
-                suppressAutoSave = false;
+            switchProject(currentProjectId, { skipSaveCurrent: true }).then(function () {
                 setStatus('Loaded ' + new Date().toLocaleTimeString());
             }).catch(function (err) {
                 console.error('Cloud load failed:', err);
@@ -3722,9 +3940,9 @@ function insertNewCheckboxLine(currentLine) {
         // local data-tree sync runs (see scheduleSyncTreeData), so the
         // cloud copy stays current without writing on every keystroke.
         window.scheduleCloudAutoSave = function () {
-            if (!currentUser || suppressAutoSave) return;
+            if (!currentUser || !currentProjectId || suppressAutoSave) return;
             clearTimeout(cloudSaveTimer);
-            cloudSaveTimer = setTimeout(window.cloudSave, 3000);
+            cloudSaveTimer = setTimeout(function () { saveProjectNow(currentProjectId); }, 3000);
         };
 
         // Also catch title edits and structural changes (add/delete
