@@ -1927,7 +1927,17 @@ function insertNewCheckboxLine(currentLine) {
             function getEditableAncestor(node) {
                 if (!node) return null;
                 const el = node.nodeType === 1 ? node : node.parentElement;
-                return el ? el.closest('[contenteditable="true"]') : null;
+                if (!el) return null;
+                // The outline table's fields are deliberately plain-text
+                // only (see the .outline-text 'input' handler) — any
+                // execCommand-based formatting this toolbar applies gets
+                // silently stripped back out a moment later, which looks
+                // exactly like "clicking Bold does nothing." Whole-line
+                // Bold/Text Color/Background are available there instead,
+                // via the ☰ panel, so don't show this toolbar at all when
+                // the selection is inside .outline-root.
+                if (el.closest('.outline-root')) return null;
+                return el.closest('[contenteditable="true"]');
             }
 
             function hideSelToolbar() {
@@ -3777,6 +3787,17 @@ function insertNewCheckboxLine(currentLine) {
             });
         };
 
+        // Keeps the small "📁 Project ▾" button label and the big top
+        // page title (#pageTitle) showing the same name — called
+        // whenever a project loads or gets renamed, from either
+        // direction (the dropdown list or editing the title directly).
+        function applyProjectNameToUI(name) {
+            const label = document.getElementById('currentProjectLabel');
+            if (label) label.textContent = name || 'Project';
+            const pageTitle = document.getElementById('pageTitle');
+            if (pageTitle && pageTitle.textContent !== name) pageTitle.textContent = name || '';
+        }
+
         function switchProject(projectId, opts) {
             opts = opts || {};
             const doSwitch = function () {
@@ -3790,7 +3811,7 @@ function insertNewCheckboxLine(currentLine) {
                     rebuildTablesContainer(parsed);
                     suppressAutoSave = false;
                     currentProjectId = projectId;
-                    document.getElementById('currentProjectLabel').textContent = data.name || 'Project';
+                    applyProjectNameToUI(data.name);
                     return db.collection('users').doc(currentUser.uid)
                         .set({ weekgoalCurrentProjectId: projectId }, { merge: true });
                 });
@@ -3826,7 +3847,7 @@ function insertNewCheckboxLine(currentLine) {
             projectsCollection().doc(projectId).set({ name: newName }, { merge: true }).then(function () {
                 const p = projectsCache.find(function (x) { return x.id === projectId; });
                 if (p) p.name = newName;
-                if (projectId === currentProjectId) document.getElementById('currentProjectLabel').textContent = newName;
+                if (projectId === currentProjectId) applyProjectNameToUI(newName);
             }).catch(function (err) {
                 console.error('Rename project failed:', err);
                 setStatus('Rename failed');
@@ -3981,9 +4002,20 @@ function insertNewCheckboxLine(currentLine) {
         // Also catch title edits and structural changes (add/delete
         // table), which don't go through the outline tree's own sync
         // path at all.
+        let pageTitleRenameTimer = null;
         document.addEventListener('input', function (e) {
             if (e.target && e.target.classList && e.target.classList.contains('cell-title')) {
                 window.scheduleCloudAutoSave();
+            }
+            // The reverse direction of applyProjectNameToUI: editing the
+            // big top title renames the current project to match,
+            // debounced so it doesn't fire a write on every keystroke.
+            if (e.target && e.target.id === 'pageTitle' && currentUser && currentProjectId) {
+                clearTimeout(pageTitleRenameTimer);
+                pageTitleRenameTimer = setTimeout(function () {
+                    const newName = e.target.textContent.trim();
+                    if (newName) window.renameProject(currentProjectId, newName);
+                }, 800);
             }
         });
 
