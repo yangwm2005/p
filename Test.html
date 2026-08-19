@@ -918,8 +918,18 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
          Add New Table / Single / Plain / Review / Summary now live in
          the floating bar at the bottom of the page. -->
     <!-- File Operations -->
-    <button id="saveButton" onclick="saveFile()" style="background-color:purple;">Save</button>
-    <button id="openButton" onclick="openFile()" class="gray">Open</button>
+    <!-- Export/Import work on the cloud project system (JSON, saved to
+         your computer's own Downloads folder — not a server) rather
+         than the whole HTML page; see exportCurrentProjectAsJson /
+         exportAllProjectsAsJson / importProjectFromFile below. -->
+    <div class="dropdown" style="display:inline-block;">
+        <button id="exportButton" onclick="toggleExportMenu()" style="background-color:purple;">Export ▾</button>
+        <div id="exportMenu" class="dropdown-content" style="min-width:210px; padding:6px;">
+            <button class="gray" style="width:100%; text-align:left; font-size:12px;" onclick="exportCurrentProjectAsJson()">Export current project…</button>
+            <button class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="exportAllProjectsAsJson()">Export all projects…</button>
+        </div>
+    </div>
+    <button id="importButton" onclick="importProjectFromFile()" class="gray" title="Import a previously exported JSON file as a new project">Import</button>
     <button onclick="openYesterdayFile()" class="gray" title="Open file with a new tab window">Open-Y</button>
     <button id="printButton" onclick="printContent()" class="gray">Print</button>
     <span class="separator">|</span>
@@ -4034,6 +4044,186 @@ function insertNewCheckboxLine(currentLine) {
                 setStatus('Duplicate failed');
             });
         };
+
+        // --- Export / Import (JSON) ---
+        // Downloads a project (or every project) as a JSON file to your
+        // computer's own Downloads folder — a local backup / hand-off
+        // file, independent of cloud sync. Importing that file back in
+        // always creates a brand new project; it never overwrites or
+        // merges into whatever project is currently open.
+        function downloadJson(filename, obj) {
+            const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function safeFileName(name) {
+            return (name || 'project').replace(/[\\/:*?"<>|]/g, '-').trim() || 'project';
+        }
+
+        window.toggleExportMenu = function () {
+            document.getElementById('exportMenu').classList.toggle('show');
+        };
+        document.addEventListener('click', function (e) {
+            const menu = document.getElementById('exportMenu');
+            if (menu && menu.classList.contains('show') && !e.target.closest('#exportMenu') &&
+                !e.target.closest('[onclick="toggleExportMenu()"]')) {
+                menu.classList.remove('show');
+            }
+        });
+
+        window.exportCurrentProjectAsJson = function () {
+            document.getElementById('exportMenu').classList.remove('show');
+            if (!currentUser || !currentProjectId) { alert('Sign in and select a project first.'); return; }
+            const current = projectsCache.find(function (p) { return p.id === currentProjectId; });
+            const name = (current && current.name) || (document.getElementById('pageTitle').textContent || 'Project').trim();
+            const payload = {
+                type: 'weekgoal-project-export',
+                version: 1,
+                name: name,
+                exportedAt: new Date().toISOString(),
+                data: serializeTablesContainer()
+            };
+            downloadJson(safeFileName(name) + '.json', payload);
+            setStatus('Exported "' + name + '"');
+        };
+
+        window.exportAllProjectsAsJson = function () {
+            document.getElementById('exportMenu').classList.remove('show');
+            if (!currentUser) { alert('Sign in first.'); return; }
+            if (projectsCache.length === 0) { alert('No projects to export.'); return; }
+            setStatus('Exporting all projects…');
+            const jobs = projectsCache.map(function (p) {
+                if (p.id === currentProjectId) {
+                    // Use the live, in-memory state for whichever project
+                    // is currently open, in case it has edits that
+                    // haven't auto-saved to the cloud yet.
+                    return Promise.resolve({ name: p.name, data: serializeTablesContainer() });
+                }
+                return projectsCollection().doc(p.id).get().then(function (doc) {
+                    const docData = doc.data();
+                    let parsed;
+                    try { parsed = JSON.parse(docData && docData.json); }
+                    catch (err) { parsed = defaultProjectTablesData(); }
+                    return { name: (docData && docData.name) || p.name, data: parsed };
+                });
+            });
+            Promise.all(jobs).then(function (projects) {
+                const payload = {
+                    type: 'weekgoal-projects-export',
+                    version: 1,
+                    exportedAt: new Date().toISOString(),
+                    projects: projects
+                };
+                downloadJson('AllProjects-' + new Date().toISOString().slice(0, 10) + '.json', payload);
+                setStatus('Exported ' + projects.length + ' project' + (projects.length === 1 ? '' : 's'));
+            }).catch(function (err) {
+                console.error('Export all failed:', err);
+                setStatus('Export failed');
+            });
+        };
+
+        window.importProjectFromFile = function () {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,application/json';
+            input.addEventListener('change', function () {
+                const file = input.files && input.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = function () {
+                    let parsed;
+                    try { parsed = JSON.parse(reader.result); }
+                    catch (err) { alert("That file isn't valid JSON."); return; }
+                    importParsedProjectJson(parsed, file.name);
+                };
+                reader.onerror = function () { alert('Could not read that file.'); };
+                reader.readAsText(file);
+            });
+            input.click();
+        };
+
+        // Loads a single project's table data straight into the page,
+        // with no cloud account involved — used when signed out, where
+        // there's no project list to add a new project to. Replaces
+        // whatever is currently on screen (after confirming), the same
+        // way opening a local HTML file used to.
+        function importLocallyWithoutAccount(name, data) {
+            if (!confirm('Import "' + name + '"? This will replace what\'s currently on screen ' +
+                '(sign in first if you want to keep it as a separate project instead).')) {
+                setStatus('');
+                return;
+            }
+            rebuildTablesContainer(data || defaultProjectTablesData());
+            applyProjectNameToUI(name);
+            setStatus('Imported "' + name + '" (not signed in — sign in to save it)');
+        }
+
+        function importParsedProjectJson(parsed, fallbackFileName) {
+            const isMulti = parsed && parsed.type === 'weekgoal-projects-export' && Array.isArray(parsed.projects);
+
+            if (!currentUser) {
+                // No account to add project(s) to — load one project's
+                // data directly into the current view instead. For a
+                // multi-project export file, that means just the first
+                // one (all of them would need separate projects).
+                if (isMulti) {
+                    if (parsed.projects.length === 0) { alert('That file has no projects in it.'); return; }
+                    const first = parsed.projects[0];
+                    if (parsed.projects.length > 1) {
+                        alert('Signed out, so only the first project ("' + (first.name || 'Untitled') +
+                            '") can be imported here. Sign in first to import all ' +
+                            parsed.projects.length + ' as separate projects.');
+                    }
+                    importLocallyWithoutAccount(first.name || 'Imported project', first.data);
+                    return;
+                }
+                const data = (parsed && parsed.data) ? parsed.data : parsed;
+                const name = (parsed && parsed.name) ||
+                    (fallbackFileName ? fallbackFileName.replace(/\.json$/i, '') : 'Imported project');
+                importLocallyWithoutAccount(name, data);
+                return;
+            }
+
+            if (isMulti) {
+                // An "export all projects" file — recreate every one of
+                // them as its own new project.
+                setStatus('Importing ' + parsed.projects.length + ' projects…');
+                let chain = Promise.resolve();
+                parsed.projects.forEach(function (p, i) {
+                    chain = chain.then(function () {
+                        return createProject(p.name || ('Imported ' + (i + 1)), p.data || defaultProjectTablesData());
+                    });
+                });
+                chain.then(function () {
+                    renderProjectsList();
+                    setStatus('Imported ' + parsed.projects.length + ' projects');
+                }).catch(function (err) {
+                    console.error('Import failed:', err);
+                    setStatus('Import failed');
+                });
+                return;
+            }
+            // A single-project export (or an unrecognized/older JSON
+            // shape) — treat it as one project's table data.
+            const data = (parsed && parsed.data) ? parsed.data : parsed;
+            const name = (parsed && parsed.name) ||
+                (fallbackFileName ? fallbackFileName.replace(/\.json$/i, '') : 'Imported project');
+            setStatus('Importing…');
+            createProject(name, data).then(function () {
+                renderProjectsList();
+                setStatus('Imported "' + name + '"');
+            }).catch(function (err) {
+                console.error('Import failed:', err);
+                setStatus('Import failed');
+            });
+        }
 
         // Keeps the small "📁 Project ▾" button label and the big top
         // page title (#pageTitle) showing the same name — called
