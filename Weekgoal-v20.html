@@ -114,20 +114,6 @@
             margin-top: 4px;
         }
 
-        #contextMenu {
-            display: none;
-            position: absolute;
-            background: white;
-            border: 1px solid #ccc;
-            padding: 5px;
-            border-radius: 5px;
-            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
-            z-index: 1000;
-            opacity: 0;
-            transform: scale(0.95);
-            transition: opacity 0.1s ease, transform 0.1s ease;
-        }
-
         .options-menu {
             position: absolute;
             background: white;
@@ -649,7 +635,15 @@
     padding: 0px 2px 0px 0;
     border-radius: 3px;
 }
-.outline-node-row:hover {
+/* body.pre-hover (removed on the page's first genuine mousemove — see
+   the script near the bottom of the file) guards against a browser
+   quirk where hovering the mouse's last-known (often top-left,
+   effectively row 1) position gets spuriously applied to whatever
+   ends up there right after the page finishes rendering, even though
+   the mouse never actually moved — which looked like row 1 permanently
+   "hovered" until you first touched the mouse. */
+body:not(.pre-hover) .outline-node-row:hover,
+.outline-node-row:focus-within {
     background: rgba(0, 0, 0, 0.04);
 }
 .outline-node.outline-dragging > .outline-node-row {
@@ -748,6 +742,25 @@
     line-height: 1;
     cursor: pointer;
     user-select: none;
+    /* Hidden until the row is interacted with — see the rules below.
+       opacity (not display/visibility) keeps its 18px of layout space
+       reserved at all times, so nothing else in the row shifts when it
+       fades in/out. */
+    opacity: 0;
+    transition: opacity 0.1s ease;
+}
+/* Reveal on mouse hover (desktop) and on focus-within (the row's own
+   text field has focus) — the latter means tapping into a line to edit
+   it on a touch device also reveals the icon, since touch has no
+   hover state to rely on. Also kept visible while its own panel is
+   open (.show, toggled in JS) so it doesn't fade out mid-interaction. */
+.outline-node-row:hover .outline-menu-inline,
+.outline-node-row:focus-within .outline-menu-inline,
+.outline-menu-inline.show {
+    opacity: 1;
+}
+body.pre-hover .outline-node-row:hover .outline-menu-inline {
+    opacity: 0;
 }
 .outline-node-row:hover .outline-menu-inline {
     color: #444;
@@ -843,9 +856,9 @@
 
     </style>
 </head>
-<body>
+<body class="pre-hover">
 
-<h2 id="pageTitle" contenteditable="true">WeekGoals-0820Weekxx(Sxx)</h2>
+<h2 id="pageTitle" contenteditable="true">Week-</h2>
 
 <div id="toolbar">
     <!-- Utility -->
@@ -905,8 +918,18 @@
          Add New Table / Single / Plain / Review / Summary now live in
          the floating bar at the bottom of the page. -->
     <!-- File Operations -->
-    <button id="saveButton" onclick="saveFile()" style="background-color:purple;">Save</button>
-    <button id="openButton" onclick="openFile()" class="gray">Open</button>
+    <!-- Export/Import work on the cloud project system (JSON, saved to
+         your computer's own Downloads folder — not a server) rather
+         than the whole HTML page; see exportCurrentProjectAsJson /
+         exportAllProjectsAsJson / importProjectFromFile below. -->
+    <div class="dropdown" style="display:inline-block;">
+        <button id="exportButton" onclick="toggleExportMenu()" style="background-color:purple;">Export ▾</button>
+        <div id="exportMenu" class="dropdown-content" style="min-width:210px; padding:6px;">
+            <button class="gray" style="width:100%; text-align:left; font-size:12px;" onclick="exportCurrentProjectAsJson()">Export current project…</button>
+            <button class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="exportAllProjectsAsJson()">Export all projects…</button>
+        </div>
+    </div>
+    <button id="importButton" onclick="importProjectFromFile()" class="gray" title="Import a previously exported JSON file as a new project">Import</button>
     <button onclick="openYesterdayFile()" class="gray" title="Open file with a new tab window">Open-Y</button>
     <button id="printButton" onclick="printContent()" class="gray">Print</button>
     <span class="separator">|</span>
@@ -928,6 +951,7 @@
                     </div>
                 </div>
             </div>
+            <button id="duplicateProjectBtn" class="gray" onclick="duplicateCurrentProject()" title="Duplicate the current project — e.g. to start next week from this week's content">⧉ Duplicate</button>
             <button id="cloudSaveBtn" class="gray" onclick="cloudSave()" title="Save current project to cloud now">☁ Save</button>
             <button id="cloudLoadBtn" class="gray" onclick="cloudLoad()" title="Reload current project from cloud">☁ Load</button>
             <button id="cloudSyncNowBtn" class="gray" onclick="syncNow()" title="Save immediately and refresh the project list, bypassing the normal delay">🔄 Sync Now</button>
@@ -1021,13 +1045,6 @@
     <button id="sidebar-close" onclick="toggleSidebar()">Close</button>
 </div>
 
-<!-- Context Menu -->
-<div id="contextMenu" class="options-menu">
-    <button onclick="applyFormat('bold')">Bold</button>
-    <button onclick="applyFormat('copy')">Copy</button>
-    <button onclick="applyFormat('paste')">Paste</button>
-    <button onclick="applyFormat('strikeThrough')">Strikeout</button>
-</div>
 
 <script>
     window.addEventListener("beforeunload", function(e) {
@@ -1536,53 +1553,11 @@ async function openYesterdayFile() {
         }
     });
 
-    document.addEventListener("mouseup", function (event) {
-        const selection = window.getSelection();
-        if (selection.toString().trim() !== "") {
-            const contextMenu = document.getElementById("contextMenu");
-            contextMenu.style.display = "block";
-            contextMenu.style.left = `${event.pageX}px`;
-            contextMenu.style.top = `${event.pageY}px`;
-            contextMenu.style.opacity = "1";
-            contextMenu.style.transform = "scale(1)";
-        }
-    });
-
-    document.addEventListener("mousedown", function (event) {
-        const contextMenu = document.getElementById("contextMenu");
-        if (event.target !== contextMenu && !contextMenu.contains(event.target)) {
-            contextMenu.style.display = "none";
-        }
-    });
-
-    window.applyFormat = function (format) {
-        const contextMenu = document.getElementById("contextMenu");
-        contextMenu.style.display = "none";
-        const selection = window.getSelection();
-        if (selection.rangeCount > 0) {
-            const range = selection.getRangeAt(0);
-            switch (format) {
-                case "bold":
-                    document.execCommand("bold");
-                    break;
-                case "copy":
-                    document.execCommand("copy");
-                    break;
-                case "paste":
-                    navigator.clipboard.readText().then((text) => {
-                        range.deleteContents();
-                        range.insertNode(document.createTextNode(text));
-                    }).catch((err) => {
-                        console.error("Failed to paste: ", err);
-                        alert("Paste failed. Please ensure the page is served over HTTPS or localhost.");
-                    });
-                    break;
-                case "strikeThrough":
-                    document.execCommand("strikeThrough");
-                    break;
-            }
-        }
-    };
+    // Old Copy/Paste pulldown menu removed — it was redundant with (and
+    // visually conflicted with) the floating selection toolbar above,
+    // which already has its own working Copy behavior (native browser
+    // copy still works with Ctrl/Cmd+C on any selection) and Paste
+    // (native Ctrl/Cmd+V).
 
     function isCursorAtBeginningOfLine() {
         const selection = window.getSelection();
@@ -1920,14 +1895,124 @@ function insertNewCheckboxLine(currentLine) {
         }
 
         // --- Floating selection toolbar (Bold/Italic/Underline/Strike) ---
-        (function () {
+        // Deferred to DOMContentLoaded: the #selection-toolbar markup
+        // itself lives further down in the HTML body (after this script
+        // block), so looking it up immediately here — as this used to do
+        // — always returned null and silently skipped setting up the
+        // whole toolbar (buttons, mouseup listener, everything). That's
+        // why selecting text only ever showed the Copy/Paste menu.
+        document.addEventListener('DOMContentLoaded', function () {
             const selToolbar = document.getElementById('selection-toolbar');
             if (!selToolbar) return;
 
             function getEditableAncestor(node) {
                 if (!node) return null;
                 const el = node.nodeType === 1 ? node : node.parentElement;
-                return el ? el.closest('[contenteditable="true"]') : null;
+                if (!el) return null;
+                // The outline table's fields now support inline formatting
+                // too (see the .outline-text 'input' handler, which
+                // sanitizes and preserves Bold/Italic/Underline/Strike/
+                // color spans instead of stripping them back to plain
+                // text). Whole-line Bold/Text Color/Background are still
+                // available separately via the ☰ panel for formatting an
+                // entire line at once.
+                return el.closest('[contenteditable="true"]');
+            }
+
+            // After a DOM-level formatting edit, make sure the underlying
+            // outline node (if the selection was inside one) picks up the
+            // change — its own 'input' listener does the actual
+            // read-back/sanitize/save, this just makes sure it fires.
+            function commitOutlineChange() {
+                const sel = window.getSelection();
+                if (!sel || !sel.rangeCount) return;
+                const node = sel.getRangeAt(0).commonAncestorContainer;
+                const el = node.nodeType === 1 ? node : node.parentElement;
+                const textEl = el && el.closest && el.closest('.outline-text');
+                if (textEl) textEl.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            // document.execCommand is deprecated and no longer reliably
+            // supported by current browsers, so Bold/Italic/Underline/
+            // Strikethrough/color are applied by directly wrapping (or
+            // unwrapping) the selected Range in the appropriate tag,
+            // rather than delegating to the browser's built-in command.
+            const TAG_FOR_CMD = { bold: 'B', italic: 'I', underline: 'U', strikethrough: 'S' };
+            window.applySelectionFormat = function (cmd) {
+                const tag = TAG_FOR_CMD[cmd];
+                if (!tag) return;
+                const sel = window.getSelection();
+                if (!sel || !sel.rangeCount || sel.isCollapsed) return;
+                const range = sel.getRangeAt(0);
+                const startEl = range.startContainer.nodeType === 1
+                    ? range.startContainer : range.startContainer.parentElement;
+                const isActive = !!(startEl && startEl.closest(tag));
+                const extracted = range.extractContents();
+                let firstNode, lastNode;
+                if (isActive) {
+                    // Already formatted — remove this tag from everything
+                    // inside the selection instead of adding it again.
+                    const walker = document.createTreeWalker(extracted, NodeFilter.SHOW_ELEMENT);
+                    const toUnwrap = [];
+                    let n;
+                    while ((n = walker.nextNode())) { if (n.tagName === tag) toUnwrap.push(n); }
+                    toUnwrap.forEach(function (elx) {
+                        const parent = elx.parentNode;
+                        while (elx.firstChild) parent.insertBefore(elx.firstChild, elx);
+                        parent.removeChild(elx);
+                    });
+                    firstNode = extracted.firstChild;
+                    lastNode = extracted.lastChild;
+                    range.insertNode(extracted);
+                } else {
+                    const wrapper = document.createElement(tag);
+                    wrapper.appendChild(extracted);
+                    firstNode = wrapper;
+                    lastNode = wrapper;
+                    range.insertNode(wrapper);
+                }
+                if (firstNode && lastNode) {
+                    const newRange = document.createRange();
+                    newRange.setStartBefore(firstNode);
+                    newRange.setEndAfter(lastNode);
+                    sel.removeAllRanges();
+                    sel.addRange(newRange);
+                }
+                commitOutlineChange();
+                hideSelToolbar();
+            };
+
+            // Wraps the current selection in a <span style="prop:value">,
+            // first stripping that same style property off any spans
+            // already inside the selection so re-applying a color/
+            // highlight replaces the old one instead of nesting spans
+            // indefinitely.
+            function applyStyleToSelection(styleProp, value) {
+                const sel = window.getSelection();
+                if (!sel || !sel.rangeCount || sel.isCollapsed) return;
+                const range = sel.getRangeAt(0);
+                const extracted = range.extractContents();
+                const walker = document.createTreeWalker(extracted, NodeFilter.SHOW_ELEMENT);
+                const spans = [];
+                let n;
+                while ((n = walker.nextNode())) { if (n.tagName === 'SPAN') spans.push(n); }
+                spans.forEach(function (sp) {
+                    sp.style[styleProp] = '';
+                    if (!sp.getAttribute('style')) {
+                        const parent = sp.parentNode;
+                        while (sp.firstChild) parent.insertBefore(sp.firstChild, sp);
+                        parent.removeChild(sp);
+                    }
+                });
+                const wrapper = document.createElement('span');
+                wrapper.style[styleProp] = value;
+                wrapper.appendChild(extracted);
+                range.insertNode(wrapper);
+                const newRange = document.createRange();
+                newRange.selectNodeContents(wrapper);
+                sel.removeAllRanges();
+                sel.addRange(newRange);
+                commitOutlineChange();
             }
 
             function hideSelToolbar() {
@@ -1952,8 +2037,12 @@ function insertNewCheckboxLine(currentLine) {
                 }
                 selToolbar.classList.add('show');
                 const tbRect = selToolbar.getBoundingClientRect();
-                let top = rect.top - tbRect.height - 8;
-                if (top < 4) top = rect.bottom + 8;
+                // Prefer placing the toolbar below the selection; only
+                // fall back to above it when there isn't enough room
+                // below (e.g. the selection is near the bottom of the
+                // viewport), so the toolbar stays fully on-screen.
+                let top = rect.bottom + 8;
+                if (top + tbRect.height > window.innerHeight - 4) top = rect.top - tbRect.height - 8;
                 let left = rect.left + (rect.width / 2) - (tbRect.width / 2);
                 left = Math.max(4, Math.min(left, window.innerWidth - tbRect.width - 4));
                 selToolbar.style.top = top + 'px';
@@ -1998,13 +2087,13 @@ function insertNewCheckboxLine(currentLine) {
                 const sw = e.target.closest('.color-swatch');
                 if (!sw) return;
                 restoreSelection();
-                document.execCommand('foreColor', false, sw.dataset.color || 'inherit');
+                applyStyleToSelection('color', sw.dataset.color || 'inherit');
                 hideColorPopover(selTextColorPopover.pop);
                 hideSelToolbar();
             });
             selTextColorPopover.customInput.addEventListener('input', function (e) {
                 restoreSelection();
-                document.execCommand('foreColor', false, e.target.value);
+                applyStyleToSelection('color', e.target.value);
             });
             selTextColorPopover.customInput.addEventListener('change', function () {
                 hideColorPopover(selTextColorPopover.pop);
@@ -2015,13 +2104,13 @@ function insertNewCheckboxLine(currentLine) {
                 const sw = e.target.closest('.color-swatch');
                 if (!sw) return;
                 restoreSelection();
-                document.execCommand('hiliteColor', false, sw.dataset.color || 'transparent');
+                applyStyleToSelection('backgroundColor', sw.dataset.color || 'transparent');
                 hideColorPopover(selBgColorPopover.pop);
                 hideSelToolbar();
             });
             selBgColorPopover.customInput.addEventListener('input', function (e) {
                 restoreSelection();
-                document.execCommand('hiliteColor', false, e.target.value);
+                applyStyleToSelection('backgroundColor', e.target.value);
             });
             selBgColorPopover.customInput.addEventListener('change', function () {
                 hideColorPopover(selBgColorPopover.pop);
@@ -2043,7 +2132,7 @@ function insertNewCheckboxLine(currentLine) {
             document.addEventListener('mousedown', function (e) {
                 if (!selToolbar.contains(e.target)) hideSelToolbar();
             });
-        })();
+        });
 
         // --- Per-item hover control (☰) for bullet/checkbox items ---
         // Hover a bullet <li> or a checkbox line: a small ☰ icon appears
@@ -2391,6 +2480,7 @@ function insertNewCheckboxLine(currentLine) {
             }
 
             document.addEventListener('mouseover', function (e) {
+                if (!window.__hasRealMouseMoved) return;
                 const line = findLineEl(e.target);
                 if (line) {
                     currentLine = line;
@@ -2675,7 +2765,10 @@ function insertNewCheckboxLine(currentLine) {
 </script>
 
 <footer>
-    Copyright © 2026 Dr. Wen-Ming Yang 20260815 v2.00 Week Goals (Add New Table/Single/Plain/Review/Summary now scroll to and focus the newly created table) WM
+    Copyright © 2026 Dr. Wen-Ming Yang 20260819 v2.00 Week Goals 
+    
+<!--     (Add New Table/Single/Plain/Review/Summary now scroll to and focus the newly created table) WM
+-->
 </footer>
 
 <div class="floating-btn-group">
@@ -2694,10 +2787,10 @@ function insertNewCheckboxLine(currentLine) {
 
 <!-- Floating selection toolbar: shows on text selection -->
 <div id="selection-toolbar">
-    <button onclick="document.execCommand('bold')" title="Bold"><b>B</b></button>
-    <button onclick="document.execCommand('italic')" title="Italic"><i>I</i></button>
-    <button onclick="document.execCommand('underline')" title="Underline"><u>U</u></button>
-    <button onclick="document.execCommand('strikethrough')" title="Strikethrough"><s>S</s></button>
+    <button onclick="applySelectionFormat('bold')" title="Bold"><b>B</b></button>
+    <button onclick="applySelectionFormat('italic')" title="Italic"><i>I</i></button>
+    <button onclick="applySelectionFormat('underline')" title="Underline"><u>U</u></button>
+    <button onclick="applySelectionFormat('strikethrough')" title="Strikethrough"><s>S</s></button>
     <button id="sel-text-color-btn" title="Text color"><u style="text-decoration-color:#e53935;">A</u></button>
     <button id="sel-bg-color-btn" title="Highlight">🖍</button>
 </div>
@@ -2715,9 +2808,92 @@ function insertNewCheckboxLine(currentLine) {
 
         function newNode(text) {
             return {
-                id: uid(), text: text || '', children: [], collapsed: false,
+                id: uid(), text: text || '', html: null, children: [], collapsed: false,
                 checkbox: false, done: false, bold: false, textColor: null, bgColor: null
             };
+        }
+
+        // --- Inline formatting (Bold/Italic/Underline/Strike/color) for a
+        // selection *within* a line, as opposed to the existing whole-line
+        // bold/textColor/bgColor flags above. Stored as sanitized HTML in
+        // node.html; node.text stays a plain-text mirror (used for search,
+        // export, and line split/merge). Only a small allow-list of inline
+        // tags survives — everything else (scripts, divs from a stray
+        // paste, event handler attributes, etc.) is stripped or unwrapped.
+        // Outline-text fields are single-line by design (Enter creates a
+        // new node instead of a line break within the field), so <br> is
+        // deliberately NOT in this allow-list, and unwrapping a stray
+        // block element does NOT insert a line break in its place —
+        // earlier it did, which is what caused the "several blank lines
+        // after pressing Enter" bug: some browsers wrap a freshly-focused
+        // empty field's first keystroke in a nested <div>, and each
+        // <br> this function inserted while unwrapping that div stacked
+        // up across keystrokes into several stray blank lines.
+        const INLINE_ALLOWED_TAGS = { B: 1, STRONG: 1, I: 1, EM: 1, U: 1, S: 1, STRIKE: 1, SPAN: 1 };
+        function sanitizeInlineHtml(html) {
+            const container = document.createElement('div');
+            container.innerHTML = html;
+            (function clean(root) {
+                let node = root.firstChild;
+                while (node) {
+                    if (node.nodeType === 3) { node = node.nextSibling; continue; }
+                    if (node.nodeType !== 1) {
+                        const rm = node; node = node.nextSibling; root.removeChild(rm); continue;
+                    }
+                    const tag = node.tagName;
+                    if (!INLINE_ALLOWED_TAGS[tag]) {
+                        // Unwrap: DIV/P/BR/etc. are all dropped, keeping
+                        // only their text/inline-formatted contents in
+                        // the flow — no line break is introduced.
+                        const first = node.firstChild;
+                        while (node.firstChild) root.insertBefore(node.firstChild, node);
+                        const rm = node; node = first || node.nextSibling; root.removeChild(rm); continue;
+                    }
+                    clean(node);
+                    Array.prototype.slice.call(node.attributes).forEach(function (a) {
+                        if (!(tag === 'SPAN' && a.name === 'style')) node.removeAttribute(a.name);
+                    });
+                    if (tag === 'SPAN') {
+                        const color = node.style.color, bg = node.style.backgroundColor;
+                        node.removeAttribute('style');
+                        if (color) node.style.color = color;
+                        if (bg) node.style.backgroundColor = bg;
+                        if (!node.getAttribute('style')) {
+                            const first = node.firstChild;
+                            while (node.firstChild) root.insertBefore(node.firstChild, node);
+                            const rm = node; node = first || node.nextSibling; root.removeChild(rm); continue;
+                        }
+                    }
+                    node = node.nextSibling;
+                }
+            })(container);
+            return container.innerHTML;
+        }
+
+        // Places the caret at a plain-text character offset inside a field
+        // that may contain multiple text nodes (e.g. split across inline
+        // formatting spans), not just a single text node.
+        function placeCaretAtOffset(field, offset) {
+            let remaining = offset, target = null, targetOffset = 0;
+            (function walk(el) {
+                for (let i = 0; i < el.childNodes.length && !target; i++) {
+                    const child = el.childNodes[i];
+                    if (child.nodeType === 3) {
+                        const len = child.textContent.length;
+                        if (remaining <= len) { target = child; targetOffset = remaining; return; }
+                        remaining -= len;
+                    } else {
+                        walk(child);
+                    }
+                }
+            })(field);
+            const range = document.createRange();
+            const sel = window.getSelection();
+            if (target) range.setStart(target, targetOffset);
+            else { range.selectNodeContents(field); range.collapse(false); }
+            range.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(range);
         }
 
         function findNodeAndParent(tree, id, parent) {
@@ -2751,7 +2927,7 @@ function insertNewCheckboxLine(currentLine) {
         // --- Node action ☰ menu (mousedown-guarded, same trick used by
         // the main table's item-hover-panel, so clicking it never steals
         // focus/selection from whichever node field is being edited) ---
-        let menuEl, menuTargetId, menuRootId;
+        let menuEl, menuTargetId, menuRootId, menuAnchorEl;
         const outlineTextColorPopover = createColorPopover();
         const outlineBgColorPopover = createColorPopover();
 
@@ -2812,7 +2988,8 @@ function insertNewCheckboxLine(currentLine) {
 
         function closeMenu() {
             if (menuEl) menuEl.classList.remove('show');
-            menuTargetId = null; menuRootId = null;
+            if (menuAnchorEl) menuAnchorEl.classList.remove('show');
+            menuTargetId = null; menuRootId = null; menuAnchorEl = null;
         }
 
         function menuButton(label, onClick, active) {
@@ -2878,12 +3055,13 @@ function insertNewCheckboxLine(currentLine) {
 
         function openMenuFor(rootId, nodeId, anchorEl) {
             ensureMenu();
-            menuRootId = rootId; menuTargetId = nodeId;
+            menuRootId = rootId; menuTargetId = nodeId; menuAnchorEl = anchorEl;
             renderMenu();
             const rect = anchorEl.getBoundingClientRect();
             menuEl.style.top = (rect.bottom + 4) + 'px';
             menuEl.style.left = rect.left + 'px';
             menuEl.classList.add('show');
+            anchorEl.classList.add('show');
         }
 
         function deleteNode(rootId, nodeId) {
@@ -3096,7 +3274,54 @@ function insertNewCheckboxLine(currentLine) {
             return el === otToggle || el === otDrag;
         }
 
+        // Each line's text is its own separate contenteditable field
+        // (not one shared contenteditable spanning the whole list), so
+        // dragging a text selection past the edge of the field you
+        // started in crosses into unrelated, non-editable row chrome
+        // (bullets, the ☰ icon, other rows entirely) — and browsers'
+        // cross-element selection behavior in that situation is
+        // inconsistent, sometimes ballooning the selection out to cover
+        // the whole list instead of stopping at the field boundary.
+        // Watch for the selection's start and end landing in two
+        // different fields and clamp it back to just the field the drag
+        // started in.
+        document.addEventListener('selectionchange', function () {
+            const sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+            const aNode = sel.anchorNode, fNode = sel.focusNode;
+            if (!aNode || !fNode) return;
+            const aEl = aNode.nodeType === 1 ? aNode : aNode.parentElement;
+            const fEl = fNode.nodeType === 1 ? fNode : fNode.parentElement;
+            const aField = aEl && aEl.closest && aEl.closest('.outline-text');
+            if (!aField) return; // selection didn't start in one of these fields — leave it alone
+            const fField = fEl && fEl.closest && fEl.closest('.outline-text');
+            if (fField === aField) return; // still inside the same field — fine
+            const range = document.createRange();
+            range.selectNodeContents(aField);
+            sel.removeAllRanges();
+            sel.addRange(range);
+        });
+
+        // Some browsers re-run hit-testing (and fire a "phantom"
+        // mouseover) against the cursor's last-known screen position —
+        // often near the top-left corner, i.e. row 1 — right after a big
+        // DOM rebuild, even though the mouse never actually moved. That
+        // showed up as the drag handle appearing to be permanently
+        // stuck on the first line until you actually touched the mouse.
+        // Ignoring mouseover until we've seen at least one real
+        // mousemove filters that phantom event out. Set as early as
+        // possible (not deferred to DOMContentLoaded) and shared via
+        // window so every hover-triggered feature in the file — the
+        // outline table's icons and the older line-hover-icon system —
+        // can check the same flag.
+        window.__hasRealMouseMoved = false;
+        document.addEventListener('mousemove', function () {
+            window.__hasRealMouseMoved = true;
+            document.body.classList.remove('pre-hover');
+        }, { once: true });
+
         document.addEventListener('mouseover', function (e) {
+            if (!window.__hasRealMouseMoved) return;
             const row = e.target.closest && e.target.closest('.outline-node-row');
             if (row) {
                 ensureOtIcons();
@@ -3169,6 +3394,14 @@ function insertNewCheckboxLine(currentLine) {
         }
 
         function placeCaret(field, pos) {
+            if (typeof pos === 'number') {
+                // A field can now contain several text nodes (split across
+                // inline formatting spans), not just one — walk the whole
+                // subtree to find the right one instead of assuming
+                // field.firstChild holds all the text.
+                placeCaretAtOffset(field, pos);
+                return;
+            }
             const range = document.createRange();
             const sel = window.getSelection();
             if (pos === 'end' || pos === undefined || pos === 'keep') {
@@ -3177,14 +3410,6 @@ function insertNewCheckboxLine(currentLine) {
             } else if (pos === 'start') {
                 range.selectNodeContents(field);
                 range.collapse(true);
-            } else if (typeof pos === 'number') {
-                const node = field.firstChild;
-                if (!node) { range.selectNodeContents(field); range.collapse(true); }
-                else {
-                    const offset = Math.min(pos, node.textContent ? node.textContent.length : 0);
-                    range.setStart(node, offset);
-                    range.collapse(true);
-                }
             }
             sel.removeAllRanges();
             sel.addRange(range);
@@ -3229,7 +3454,7 @@ function insertNewCheckboxLine(currentLine) {
             text = document.createElement('div');
             text.className = 'outline-text' + (n.done ? ' done' : '') + (n.bold ? ' bold' : '');
             text.contentEditable = 'true';
-            text.textContent = n.text;
+            if (n.html) text.innerHTML = n.html; else text.textContent = n.text;
             text.dataset.nodeId = n.id;
             if (n.textColor) text.style.color = n.textColor;
             if (n.bgColor) {
@@ -3238,22 +3463,29 @@ function insertNewCheckboxLine(currentLine) {
                 text.style.borderRadius = '4px';
             }
             text.addEventListener('input', function () {
-                n.text = text.textContent;
                 // Some browsers, right after a freshly-focused empty
                 // contenteditable field receives its first keystroke
                 // (e.g. immediately after Enter creates a new line),
                 // wrap the typed text in a nested <div>/<br> instead of
-                // a plain text node. That extra block pushes the visible
-                // text down onto a second line inside the field while
-                // the bullet stays pinned at the top of the row — i.e.
-                // the text appears to sit "below" the bullet. Flatten
-                // back to plain text immediately so it always renders
-                // as a single line, restoring the caret position.
+                // a plain text node — that extra block pushes the visible
+                // text down onto a second line inside the field while the
+                // bullet stays pinned at the top of the row. Native paste
+                // can also drop in <div>/<p> wrappers. Unwrap those block
+                // elements, but (unlike before) keep any inline formatting
+                // — Bold/Italic/Underline/Strike/color spans — intact:
+                // this field now genuinely supports per-selection
+                // formatting instead of always collapsing back to plain
+                // text on the very next keystroke.
                 if (text.children.length > 0) {
                     const caret = caretOffsetIn(text);
-                    text.textContent = n.text;
-                    placeCaret(text, caret);
+                    const cleaned = sanitizeInlineHtml(text.innerHTML);
+                    if (cleaned !== text.innerHTML) text.innerHTML = cleaned;
+                    placeCaretAtOffset(text, caret);
+                    n.html = text.querySelector('b, strong, i, em, u, s, strike, span') ? cleaned : null;
+                } else {
+                    n.html = null;
                 }
+                n.text = text.textContent;
                 // Plain typing doesn't go through renderRoot (which is
                 // what normally keeps the saved data-tree attribute in
                 // sync — see syncTreeData), so schedule it here too,
@@ -3355,7 +3587,17 @@ function insertNewCheckboxLine(currentLine) {
                 const before = textEl.textContent.slice(0, caretOffset);
                 const after = textEl.textContent.slice(caretOffset);
                 n.text = before;
+                // Splitting a line at the caret works on plain-text offsets,
+                // which doesn't know where formatting spans should end up —
+                // simplest to drop inline formatting at the split point
+                // rather than leave it applied to the wrong half.
+                n.html = null;
                 const sibling = newNode(after);
+                // A new line created by pressing Enter on a checkbox item
+                // is itself a checkbox item too — same as most outliner/
+                // task apps — just unchecked, even if the line it split
+                // from was already checked off.
+                if (n.checkbox) sibling.checkbox = true;
                 const found = findNodeAndParent(st.tree, n.id);
                 if (!found) return;
                 // Enter on a node with expanded children inserts the new
@@ -3418,6 +3660,10 @@ function insertNewCheckboxLine(currentLine) {
             if (!found) return;
             const prevLen = prev.text.length;
             prev.text = prev.text + n.text;
+            // Same reasoning as the Enter-split above: merging on plain
+            // text doesn't have a sensible way to recombine two lines'
+            // formatting spans, so drop them rather than mismatch them.
+            prev.html = null;
             prev.children = prev.children.concat(n.children);
             found.parentArr.splice(found.index, 1);
             renderRoot(rootId, { focusId: prev.id, cursorPos: prevLen });
@@ -3777,6 +4023,219 @@ function insertNewCheckboxLine(currentLine) {
             });
         };
 
+        // Clones the currently active project — all its tables, content,
+        // and structure — into a brand new project, e.g. to start next
+        // week from this week's plan instead of a blank page. Checkbox
+        // done/undone state is carried over as-is; rename or clear
+        // items afterward as needed.
+        window.duplicateCurrentProject = function () {
+            if (!currentUser || !currentProjectId) return;
+            const current = projectsCache.find(function (p) { return p.id === currentProjectId; });
+            const baseName = (current && current.name) ||
+                (document.getElementById('pageTitle').textContent || 'Project').trim();
+            const newName = baseName + ' (copy)';
+            setStatus('Duplicating…');
+            const data = serializeTablesContainer();
+            createProject(newName, data).then(function () {
+                renderProjectsList();
+                setStatus('Duplicated as "' + newName + '"');
+            }).catch(function (err) {
+                console.error('Duplicate project failed:', err);
+                setStatus('Duplicate failed');
+            });
+        };
+
+        // --- Export / Import (JSON) ---
+        // Downloads a project (or every project) as a JSON file to your
+        // computer's own Downloads folder — a local backup / hand-off
+        // file, independent of cloud sync. Importing that file back in
+        // always creates a brand new project; it never overwrites or
+        // merges into whatever project is currently open.
+        function downloadJson(filename, obj) {
+            const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function safeFileName(name) {
+            return (name || 'project').replace(/[\\/:*?"<>|]/g, '-').trim() || 'project';
+        }
+
+        window.toggleExportMenu = function () {
+            document.getElementById('exportMenu').classList.toggle('show');
+        };
+        document.addEventListener('click', function (e) {
+            const menu = document.getElementById('exportMenu');
+            if (menu && menu.classList.contains('show') && !e.target.closest('#exportMenu') &&
+                !e.target.closest('[onclick="toggleExportMenu()"]')) {
+                menu.classList.remove('show');
+            }
+        });
+
+        window.exportCurrentProjectAsJson = function () {
+            document.getElementById('exportMenu').classList.remove('show');
+            if (!currentUser || !currentProjectId) { alert('Sign in and select a project first.'); return; }
+            const current = projectsCache.find(function (p) { return p.id === currentProjectId; });
+            const name = (current && current.name) || (document.getElementById('pageTitle').textContent || 'Project').trim();
+            const payload = {
+                type: 'weekgoal-project-export',
+                version: 1,
+                name: name,
+                exportedAt: new Date().toISOString(),
+                data: serializeTablesContainer()
+            };
+            downloadJson(safeFileName(name) + '.json', payload);
+            setStatus('Exported "' + name + '"');
+        };
+
+        window.exportAllProjectsAsJson = function () {
+            document.getElementById('exportMenu').classList.remove('show');
+            if (!currentUser) { alert('Sign in first.'); return; }
+            if (projectsCache.length === 0) { alert('No projects to export.'); return; }
+            setStatus('Exporting all projects…');
+            const jobs = projectsCache.map(function (p) {
+                if (p.id === currentProjectId) {
+                    // Use the live, in-memory state for whichever project
+                    // is currently open, in case it has edits that
+                    // haven't auto-saved to the cloud yet.
+                    return Promise.resolve({ name: p.name, data: serializeTablesContainer() });
+                }
+                return projectsCollection().doc(p.id).get().then(function (doc) {
+                    const docData = doc.data();
+                    let parsed;
+                    try { parsed = JSON.parse(docData && docData.json); }
+                    catch (err) { parsed = defaultProjectTablesData(); }
+                    return { name: (docData && docData.name) || p.name, data: parsed };
+                });
+            });
+            Promise.all(jobs).then(function (projects) {
+                const payload = {
+                    type: 'weekgoal-projects-export',
+                    version: 1,
+                    exportedAt: new Date().toISOString(),
+                    projects: projects
+                };
+                downloadJson('AllProjects-' + new Date().toISOString().slice(0, 10) + '.json', payload);
+                setStatus('Exported ' + projects.length + ' project' + (projects.length === 1 ? '' : 's'));
+            }).catch(function (err) {
+                console.error('Export all failed:', err);
+                setStatus('Export failed');
+            });
+        };
+
+        window.importProjectFromFile = function () {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,application/json';
+            input.addEventListener('change', function () {
+                const file = input.files && input.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = function () {
+                    let parsed;
+                    try { parsed = JSON.parse(reader.result); }
+                    catch (err) { alert("That file isn't valid JSON."); return; }
+                    importParsedProjectJson(parsed, file.name);
+                };
+                reader.onerror = function () { alert('Could not read that file.'); };
+                reader.readAsText(file);
+            });
+            input.click();
+        };
+
+        // Loads a single project's table data straight into the page,
+        // with no cloud account involved — used when signed out, where
+        // there's no project list to add a new project to. Replaces
+        // whatever is currently on screen (after confirming), the same
+        // way opening a local HTML file used to.
+        function importLocallyWithoutAccount(name, data) {
+            if (!confirm('Import "' + name + '"? This will replace what\'s currently on screen ' +
+                '(sign in first if you want to keep it as a separate project instead).')) {
+                setStatus('');
+                return;
+            }
+            rebuildTablesContainer(data || defaultProjectTablesData());
+            applyProjectNameToUI(name);
+            setStatus('Imported "' + name + '" (not signed in — sign in to save it)');
+        }
+
+        function importParsedProjectJson(parsed, fallbackFileName) {
+            const isMulti = parsed && parsed.type === 'weekgoal-projects-export' && Array.isArray(parsed.projects);
+
+            if (!currentUser) {
+                // No account to add project(s) to — load one project's
+                // data directly into the current view instead. For a
+                // multi-project export file, that means just the first
+                // one (all of them would need separate projects).
+                if (isMulti) {
+                    if (parsed.projects.length === 0) { alert('That file has no projects in it.'); return; }
+                    const first = parsed.projects[0];
+                    if (parsed.projects.length > 1) {
+                        alert('Signed out, so only the first project ("' + (first.name || 'Untitled') +
+                            '") can be imported here. Sign in first to import all ' +
+                            parsed.projects.length + ' as separate projects.');
+                    }
+                    importLocallyWithoutAccount(first.name || 'Imported project', first.data);
+                    return;
+                }
+                const data = (parsed && parsed.data) ? parsed.data : parsed;
+                const name = (parsed && parsed.name) ||
+                    (fallbackFileName ? fallbackFileName.replace(/\.json$/i, '') : 'Imported project');
+                importLocallyWithoutAccount(name, data);
+                return;
+            }
+
+            if (isMulti) {
+                // An "export all projects" file — recreate every one of
+                // them as its own new project.
+                setStatus('Importing ' + parsed.projects.length + ' projects…');
+                let chain = Promise.resolve();
+                parsed.projects.forEach(function (p, i) {
+                    chain = chain.then(function () {
+                        return createProject(p.name || ('Imported ' + (i + 1)), p.data || defaultProjectTablesData());
+                    });
+                });
+                chain.then(function () {
+                    renderProjectsList();
+                    setStatus('Imported ' + parsed.projects.length + ' projects');
+                }).catch(function (err) {
+                    console.error('Import failed:', err);
+                    setStatus('Import failed');
+                });
+                return;
+            }
+            // A single-project export (or an unrecognized/older JSON
+            // shape) — treat it as one project's table data.
+            const data = (parsed && parsed.data) ? parsed.data : parsed;
+            const name = (parsed && parsed.name) ||
+                (fallbackFileName ? fallbackFileName.replace(/\.json$/i, '') : 'Imported project');
+            setStatus('Importing…');
+            createProject(name, data).then(function () {
+                renderProjectsList();
+                setStatus('Imported "' + name + '"');
+            }).catch(function (err) {
+                console.error('Import failed:', err);
+                setStatus('Import failed');
+            });
+        }
+
+        // Keeps the small "📁 Project ▾" button label and the big top
+        // page title (#pageTitle) showing the same name — called
+        // whenever a project loads or gets renamed, from either
+        // direction (the dropdown list or editing the title directly).
+        function applyProjectNameToUI(name) {
+            const label = document.getElementById('currentProjectLabel');
+            if (label) label.textContent = name || 'Project';
+            const pageTitle = document.getElementById('pageTitle');
+            if (pageTitle && pageTitle.textContent !== name) pageTitle.textContent = name || '';
+        }
+
         function switchProject(projectId, opts) {
             opts = opts || {};
             const doSwitch = function () {
@@ -3790,7 +4249,7 @@ function insertNewCheckboxLine(currentLine) {
                     rebuildTablesContainer(parsed);
                     suppressAutoSave = false;
                     currentProjectId = projectId;
-                    document.getElementById('currentProjectLabel').textContent = data.name || 'Project';
+                    applyProjectNameToUI(data.name);
                     return db.collection('users').doc(currentUser.uid)
                         .set({ weekgoalCurrentProjectId: projectId }, { merge: true });
                 });
@@ -3826,7 +4285,7 @@ function insertNewCheckboxLine(currentLine) {
             projectsCollection().doc(projectId).set({ name: newName }, { merge: true }).then(function () {
                 const p = projectsCache.find(function (x) { return x.id === projectId; });
                 if (p) p.name = newName;
-                if (projectId === currentProjectId) document.getElementById('currentProjectLabel').textContent = newName;
+                if (projectId === currentProjectId) applyProjectNameToUI(newName);
             }).catch(function (err) {
                 console.error('Rename project failed:', err);
                 setStatus('Rename failed');
@@ -3876,9 +4335,17 @@ function insertNewCheckboxLine(currentLine) {
                 row.appendChild(nameSpan);
 
                 const switchBtn = document.createElement('span');
-                switchBtn.textContent = p.id === currentProjectId ? '●' : '○';
-                switchBtn.title = p.id === currentProjectId ? 'Current project' : 'Switch to this project';
-                switchBtn.style.cssText = 'cursor:pointer; padding:0 6px; font-size:11px; color:#888;';
+                const isCurrent = p.id === currentProjectId;
+                switchBtn.title = isCurrent ? 'Current project' : 'Switch to this project';
+                // Was an 11px text "●"/"○" — a hard target to click
+                // precisely. A bigger square swatch is both easier to
+                // hit and easier to spot at a glance which project is
+                // active.
+                switchBtn.style.cssText = 'cursor:pointer; flex:0 0 auto; width:16px; height:16px; ' +
+                    'margin:0 6px; border-radius:3px; box-sizing:border-box; ' +
+                    (isCurrent
+                        ? 'background:#2b6cff; border:2px solid #2b6cff;'
+                        : 'background:transparent; border:2px solid #aaa;');
                 switchBtn.addEventListener('click', function () { window.switchProjectFromMenu(p.id); });
                 row.appendChild(switchBtn);
 
@@ -3886,8 +4353,20 @@ function insertNewCheckboxLine(currentLine) {
                 delBtn.textContent = '×';
                 delBtn.title = 'Delete project';
                 delBtn.style.cssText = 'cursor:pointer; padding:0 4px; color:#c33; font-weight:bold;';
-                delBtn.addEventListener('click', function () { window.deleteProjectFromMenu(p.id, p.name); });
+                delBtn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    window.deleteProjectFromMenu(p.id, p.name);
+                });
                 row.appendChild(delBtn);
+
+                // Match the row's own tooltip ("click elsewhere on the
+                // row to switch") — previously only the small swatch
+                // itself was clickable, which was easy to miss.
+                row.style.cursor = 'pointer';
+                row.addEventListener('click', function (e) {
+                    if (e.target === nameSpan || e.target === delBtn || e.target === switchBtn) return;
+                    window.switchProjectFromMenu(p.id);
+                });
 
                 listEl.appendChild(row);
             });
@@ -3981,9 +4460,20 @@ function insertNewCheckboxLine(currentLine) {
         // Also catch title edits and structural changes (add/delete
         // table), which don't go through the outline tree's own sync
         // path at all.
+        let pageTitleRenameTimer = null;
         document.addEventListener('input', function (e) {
             if (e.target && e.target.classList && e.target.classList.contains('cell-title')) {
                 window.scheduleCloudAutoSave();
+            }
+            // The reverse direction of applyProjectNameToUI: editing the
+            // big top title renames the current project to match,
+            // debounced so it doesn't fire a write on every keystroke.
+            if (e.target && e.target.id === 'pageTitle' && currentUser && currentProjectId) {
+                clearTimeout(pageTitleRenameTimer);
+                pageTitleRenameTimer = setTimeout(function () {
+                    const newName = e.target.textContent.trim();
+                    if (newName) window.renameProject(currentProjectId, newName);
+                }, 800);
             }
         });
 
