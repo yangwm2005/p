@@ -1906,6 +1906,19 @@ async function openYesterdayFile() {
         sidebar.classList.toggle('open');
     }
 
+    // Sidebar notes are now stored with each cloud project (see
+    // serializeTablesContainer/rebuildTablesContainer) rather than being
+    // one global scratchpad shared across every project — so an edit
+    // here needs to schedule a save the same way editing a cell does.
+    (function () {
+        const notesEl = document.querySelector('#sidebar .notes-area');
+        if (notesEl) {
+            notesEl.addEventListener('input', function () {
+                if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+            });
+        }
+    })();
+
     document.addEventListener('click', function(event) {
         const sidebar = document.getElementById('sidebar');
         const sidebarButton = document.querySelector('button[onclick="toggleSidebar()"]');
@@ -4197,6 +4210,7 @@ function insertNewCheckboxLine(currentLine) {
         // native nested Firestore data. ---
         function serializeTablesContainer() {
             const container = document.getElementById('tablesContainer');
+            const sidebarNotesEl = document.querySelector('#sidebar .notes-area');
             const tables = [];
             Array.from(container.children).forEach(function (child) {
                 let table, wrapped;
@@ -4228,7 +4242,7 @@ function insertNewCheckboxLine(currentLine) {
                 });
                 tables.push({ wrapped: wrapped, mainTableId: table.id === 'mainTable', rows: rows });
             });
-            return { version: 1, tables: tables };
+            return { version: 1, tables: tables, sidebarNotes: sidebarNotesEl ? sidebarNotesEl.innerHTML : '' };
         }
 
         function buildCellElement(cellData) {
@@ -4274,6 +4288,11 @@ function insertNewCheckboxLine(currentLine) {
         function rebuildTablesContainer(data) {
             const container = document.getElementById('tablesContainer');
             container.innerHTML = '';
+            const sidebarNotesEl = document.querySelector('#sidebar .notes-area');
+            if (sidebarNotesEl) {
+                sidebarNotesEl.innerHTML = (data.sidebarNotes !== undefined && data.sidebarNotes !== null && data.sidebarNotes !== '')
+                    ? data.sidebarNotes : 'Notes';
+            }
             (data.tables || []).forEach(function (tableData) {
                 const table = document.createElement('table');
                 if (tableData.mainTableId) table.id = 'mainTable';
@@ -4321,6 +4340,7 @@ function insertNewCheckboxLine(currentLine) {
         function defaultProjectTablesData() {
             return {
                 version: 1,
+                sidebarNotes: '',
                 tables: [
                     {
                         wrapped: false, mainTableId: true,
