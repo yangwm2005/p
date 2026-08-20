@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=95vw; max-width: 950px;">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Week Goals</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/7.4.0/docx.min.js"></script>
     <style>
@@ -215,6 +215,16 @@
         #sidebar h3 {
             margin-top: 0;
             font-size: 1.2em;
+        }
+
+        #sidebar-edit-link {
+            cursor: pointer;
+            font-size: 0.7em;
+            margin-left: 4px;
+            opacity: 0.6;
+        }
+        #sidebar-edit-link:hover {
+            opacity: 1;
         }
 
         #sidebar iframe {
@@ -1009,6 +1019,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     <button id="importButton" onclick="importProjectFromFile()" class="gray" title="Import a previously exported JSON file as a new project">Import</button>
     <button onclick="openYesterdayFile()" class="gray" title="Open file with a new tab window">Open-Y</button>
     <button id="printButton" onclick="printContent()" class="gray">Print</button>
+    <button id="viewButton" onclick="quickView()" class="gray" title="Open a clean read-only view of the whole document (works on desktop and mobile)">👁 View</button>
     <span class="separator">|</span>
 
     <!-- Cloud sync (Firebase, shared qtodo-syn project — same account
@@ -1116,8 +1127,8 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
 
 <!-- Sidebar -->
 <div id="sidebar">
-    <h3>Sidebar</h3>
-    <iframe src="https://yangwm2005.github.io/p/self-chat v209T7b.html" title="Embedded Website"></iframe>
+    <h3>Sidebar <span id="sidebar-edit-link" title="Change the embedded link for this project">🔗</span></h3>
+    <iframe id="sidebar-iframe" src="https://yangwm2005.github.io/p/self-chat v209T7b.html" title="Embedded Website"></iframe>
     <div contenteditable="true" class="notes-area">Notes</div>
     <button id="sidebar-close" onclick="toggleSidebar()">Close</button>
 </div>
@@ -1270,6 +1281,144 @@ function printContent() {
     printWindow.print();
 }
 
+// A clean, read-only quick-view of the whole document — cards laid out
+// in a wrapping grid rather than the editor's own table/column layout,
+// so it reads well regardless of how many cells you have or how
+// they're currently sized/collapsed on the main page. Every cell
+// always shows in full here, regardless of its collapsed/full-height
+// state in the editor. Checkboxes are shown exactly as checked/
+// unchecked but aren't clickable — this view doesn't write anything
+// back to the document.
+//
+// Built as an in-page overlay rather than window.open(...) — a
+// separate floating popup window is a desktop-browser-only concept.
+// Mobile Safari (iPhone/iPad) doesn't support it and would just open
+// this as another full tab instead, exactly what the feature was meant
+// to avoid. An overlay works identically on desktop and mobile, and
+// still reads as a "popup" — dimmed backdrop, floating rounded panel,
+// tap outside or ✕ to close.
+function quickView() {
+    const pageTitle = document.getElementById('pageTitle').innerText.trim();
+    const tables = document.querySelectorAll('#tablesContainer table');
+
+    const existing = document.getElementById('quickViewOverlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'quickViewOverlay';
+    overlay.innerHTML = `
+        <style>
+            #quickViewOverlay {
+                position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 99999;
+                background: rgba(0, 0, 0, 0.45);
+                display: flex; align-items: flex-start; justify-content: center;
+                padding: 4vh 3vw;
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            #quickViewPanel {
+                background: #f4f4f6;
+                border-radius: 12px;
+                box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+                width: 100%; max-width: 900px;
+                padding: 20px 22px 32px;
+                position: relative;
+                box-sizing: border-box;
+                font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+                color: #24292f;
+                user-select: text;
+                -webkit-user-select: text;
+            }
+            #quickViewClose {
+                position: absolute; top: 10px; right: 12px;
+                width: 34px; height: 34px;
+                border: none; border-radius: 50%;
+                background: rgba(0, 0, 0, 0.08);
+                font-size: 18px; line-height: 1;
+                cursor: pointer; color: #444;
+            }
+            #quickViewClose:hover { background: rgba(0, 0, 0, 0.15); }
+            #quickViewPanel h2 {
+                text-align: center; font-weight: 600; font-size: 1.3em;
+                margin: 4px 44px 20px;
+            }
+            #quickViewPanel .view-grid {
+                display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px;
+            }
+            #quickViewPanel .view-cell {
+                flex: 1 1 300px; min-width: 260px;
+                background: #fff; border-radius: 10px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+                padding: 14px 16px 16px;
+            }
+            #quickViewPanel .view-cell h3 {
+                margin: 0 0 8px; padding-bottom: 6px;
+                font-size: 14px; font-weight: 600; color: #333;
+                border-bottom: 1px solid #eee;
+            }
+            #quickViewPanel .outline-node-row { display: flex; align-items: flex-start; padding: 2px 0; }
+            #quickViewPanel .outline-bullet { flex: 0 0 18px; width: 18px; text-align: center; color: #aaa; }
+            #quickViewPanel .outline-checkbox { margin: 3px 4px 0 0; pointer-events: none; }
+            #quickViewPanel .outline-text { flex: 1; line-height: 1.4; font-size: 13.5px; }
+            #quickViewPanel .outline-text.done { text-decoration: line-through; opacity: 0.5; }
+            #quickViewPanel .outline-text.bold { font-weight: bold; }
+            #quickViewPanel .outline-children { margin-left: 20px; }
+            #quickViewPanel .outline-children.outline-top { margin-left: 4px; }
+            #quickViewPanel input[type="checkbox"] { width: 13px; height: 13px; pointer-events: none; }
+            @media (max-width: 600px) {
+                #quickViewOverlay { padding: 0; }
+                #quickViewPanel { max-width: 100%; min-height: 100%; border-radius: 0; }
+            }
+        </style>
+        <div id="quickViewPanel">
+            <button id="quickViewClose" title="Close">✕</button>
+            <h2></h2>
+            <div class="view-grid"></div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector('h2').textContent = pageTitle;
+    const grid = overlay.querySelector('.view-grid');
+
+    tables.forEach(table => {
+        window.getCellTableRows(table).forEach(rowTds => {
+            rowTds.forEach(cell => {
+                const cellClone = cell.cloneNode(true);
+                cellClone.querySelectorAll(
+                    '.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, button'
+                ).forEach(el => el.remove());
+                // Each line is its own separate contenteditable region
+                // in the live editor — dragging a selection across
+                // several of them hits the same "selection balloons out
+                // unpredictably" browser quirk fixed in the main editor
+                // a while back (see the selectionchange clamp there),
+                // which doesn't reach into this cloned copy. This is a
+                // read-only view anyway, so strip contenteditable
+                // entirely — plain (non-editable) text selects cleanly
+                // across multiple lines/divs with no special-casing.
+                cellClone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+                const wrap = document.createElement('div');
+                wrap.className = 'view-cell';
+                wrap.innerHTML = cellClone.innerHTML;
+                grid.appendChild(wrap);
+            });
+        });
+    });
+
+    function closeQuickView() {
+        overlay.remove();
+        document.removeEventListener('keydown', onEscKey);
+    }
+    function onEscKey(e) {
+        if (e.key === 'Escape') closeQuickView();
+    }
+    overlay.querySelector('#quickViewClose').addEventListener('click', closeQuickView);
+    overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) closeQuickView();
+    });
+    document.addEventListener('keydown', onEscKey);
+}
+
     // Creates a table wrapped with a small delete (×) button so it can be
     // removed later. Used by all "Add ..." table functions below — the
     // original mainTable is never wrapped, so it can't be deleted.
@@ -1323,7 +1472,13 @@ function printContent() {
     // Idempotent — safe to call more than once on the same table.
     window.applyCellTableLayout = function (table) {
         if (!table || table.classList.contains('cell-table')) return;
-        const rows = Array.from(table.children).filter(function (c) { return c.tagName === 'TR'; });
+        // table.rows (not table.children) — browsers silently insert an
+        // invisible <tbody> between <table> and <tr> for markup that
+        // came from raw HTML (the page's own hardcoded tables, or any
+        // table built via innerHTML=... like createDeletableTable),
+        // which would make the <tr>s not direct children anymore.
+        // .rows finds them either way.
+        const rows = Array.from(table.rows);
         const colCount = rows.length ? rows[0].children.length : 0;
         if (colCount < 2) return;
         const grid = rows.map(function (tr) { return Array.from(tr.children); });
@@ -1345,7 +1500,7 @@ function printContent() {
     // serializeTablesContainer and printContent so neither needs to
     // care whether the live DOM is row-grouped or column-grouped.
     window.getCellTableRows = function (table) {
-        const trs = Array.from(table.children).filter(function (c) { return c.tagName === 'TR'; });
+        const trs = Array.from(table.rows);
         if (!table.classList.contains('cell-table')) {
             return trs.map(function (tr) { return Array.from(tr.children); });
         }
@@ -1760,6 +1915,39 @@ async function openYesterdayFile() {
         const sidebar = document.getElementById('sidebar');
         sidebar.classList.toggle('open');
     }
+
+    // Sidebar notes are now stored with each cloud project (see
+    // serializeTablesContainer/rebuildTablesContainer) rather than being
+    // one global scratchpad shared across every project — so an edit
+    // here needs to schedule a save the same way editing a cell does.
+    (function () {
+        const notesEl = document.querySelector('#sidebar .notes-area');
+        if (notesEl) {
+            notesEl.addEventListener('input', function () {
+                if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+            });
+        }
+    })();
+
+    // The embedded iframe's URL is also per-project now (see
+    // serializeTablesContainer/rebuildTablesContainer) — the 🔗 next to
+    // "Sidebar" is the only way to change it, since there's no reason
+    // to expose editing a URL inline the way the notes text is.
+    (function () {
+        const editBtn = document.getElementById('sidebar-edit-link');
+        const iframe = document.getElementById('sidebar-iframe');
+        if (!editBtn || !iframe) return;
+        editBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            const current = iframe.src;
+            const next = prompt('Embedded link for this project:', current);
+            if (next === null) return; // cancelled
+            const trimmed = next.trim();
+            if (!trimmed) return;
+            iframe.src = trimmed;
+            if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+        });
+    })();
 
     document.addEventListener('click', function(event) {
         const sidebar = document.getElementById('sidebar');
@@ -4052,6 +4240,8 @@ function insertNewCheckboxLine(currentLine) {
         // native nested Firestore data. ---
         function serializeTablesContainer() {
             const container = document.getElementById('tablesContainer');
+            const sidebarNotesEl = document.querySelector('#sidebar .notes-area');
+            const sidebarIframeEl = document.getElementById('sidebar-iframe');
             const tables = [];
             Array.from(container.children).forEach(function (child) {
                 let table, wrapped;
@@ -4083,7 +4273,12 @@ function insertNewCheckboxLine(currentLine) {
                 });
                 tables.push({ wrapped: wrapped, mainTableId: table.id === 'mainTable', rows: rows });
             });
-            return { version: 1, tables: tables };
+            return {
+                version: 1,
+                tables: tables,
+                sidebarNotes: sidebarNotesEl ? sidebarNotesEl.innerHTML : '',
+                sidebarIframeUrl: sidebarIframeEl ? sidebarIframeEl.src : ''
+            };
         }
 
         function buildCellElement(cellData) {
@@ -4126,9 +4321,23 @@ function insertNewCheckboxLine(currentLine) {
             return td;
         }
 
+        // The iframe's original built-in URL — used as the fallback for
+        // any project saved before sidebarIframeUrl existed, so those
+        // don't suddenly show a blank sidebar.
+        const DEFAULT_SIDEBAR_IFRAME_URL = 'https://yangwm2005.github.io/p/self-chat v209T7b.html';
+
         function rebuildTablesContainer(data) {
             const container = document.getElementById('tablesContainer');
             container.innerHTML = '';
+            const sidebarNotesEl = document.querySelector('#sidebar .notes-area');
+            if (sidebarNotesEl) {
+                sidebarNotesEl.innerHTML = (data.sidebarNotes !== undefined && data.sidebarNotes !== null && data.sidebarNotes !== '')
+                    ? data.sidebarNotes : 'Notes';
+            }
+            const sidebarIframeEl = document.getElementById('sidebar-iframe');
+            if (sidebarIframeEl) {
+                sidebarIframeEl.src = data.sidebarIframeUrl || DEFAULT_SIDEBAR_IFRAME_URL;
+            }
             (data.tables || []).forEach(function (tableData) {
                 const table = document.createElement('table');
                 if (tableData.mainTableId) table.id = 'mainTable';
@@ -4176,6 +4385,8 @@ function insertNewCheckboxLine(currentLine) {
         function defaultProjectTablesData() {
             return {
                 version: 1,
+                sidebarNotes: '',
+                sidebarIframeUrl: '', // rebuildTablesContainer falls back to the built-in default
                 tables: [
                     {
                         wrapped: false, mainTableId: true,
