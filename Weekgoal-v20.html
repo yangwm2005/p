@@ -360,6 +360,20 @@
     background-color: rgba(0, 0, 0, 0.08);
     color: #444;
 }
+.cell-height-toggle {
+    float: right;
+    cursor: pointer;
+    user-select: none;
+    font-size: 15px;
+    line-height: 1;
+    color: #999;
+    padding: 4px 7px;
+    border-radius: 4px;
+}
+.cell-height-toggle:hover {
+    background-color: rgba(0, 0, 0, 0.08);
+    color: #444;
+}
 td.cell-collapsed {
     /* td normally has a fixed height (see the base `td` rule above)
        plus whatever a manual drag-resize set inline — both need to be
@@ -371,6 +385,15 @@ td.cell-collapsed {
 td.cell-collapsed .outline-root,
 td.cell-collapsed .cell-action-button {
     display: none;
+}
+td.cell-full-height {
+    /* Same reasoning as .cell-collapsed above: both the base fixed
+       height and any manual drag-resize height need overriding, not
+       just the scrollbar, or the cell keeps its old height with a
+       scrollbar hidden behind an unrelated overflow setting. */
+    height: auto !important;
+    overflow: visible;
+    resize: none;
 }
 
 /* Add to your existing CSS */
@@ -986,6 +1009,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     <button id="importButton" onclick="importProjectFromFile()" class="gray" title="Import a previously exported JSON file as a new project">Import</button>
     <button onclick="openYesterdayFile()" class="gray" title="Open file with a new tab window">Open-Y</button>
     <button id="printButton" onclick="printContent()" class="gray">Print</button>
+    <button id="viewButton" onclick="quickView()" class="gray" title="Open a clean read-only view of the whole document in a popup window">👁 View</button>
     <span class="separator">|</span>
 
     <!-- Cloud sync (Firebase, shared qtodo-syn project — same account
@@ -1176,6 +1200,42 @@ function printContent() {
                     flex: 0 0 auto;
                     margin-top: 4px;
                 }
+                /* Mirror the outline table's own row/bullet/checkbox/
+                   indent layout (see .outline-node-row and friends in
+                   the main stylesheet) so bullets and checkboxes line
+                   up with their text the same way they do on-screen —
+                   this print window has its own separate stylesheet
+                   with no access to that CSS otherwise. */
+                .outline-children { margin-left: 20px; }
+                .outline-children.outline-top { margin-left: 4px; }
+                .outline-node-row {
+                    display: flex;
+                    align-items: flex-start;
+                    padding: 1px 0;
+                }
+                .outline-bullet {
+                    flex: 0 0 18px;
+                    width: 18px;
+                    margin-top: 2px;
+                    text-align: center;
+                    color: #888;
+                }
+                .outline-checkbox {
+                    margin: 3px 4px 0 0;
+                    flex: 0 0 auto;
+                }
+                .outline-text {
+                    flex: 1;
+                    line-height: 1.3;
+                    padding: 1px 4px;
+                }
+                .outline-text.done {
+                    text-decoration: line-through;
+                    opacity: 0.55;
+                }
+                .outline-text.bold {
+                    font-weight: bold;
+                }
             </style>
         </head>
         <body>
@@ -1190,11 +1250,14 @@ function printContent() {
             rowTds.forEach(cell => {
                 // Clone the cell to modify it without affecting the original
                 const cellClone = cell.cloneNode(true);
-                // Remove all buttons and the collapse toggle from the
-                // cloned cell (also means a collapsed cell always prints
-                // with its full content, regardless of its on-screen
-                // collapsed state)
-                const buttons = cellClone.querySelectorAll('.cell-action-button, .cell-toggle, button');
+                // Remove all buttons, the collapse/height toggles, and
+                // the per-item ☰ control icon from the cloned cell
+                // (also means a collapsed cell always prints with its
+                // full content, regardless of its on-screen collapsed
+                // state)
+                const buttons = cellClone.querySelectorAll(
+                    '.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, button'
+                );
                 buttons.forEach(button => button.remove());
                 printWindow.document.write(`<td>${cellClone.innerHTML}</td>`);
             });
@@ -1206,6 +1269,115 @@ function printContent() {
     printWindow.document.write(`</body></html>`);
     printWindow.document.close();
     printWindow.print();
+}
+
+// A clean, read-only quick-view of the whole document in a small popup
+// window (not a new tab — the explicit width/height/left/top in the
+// window.open features string is what makes browsers treat it as a
+// popup) — cards laid out in a wrapping grid rather than the editor's
+// own table/column layout, so it reads well regardless of how many
+// cells you have or how they're currently sized/collapsed on the main
+// page. Every cell always shows in full here, regardless of its
+// collapsed/full-height state in the editor. Checkboxes are shown
+// exactly as checked/unchecked but aren't clickable — this window
+// doesn't write anything back to the document.
+function quickView() {
+    const pageTitle = document.getElementById('pageTitle').innerText.trim();
+    const tables = document.querySelectorAll('#tablesContainer table');
+
+    const viewWindow = window.open(
+        '', 'weekgoalQuickView',
+        'width=900,height=760,left=120,top=80,resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=no,status=no'
+    );
+    if (!viewWindow) {
+        alert('Your browser blocked the popup — please allow popups for this page and try again.');
+        return;
+    }
+
+    viewWindow.document.write(`
+        <html>
+        <head>
+            <title>${pageTitle}</title>
+            <style>
+                * { box-sizing: border-box; }
+                body {
+                    font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+                    margin: 0;
+                    padding: 22px 26px 40px;
+                    background: #f4f4f6;
+                    color: #24292f;
+                    user-select: text;
+                }
+                h2 {
+                    text-align: center;
+                    font-weight: 600;
+                    font-size: 1.4em;
+                    margin: 4px 0 20px;
+                }
+                .view-grid {
+                    display: flex;
+                    flex-wrap: wrap;
+                    align-items: flex-start;
+                    gap: 14px;
+                }
+                .view-cell {
+                    flex: 1 1 300px;
+                    min-width: 260px;
+                    background: #fff;
+                    border-radius: 10px;
+                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+                    padding: 14px 16px 16px;
+                }
+                .view-cell h3 {
+                    margin: 0 0 8px;
+                    padding-bottom: 6px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    color: #333;
+                    border-bottom: 1px solid #eee;
+                }
+                .outline-node-row { display: flex; align-items: flex-start; padding: 2px 0; }
+                .outline-bullet { flex: 0 0 18px; width: 18px; text-align: center; color: #aaa; }
+                .outline-checkbox { margin: 3px 4px 0 0; pointer-events: none; }
+                .outline-text { flex: 1; line-height: 1.4; font-size: 13.5px; }
+                .outline-text.done { text-decoration: line-through; opacity: 0.5; }
+                .outline-text.bold { font-weight: bold; }
+                .outline-children { margin-left: 20px; }
+                .outline-children.outline-top { margin-left: 4px; }
+                input[type="checkbox"] { width: 13px; height: 13px; pointer-events: none; }
+            </style>
+        </head>
+        <body>
+            <h2>${pageTitle}</h2>
+            <div class="view-grid">
+    `);
+
+    tables.forEach(table => {
+        window.getCellTableRows(table).forEach(rowTds => {
+            rowTds.forEach(cell => {
+                const cellClone = cell.cloneNode(true);
+                cellClone.querySelectorAll(
+                    '.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, button'
+                ).forEach(el => el.remove());
+                // Each line is its own separate contenteditable region
+                // in the live editor — dragging a selection across
+                // several of them hits the same "selection balloons out
+                // unpredictably" browser quirk fixed in the main editor
+                // a while back (see the selectionchange clamp there).
+                // That fix lives in the main page's JS and doesn't
+                // reach into this separate popup window, so instead:
+                // strip contenteditable entirely here. This is a
+                // read-only view anyway, and plain (non-editable) text
+                // selects cleanly across multiple lines/divs with no
+                // special-casing needed.
+                cellClone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+                viewWindow.document.write(`<div class="view-cell">${cellClone.innerHTML}</div>`);
+            });
+        });
+    });
+
+    viewWindow.document.write('</div></body></html>');
+    viewWindow.document.close();
 }
 
     // Creates a table wrapped with a small delete (×) button so it can be
@@ -1230,6 +1402,27 @@ function printContent() {
         h3.insertBefore(toggle, h3.firstChild);
     };
 
+    // Adds a second toggle (⤢/⤡) next to the collapse toggle, switching
+    // a cell between its normal fixed height + internal scrollbar (the
+    // long-standing default — good for keeping the page compact) and
+    // "full content" mode, where the cell simply grows to fit
+    // everything with no scrolling and no height limit.
+    window.ensureCellHeightToggle = function (td) {
+        const h3 = td.querySelector('h3');
+        if (!h3 || h3.querySelector('.cell-height-toggle')) return;
+        const toggle = document.createElement('span');
+        toggle.className = 'cell-height-toggle';
+        toggle.title = 'Show full content (no scrolling)';
+        toggle.textContent = '⤢';
+        toggle.addEventListener('click', function () {
+            const full = td.classList.toggle('cell-full-height');
+            toggle.textContent = full ? '⤡' : '⤢';
+            toggle.title = full ? 'Use a fixed height with scrolling' : 'Show full content (no scrolling)';
+            if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+        });
+        h3.insertBefore(toggle, h3.firstChild);
+    };
+
     // Regroups a 2-column table's <tr><td> markup (built/stored in the
     // normal row-major order — see getCellTableRows for the reverse
     // direction) into two independent vertical <tr class="cell-column">
@@ -1240,7 +1433,13 @@ function printContent() {
     // Idempotent — safe to call more than once on the same table.
     window.applyCellTableLayout = function (table) {
         if (!table || table.classList.contains('cell-table')) return;
-        const rows = Array.from(table.children).filter(function (c) { return c.tagName === 'TR'; });
+        // table.rows (not table.children) — browsers silently insert an
+        // invisible <tbody> between <table> and <tr> for markup that
+        // came from raw HTML (the page's own hardcoded tables, or any
+        // table built via innerHTML=... like createDeletableTable),
+        // which would make the <tr>s not direct children anymore.
+        // .rows finds them either way.
+        const rows = Array.from(table.rows);
         const colCount = rows.length ? rows[0].children.length : 0;
         if (colCount < 2) return;
         const grid = rows.map(function (tr) { return Array.from(tr.children); });
@@ -1262,7 +1461,7 @@ function printContent() {
     // serializeTablesContainer and printContent so neither needs to
     // care whether the live DOM is row-grouped or column-grouped.
     window.getCellTableRows = function (table) {
-        const trs = Array.from(table.children).filter(function (c) { return c.tagName === 'TR'; });
+        const trs = Array.from(table.rows);
         if (!table.classList.contains('cell-table')) {
             return trs.map(function (tr) { return Array.from(tr.children); });
         }
@@ -1282,6 +1481,7 @@ function printContent() {
 
     function ensureAllCellToggles() {
         document.querySelectorAll('#tablesContainer td').forEach(window.ensureCellToggle);
+        document.querySelectorAll('#tablesContainer td').forEach(window.ensureCellHeightToggle);
         document.querySelectorAll('#tablesContainer > table').forEach(window.applyCellTableLayout);
     }
     document.addEventListener('DOMContentLoaded', ensureAllCellToggles);
@@ -1316,6 +1516,7 @@ function printContent() {
             window.initOutlineTable(el, '');
         });
         newTable.querySelectorAll('td').forEach(window.ensureCellToggle);
+        newTable.querySelectorAll('td').forEach(window.ensureCellHeightToggle);
         window.applyCellTableLayout(newTable);
 
         // Scroll to the new table and drop the cursor into its first
@@ -3990,6 +4191,7 @@ function insertNewCheckboxLine(currentLine) {
                             title: titleEl ? titleEl.textContent : '',
                             checkboxBtn: !!td.querySelector('.cell-action-button'),
                             collapsed: td.classList.contains('cell-collapsed'),
+                            fullHeight: td.classList.contains('cell-full-height'),
                             tree: tree
                         });
                     });
@@ -4023,10 +4225,19 @@ function insertNewCheckboxLine(currentLine) {
             root.dataset.tree = JSON.stringify(cellData.tree || []);
             td.appendChild(root);
             if (window.ensureCellToggle) window.ensureCellToggle(td);
+            if (window.ensureCellHeightToggle) window.ensureCellHeightToggle(td);
             if (cellData.collapsed) {
                 td.classList.add('cell-collapsed');
                 const toggle = h3.querySelector('.cell-toggle');
                 if (toggle) toggle.textContent = '▸';
+            }
+            if (cellData.fullHeight) {
+                td.classList.add('cell-full-height');
+                const heightToggle = h3.querySelector('.cell-height-toggle');
+                if (heightToggle) {
+                    heightToggle.textContent = '⤡';
+                    heightToggle.title = 'Use a fixed height with scrolling';
+                }
             }
             return td;
         }
