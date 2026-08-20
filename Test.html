@@ -1009,7 +1009,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     <button id="importButton" onclick="importProjectFromFile()" class="gray" title="Import a previously exported JSON file as a new project">Import</button>
     <button onclick="openYesterdayFile()" class="gray" title="Open file with a new tab window">Open-Y</button>
     <button id="printButton" onclick="printContent()" class="gray">Print</button>
-    <button id="viewButton" onclick="quickView()" class="gray" title="Open a clean read-only view of the whole document in a popup window">👁 View</button>
+    <button id="viewButton" onclick="quickView()" class="gray" title="Open a clean read-only view of the whole document (works on desktop and mobile)">👁 View</button>
     <span class="separator">|</span>
 
     <!-- Cloud sync (Firebase, shared qtodo-syn project — same account
@@ -1271,86 +1271,104 @@ function printContent() {
     printWindow.print();
 }
 
-// A clean, read-only quick-view of the whole document in a small popup
-// window (not a new tab — the explicit width/height/left/top in the
-// window.open features string is what makes browsers treat it as a
-// popup) — cards laid out in a wrapping grid rather than the editor's
-// own table/column layout, so it reads well regardless of how many
-// cells you have or how they're currently sized/collapsed on the main
-// page. Every cell always shows in full here, regardless of its
-// collapsed/full-height state in the editor. Checkboxes are shown
-// exactly as checked/unchecked but aren't clickable — this window
-// doesn't write anything back to the document.
+// A clean, read-only quick-view of the whole document — cards laid out
+// in a wrapping grid rather than the editor's own table/column layout,
+// so it reads well regardless of how many cells you have or how
+// they're currently sized/collapsed on the main page. Every cell
+// always shows in full here, regardless of its collapsed/full-height
+// state in the editor. Checkboxes are shown exactly as checked/
+// unchecked but aren't clickable — this view doesn't write anything
+// back to the document.
+//
+// Built as an in-page overlay rather than window.open(...) — a
+// separate floating popup window is a desktop-browser-only concept.
+// Mobile Safari (iPhone/iPad) doesn't support it and would just open
+// this as another full tab instead, exactly what the feature was meant
+// to avoid. An overlay works identically on desktop and mobile, and
+// still reads as a "popup" — dimmed backdrop, floating rounded panel,
+// tap outside or ✕ to close.
 function quickView() {
     const pageTitle = document.getElementById('pageTitle').innerText.trim();
     const tables = document.querySelectorAll('#tablesContainer table');
 
-    const viewWindow = window.open(
-        '', 'weekgoalQuickView',
-        'width=900,height=760,left=120,top=80,resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=no,status=no'
-    );
-    if (!viewWindow) {
-        alert('Your browser blocked the popup — please allow popups for this page and try again.');
-        return;
-    }
+    const existing = document.getElementById('quickViewOverlay');
+    if (existing) existing.remove();
 
-    viewWindow.document.write(`
-        <html>
-        <head>
-            <title>${pageTitle}</title>
-            <style>
-                * { box-sizing: border-box; }
-                body {
-                    font-family: -apple-system, "Segoe UI", Arial, sans-serif;
-                    margin: 0;
-                    padding: 22px 26px 40px;
-                    background: #f4f4f6;
-                    color: #24292f;
-                    user-select: text;
-                }
-                h2 {
-                    text-align: center;
-                    font-weight: 600;
-                    font-size: 1.4em;
-                    margin: 4px 0 20px;
-                }
-                .view-grid {
-                    display: flex;
-                    flex-wrap: wrap;
-                    align-items: flex-start;
-                    gap: 14px;
-                }
-                .view-cell {
-                    flex: 1 1 300px;
-                    min-width: 260px;
-                    background: #fff;
-                    border-radius: 10px;
-                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-                    padding: 14px 16px 16px;
-                }
-                .view-cell h3 {
-                    margin: 0 0 8px;
-                    padding-bottom: 6px;
-                    font-size: 14px;
-                    font-weight: 600;
-                    color: #333;
-                    border-bottom: 1px solid #eee;
-                }
-                .outline-node-row { display: flex; align-items: flex-start; padding: 2px 0; }
-                .outline-bullet { flex: 0 0 18px; width: 18px; text-align: center; color: #aaa; }
-                .outline-checkbox { margin: 3px 4px 0 0; pointer-events: none; }
-                .outline-text { flex: 1; line-height: 1.4; font-size: 13.5px; }
-                .outline-text.done { text-decoration: line-through; opacity: 0.5; }
-                .outline-text.bold { font-weight: bold; }
-                .outline-children { margin-left: 20px; }
-                .outline-children.outline-top { margin-left: 4px; }
-                input[type="checkbox"] { width: 13px; height: 13px; pointer-events: none; }
-            </style>
-        </head>
-        <body>
-            <h2>${pageTitle}</h2>
-            <div class="view-grid">
-    `);
+    const overlay = document.createElement('div');
+    overlay.id = 'quickViewOverlay';
+    overlay.innerHTML = `
+        <style>
+            #quickViewOverlay {
+                position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 99999;
+                background: rgba(0, 0, 0, 0.45);
+                display: flex; align-items: flex-start; justify-content: center;
+                padding: 4vh 3vw;
+                overflow-y: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            #quickViewPanel {
+                background: #f4f4f6;
+                border-radius: 12px;
+                box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+                width: 100%; max-width: 900px;
+                padding: 20px 22px 32px;
+                position: relative;
+                box-sizing: border-box;
+                font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+                color: #24292f;
+                user-select: text;
+                -webkit-user-select: text;
+            }
+            #quickViewClose {
+                position: absolute; top: 10px; right: 12px;
+                width: 34px; height: 34px;
+                border: none; border-radius: 50%;
+                background: rgba(0, 0, 0, 0.08);
+                font-size: 18px; line-height: 1;
+                cursor: pointer; color: #444;
+            }
+            #quickViewClose:hover { background: rgba(0, 0, 0, 0.15); }
+            #quickViewPanel h2 {
+                text-align: center; font-weight: 600; font-size: 1.3em;
+                margin: 4px 44px 20px;
+            }
+            #quickViewPanel .view-grid {
+                display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px;
+            }
+            #quickViewPanel .view-cell {
+                flex: 1 1 300px; min-width: 260px;
+                background: #fff; border-radius: 10px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+                padding: 14px 16px 16px;
+            }
+            #quickViewPanel .view-cell h3 {
+                margin: 0 0 8px; padding-bottom: 6px;
+                font-size: 14px; font-weight: 600; color: #333;
+                border-bottom: 1px solid #eee;
+            }
+            #quickViewPanel .outline-node-row { display: flex; align-items: flex-start; padding: 2px 0; }
+            #quickViewPanel .outline-bullet { flex: 0 0 18px; width: 18px; text-align: center; color: #aaa; }
+            #quickViewPanel .outline-checkbox { margin: 3px 4px 0 0; pointer-events: none; }
+            #quickViewPanel .outline-text { flex: 1; line-height: 1.4; font-size: 13.5px; }
+            #quickViewPanel .outline-text.done { text-decoration: line-through; opacity: 0.5; }
+            #quickViewPanel .outline-text.bold { font-weight: bold; }
+            #quickViewPanel .outline-children { margin-left: 20px; }
+            #quickViewPanel .outline-children.outline-top { margin-left: 4px; }
+            #quickViewPanel input[type="checkbox"] { width: 13px; height: 13px; pointer-events: none; }
+            @media (max-width: 600px) {
+                #quickViewOverlay { padding: 0; }
+                #quickViewPanel { max-width: 100%; min-height: 100%; border-radius: 0; }
+            }
+        </style>
+        <div id="quickViewPanel">
+            <button id="quickViewClose" title="Close">✕</button>
+            <h2></h2>
+            <div class="view-grid"></div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector('h2').textContent = pageTitle;
+    const grid = overlay.querySelector('.view-grid');
 
     tables.forEach(table => {
         window.getCellTableRows(table).forEach(rowTds => {
@@ -1363,21 +1381,32 @@ function quickView() {
                 // in the live editor — dragging a selection across
                 // several of them hits the same "selection balloons out
                 // unpredictably" browser quirk fixed in the main editor
-                // a while back (see the selectionchange clamp there).
-                // That fix lives in the main page's JS and doesn't
-                // reach into this separate popup window, so instead:
-                // strip contenteditable entirely here. This is a
-                // read-only view anyway, and plain (non-editable) text
-                // selects cleanly across multiple lines/divs with no
-                // special-casing needed.
+                // a while back (see the selectionchange clamp there),
+                // which doesn't reach into this cloned copy. This is a
+                // read-only view anyway, so strip contenteditable
+                // entirely — plain (non-editable) text selects cleanly
+                // across multiple lines/divs with no special-casing.
                 cellClone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
-                viewWindow.document.write(`<div class="view-cell">${cellClone.innerHTML}</div>`);
+                const wrap = document.createElement('div');
+                wrap.className = 'view-cell';
+                wrap.innerHTML = cellClone.innerHTML;
+                grid.appendChild(wrap);
             });
         });
     });
 
-    viewWindow.document.write('</div></body></html>');
-    viewWindow.document.close();
+    function closeQuickView() {
+        overlay.remove();
+        document.removeEventListener('keydown', onEscKey);
+    }
+    function onEscKey(e) {
+        if (e.key === 'Escape') closeQuickView();
+    }
+    overlay.querySelector('#quickViewClose').addEventListener('click', closeQuickView);
+    overlay.addEventListener('click', function (e) {
+        if (e.target === overlay) closeQuickView();
+    });
+    document.addEventListener('keydown', onEscKey);
 }
 
     // Creates a table wrapped with a small delete (×) button so it can be
