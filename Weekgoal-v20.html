@@ -217,11 +217,87 @@
             font-size: 1.2em;
         }
 
-        #sidebar iframe {
-            width: 100%;
-            height: 80%;
-            border: none;
+        /* Think Log — a simple, built-in per-project running log,
+           replacing the old embedded iframe so notes never depend on
+           an external site being reachable. */
+        #think-log {
+            display: flex;
+            flex-direction: column;
+            height: 60%;
             margin-bottom: 10px;
+        }
+        #think-log-entries {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 6px 8px;
+            background: #fff;
+            margin-bottom: 6px;
+        }
+        .think-log-entry {
+            padding: 8px 4px;
+            border-bottom: 1px solid #eee;
+            font-size: 16px;
+        }
+        .think-log-entry:last-child {
+            border-bottom: none;
+        }
+        .think-log-entry-time {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 3px;
+        }
+        .think-log-entry-text {
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.4;
+        }
+        .think-log-entry-delete {
+            float: right;
+            cursor: pointer;
+            color: #c33;
+            font-size: 12px;
+            opacity: 0.6;
+        }
+        .think-log-entry-delete:hover {
+            opacity: 1;
+        }
+        #think-log-empty {
+            color: #999;
+            font-size: 15px;
+            font-style: italic;
+            padding: 4px;
+        }
+        #think-log-composer {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        #think-log-input {
+            width: 100%;
+            box-sizing: border-box;
+            resize: vertical;
+            font-family: inherit;
+            font-size: 16px;
+            line-height: 1.4;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #think-log-add {
+            align-self: flex-end;
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 12px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        #think-log-add:hover {
+            background-color: #5a6268;
         }
 
         #sidebar .notes-area {
@@ -1117,10 +1193,17 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
 
 <!-- Sidebar -->
 <div id="sidebar">
-    <h3>Sidebar</h3>
-    <iframe src="https://yangwm2005.github.io/p/self-chat v209T7b.html" title="Embedded Website"></iframe>
+    <h3>Think Log</h3>
+    <div id="think-log">
+        <div id="think-log-entries"></div>
+        <div id="think-log-composer">
+            <textarea id="think-log-input" placeholder="Jot a thought…" rows="3"></textarea>
+            <button id="think-log-add" onclick="addThinkLogEntry()">Add</button>
+        </div>
+    </div>
     <div contenteditable="true" class="notes-area">Notes</div>
     <button id="sidebar-close" onclick="toggleSidebar()">Close</button>
+</div>
 </div>
 
 
@@ -1918,6 +2001,118 @@ async function openYesterdayFile() {
             });
         }
     })();
+
+    // The Think Log — a simple, built-in per-project running log of
+    // timestamped entries. Stored as window.__thinkLogEntries (an array
+    // of {id, ts, text}), read/written by serializeTablesContainer/
+    // rebuildTablesContainer the same way everything else on the page
+    // is, so switching projects swaps the whole log along with it.
+    window.__thinkLogEntries = [];
+
+    function renderThinkLogEntries() {
+
+        const container = document.getElementById('think-log-entries');
+        if (!container) return;
+        container.innerHTML = '';
+        if (window.__thinkLogEntries.length === 0) {
+            container.innerHTML = '<div id="think-log-empty">No entries yet — jot down a thought below.</div>';
+            return;
+        }
+        // Newest first, easiest to scan when you're adding to it often.
+        window.__thinkLogEntries.slice().reverse().forEach(function (entry) {
+            const row = document.createElement('div');
+            row.className = 'think-log-entry';
+            const del = document.createElement('span');
+            del.className = 'think-log-entry-delete';
+            del.textContent = '✕';
+            del.title = 'Delete this entry';
+            del.addEventListener('click', function () { deleteThinkLogEntry(entry.id); });
+            row.appendChild(del);
+            const time = document.createElement('span');
+            time.className = 'think-log-entry-time';
+            time.textContent = new Date(entry.ts).toLocaleString();
+            row.appendChild(time);
+            const text = document.createElement('div');
+            text.className = 'think-log-entry-text';
+            text.textContent = entry.text;
+            row.appendChild(text);
+            container.appendChild(row);
+        });
+    }
+    // Exposed on window (this <script> block ends above the cloud/
+    // project one, which calls this from rebuildTablesContainer when
+    // switching projects) — plain function declarations don't cross
+    // that boundary on their own.
+    window.renderThinkLogEntries = renderThinkLogEntries;
+
+    window.addThinkLogEntry = function () {
+        const input = document.getElementById('think-log-input');
+        const text = (input.value || '').trim();
+        if (!text) return;
+        window.__thinkLogEntries.push({ id: 'tl' + Date.now() + Math.random().toString(36).slice(2, 6), ts: Date.now(), text: text });
+        input.value = '';
+        // Clearing .value alone doesn't reliably reset where the browser
+        // thinks the cursor/scroll position is — on some browsers the
+        // next thing you type starts appearing partway down the box
+        // (wherever the old, now-gone text used to end) instead of at
+        // the top. Explicitly put both back to the very start.
+        input.setSelectionRange(0, 0);
+        input.scrollTop = 0;
+        input.focus();
+        renderThinkLogEntries();
+        if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+        // Safety net: on some mobile browsers, the Enter/Return keypress
+        // that triggered this can still insert its newline right after
+        // this function runs (a timing quirk the keydown/beforeinput
+        // handlers don't always fully prevent), which would otherwise
+        // leave the cursor sitting on that phantom second line. Wipe it
+        // right back out and re-pin the cursor to the top once more,
+        // after the browser's own handling of that keypress has settled.
+        setTimeout(function () {
+            if (/^[\r\n]+$/.test(input.value)) {
+                input.value = '';
+                input.setSelectionRange(0, 0);
+                input.scrollTop = 0;
+            }
+        }, 0);
+    };
+
+    window.deleteThinkLogEntry = function (id) {
+        window.__thinkLogEntries = window.__thinkLogEntries.filter(function (e) { return e.id !== id; });
+        renderThinkLogEntries();
+        if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+    };
+
+    document.addEventListener('DOMContentLoaded', function () {
+        renderThinkLogEntries();
+        const input = document.getElementById('think-log-input');
+        if (input) {
+            // 'keydown' + preventDefault is the usual way to stop Enter
+            // from inserting a newline, but on some mobile browsers the
+            // virtual keyboard's Return key doesn't fully honor that,
+            // and the newline slips in anyway — landing the cursor on a
+            // second, blank line instead of back at the top. 'beforeinput'
+            // with inputType 'insertLineBreak' is the more reliable,
+            // mobile-safe way to catch and cancel that same keypress
+            // before any newline is actually inserted into the field.
+            // addThinkLogEntry() clears the field immediately, so even
+            // if both handlers somehow fire for one Enter press, the
+            // second call just sees an empty field and no-ops — no risk
+            // of double-adding the entry.
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    window.addThinkLogEntry();
+                }
+            });
+            input.addEventListener('beforeinput', function (e) {
+                if (e.inputType === 'insertLineBreak') {
+                    e.preventDefault();
+                    window.addThinkLogEntry();
+                }
+            });
+        }
+    });
 
     document.addEventListener('click', function(event) {
         const sidebar = document.getElementById('sidebar');
@@ -4242,7 +4437,12 @@ function insertNewCheckboxLine(currentLine) {
                 });
                 tables.push({ wrapped: wrapped, mainTableId: table.id === 'mainTable', rows: rows });
             });
-            return { version: 1, tables: tables, sidebarNotes: sidebarNotesEl ? sidebarNotesEl.innerHTML : '' };
+            return {
+                version: 1,
+                tables: tables,
+                sidebarNotes: sidebarNotesEl ? sidebarNotesEl.innerHTML : '',
+                thinkLog: window.__thinkLogEntries || []
+            };
         }
 
         function buildCellElement(cellData) {
@@ -4293,6 +4493,8 @@ function insertNewCheckboxLine(currentLine) {
                 sidebarNotesEl.innerHTML = (data.sidebarNotes !== undefined && data.sidebarNotes !== null && data.sidebarNotes !== '')
                     ? data.sidebarNotes : 'Notes';
             }
+            window.__thinkLogEntries = Array.isArray(data.thinkLog) ? data.thinkLog : [];
+            if (window.renderThinkLogEntries) window.renderThinkLogEntries();
             (data.tables || []).forEach(function (tableData) {
                 const table = document.createElement('table');
                 if (tableData.mainTableId) table.id = 'mainTable';
@@ -4341,6 +4543,7 @@ function insertNewCheckboxLine(currentLine) {
             return {
                 version: 1,
                 sidebarNotes: '',
+                thinkLog: [],
                 tables: [
                     {
                         wrapped: false, mainTableId: true,
