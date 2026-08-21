@@ -942,11 +942,12 @@ body:not(.pre-hover) .outline-node-row:hover,
 .outline-drag-fixed:hover { background-color: rgba(0, 0, 0, 0.3); }
 .outline-drag-fixed:active { cursor: grabbing; }
 
-/* One-click "remove checkbox" for a checkbox item — only shown when
-   the hovered row actually has one, so it never appears for plain
-   bullet lines. Same position:fixed hover-icon pattern as the toggle/
-   drag icons above. */
-.outline-checkbox-remove-fixed {
+/* One-click add/remove checkbox for the hovered item — shows a "+" to
+   add one when there isn't one yet, or an "✕" to remove it when there
+   is, always in the same spot so it's a predictable, muscle-memory
+   click either way. Same position:fixed hover-icon pattern as the
+   toggle/drag icons above. */
+.outline-checkbox-toggle-fixed {
     position: fixed;
     display: none;
     align-items: center;
@@ -962,8 +963,9 @@ body:not(.pre-hover) .outline-node-row:hover,
     z-index: 2500;
     user-select: none;
 }
-.outline-checkbox-remove-fixed.show { display: flex; }
-.outline-checkbox-remove-fixed:hover { background-color: rgba(220, 53, 69, 0.7); color: #fff; }
+.outline-checkbox-toggle-fixed.show { display: flex; }
+.outline-checkbox-toggle-fixed:hover { background-color: rgba(0, 0, 0, 0.3); }
+.outline-checkbox-toggle-fixed.remove-mode:hover { background-color: rgba(220, 53, 69, 0.7); color: #fff; }
 
 /* Always-visible inline control-panel button — not a hover overlay
    (see the comment in renderNode for why: the fixed-position hover
@@ -3913,9 +3915,7 @@ function insertNewCheckboxLine(currentLine) {
             document.body.appendChild(otDrag);
 
             otCheckboxRemove = document.createElement('div');
-            otCheckboxRemove.className = 'outline-checkbox-remove-fixed';
-            otCheckboxRemove.textContent = '✕';
-            otCheckboxRemove.title = 'Remove checkbox';
+            otCheckboxRemove.className = 'outline-checkbox-toggle-fixed';
             document.body.appendChild(otCheckboxRemove);
 
             [otToggle, otDrag, otCheckboxRemove].forEach(function (el) {
@@ -3929,8 +3929,10 @@ function insertNewCheckboxLine(currentLine) {
                 if (!otHoverNodeId) return;
                 const st = roots[otHoverRootId];
                 const found = st && findNodeAndParent(st.tree, otHoverNodeId);
-                if (!found || !found.node.checkbox) return;
-                found.node.checkbox = false;
+                if (!found) return;
+                // Same toggle the ☰ panel's own "Add/Remove checkbox"
+                // option does.
+                found.node.checkbox = !found.node.checkbox;
                 renderRoot(otHoverRootId, { focusId: otHoverNodeId, cursorPos: 'keep' });
             });
 
@@ -4021,12 +4023,11 @@ function insertNewCheckboxLine(currentLine) {
             // out to sit past the table's own border). That felt better
             // for breathing room but made the drag handle a long reach
             // from the bullet it's acting on — closer wins here.
-            // The checkbox-remove icon only exists (and only takes up
-            // one of these slots) for items that actually have a
-            // checkbox, so the other two icons shift right when it's
-            // not there instead of leaving an empty gap.
+            // The add/remove-checkbox icon shows for every item (its
+            // glyph/mode changes, not its presence), so these three
+            // positions stay fixed regardless of checkbox state.
             const checkboxLeft = Math.max(4, rect.left - 56);
-            const toggleLeft = Math.max(4, rect.left - (hasCheckbox ? 36 : 36));
+            const toggleLeft = Math.max(4, rect.left - 36);
             const dragLeft = Math.max(4, rect.left - 16);
             otToggle.style.top = top + 'px';
             otToggle.style.left = toggleLeft + 'px';
@@ -4039,7 +4040,14 @@ function insertNewCheckboxLine(currentLine) {
             otToggle.textContent = hasKids ? (found.node.collapsed ? '▸' : '▾') : '';
             otToggle.classList.toggle('show', hasKids);
             otDrag.classList.add('show');
-            otCheckboxRemove.classList.toggle('show', hasCheckbox);
+            if (found) {
+                otCheckboxRemove.textContent = hasCheckbox ? '✕' : '+';
+                otCheckboxRemove.title = hasCheckbox ? 'Remove checkbox' : 'Add checkbox';
+                otCheckboxRemove.classList.toggle('remove-mode', hasCheckbox);
+                otCheckboxRemove.classList.add('show');
+            } else {
+                otCheckboxRemove.classList.remove('show');
+            }
 
             // The icons sit well to the left of the row now (see the
             // spacing note below), which used to create a "dead zone":
@@ -4050,7 +4058,7 @@ function insertNewCheckboxLine(currentLine) {
             // keep everything visible as long as the mouse is anywhere
             // inside it — see the mousemove listener below.
             otSafeZone = {
-                left: (hasCheckbox ? checkboxLeft : toggleLeft) - 8,
+                left: checkboxLeft - 8,
                 right: rect.right + 8,
                 top: rect.top - 10,
                 bottom: rect.bottom + 10
