@@ -23,6 +23,52 @@
             width: 95vw;
             max-width: 950px;
             margin-top: 20px;
+            position: relative;
+        }
+
+        /* Small grip for reordering whole tables/cells by drag-and-drop
+           (see initTableReorder). Floats just above the table's own
+           top-left corner, in the gap between blocks, rather than
+           overlapping the first cell's own title — only the grip itself
+           is draggable, not the table, so normal clicking/selecting
+           text/dragging inside the table is completely unaffected. */
+        .table-drag-handle {
+            position: absolute;
+            top: -20px;
+            left: 0;
+            width: 22px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+            color: #aaa;
+            font-size: 13px;
+            border-radius: 4px;
+            user-select: none;
+            z-index: 5;
+        }
+        .table-drag-handle:hover {
+            color: #555;
+            background: rgba(0, 0, 0, 0.06);
+        }
+        .table-dragging {
+            opacity: 0.4;
+        }
+        .table-drop-target {
+            outline: 2px dashed #2d8cff;
+            outline-offset: 4px;
+        }
+
+        /* A standalone cell sized to fit two side by side within
+           #tablesContainer's own width, accounting for the 20px gap
+           between them there (see #tablesContainer below) — roughly
+           matching one normal cell from a 2-column row, instead of
+           stretching across the full row width like a normal
+           1-column table does. */
+        table.cell-table-small {
+            width: calc((min(95vw, 950px) - 20px) / 2);
+            max-width: none;
         }
 
         td {
@@ -322,6 +368,22 @@
             width: 95vw;
             max-width: 950px;
         }
+        #tablesContainer {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 20px;
+        }
+        /* Each table/wrapper brings its own width (normal tables are
+           full-width and so always end up alone on their line; small
+           ones — see table.cell-table-small — are roughly half-width,
+           so two fit side by side before wrapping to a new line) and
+           its own top spacing, which would otherwise stack on top of
+           the flex gap above and leave extra space. */
+        #tablesContainer > table,
+        #tablesContainer > .table-wrapper {
+            margin-top: 0;
+        }
 
         .separator {
             color: #666;
@@ -607,8 +669,12 @@ td.cell-full-height {
 /* Wrapper for deletable tables (Add New Table / Review / Summary / Single) */
 .table-wrapper {
     position: relative;
-    width: 95vw;
-    max-width: 950px;
+    /* No explicit width here — sizes to whatever its <table> child
+       needs (full-width for a normal table, roughly half for a small
+       one via table.cell-table-small), so that width, not this
+       wrapper, is what determines whether it ends up alone on its own
+       line or side by side with another small one (see #tablesContainer
+       flex-wrap above). */
 }
 
 .table-delete-btn {
@@ -875,6 +941,29 @@ body:not(.pre-hover) .outline-node-row:hover,
 .outline-drag-fixed.show { display: flex; }
 .outline-drag-fixed:hover { background-color: rgba(0, 0, 0, 0.3); }
 .outline-drag-fixed:active { cursor: grabbing; }
+
+/* One-click "remove checkbox" for a checkbox item — only shown when
+   the hovered row actually has one, so it never appears for plain
+   bullet lines. Same position:fixed hover-icon pattern as the toggle/
+   drag icons above. */
+.outline-checkbox-remove-fixed {
+    position: fixed;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    background-color: rgba(0, 0, 0, 0.15);
+    color: #444;
+    font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 2500;
+    user-select: none;
+}
+.outline-checkbox-remove-fixed.show { display: flex; }
+.outline-checkbox-remove-fixed:hover { background-color: rgba(220, 53, 69, 0.7); color: #fff; }
 
 /* Always-visible inline control-panel button — not a hover overlay
    (see the comment in renderNode for why: the fixed-position hover
@@ -1595,14 +1684,109 @@ function quickView() {
         document.querySelectorAll('#tablesContainer td').forEach(window.ensureCellToggle);
         document.querySelectorAll('#tablesContainer td').forEach(window.ensureCellHeightToggle);
         document.querySelectorAll('#tablesContainer > table').forEach(window.applyCellTableLayout);
+        document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTableDragHandle);
     }
-    document.addEventListener('DOMContentLoaded', ensureAllCellToggles);
+    document.addEventListener('DOMContentLoaded', function () {
+        ensureAllCellToggles();
+        initTableReorder();
+    });
 
-    function createDeletableTable(rowsHtml) {
+    // Adds a small ⠿ grip to a top-level table/wrapper (a direct child
+    // of #tablesContainer) for drag-and-drop reordering. Safe to call
+    // more than once on the same element (idempotent), and works
+    // whether the element is a bare <table> (the two built-in ones) or
+    // a .table-wrapper div (everything added via "Add ..." below).
+    window.ensureTableDragHandle = function (el) {
+        if (!el || el.querySelector(':scope > .table-drag-handle')) return;
+        const handle = document.createElement('div');
+        handle.className = 'table-drag-handle';
+        handle.title = 'Drag to reorder';
+        handle.textContent = '⠿';
+        handle.draggable = true;
+        handle.addEventListener('dragstart', function (e) {
+            draggedTableBlock = el;
+            el.classList.add('table-dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            try { e.dataTransfer.setData('text/plain', ''); } catch (err) {}
+            // Without this the browser drags a ghost image of just the
+            // tiny handle itself — show the whole table/cell instead,
+            // which reads much more clearly as "this is what's moving."
+            if (e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(el, 16, 16);
+        });
+        handle.addEventListener('dragend', function () {
+            el.classList.remove('table-dragging');
+            draggedTableBlock = null;
+            document.querySelectorAll('.table-drop-target').forEach(function (t) { t.classList.remove('table-drop-target'); });
+        });
+        el.appendChild(handle);
+    };
+
+    // --- Drag-and-drop reordering of top-level tables/cells ---
+    let draggedTableBlock = null;
+    function initTableReorder() {
+        const container = document.getElementById('tablesContainer');
+        if (!container) return;
+
+        function reorderableBlocks() {
+            return Array.from(container.children).filter(function (el) {
+                return (el.tagName === 'TABLE' || el.classList.contains('table-wrapper')) && el !== draggedTableBlock;
+            });
+        }
+
+        // Layout wraps small cells two-per-row and normal tables one
+        // per row (see #tablesContainer flex-wrap), so simple "am I
+        // above/below this one" logic isn't enough — instead, find
+        // whichever block's own center the cursor is nearest to, and
+        // insert before/after it depending on which side of that
+        // center point the cursor is on.
+        function findDropTarget(x, y) {
+            let best = null, bestDist = Infinity;
+            reorderableBlocks().forEach(function (el) {
+                const rect = el.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const dist = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    best = { el: el, before: (y < cy) || (y === cy && x < cx) };
+                }
+            });
+            return best;
+        }
+
+        container.addEventListener('dragover', function (e) {
+            if (!draggedTableBlock) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            document.querySelectorAll('.table-drop-target').forEach(function (t) { t.classList.remove('table-drop-target'); });
+            const target = findDropTarget(e.clientX, e.clientY);
+            if (target) target.el.classList.add('table-drop-target');
+        });
+
+        container.addEventListener('drop', function (e) {
+            if (!draggedTableBlock) return;
+            e.preventDefault();
+            const target = findDropTarget(e.clientX, e.clientY);
+            document.querySelectorAll('.table-drop-target').forEach(function (t) { t.classList.remove('table-drop-target'); });
+            if (target) {
+                if (target.before) container.insertBefore(draggedTableBlock, target.el);
+                else container.insertBefore(draggedTableBlock, target.el.nextSibling);
+            } else {
+                container.appendChild(draggedTableBlock);
+            }
+            // serializeTablesContainer already reads tables in DOM
+            // order, so simply having moved the element is enough —
+            // no separate "order" field to update.
+            if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+        });
+    }
+
+    function createDeletableTable(rowsHtml, small) {
         const wrapper = document.createElement('div');
         wrapper.className = 'table-wrapper';
 
         const newTable = document.createElement('table');
+        if (small) newTable.classList.add('cell-table-small');
         newTable.innerHTML = rowsHtml;
 
         const delBtn = document.createElement('button');
@@ -1630,6 +1814,7 @@ function quickView() {
         newTable.querySelectorAll('td').forEach(window.ensureCellToggle);
         newTable.querySelectorAll('td').forEach(window.ensureCellHeightToggle);
         window.applyCellTableLayout(newTable);
+        window.ensureTableDragHandle(wrapper);
 
         // Scroll to the new table and drop the cursor into its first
         // cell, so you can start typing immediately instead of
@@ -1673,6 +1858,20 @@ function quickView() {
                     <div class="outline-root"></div>
                 </td>
             </tr>`);
+    }
+
+    // Same single-cell content as "Add Single", but sized to match one
+    // normal cell from a 2-column row (like Week Due/Projects) instead
+    // of stretching across the whole width — for when you want a small
+    // standalone cell rather than a full-width one.
+    function addSmallTable() {
+        createDeletableTable(`
+            <tr>
+                <td>
+                    <h3><span class="cell-title" contenteditable="true">New Item</span></h3>
+                    <div class="outline-root"></div>
+                </td>
+            </tr>`, true);
     }
 
     function addPlainTable() {
@@ -3343,7 +3542,7 @@ function insertNewCheckboxLine(currentLine) {
 </footer>
 
 <div class="floating-btn-group">
-    <button id="floating-save" class="floating-btn" onclick="saveFile()" title="Save (Ctrl+S)">💾</button>
+    <button id="floating-save" class="floating-btn" onclick="floatingSave()" title="Save to the cloud (Ctrl+S)">💾</button>
     <button id="floating-bullet" class="floating-btn" onclick="insertBulletPoint()" title="Add Bullet Point">•</button>
     <button id="floating-checkbox" class="floating-btn" onclick="insertCheckbox()" title="Add Checkbox">✓</button>
 </div>
@@ -3351,6 +3550,7 @@ function insertNewCheckboxLine(currentLine) {
 <div class="floating-add-bar">
     <button onclick="addNewTable()" class="btn-structural">Add New Table</button>
     <button onclick="addSingleTable()" class="btn-structural">Add Single</button>
+    <button onclick="addSmallTable()" class="btn-structural" title="Same as Add Single, but sized to match one normal 2-column cell instead of stretching full-width">Add Small</button>
     <button onclick="addPlainTable()" class="btn-structural">Add Plain</button>
     <button onclick="addReview()" class="btn-structural">Add Review</button>
     <button onclick="addSummary()" class="btn-structural">Add Summary</button>
@@ -3694,7 +3894,7 @@ function insertNewCheckboxLine(currentLine) {
         // ☰ hover-icon pattern exactly, so these icons never consume
         // row layout space and the bullet/text stay flush with the
         // other tables regardless of whether the icons are visible. ---
-        let otToggle, otDrag;
+        let otToggle, otDrag, otCheckboxRemove;
         let otHoverRootId = null, otHoverNodeId = null, otHoverRow = null;
         let otHideTimer = null;
         let otSafeZone = null; // {left, right, top, bottom} — see comment below
@@ -3712,9 +3912,26 @@ function insertNewCheckboxLine(currentLine) {
             otDrag.title = 'Drag to reorder';
             document.body.appendChild(otDrag);
 
-            [otToggle, otDrag].forEach(function (el) {
+            otCheckboxRemove = document.createElement('div');
+            otCheckboxRemove.className = 'outline-checkbox-remove-fixed';
+            otCheckboxRemove.textContent = '✕';
+            otCheckboxRemove.title = 'Remove checkbox';
+            document.body.appendChild(otCheckboxRemove);
+
+            [otToggle, otDrag, otCheckboxRemove].forEach(function (el) {
                 el.addEventListener('mouseenter', cancelOtHide);
                 el.addEventListener('mouseleave', scheduleOtHide);
+            });
+
+            otCheckboxRemove.addEventListener('mousedown', function (e) { e.preventDefault(); });
+            otCheckboxRemove.addEventListener('click', function (e) {
+                e.preventDefault();
+                if (!otHoverNodeId) return;
+                const st = roots[otHoverRootId];
+                const found = st && findNodeAndParent(st.tree, otHoverNodeId);
+                if (!found || !found.node.checkbox) return;
+                found.node.checkbox = false;
+                renderRoot(otHoverRootId, { focusId: otHoverNodeId, cursorPos: 'keep' });
             });
 
             otToggle.addEventListener('mousedown', function (e) { e.preventDefault(); });
@@ -3796,23 +4013,33 @@ function insertNewCheckboxLine(currentLine) {
         function positionOtIcons(row) {
             const rect = row.getBoundingClientRect();
             const top = Math.max(4, rect.top + rect.height / 2 - 8);
+            const st = roots[otHoverRootId];
+            const found = st ? findNodeAndParent(st.tree, otHoverNodeId) : null;
+            const hasCheckbox = !!(found && found.node.checkbox);
+
             // Brought back in close to the bullet (was -64/-40, pushed
             // out to sit past the table's own border). That felt better
             // for breathing room but made the drag handle a long reach
             // from the bullet it's acting on — closer wins here.
-            const toggleLeft = Math.max(4, rect.left - 36);
+            // The checkbox-remove icon only exists (and only takes up
+            // one of these slots) for items that actually have a
+            // checkbox, so the other two icons shift right when it's
+            // not there instead of leaving an empty gap.
+            const checkboxLeft = Math.max(4, rect.left - 56);
+            const toggleLeft = Math.max(4, rect.left - (hasCheckbox ? 36 : 36));
             const dragLeft = Math.max(4, rect.left - 16);
             otToggle.style.top = top + 'px';
             otToggle.style.left = toggleLeft + 'px';
             otDrag.style.top = top + 'px';
             otDrag.style.left = dragLeft + 'px';
+            otCheckboxRemove.style.top = top + 'px';
+            otCheckboxRemove.style.left = checkboxLeft + 'px';
 
-            const st = roots[otHoverRootId];
-            const found = st ? findNodeAndParent(st.tree, otHoverNodeId) : null;
             const hasKids = !!(found && found.node.children.length);
             otToggle.textContent = hasKids ? (found.node.collapsed ? '▸' : '▾') : '';
             otToggle.classList.toggle('show', hasKids);
             otDrag.classList.add('show');
+            otCheckboxRemove.classList.toggle('show', hasCheckbox);
 
             // The icons sit well to the left of the row now (see the
             // spacing note below), which used to create a "dead zone":
@@ -3823,7 +4050,7 @@ function insertNewCheckboxLine(currentLine) {
             // keep everything visible as long as the mouse is anywhere
             // inside it — see the mousemove listener below.
             otSafeZone = {
-                left: toggleLeft - 8,
+                left: (hasCheckbox ? checkboxLeft : toggleLeft) - 8,
                 right: rect.right + 8,
                 top: rect.top - 10,
                 bottom: rect.bottom + 10
@@ -3837,12 +4064,13 @@ function insertNewCheckboxLine(currentLine) {
             otHideTimer = setTimeout(function () {
                 otToggle.classList.remove('show');
                 otDrag.classList.remove('show');
+                otCheckboxRemove.classList.remove('show');
                 otHoverRootId = null; otHoverNodeId = null; otHoverRow = null; otSafeZone = null;
             }, 250);
         }
 
         function isOtChrome(el) {
-            return el === otToggle || el === otDrag;
+            return el === otToggle || el === otDrag || el === otCheckboxRemove;
         }
 
         // Each line's text is its own separate contenteditable field
@@ -4435,7 +4663,12 @@ function insertNewCheckboxLine(currentLine) {
                     });
                     rows.push(cells);
                 });
-                tables.push({ wrapped: wrapped, mainTableId: table.id === 'mainTable', rows: rows });
+                tables.push({
+                    wrapped: wrapped,
+                    mainTableId: table.id === 'mainTable',
+                    small: table.classList.contains('cell-table-small'),
+                    rows: rows
+                });
             });
             return {
                 version: 1,
@@ -4498,6 +4731,7 @@ function insertNewCheckboxLine(currentLine) {
             (data.tables || []).forEach(function (tableData) {
                 const table = document.createElement('table');
                 if (tableData.mainTableId) table.id = 'mainTable';
+                if (tableData.small) table.classList.add('cell-table-small');
                 // Built here in plain row-major order first (one <tr>
                 // per stored row) — same as always — then regrouped into
                 // independent column stacks afterward, once every cell
@@ -4524,8 +4758,10 @@ function insertNewCheckboxLine(currentLine) {
                     };
                     wrapper.appendChild(table);
                     wrapper.appendChild(delBtn);
+                    if (window.ensureTableDragHandle) window.ensureTableDragHandle(wrapper);
                     container.appendChild(wrapper);
                 } else {
+                    if (window.ensureTableDragHandle) window.ensureTableDragHandle(table);
                     container.appendChild(table);
                 }
             });
@@ -5022,6 +5258,19 @@ function insertNewCheckboxLine(currentLine) {
                 console.error('Cloud save failed:', err);
                 setStatus('Save failed');
             });
+        };
+
+        // The floating 💾 button (bottom of the page) — saves straight
+        // to the cloud project like ☁ Save does, since that's the save
+        // people actually want day to day. Falls back to the old
+        // whole-page local file save only if not signed in, since
+        // there's no cloud project to save to in that case.
+        window.floatingSave = function () {
+            if (currentUser && currentProjectId) {
+                window.cloudSave();
+            } else if (window.saveFile) {
+                window.saveFile();
+            }
         };
 
         window.cloudLoad = function () {
