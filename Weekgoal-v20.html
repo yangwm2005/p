@@ -258,6 +258,62 @@
             right: 0;
         }
 
+        /* Left-side Files "frame" — a bordered popover near the ☰ Files
+           button, matching the app's existing dropdown-menu look and
+           feel (fade+scale in, click anywhere else to close) instead
+           of a full-height sliding panel. */
+        #fileSidebar {
+            display: none;
+            position: fixed;
+            top: 60px;
+            left: 10px;
+            width: 300px;
+            max-height: 75vh;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-shadow: 2px 4px 10px rgba(0, 0, 0, 0.2);
+            z-index: 2000;
+            padding: 16px;
+            overflow-y: auto;
+            box-sizing: border-box;
+            opacity: 0;
+            transform: scale(0.97);
+            transition: opacity 0.15s ease, transform 0.15s ease;
+        }
+
+        #fileSidebar.show {
+            display: block;
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        #fileSidebar h3 {
+            margin-top: 0;
+            font-size: 1.2em;
+        }
+
+        #fileSidebar .file-sidebar-row {
+            display: flex;
+            align-items: center;
+            padding: 5px 3px;
+            border-radius: 4px;
+        }
+
+        #fileSidebar .file-sidebar-add {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 6px;
+        }
+
+        #fileSidebar .file-sidebar-add input {
+            flex: 1;
+            font-size: 13px;
+            padding: 4px 6px;
+        }
+
         #sidebar h3 {
             margin-top: 0;
             font-size: 1.2em;
@@ -1196,6 +1252,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
                     </div>
                 </div>
             </div>
+            <button id="fileSidebarToggle" class="gray" onclick="toggleFileSidebar()" title="Open a side panel with your project list">☰ Files</button>
             <button id="duplicateProjectBtn" class="gray" onclick="duplicateCurrentProject()" title="Duplicate the current project — e.g. to start next week from this week's content">⧉ Duplicate</button>
             <button id="cloudSaveBtn" class="gray" onclick="cloudSave()" title="Save current project to cloud now">☁ Save</button>
             <button id="cloudLoadBtn" class="gray" onclick="cloudLoad()" title="Reload current project from cloud">☁ Load</button>
@@ -1294,6 +1351,20 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     </div>
     <div contenteditable="true" class="notes-area">Notes</div>
     <button id="sidebar-close" onclick="toggleSidebar()">Close</button>
+</div>
+
+<!-- Left-side Files panel: switch/rename/delete/add projects without
+     opening the 📁 dropdown. Reuses the same project-row rendering and
+     switch/rename/delete/create logic as that dropdown — see
+     renderProjectsList/buildProjectRow. -->
+<div id="fileSidebar">
+    <h3>Files</h3>
+    <div id="projectsListSide"></div>
+    <div class="file-sidebar-add">
+        <input id="newProjectNameInputSide" type="text" placeholder="New project name…">
+        <button class="gray" onclick="createProjectFromInput('newProjectNameInputSide')">+ Add</button>
+    </div>
+    <button id="fileSidebar-close" onclick="toggleFileSidebar()" style="margin-top:14px;">Close</button>
 </div>
 </div>
 
@@ -2189,6 +2260,20 @@ async function openYesterdayFile() {
         const sidebar = document.getElementById('sidebar');
         sidebar.classList.toggle('open');
     }
+
+    window.toggleFileSidebar = function () {
+        document.getElementById('fileSidebar').classList.toggle('show');
+    };
+    // Same click-outside-to-close pattern as the 📁 dropdown menu (see
+    // toggleProjectsMenu) — click anywhere that isn't the frame itself
+    // or its own toggle button, and it closes.
+    document.addEventListener('click', function (e) {
+        const panel = document.getElementById('fileSidebar');
+        if (panel && panel.classList.contains('show') && !e.target.closest('#fileSidebar') &&
+            !e.target.closest('#fileSidebarToggle')) {
+            panel.classList.remove('show');
+        }
+    });
 
     // Sidebar notes are now stored with each cloud project (see
     // serializeTablesContainer/rebuildTablesContainer) rather than being
@@ -4865,8 +4950,8 @@ function insertNewCheckboxLine(currentLine) {
             });
         }
 
-        window.createProjectFromInput = function () {
-            const input = document.getElementById('newProjectNameInput');
+        window.createProjectFromInput = function (inputId) {
+            const input = document.getElementById(inputId || 'newProjectNameInput');
             const name = (input.value || '').trim();
             if (!name) return;
             input.value = '';
@@ -5169,63 +5254,76 @@ function insertNewCheckboxLine(currentLine) {
             });
         };
 
+        function buildProjectRow(p) {
+            const row = document.createElement('div');
+            row.className = 'file-sidebar-row';
+            row.style.cssText = 'display:flex; align-items:center; padding:3px 2px; border-radius:3px;' +
+                (p.id === currentProjectId ? 'background:rgba(0,0,0,0.08); font-weight:bold;' : '');
+
+            const nameSpan = document.createElement('span');
+            nameSpan.contentEditable = 'true';
+            nameSpan.textContent = p.name;
+            nameSpan.style.cssText = 'flex:1; font-size:13px; outline:none; padding:1px 3px; cursor:text;';
+            nameSpan.title = 'Click name to rename, or click elsewhere on the row to switch';
+            nameSpan.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+            nameSpan.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }
+            });
+            nameSpan.addEventListener('blur', function () {
+                if (nameSpan.textContent.trim() !== p.name) window.renameProject(p.id, nameSpan.textContent);
+            });
+            row.appendChild(nameSpan);
+
+            const switchBtn = document.createElement('span');
+            const isCurrent = p.id === currentProjectId;
+            switchBtn.title = isCurrent ? 'Current project' : 'Switch to this project';
+            // Was a 16px square — doubled the width (not the height) so
+            // it's a wider, easier target to click precisely without
+            // making the row visually taller.
+            switchBtn.style.cssText = 'cursor:pointer; flex:0 0 auto; width:32px; height:16px; ' +
+                'margin:0 6px; border-radius:3px; box-sizing:border-box; ' +
+                (isCurrent
+                    ? 'background:#2b6cff; border:2px solid #2b6cff;'
+                    : 'background:transparent; border:2px solid #aaa;');
+            switchBtn.addEventListener('click', function () { window.switchProjectFromMenu(p.id); });
+            row.appendChild(switchBtn);
+
+            const delBtn = document.createElement('span');
+            delBtn.textContent = '×';
+            delBtn.title = 'Delete project';
+            delBtn.style.cssText = 'cursor:pointer; padding:0 4px; color:#c33; font-weight:bold;';
+            delBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                window.deleteProjectFromMenu(p.id, p.name);
+            });
+            row.appendChild(delBtn);
+
+            // Match the row's own tooltip ("click elsewhere on the
+            // row to switch") — previously only the small swatch
+            // itself was clickable, which was easy to miss.
+            row.style.cursor = 'pointer';
+            row.addEventListener('click', function (e) {
+                if (e.target === nameSpan || e.target === delBtn || e.target === switchBtn) return;
+                window.switchProjectFromMenu(p.id);
+            });
+
+            return row;
+        }
+
+        // Renders into every list container that currently exists —
+        // the 📁 dropdown's #projectsList and the left Files panel's
+        // #projectsListSide — using freshly-built rows for each (DOM
+        // nodes can only live in one place at a time, and listeners
+        // don't survive cloneNode, so each container gets its own set
+        // rather than sharing elements).
         function renderProjectsList() {
-            const listEl = document.getElementById('projectsList');
-            listEl.innerHTML = '';
-            projectsCache.forEach(function (p) {
-                const row = document.createElement('div');
-                row.style.cssText = 'display:flex; align-items:center; padding:3px 2px; border-radius:3px;' +
-                    (p.id === currentProjectId ? 'background:rgba(0,0,0,0.08); font-weight:bold;' : '');
-
-                const nameSpan = document.createElement('span');
-                nameSpan.contentEditable = 'true';
-                nameSpan.textContent = p.name;
-                nameSpan.style.cssText = 'flex:1; font-size:13px; outline:none; padding:1px 3px; cursor:text;';
-                nameSpan.title = 'Click name to rename, or click elsewhere on the row to switch';
-                nameSpan.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-                nameSpan.addEventListener('keydown', function (e) {
-                    if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }
+            ['projectsList', 'projectsListSide'].forEach(function (containerId) {
+                const listEl = document.getElementById(containerId);
+                if (!listEl) return;
+                listEl.innerHTML = '';
+                projectsCache.forEach(function (p) {
+                    listEl.appendChild(buildProjectRow(p));
                 });
-                nameSpan.addEventListener('blur', function () {
-                    if (nameSpan.textContent.trim() !== p.name) window.renameProject(p.id, nameSpan.textContent);
-                });
-                row.appendChild(nameSpan);
-
-                const switchBtn = document.createElement('span');
-                const isCurrent = p.id === currentProjectId;
-                switchBtn.title = isCurrent ? 'Current project' : 'Switch to this project';
-                // Was an 11px text "●"/"○" — a hard target to click
-                // precisely. A bigger square swatch is both easier to
-                // hit and easier to spot at a glance which project is
-                // active.
-                switchBtn.style.cssText = 'cursor:pointer; flex:0 0 auto; width:16px; height:16px; ' +
-                    'margin:0 6px; border-radius:3px; box-sizing:border-box; ' +
-                    (isCurrent
-                        ? 'background:#2b6cff; border:2px solid #2b6cff;'
-                        : 'background:transparent; border:2px solid #aaa;');
-                switchBtn.addEventListener('click', function () { window.switchProjectFromMenu(p.id); });
-                row.appendChild(switchBtn);
-
-                const delBtn = document.createElement('span');
-                delBtn.textContent = '×';
-                delBtn.title = 'Delete project';
-                delBtn.style.cssText = 'cursor:pointer; padding:0 4px; color:#c33; font-weight:bold;';
-                delBtn.addEventListener('click', function (e) {
-                    e.stopPropagation();
-                    window.deleteProjectFromMenu(p.id, p.name);
-                });
-                row.appendChild(delBtn);
-
-                // Match the row's own tooltip ("click elsewhere on the
-                // row to switch") — previously only the small swatch
-                // itself was clickable, which was easy to miss.
-                row.style.cursor = 'pointer';
-                row.addEventListener('click', function (e) {
-                    if (e.target === nameSpan || e.target === delBtn || e.target === switchBtn) return;
-                    window.switchProjectFromMenu(p.id);
-                });
-
-                listEl.appendChild(row);
             });
         }
 
