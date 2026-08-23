@@ -258,34 +258,28 @@
             right: 0;
         }
 
-        /* Left-side Files "frame" — a bordered popover near the ☰ Files
-           button, matching the app's existing dropdown-menu look and
-           feel (fade+scale in, click anywhere else to close) instead
-           of a full-height sliding panel. */
+        /* Left-side Files panel — a full-height slide-out from the left
+           edge, mirroring #sidebar above (which does the same thing from
+           the right): parked just off-screen at left:-320px, then
+           transitions to left:0 when .open is toggled on. Replaces the
+           earlier fade+scale popover version. */
         #fileSidebar {
-            display: none;
             position: fixed;
-            top: 60px;
-            left: 10px;
-            width: 300px;
-            max-height: 75vh;
+            top: 0;
+            left: -320px;
+            width: 320px;
+            height: 100%;
             background-color: #fff;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            box-shadow: 2px 4px 10px rgba(0, 0, 0, 0.2);
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.3);
+            transition: left 0.3s ease;
             z-index: 2000;
-            padding: 16px;
+            padding: 20px;
             overflow-y: auto;
             box-sizing: border-box;
-            opacity: 0;
-            transform: scale(0.97);
-            transition: opacity 0.15s ease, transform 0.15s ease;
         }
 
-        #fileSidebar.show {
-            display: block;
-            opacity: 1;
-            transform: scale(1);
+        #fileSidebar.open {
+            left: 0;
         }
 
         #fileSidebar h3 {
@@ -2464,16 +2458,16 @@ async function openYesterdayFile() {
     }
 
     window.toggleFileSidebar = function () {
-        document.getElementById('fileSidebar').classList.toggle('show');
+        document.getElementById('fileSidebar').classList.toggle('open');
     };
     // Same click-outside-to-close pattern as the 📁 dropdown menu (see
     // toggleProjectsMenu) — click anywhere that isn't the frame itself
     // or its own toggle button, and it closes.
     document.addEventListener('click', function (e) {
         const panel = document.getElementById('fileSidebar');
-        if (panel && panel.classList.contains('show') && !e.target.closest('#fileSidebar') &&
+        if (panel && panel.classList.contains('open') && !e.target.closest('#fileSidebar') &&
             !e.target.closest('#fileSidebarToggle')) {
-            panel.classList.remove('show');
+            panel.classList.remove('open');
         }
     });
 
@@ -3005,7 +2999,38 @@ function insertNewCheckboxLine(currentLine) {
                 const range = sel.getRangeAt(0);
                 const startEl = range.startContainer.nodeType === 1
                     ? range.startContainer : range.startContainer.parentElement;
-                const isActive = !!(startEl && startEl.closest(tag));
+                const field = startEl && startEl.closest('[contenteditable="true"]');
+
+                // Whether the WHOLE selection is already this format —
+                // checked against every text node the range actually
+                // touches, not just where the selection starts. A plain
+                // "does the selection's start sit inside a <b>?" check
+                // (the old approach) gets this wrong whenever a drag- or
+                // double-click-select lands exactly on the tag element's
+                // own boundary rather than inside its text — which is
+                // the common case when selecting an entire bold word/
+                // phrase — silently double-wrapping it instead of
+                // unbolding it.
+                function isEntireSelectionTagged() {
+                    if (!field) return false;
+                    const walker = document.createTreeWalker(field, NodeFilter.SHOW_TEXT);
+                    let node, touchedAny = false, allTagged = true;
+                    while ((node = walker.nextNode())) {
+                        if (!node.textContent || !range.intersectsNode(node)) continue;
+                        if (node === range.startContainer && node === range.endContainer &&
+                            range.startOffset === range.endOffset) continue; // zero-length touch at a boundary
+                        touchedAny = true;
+                        let anc = node.parentNode, tagged = false;
+                        while (anc && anc !== field) {
+                            if (anc.nodeType === 1 && anc.tagName === tag) { tagged = true; break; }
+                            anc = anc.parentNode;
+                        }
+                        if (!tagged) { allTagged = false; break; }
+                    }
+                    return touchedAny && allTagged;
+                }
+                const isActive = isEntireSelectionTagged();
+
                 const extracted = range.extractContents();
                 let firstNode, lastNode;
                 if (isActive) {
@@ -3020,10 +3045,67 @@ function insertNewCheckboxLine(currentLine) {
                         while (elx.firstChild) parent.insertBefore(elx.firstChild, elx);
                         parent.removeChild(elx);
                     });
+
+                    // extractContents() only pulls the SELECTED portion
+                    // out — if the selection started/ended exactly at a
+                    // tag element's edge (rather than around the whole
+                    // element), part of that tag element survives in the
+                    // document and the collapsed range point lands right
+                    // inside it. Reinserting the now tag-free content
+                    // there would just get it silently swallowed back
+                    // in. Split any such surviving tag ancestor into its
+                    // before/after halves so the insertion point ends up
+                    // OUTSIDE the tag, same as if the browser's own bold
+                    // command had done the split.
+                    let container = range.startContainer, offset = range.startOffset, guard = 0;
+                    while (guard++ < 20) {
+                        let el = container.nodeType === 1 ? container : container.parentElement;
+                        let target = null;
+                        while (el && el !== field) {
+                            if (el.tagName === tag) { target = el; break; }
+                            el = el.parentElement;
+                        }
+                        if (!target) break;
+
+                        const originalNextSibling = target.nextSibling;
+                        const parent = target.parentNode;
+                        const afterRange = document.createRange();
+                        afterRange.setStart(container, offset);
+                        afterRange.setEnd(target, target.childNodes.length);
+                        const afterFrag = afterRange.extractContents();
+
+                        let afterWrap = null;
+                        if (afterFrag.textContent) {
+                            afterWrap = document.createElement(tag);
+                            afterWrap.appendChild(afterFrag);
+                            parent.insertBefore(afterWrap, originalNextSibling);
+                        }
+                        if (!target.textContent) parent.removeChild(target);
+
+                        container = parent;
+                        offset = Array.prototype.indexOf.call(parent.childNodes, afterWrap || originalNextSibling || null);
+                        if (offset === -1) offset = parent.childNodes.length;
+                    }
+                    range.setStart(container, offset);
+                    range.setEnd(container, offset);
+
                     firstNode = extracted.firstChild;
                     lastNode = extracted.lastChild;
                     range.insertNode(extracted);
                 } else {
+                    // Strip out any same-tag elements already inside the
+                    // selection first, so a selection that's only
+                    // partially bold doesn't end up double-wrapped once
+                    // the new tag goes on around the whole thing.
+                    const walker = document.createTreeWalker(extracted, NodeFilter.SHOW_ELEMENT);
+                    const nested = [];
+                    let n;
+                    while ((n = walker.nextNode())) { if (n.tagName === tag) nested.push(n); }
+                    nested.forEach(function (elx) {
+                        const parent = elx.parentNode;
+                        while (elx.firstChild) parent.insertBefore(elx.firstChild, elx);
+                        parent.removeChild(elx);
+                    });
                     const wrapper = document.createElement(tag);
                     wrapper.appendChild(extracted);
                     firstNode = wrapper;
