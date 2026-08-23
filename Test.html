@@ -753,6 +753,107 @@ td.cell-full-height {
     background-color: #a71d2a;
 }
 
+/* Pop-out button: sits next to the drag handle, top-right of the
+   table/wrapper. Click moves the actual table element (not a copy)
+   into the full-screen overlay so edits happen on the same DOM node
+   and are already "saved" back in place the moment the overlay closes. */
+.table-popout-btn {
+    position: absolute;
+    top: -20px;
+    right: 24px;
+    width: 22px;
+    height: 18px;
+    padding: 0;
+    margin: 0;
+    line-height: 1;
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+    z-index: 5;
+}
+
+.table-popout-btn:hover {
+    color: #555;
+    background: rgba(0, 0, 0, 0.06);
+}
+
+.table-popped-out {
+    width: 100% !important;
+    max-width: none !important;
+}
+
+.table-popout-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 3000;
+    align-items: center;
+    justify-content: center;
+}
+
+.table-popout-overlay.active {
+    display: flex;
+}
+
+.table-popout-panel {
+    background: #f0f0f0;
+    width: 94vw;
+    max-width: 1500px;
+    height: 92vh;
+    border-radius: 8px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.table-popout-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: #333;
+    color: #fff;
+    flex: 0 0 auto;
+}
+
+.table-popout-header span {
+    font-size: 14px;
+    opacity: 0.85;
+}
+
+.table-popout-close {
+    background: #dc3545;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.table-popout-close:hover {
+    background: #a71d2a;
+}
+
+.table-popout-body {
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 40px 30px;
+    display: flex;
+    justify-content: center;
+}
+
+.table-popout-body > table,
+.table-popout-body > .table-wrapper {
+    width: 100%;
+    max-width: 1300px;
+}
+
 /* Per-item hover control (☰): appears next to a bullet-list item on
    hover, click reveals a small panel with per-item actions (e.g. Sub). */
 .item-hover-icon {
@@ -1368,6 +1469,19 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
 </div>
 </div>
 
+<!-- Pop-out overlay: the target table/wrapper is actually moved in
+     here (see openTablePopout/closeTablePopout below), so editing it
+     is editing the same live element — no copy/sync step needed. -->
+<div id="tablePopoutOverlay" class="table-popout-overlay">
+    <div class="table-popout-panel">
+        <div class="table-popout-header">
+            <span>Editing table — changes apply directly, just close when done</span>
+            <button class="table-popout-close" onclick="closeTablePopout()">Close ✕</button>
+        </div>
+        <div id="tablePopoutBody" class="table-popout-body"></div>
+    </div>
+</div>
+
 
 <script>
     window.addEventListener("beforeunload", function(e) {
@@ -1758,6 +1872,7 @@ function quickView() {
         document.querySelectorAll('#tablesContainer td').forEach(window.ensureCellHeightToggle);
         document.querySelectorAll('#tablesContainer > table').forEach(window.applyCellTableLayout);
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTableDragHandle);
+        document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTablePopoutButton);
     }
     document.addEventListener('DOMContentLoaded', function () {
         ensureAllCellToggles();
@@ -1793,6 +1908,74 @@ function quickView() {
         });
         el.appendChild(handle);
     };
+
+    // Adds a small ⤢ button to a top-level table/wrapper that pops it
+    // out into a large full-screen overlay for focused editing. Same
+    // idempotent/works-on-either-element-type pattern as the drag
+    // handle above.
+    window.ensureTablePopoutButton = function (el) {
+        if (!el || el.querySelector(':scope > .table-popout-btn')) return;
+        const btn = document.createElement('button');
+        btn.className = 'table-popout-btn';
+        btn.title = 'Pop out to edit in a large view';
+        btn.textContent = '⤢';
+        btn.type = 'button';
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            openTablePopout(el);
+        });
+        el.appendChild(btn);
+    };
+
+    // Holds a comment node marking exactly where the popped-out
+    // element came from, so closing puts it back in the same spot
+    // (same position among siblings) rather than at the end.
+    let popoutPlaceholder = null;
+
+    function openTablePopout(el) {
+        const overlay = document.getElementById('tablePopoutOverlay');
+        const body = document.getElementById('tablePopoutBody');
+        if (!overlay || !body || !el) return;
+        // If something is already popped out (shouldn't normally
+        // happen), put it back first rather than stacking.
+        if (body.firstElementChild) closeTablePopout();
+
+        popoutPlaceholder = document.createComment('table-popout-placeholder');
+        el.parentNode.insertBefore(popoutPlaceholder, el);
+        body.appendChild(el);
+        el.classList.add('table-popped-out');
+        overlay.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    window.closeTablePopout = function () {
+        const overlay = document.getElementById('tablePopoutOverlay');
+        const body = document.getElementById('tablePopoutBody');
+        if (!overlay || !body) return;
+        const el = body.firstElementChild;
+        if (el) {
+            el.classList.remove('table-popped-out');
+            if (popoutPlaceholder && popoutPlaceholder.parentNode) {
+                popoutPlaceholder.parentNode.insertBefore(el, popoutPlaceholder);
+                popoutPlaceholder.remove();
+            } else {
+                document.getElementById('tablesContainer').appendChild(el);
+            }
+        }
+        popoutPlaceholder = null;
+        overlay.classList.remove('active');
+        document.body.style.overflow = '';
+        if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+    }
+
+    document.getElementById('tablePopoutOverlay').addEventListener('click', function (e) {
+        if (e.target === this) window.closeTablePopout();
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && document.getElementById('tablePopoutOverlay').classList.contains('active')) {
+            window.closeTablePopout();
+        }
+    });
 
     // --- Drag-and-drop reordering of top-level tables/cells ---
     let draggedTableBlock = null;
@@ -1854,7 +2037,7 @@ function quickView() {
         });
     }
 
-    function createDeletableTable(rowsHtml, small) {
+    function createDeletableTable(rowsHtml, small, toTop) {
         const wrapper = document.createElement('div');
         wrapper.className = 'table-wrapper';
 
@@ -1875,7 +2058,12 @@ function quickView() {
 
         wrapper.appendChild(newTable);
         wrapper.appendChild(delBtn);
-        document.getElementById('tablesContainer').appendChild(wrapper);
+        const tablesContainerEl = document.getElementById('tablesContainer');
+        if (toTop) {
+            tablesContainerEl.insertBefore(wrapper, tablesContainerEl.firstChild);
+        } else {
+            tablesContainerEl.appendChild(wrapper);
+        }
 
         // These cells use the same tree-based outline table as the six
         // built-in ones. DOMContentLoaded already fired long before this
@@ -1888,6 +2076,7 @@ function quickView() {
         newTable.querySelectorAll('td').forEach(window.ensureCellHeightToggle);
         window.applyCellTableLayout(newTable);
         window.ensureTableDragHandle(wrapper);
+        window.ensureTablePopoutButton(wrapper);
 
         // Scroll to the new table and drop the cursor into its first
         // cell, so you can start typing immediately instead of
@@ -1931,6 +2120,18 @@ function quickView() {
                     <div class="outline-root"></div>
                 </td>
             </tr>`);
+    }
+
+    // Same as "Add Single" but inserted at the very top of
+    // #tablesContainer instead of appended at the bottom.
+    function addSingleTableTop() {
+        createDeletableTable(`
+            <tr>
+                <td>
+                    <h3><span class="cell-title" contenteditable="true">New Item</span></h3>
+                    <div class="outline-root"></div>
+                </td>
+            </tr>`, false, true);
     }
 
     // Same single-cell content as "Add Single", but sized to match one
@@ -3637,6 +3838,7 @@ function insertNewCheckboxLine(currentLine) {
 <div class="floating-add-bar">
     <button onclick="addNewTable()" class="btn-structural">Add New Table</button>
     <button onclick="addSingleTable()" class="btn-structural">Add Single</button>
+    <button onclick="addSingleTableTop()" class="btn-structural" title="Same as Add Single, but inserted at the top of the page instead of the bottom">Add Single (Top)</button>
     <button onclick="addSmallTable()" class="btn-structural" title="Same as Add Single, but sized to match one normal 2-column cell instead of stretching full-width">Add Small</button>
     <button onclick="addPlainTable()" class="btn-structural">Add Plain</button>
     <button onclick="addReview()" class="btn-structural">Add Review</button>
@@ -4175,12 +4377,8 @@ function insertNewCheckboxLine(currentLine) {
         // inconsistent, sometimes ballooning the selection out to cover
         // the whole list instead of stopping at the field boundary.
         // Watch for the selection's start and end landing in two
-        // different fields and clamp the drag back to the nearest edge
-        // of the field it started in — using Selection.extend() to move
-        // just the moving (focus) end, not jumping to select the
-        // field's entire contents, which was flickery/unstable since it
-        // fired repeatedly on every small boundary crossing during an
-        // ordinary drag, not just a genuine cross-line one.
+        // different fields and clamp it back to just the field the drag
+        // started in.
         document.addEventListener('selectionchange', function () {
             const sel = window.getSelection();
             if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
@@ -4192,21 +4390,10 @@ function insertNewCheckboxLine(currentLine) {
             if (!aField) return; // selection didn't start in one of these fields — leave it alone
             const fField = fEl && fEl.closest && fEl.closest('.outline-text');
             if (fField === aField) return; // still inside the same field — fine
-            const fieldRange = document.createRange();
-            fieldRange.selectNodeContents(aField);
-            let focusRange;
-            try {
-                focusRange = document.createRange();
-                focusRange.setStart(fNode, sel.focusOffset);
-            } catch (e) {
-                return;
-            }
-            const focusIsBeforeField = focusRange.compareBoundaryPoints(Range.START_TO_START, fieldRange) < 0;
-            if (focusIsBeforeField) {
-                sel.extend(fieldRange.startContainer, fieldRange.startOffset);
-            } else {
-                sel.extend(fieldRange.endContainer, fieldRange.endOffset);
-            }
+            const range = document.createRange();
+            range.selectNodeContents(aField);
+            sel.removeAllRanges();
+            sel.addRange(range);
         });
 
         // Some browsers re-run hit-testing (and fire a "phantom"
@@ -4447,6 +4634,164 @@ function insertNewCheckboxLine(currentLine) {
 
             return nodeEl;
         }
+
+        // --- Outline copy: preserve indentation structure on Ctrl/Cmd+C ---
+        // Each line's text is its own separate contenteditable .outline-text
+        // field (see the comment above), so a mouse drag-select already
+        // works natively across lines — but a plain native copy only grabs
+        // each field's flat text, one per line, with no record of nesting
+        // depth (the visible indent comes from CSS margins on ancestor
+        // .outline-node elements, not from characters in the text). This
+        // listener rebuilds a tab-indented, "- " bulleted plain-text version
+        // of whatever's selected, so pasting into another outline table (or
+        // another app entirely) reproduces the original tree shape instead
+        // of a flat list.
+        document.addEventListener('copy', function (e) {
+            const sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+            const selRange = sel.getRangeAt(0);
+            const startEl = selRange.startContainer.nodeType === 1
+                ? selRange.startContainer
+                : selRange.startContainer.parentElement;
+            const root = startEl && startEl.closest('.outline-root');
+            if (!root) return; // not an outline selection — let native copy run as-is
+
+            const rows = Array.from(root.querySelectorAll('.outline-node-row'));
+            const lines = [];
+            rows.forEach(function (row) {
+                const text = row.querySelector('.outline-text');
+                if (!text || !selRange.intersectsNode(text)) return;
+
+                // Clamp a full-field range down to just the portion that's
+                // actually selected, so a selection starting/ending mid-line
+                // doesn't pull in the whole line.
+                const fieldRange = document.createRange();
+                fieldRange.selectNodeContents(text);
+                if (selRange.compareBoundaryPoints(Range.START_TO_START, fieldRange) > 0) {
+                    fieldRange.setStart(selRange.startContainer, selRange.startOffset);
+                }
+                if (selRange.compareBoundaryPoints(Range.END_TO_END, fieldRange) < 0) {
+                    fieldRange.setEnd(selRange.endContainer, selRange.endOffset);
+                }
+                const t = fieldRange.toString();
+                if (!t) return;
+
+                // Depth = number of ancestor .outline-node elements above
+                // this row's own node (mirrors the depth param renderNode
+                // was originally built with).
+                let depth = 0;
+                let anc = row.closest('.outline-node') && row.closest('.outline-node').parentElement;
+                while (anc && anc !== root) {
+                    if (anc.classList.contains('outline-node')) depth++;
+                    anc = anc.parentElement;
+                }
+                lines.push('\t'.repeat(depth) + '- ' + t);
+            });
+
+            if (!lines.length) return; // fall back to native copy
+            e.clipboardData.setData('text/plain', lines.join('\n'));
+            e.preventDefault();
+        });
+
+        // Turns tab-indented, "- "/"* "/"• "-bulleted (or numbered) plain
+        // text — the format the copy handler above produces, and roughly
+        // what most other outliners export as plain text — into a forest
+        // of real node objects with proper .children nesting. 4 leading
+        // spaces are also accepted as one indent level, for text copied
+        // from apps that indent with spaces instead of tabs.
+        function parseOutlinePasteText(text) {
+            const rawLines = text.replace(/\r\n?/g, '\n').split('\n');
+            while (rawLines.length && rawLines[rawLines.length - 1].trim() === '') rawLines.pop();
+
+            const parsed = [];
+            rawLines.forEach(function (line) {
+                if (line.trim() === '') return; // drop stray blank lines within the pasted block
+                let rest = line, depth = 0;
+                while (rest.charAt(0) === '\t') { depth++; rest = rest.slice(1); }
+                if (depth === 0) {
+                    const spaceMatch = rest.match(/^ +/);
+                    if (spaceMatch) { depth = Math.floor(spaceMatch[0].length / 4); rest = rest.slice(spaceMatch[0].length); }
+                }
+                rest = rest.replace(/^[-*•]\s+/, '').replace(/^\d+[.)]\s+/, '');
+                parsed.push({ depth: depth, text: rest });
+            });
+            if (!parsed.length) return [];
+
+            // Re-base so the shallowest pasted line becomes depth 0,
+            // preserving everything's nesting relative to it.
+            const minDepth = Math.min.apply(null, parsed.map(function (p) { return p.depth; }));
+            parsed.forEach(function (p) { p.depth -= minDepth; });
+
+            const forest = [];
+            const stack = []; // stack[d] = most recently placed node at depth d
+            parsed.forEach(function (p) {
+                const node = newNode(p.text);
+                stack.length = p.depth; // drop any stale deeper entries
+                if (p.depth > 0 && stack[p.depth - 1]) stack[p.depth - 1].children.push(node);
+                else forest.push(node); // depth 0, or an indentation jump we can't place — top-level fallback
+                stack[p.depth] = node;
+            });
+            return forest;
+        }
+
+        // A native paste into a single-line .outline-text field turns
+        // multi-line clipboard text into one field containing several
+        // wrapped <div>s — and the 'input' handler above deliberately
+        // unwraps those without inserting line breaks (see the comment on
+        // that handler), so the whole paste collapses onto one visible
+        // line instead of becoming separate outline items. Intercept
+        // multi-line pastes here and rebuild them as real sibling/child
+        // nodes instead.
+        document.addEventListener('paste', function (e) {
+            const target = e.target && e.target.closest && e.target.closest('.outline-text');
+            if (!target) return; // not an outline field — default paste applies
+            const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+            if (!text || text.indexOf('\n') === -1) return; // single line — default paste already handles this fine
+
+            const row = target.closest('.outline-node-row');
+            const rootEl = target.closest('.outline-root');
+            if (!row || !rootEl) return;
+            const st = roots[rootEl.id];
+            if (!st) return;
+            const found = findNodeAndParent(st.tree, row.dataset.nodeId);
+            if (!found) return;
+
+            const forest = parseOutlinePasteText(text);
+            if (!forest.length) return; // e.g. clipboard was all blank lines — let default paste handle it
+
+            e.preventDefault();
+            const n = found.node;
+            const caretOffset = caretOffsetIn(target);
+            const before = target.textContent.slice(0, caretOffset);
+            const after = target.textContent.slice(caretOffset);
+
+            // The first pasted line merges into the current node (like
+            // typing it in), carrying the current caret's "before" text;
+            // its children, if any, are prepended ahead of this node's
+            // existing children.
+            n.text = before + forest[0].text;
+            n.html = null;
+            n.children = forest[0].children.concat(n.children);
+
+            const restNodes = forest.slice(1);
+            let focusId = n.id;
+            if (restNodes.length) {
+                found.parentArr.splice.apply(found.parentArr, [found.index + 1, 0].concat(restNodes));
+                focusId = restNodes[restNodes.length - 1].id;
+                if (after) {
+                    // Text that was after the caret shouldn't get absorbed
+                    // into the last pasted node — give it its own trailing
+                    // line, same as pressing Enter would.
+                    const trailing = newNode(after);
+                    found.parentArr.splice(found.index + 1 + restNodes.length, 0, trailing);
+                    focusId = trailing.id;
+                }
+            } else if (after) {
+                n.text = n.text + after; // only one pasted line — just reattach the rest of the original line
+            }
+
+            renderRoot(rootEl.id, { focusId: focusId, cursorPos: 'end' });
+        });
 
         // --- Shared drag state (set by startManualDrag above; consumed
         // by performDrop/showDropIndicator/clearDropIndicator below) ---
@@ -4867,9 +5212,11 @@ function insertNewCheckboxLine(currentLine) {
                     wrapper.appendChild(table);
                     wrapper.appendChild(delBtn);
                     if (window.ensureTableDragHandle) window.ensureTableDragHandle(wrapper);
+                    if (window.ensureTablePopoutButton) window.ensureTablePopoutButton(wrapper);
                     container.appendChild(wrapper);
                 } else {
                     if (window.ensureTableDragHandle) window.ensureTableDragHandle(table);
+                    if (window.ensureTablePopoutButton) window.ensureTablePopoutButton(table);
                     container.appendChild(table);
                 }
             });
@@ -4897,8 +5244,13 @@ function insertNewCheckboxLine(currentLine) {
                         ]
                     },
                     {
+                        // A single-cell row (colCount < 2) is left alone by
+                        // applyCellTableLayout — no side-by-side column
+                        // regrouping happens — so it naturally spans the
+                        // table's full width instead of sitting in one of
+                        // two half-width columns like it used to.
                         wrapped: false, mainTableId: false,
-                        rows: [[{ title: '2nd life', checkboxBtn: false, tree: [] }, { title: 'Month Goals', checkboxBtn: false, tree: [] }]]
+                        rows: [[{ title: '2nd Life & Month Goals', checkboxBtn: false, tree: [] }]]
                     }
                 ]
             };
