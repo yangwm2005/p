@@ -242,6 +242,13 @@
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
   #syncNowBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
   #syncNowBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
+  #loadCloudBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
+  #loadCloudBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
+  .sync-label{font-size:11px; color:var(--ink-faint); white-space:nowrap; margin-right:2px;}
+  .sync-label[data-state="synced"]{color:var(--accent);}
+  .sync-label[data-state="syncing"]{color:var(--accent);}
+  .sync-label[data-state="error"]{color:var(--danger);}
+  .sync-label[data-state="offline"]{color:var(--ink-faint);}
   .signin-btn{display:flex; align-items:center; gap:7px; font-weight:500;}
   .signin-btn svg{flex-shrink:0;}
   .signin-btn:disabled{opacity:0.5; cursor:not-allowed;}
@@ -1123,7 +1130,9 @@
     #topbar{padding:8px 10px; gap:6px;}
     #undoBtn, #redoBtn{flex-shrink:0;}
     #themeBtn, #linesBtn, #collapseAllBtn, #shareBtn, .signin-btn{flex-shrink:0; padding:6px 8px;}
+    #syncNowBtn, #loadCloudBtn{flex-shrink:0; padding:6px 8px;}
     .auth-group .user-name{display:none;}
+    .sync-label{display:none;}
   }
 
   @media (max-width: 480px){
@@ -1192,7 +1201,9 @@
   <input type="file" id="fileInput" accept=".json,.txt">
   <div class="auth-group" id="authGroup">
     <span class="sync-dot" id="syncDot" data-state="offline" title="Not signed in"></span>
-    <button id="syncNowBtn" class="topbtn" title="Sync now" style="display:none;">Sync Now</button>
+    <span class="sync-label" id="syncLabel">Offline</span>
+    <button id="syncNowBtn" class="topbtn" title="Save current content to the cloud now" style="display:none;">Save</button>
+    <button id="loadCloudBtn" class="topbtn" title="Replace this device's content with what's saved in the cloud" style="display:none;">Load</button>
     <button id="signInBtn" class="topbtn signin-btn">
       <svg width="14" height="14" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.95v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.95A9 9 0 0 0 0 9c0 1.45.35 2.83.95 4.05l3.02-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .95 4.95L3.97 7.28C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
       Sign in
@@ -5486,11 +5497,33 @@
   let shareModalKind = 'doc';
   let initialSyncDone = false;
 
-  let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl;
+  let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, syncLabelEl, loadCloudBtnEl;
   let syncWatchdogTimer = null;
+  let syncLabelTicker = null;
+  let lastSyncedAt = null;
   let cloudSyncScheduled = false;
   let cloudSyncPending = false;
   let cloudSyncQueue = new Set();
+
+  function formatSyncAgo(date){
+    if(!date) return '';
+    const secs = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+    if(secs < 5) return 'just now';
+    if(secs < 60) return secs + 's ago';
+    const mins = Math.round(secs / 60);
+    if(mins < 60) return mins + 'm ago';
+    const hrs = Math.round(mins / 60);
+    if(hrs < 24) return hrs + 'h ago';
+    return date.toLocaleDateString();
+  }
+
+  function refreshSyncLabelText(){
+    if(!syncLabelEl) return;
+    const state = syncLabelEl.dataset.state;
+    if(state === 'synced'){
+      syncLabelEl.textContent = lastSyncedAt ? ('Synced ' + formatSyncAgo(lastSyncedAt)) : 'Synced';
+    }
+  }
 
   function setSyncState(state, label){
     if(!syncDotEl) return;
@@ -5504,6 +5537,22 @@
         }
       }, 15000);
     }
+    if(syncLabelEl){
+      syncLabelEl.dataset.state = state;
+      if(state === 'synced'){
+        lastSyncedAt = new Date();
+        syncLabelEl.title = 'All changes are saved to the cloud';
+        refreshSyncLabelText();
+        clearInterval(syncLabelTicker);
+        syncLabelTicker = setInterval(refreshSyncLabelText, 30000);
+      } else {
+        clearInterval(syncLabelTicker);
+        syncLabelEl.title = label || state;
+        if(state === 'syncing') syncLabelEl.textContent = 'Saving…';
+        else if(state === 'error') syncLabelEl.textContent = 'Sync error';
+        else syncLabelEl.textContent = 'Offline';
+      }
+    }
   }
 
   function initFirebase(){
@@ -5513,6 +5562,8 @@
     userAvatarEl = document.getElementById('userAvatar');
     userNameEl = document.getElementById('userName');
     syncNowBtnEl = document.getElementById('syncNowBtn');
+    syncLabelEl = document.getElementById('syncLabel');
+    loadCloudBtnEl = document.getElementById('loadCloudBtn');
 
     if(typeof firebase === 'undefined'){
       setSyncState('offline', 'Firebase SDK failed to load — working offline');
@@ -5549,12 +5600,17 @@
       forceCloudSync();
     });
 
+    loadCloudBtnEl.addEventListener('click', ()=>{
+      loadFromCloudNow();
+    });
+
     auth.onAuthStateChanged(user=>{
       currentUser = user;
       if(user){
         signInBtnEl.style.display = 'none';
         userChipEl.style.display = 'flex';
         syncNowBtnEl.style.display = 'inline-flex';
+        loadCloudBtnEl.style.display = 'inline-flex';
         userAvatarEl.src = user.photoURL || '';
         userNameEl.textContent = user.displayName || user.email || 'Signed in';
         initialSyncDone = false;
@@ -5569,6 +5625,7 @@
         signInBtnEl.style.display = 'flex';
         userChipEl.style.display = 'none';
         syncNowBtnEl.style.display = 'none';
+        loadCloudBtnEl.style.display = 'none';
         if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
         if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
         Object.values(sharedDocUnsubs).forEach(fn=>fn());
@@ -5581,8 +5638,8 @@
     });
   }
 
-  // Manually force an immediate cloud sync of every document, bypassing the
-  // debounce delay and the "unchanged since last save" skip.
+  // Manually force an immediate SAVE of every local document to the cloud,
+  // bypassing the debounce delay and the "unchanged since last save" skip.
   function forceCloudSync(){
     if(!firebaseReady || !currentUser){
       setSyncState('error', 'Sign in first to sync');
@@ -5604,9 +5661,61 @@
     performCloudSync(allIds);
   }
 
+  // Manually LOAD this account's cloud copy straight from Firestore's
+  // server (bypassing any local cache) and replace this device's private
+  // documents with it. Shared documents are left untouched since those
+  // sync via their own listeners. Useful when switching devices/users, or
+  // whenever this device's local copy might have drifted from the cloud.
+  function loadFromCloudNow(){
+    if(!firebaseReady || !currentUser){
+      setSyncState('error', 'Sign in first to load from the cloud');
+      return;
+    }
+    if(!confirm('Load from the cloud? This will replace everything on this device with what\'s currently saved in the cloud. Any local changes here that have not synced yet will be lost.')) return;
+    setSyncState('syncing', 'Loading from cloud…');
+    db.collection('users').doc(currentUser.uid).get({ source: 'server' }).then(snap=>{
+      const data = snap.data() || {};
+      const remote = data.threadlineDocs || {};
+      const remoteFolders = data.threadlineFolders || {};
+      applyingRemote = true;
+      try{
+        Object.keys(workspace.documents).forEach(id=>{
+          if(!workspace.documents[id].shareId) delete workspace.documents[id];
+        });
+        Object.keys(remote).forEach(id=>{
+          workspace.documents[id] = remote[id];
+        });
+        Object.keys(workspace.folders || {}).forEach(id=>{
+          if(!workspace.folders[id].shareId) delete workspace.folders[id];
+        });
+        Object.keys(remoteFolders).forEach(id=>{
+          workspace.folders[id] = remoteFolders[id];
+        });
+        if(!workspace.documents[workspace.activeDocId]){
+          const ids = Object.keys(workspace.documents);
+          workspace.activeDocId = ids.length ? ids[0] : null;
+        }
+        if(!workspace.activeDocId){
+          const fresh = makeDoc('Untitled');
+          workspace.documents[fresh.id] = fresh;
+          workspace.activeDocId = fresh.id;
+        }
+        lastPrivateJSON = stableStringify({ docs: remote, folders: remoteFolders });
+        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+      } finally {
+        applyingRemote = false;
+      }
+      renderDocList();
+      renderTreePreservingFocus();
+      setSyncState('synced', 'Synced');
+    }).catch(err=>{
+      console.error('Load from cloud failed', err);
+      setSyncState('error', 'Load failed: ' + err.message);
+    });
+  }
+
   function triggerCloudSync(){
-    if(!firebaseReady || !currentUser || applyingRemote) return;
-    Object.keys(workspace.documents).forEach(id => {
+    if(!firebaseReady || !currentUser || applyingRemote) return;    Object.keys(workspace.documents).forEach(id => {
       cloudSyncQueue.add(id);
     });
     if(!cloudSyncScheduled) {
