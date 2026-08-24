@@ -5526,6 +5526,12 @@
   let cloudSyncScheduled = false;
   let cloudSyncPending = false;
   let cloudSyncQueue = new Set();
+  // Set when something wants to push local state to the cloud before this
+  // session has reconciled with the cloud's current state at least once.
+  // Pushing early risks writing a stale local copy of a document that was
+  // actually deleted (or edited) on another device while this one was
+  // offline — see the guard in triggerCloudSync/forceCloudSync below.
+  let pendingSyncAfterInitial = false;
 
   function formatSyncAgo(date){
     if(!date) return '';
@@ -5668,6 +5674,17 @@
       return;
     }
     if(applyingRemote) return;
+    if(!initialSyncDone){
+      // Same reasoning as triggerCloudSync: don't push a possibly-stale
+      // local copy before this session has reconciled with the cloud at
+      // least once. Once that reconciliation lands, workspace.documents
+      // will already match the cloud, so falling back to a plain
+      // triggerCloudSync then is correct (it'll simply no-op if nothing
+      // actually changed).
+      pendingSyncAfterInitial = true;
+      setSyncState('syncing', 'Waiting for initial sync…');
+      return;
+    }
     cloudSyncScheduled = false;
     cloudSyncQueue.clear();
     lastPrivateJSON = null;
@@ -5737,7 +5754,18 @@
   }
 
   function triggerCloudSync(){
-    if(!firebaseReady || !currentUser || applyingRemote) return;    Object.keys(workspace.documents).forEach(id => {
+    if(!firebaseReady || !currentUser || applyingRemote) return;
+    if(!initialSyncDone){
+      // This device hasn't reconciled with the cloud's current state yet
+      // this session (e.g. it just signed in / just came back online).
+      // Pushing workspace.documents now could contain documents that were
+      // deleted elsewhere while this device was offline, which would
+      // resurrect them in the cloud. Defer until the first snapshot from
+      // subscribeToUserDoc has been merged in.
+      pendingSyncAfterInitial = true;
+      return;
+    }
+    Object.keys(workspace.documents).forEach(id => {
       cloudSyncQueue.add(id);
     });
     if(!cloudSyncScheduled) {
@@ -5858,8 +5886,12 @@
       }
       if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
         setSyncState('synced', 'Synced');
-        if(Object.keys(workspace.documents).length > 0 && !initialSyncDone) {
-          initialSyncDone = true;
+        const wasInitial = !initialSyncDone;
+        initialSyncDone = true;
+        if(wasInitial && Object.keys(workspace.documents).length > 0) {
+          triggerCloudSync();
+        } else if(pendingSyncAfterInitial) {
+          pendingSyncAfterInitial = false;
           triggerCloudSync();
         }
         return;
@@ -5868,6 +5900,10 @@
       if(json === lastPrivateJSON){ 
         setSyncState('synced', 'Synced');
         initialSyncDone = true;
+        if(pendingSyncAfterInitial) {
+          pendingSyncAfterInitial = false;
+          triggerCloudSync();
+        }
         return; 
       }
 
@@ -5940,6 +5976,10 @@
       }
       initialSyncDone = true;
       setSyncState('synced', 'Synced');
+      if(pendingSyncAfterInitial) {
+        pendingSyncAfterInitial = false;
+        triggerCloudSync();
+      }
     }, err=>{
       console.error('Cloud sync error', err);
       setSyncState('error', 'Sync error: ' + err.message);
