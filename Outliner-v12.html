@@ -53,6 +53,14 @@
     font-family:'IBM Plex Sans', system-ui, sans-serif;
     background:var(--paper);
     color:var(--ink);
+  }
+  /* #appShell (not body) owns the app's fixed-viewport layout. Keeping
+     height/overflow off <body> itself avoids a Safari bug where
+     position:fixed descendants of a body with height:100vh + overflow:hidden
+     can get clipped/mispositioned against body's own box instead of the
+     true viewport. Overlay elements (menus, popups) are attached directly
+     to <body>, outside #appShell, so they're never affected by it. */
+  #appShell{
     display:flex;
     flex-direction:column;
     height:100vh;
@@ -240,6 +248,15 @@
   .sync-dot[data-state="error"]{background:var(--danger);}
   .sync-dot[data-state="offline"]{background:var(--line-strong);}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
+  #syncNowBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
+  #syncNowBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
+  #loadCloudBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
+  #loadCloudBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
+  .sync-label{font-size:11px; color:var(--ink-faint); white-space:nowrap; margin-right:2px;}
+  .sync-label[data-state="synced"]{color:var(--accent);}
+  .sync-label[data-state="syncing"]{color:var(--accent);}
+  .sync-label[data-state="error"]{color:var(--danger);}
+  .sync-label[data-state="offline"]{color:var(--ink-faint);}
   .signin-btn{display:flex; align-items:center; gap:7px; font-weight:500;}
   .signin-btn svg{flex-shrink:0;}
   .signin-btn:disabled{opacity:0.5; cursor:not-allowed;}
@@ -825,6 +842,8 @@
   #selectionToolbar button.active{background:var(--accent); color:#fff;}
   #selectionToolbar .st-italic{font-style:italic; font-weight:400;}
   #selectionToolbar .st-sep{width:1px; align-self:stretch; background:var(--line); margin:2px 3px; flex-shrink:0;}
+  #selectionToolbar .fs-btn{font-size:12px; font-weight:600; width:24px;}
+  #selectionToolbar .fs-btn.active{background:var(--accent); color:#fff;}
   #selectionToolbar .swatch{
     width:17px; height:17px; border-radius:50%; border:1px solid var(--line);
     cursor:pointer; padding:0; display:flex; align-items:center; justify-content:center;
@@ -1119,7 +1138,9 @@
     #topbar{padding:8px 10px; gap:6px;}
     #undoBtn, #redoBtn{flex-shrink:0;}
     #themeBtn, #linesBtn, #collapseAllBtn, #shareBtn, .signin-btn{flex-shrink:0; padding:6px 8px;}
+    #syncNowBtn, #loadCloudBtn{flex-shrink:0; padding:6px 8px;}
     .auth-group .user-name{display:none;}
+    .sync-label{display:none;}
   }
 
   @media (max-width: 480px){
@@ -1129,7 +1150,7 @@
 
   @media print{
     #topbar, #body, #helpOverlay, #shareModalOverlay, #itemMenu, #calOverlay, #datePickerPopup{display:none !important;}
-    body{overflow:visible !important; height:auto !important; background:#fff !important;}
+    body, #appShell{overflow:visible !important; height:auto !important; background:#fff !important;}
     #printArea{
       display:block !important;
       max-width:100%;
@@ -1140,6 +1161,7 @@
 </head>
 <body data-theme="light">
 
+<div id="appShell">
 <div id="topbar">
   <button id="sidebarToggleBtn" title="Toggle documents list">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
@@ -1188,6 +1210,9 @@
   <input type="file" id="fileInput" accept=".json,.txt">
   <div class="auth-group" id="authGroup">
     <span class="sync-dot" id="syncDot" data-state="offline" title="Not signed in"></span>
+    <span class="sync-label" id="syncLabel">Offline</span>
+    <button id="syncNowBtn" class="topbtn" title="Save current content to the cloud now" style="display:none;">Save</button>
+    <button id="loadCloudBtn" class="topbtn" title="Replace this device's content with what's saved in the cloud" style="display:none;">Load</button>
     <button id="signInBtn" class="topbtn signin-btn">
       <svg width="14" height="14" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.95v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.95A9 9 0 0 0 0 9c0 1.45.35 2.83.95 4.05l3.02-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .95 4.95L3.97 7.28C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
       Sign in
@@ -1253,6 +1278,7 @@
       </div>
     </div>
   </div>
+</div>
 </div>
 
 <button id="helpToggle" title="Guide & shortcuts">?</button>
@@ -1391,6 +1417,12 @@
 <div id="selectionToolbar">
   <button type="button" data-action="bold" title="Bold (Ctrl+B)"><b>B</b></button>
   <button type="button" data-action="italic" class="st-italic" title="Italic (Ctrl+I)"><i>I</i></button>
+  <div class="st-sep"></div>
+  <button type="button" class="fs-btn" data-fontsize="" title="Default size">Aa</button>
+  <button type="button" class="fs-btn" data-fontsize="12" title="12px"><span style="font-size:11px;">A</span></button>
+  <button type="button" class="fs-btn" data-fontsize="17" title="17px"><span style="font-size:14px;">A</span></button>
+  <button type="button" class="fs-btn" data-fontsize="22" title="22px"><span style="font-size:16px;">A</span></button>
+  <button type="button" class="fs-btn" data-fontsize="28" title="28px"><span style="font-size:18px;">A</span></button>
   <div class="st-sep"></div>
   <button type="button" class="swatch tc-swatch none" data-textcolor="" title="Remove text color"><b>A</b></button>
   <button type="button" class="swatch tc-swatch tc-red" data-textcolor="red" title="Red text"><b>A</b></button>
@@ -2556,6 +2588,9 @@
   // ---------------- Editing / keyboard ----------------
   // ---------------- Tag autocomplete ----------------
   const tagAutocompleteEl = document.getElementById('tagAutocomplete');
+  // Same Safari fixed-position-inside-scrollable-ancestor issue as the
+  // export menu (see note near #exportMenu) — move it out of #topbar.
+  document.body.appendChild(tagAutocompleteEl);
   let tagAC = { open:false, nodeId:null, targetEl:null, sigilIndex:-1, query:'', items:[], activeIndex:0 };
 
   function hideTagAutocomplete(){
@@ -2672,6 +2707,7 @@
       node.italicRanges = shiftRangesForEdit(node.italicRanges, diff.editStart, diff.removedLen, diff.insertedLen);
       node.highlightRanges = shiftRangesForEdit(node.highlightRanges, diff.editStart, diff.removedLen, diff.insertedLen);
       node.textColorRanges = shiftRangesForEdit(node.textColorRanges, diff.editStart, diff.removedLen, diff.insertedLen);
+      node.fontSizeRanges = shiftRangesForEdit(node.fontSizeRanges, diff.editStart, diff.removedLen, diff.insertedLen);
       lastKnownText = currentText;
       
       captureUndoPoint(doc, { coalesce: true });
@@ -3004,6 +3040,7 @@
     const italicActive = isRangeFullyCovered(node.italicRanges || [], offsets.start, offsets.end);
     const hlColor = colorForRange(node, 'highlightRanges', offsets.start, offsets.end);
     const fgColor = colorForRange(node, 'textColorRanges', offsets.start, offsets.end);
+    const fontSize = colorForRange(node, 'fontSizeRanges', offsets.start, offsets.end);
     selectionToolbarEl.querySelector('[data-action="bold"]').classList.toggle('active', boldActive);
     selectionToolbarEl.querySelector('[data-action="italic"]').classList.toggle('active', italicActive);
     selectionToolbarEl.querySelectorAll('.hl-swatch').forEach(sw=>{
@@ -3011,6 +3048,9 @@
     });
     selectionToolbarEl.querySelectorAll('.tc-swatch').forEach(sw=>{
       sw.classList.toggle('active', (sw.dataset.textcolor || null) === (fgColor || null));
+    });
+    selectionToolbarEl.querySelectorAll('.fs-btn').forEach(fb=>{
+      fb.classList.toggle('active', (fb.dataset.fontsize || null) === (fontSize ? String(fontSize) : null));
     });
 
     positionSelectionToolbar(rect);
@@ -3050,6 +3090,11 @@
       const clicked = btn.dataset.textcolor || '';
       const newColor = (clicked && activeColor === clicked) ? '' : clicked;
       setColorRange(node, 'textColorRanges', offsets.start, offsets.end, newColor);
+    } else if(btn.classList.contains('fs-btn')){
+      const activeSize = colorForRange(node, 'fontSizeRanges', offsets.start, offsets.end);
+      const clicked = btn.dataset.fontsize || '';
+      const newSize = (clicked && String(activeSize) === clicked) ? '' : clicked;
+      setColorRange(node, 'fontSizeRanges', offsets.start, offsets.end, newSize);
     } else {
       return;
     }
@@ -3081,6 +3126,9 @@
   // ---------------- Search ----------------
   let searchDebounce = null;
   const searchResultsPanel = document.getElementById('searchResultsPanel');
+  // Same Safari fixed-position-inside-scrollable-ancestor issue as the
+  // export menu (see note near #exportMenu) — move it out of #topbar.
+  document.body.appendChild(searchResultsPanel);
   const searchWrapEl = document.getElementById('searchWrap');
   const searchScopeBtn = document.getElementById('searchScopeBtn');
   const SRP_MAX_PER_DOC = 6;
@@ -3476,7 +3524,8 @@
     const italicRanges = node.italicRanges || [];
     const highlightRanges = node.highlightRanges || [];
     const textColorRanges = node.textColorRanges || [];
-    if(!tags.length && !boldRanges.length && !italicRanges.length && !highlightRanges.length && !textColorRanges.length) return escapeHtmlText(text);
+    const fontSizeRanges = node.fontSizeRanges || [];
+    if(!tags.length && !boldRanges.length && !italicRanges.length && !highlightRanges.length && !textColorRanges.length && !fontSizeRanges.length) return escapeHtmlText(text);
 
     const points = new Set([0, text.length]);
     tags.forEach(t=>{ points.add(t.index); points.add(t.index + t.length); });
@@ -3484,12 +3533,14 @@
     italicRanges.forEach(([s, e])=>{ points.add(s); points.add(e); });
     highlightRanges.forEach(([s, e])=>{ points.add(s); points.add(e); });
     textColorRanges.forEach(([s, e])=>{ points.add(s); points.add(e); });
+    fontSizeRanges.forEach(([s, e])=>{ points.add(s); points.add(e); });
     const sorted = Array.from(points).filter(p => p >= 0 && p <= text.length).sort((a, b) => a - b);
 
     const isActive = (ranges, pos) => ranges.some(([s, e]) => pos >= s && pos < e);
     const activeTag = pos => tags.find(t => pos >= t.index && pos < t.index + t.length);
     const activeHighlight = pos => { const r = highlightRanges.find(([s, e]) => pos >= s && pos < e); return r ? r[2] : null; };
     const activeTextColor = pos => { const r = textColorRanges.find(([s, e]) => pos >= s && pos < e); return r ? r[2] : null; };
+    const activeFontSize = pos => { const r = fontSizeRanges.find(([s, e]) => pos >= s && pos < e); return r ? r[2] : null; };
 
     let out = '';
     for(let i = 0; i < sorted.length - 1; i++){
@@ -3504,6 +3555,8 @@
       if(hl) seg = '<span class="text-hl text-hl-' + hl + '">' + seg + '</span>';
       const fg = activeTextColor(segStart);
       if(fg) seg = '<span class="text-fg-' + fg + '">' + seg + '</span>';
+      const fs = activeFontSize(segStart);
+      if(fs) seg = '<span class="text-fs" style="font-size:' + escapeHtmlText(String(fs)) + 'px">' + seg + '</span>';
       if(isActive(italicRanges, segStart)) seg = '<i>' + seg + '</i>';
       if(isActive(boldRanges, segStart)) seg = '<b>' + seg + '</b>';
       out += seg;
@@ -4567,6 +4620,7 @@
       copy.italicRanges = (n.italicRanges || []).map(r => r.slice());
       copy.highlightRanges = (n.highlightRanges || []).map(r => r.slice());
       copy.textColorRanges = (n.textColorRanges || []).map(r => r.slice());
+      copy.fontSizeRanges = (n.fontSizeRanges || []).map(r => r.slice());
       doc.nodes[copy.id] = copy;
       n.children.forEach(cid=>{
         const child = doc.nodes[cid];
@@ -4893,7 +4947,7 @@
     const n = doc.nodes[id];
     return {
       text: n.text, done: !!n.done, bold: !!n.bold, bgColor: n.bgColor || null, checkboxOn: n.checkboxOn !== false,
-      boldRanges: n.boldRanges || [], italicRanges: n.italicRanges || [], highlightRanges: n.highlightRanges || [], textColorRanges: n.textColorRanges || [],
+      boldRanges: n.boldRanges || [], italicRanges: n.italicRanges || [], highlightRanges: n.highlightRanges || [], textColorRanges: n.textColorRanges || [], fontSizeRanges: n.fontSizeRanges || [],
       children: n.children.map(cid => exportNodeForClipboard(doc, cid))
     };
   }
@@ -5074,7 +5128,7 @@
     const expand = mode === 'full' || !n.collapsed;
     return {
       text: n.text, done: !!n.done, bold: !!n.bold, bgColor: n.bgColor || null, checkboxOn: n.checkboxOn !== false,
-      boldRanges: n.boldRanges || [], italicRanges: n.italicRanges || [], highlightRanges: n.highlightRanges || [], textColorRanges: n.textColorRanges || [],
+      boldRanges: n.boldRanges || [], italicRanges: n.italicRanges || [], highlightRanges: n.highlightRanges || [], textColorRanges: n.textColorRanges || [], fontSizeRanges: n.fontSizeRanges || [],
       children: expand ? n.children.map(cid => exportNodeForClipboardMode(doc, cid, mode)) : []
     };
   }
@@ -5227,6 +5281,12 @@
   // ---------------- Export / Import ----------------
   const shareBtn = document.getElementById('shareBtn');
   const exportMenu = document.getElementById('exportMenu');
+  // Safari has a known bug where position:fixed descendants of a scrollable
+  // ancestor (#topbar has overflow-x:auto) can get clipped or lose click
+  // handling once that ancestor actually overflows. Moving the menu out to
+  // <body> sidesteps it entirely; its own position:fixed + JS-computed
+  // left/top keep it placed correctly regardless of where it lives in the DOM.
+  document.body.appendChild(exportMenu);
   function positionExportMenu(){
     const rect = shareBtn.getBoundingClientRect();
     const menuRect = exportMenu.getBoundingClientRect();
@@ -5291,7 +5351,7 @@
         if(n.bold) text = '**' + text + '**';
         lines.push(indent + mark + text);
       }
-      n.children.forEach(cid => walk(cid, id===doc.rootId ? depth : depth+1));
+      n.children.forEach(cid => walk(cid, depth+1));
     }
     walk(doc.rootId, 0);
     return `${doc.name}\n${'='.repeat(doc.name.length)}\n\n` + lines.join('\n');
@@ -5369,6 +5429,7 @@
     n.italicRanges = (item.italicRanges || []).map(r => r.slice());
     n.highlightRanges = (item.highlightRanges || []).map(r => r.slice());
     n.textColorRanges = (item.textColorRanges || []).map(r => r.slice());
+    n.fontSizeRanges = (item.fontSizeRanges || []).map(r => r.slice());
     doc.nodes[n.id] = n;
     (item.children || []).forEach(child=>{
       const c = buildNodeFromExport(doc, n.id, child);
@@ -5458,11 +5519,33 @@
   let shareModalKind = 'doc';
   let initialSyncDone = false;
 
-  let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl;
+  let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, syncLabelEl, loadCloudBtnEl;
   let syncWatchdogTimer = null;
+  let syncLabelTicker = null;
+  let lastSyncedAt = null;
   let cloudSyncScheduled = false;
   let cloudSyncPending = false;
   let cloudSyncQueue = new Set();
+
+  function formatSyncAgo(date){
+    if(!date) return '';
+    const secs = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+    if(secs < 5) return 'just now';
+    if(secs < 60) return secs + 's ago';
+    const mins = Math.round(secs / 60);
+    if(mins < 60) return mins + 'm ago';
+    const hrs = Math.round(mins / 60);
+    if(hrs < 24) return hrs + 'h ago';
+    return date.toLocaleDateString();
+  }
+
+  function refreshSyncLabelText(){
+    if(!syncLabelEl) return;
+    const state = syncLabelEl.dataset.state;
+    if(state === 'synced'){
+      syncLabelEl.textContent = lastSyncedAt ? ('Synced ' + formatSyncAgo(lastSyncedAt)) : 'Synced';
+    }
+  }
 
   function setSyncState(state, label){
     if(!syncDotEl) return;
@@ -5476,6 +5559,22 @@
         }
       }, 15000);
     }
+    if(syncLabelEl){
+      syncLabelEl.dataset.state = state;
+      if(state === 'synced'){
+        lastSyncedAt = new Date();
+        syncLabelEl.title = 'All changes are saved to the cloud';
+        refreshSyncLabelText();
+        clearInterval(syncLabelTicker);
+        syncLabelTicker = setInterval(refreshSyncLabelText, 30000);
+      } else {
+        clearInterval(syncLabelTicker);
+        syncLabelEl.title = label || state;
+        if(state === 'syncing') syncLabelEl.textContent = 'Saving…';
+        else if(state === 'error') syncLabelEl.textContent = 'Sync error';
+        else syncLabelEl.textContent = 'Offline';
+      }
+    }
   }
 
   function initFirebase(){
@@ -5484,6 +5583,9 @@
     userChipEl = document.getElementById('userChip');
     userAvatarEl = document.getElementById('userAvatar');
     userNameEl = document.getElementById('userName');
+    syncNowBtnEl = document.getElementById('syncNowBtn');
+    syncLabelEl = document.getElementById('syncLabel');
+    loadCloudBtnEl = document.getElementById('loadCloudBtn');
 
     if(typeof firebase === 'undefined'){
       setSyncState('offline', 'Firebase SDK failed to load — working offline');
@@ -5516,11 +5618,21 @@
       auth.signOut();
     });
 
+    syncNowBtnEl.addEventListener('click', ()=>{
+      forceCloudSync();
+    });
+
+    loadCloudBtnEl.addEventListener('click', ()=>{
+      loadFromCloudNow();
+    });
+
     auth.onAuthStateChanged(user=>{
       currentUser = user;
       if(user){
         signInBtnEl.style.display = 'none';
         userChipEl.style.display = 'flex';
+        syncNowBtnEl.style.display = 'inline-flex';
+        loadCloudBtnEl.style.display = 'inline-flex';
         userAvatarEl.src = user.photoURL || '';
         userNameEl.textContent = user.displayName || user.email || 'Signed in';
         initialSyncDone = false;
@@ -5534,6 +5646,8 @@
       } else {
         signInBtnEl.style.display = 'flex';
         userChipEl.style.display = 'none';
+        syncNowBtnEl.style.display = 'none';
+        loadCloudBtnEl.style.display = 'none';
         if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
         if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
         Object.values(sharedDocUnsubs).forEach(fn=>fn());
@@ -5546,9 +5660,84 @@
     });
   }
 
+  // Manually force an immediate SAVE of every local document to the cloud,
+  // bypassing the debounce delay and the "unchanged since last save" skip.
+  function forceCloudSync(){
+    if(!firebaseReady || !currentUser){
+      setSyncState('error', 'Sign in first to sync');
+      return;
+    }
+    if(applyingRemote) return;
+    cloudSyncScheduled = false;
+    cloudSyncQueue.clear();
+    lastPrivateJSON = null;
+    lastSharedJSON = {};
+    const allIds = Object.keys(workspace.documents);
+    if(cloudSyncPending){
+      // A sync is already in flight; queue these ids so the debounce
+      // timer picks them up right after it finishes.
+      allIds.forEach(id => cloudSyncQueue.add(id));
+      return;
+    }
+    cloudSyncPending = true;
+    performCloudSync(allIds);
+  }
+
+  // Manually LOAD this account's cloud copy straight from Firestore's
+  // server (bypassing any local cache) and replace this device's private
+  // documents with it. Shared documents are left untouched since those
+  // sync via their own listeners. Useful when switching devices/users, or
+  // whenever this device's local copy might have drifted from the cloud.
+  function loadFromCloudNow(){
+    if(!firebaseReady || !currentUser){
+      setSyncState('error', 'Sign in first to load from the cloud');
+      return;
+    }
+    if(!confirm('Load from the cloud? This will replace everything on this device with what\'s currently saved in the cloud. Any local changes here that have not synced yet will be lost.')) return;
+    setSyncState('syncing', 'Loading from cloud…');
+    db.collection('users').doc(currentUser.uid).get({ source: 'server' }).then(snap=>{
+      const data = snap.data() || {};
+      const remote = data.threadlineDocs || {};
+      const remoteFolders = data.threadlineFolders || {};
+      applyingRemote = true;
+      try{
+        Object.keys(workspace.documents).forEach(id=>{
+          if(!workspace.documents[id].shareId) delete workspace.documents[id];
+        });
+        Object.keys(remote).forEach(id=>{
+          workspace.documents[id] = remote[id];
+        });
+        Object.keys(workspace.folders || {}).forEach(id=>{
+          if(!workspace.folders[id].shareId) delete workspace.folders[id];
+        });
+        Object.keys(remoteFolders).forEach(id=>{
+          workspace.folders[id] = remoteFolders[id];
+        });
+        if(!workspace.documents[workspace.activeDocId]){
+          const ids = Object.keys(workspace.documents);
+          workspace.activeDocId = ids.length ? ids[0] : null;
+        }
+        if(!workspace.activeDocId){
+          const fresh = makeDoc('Untitled');
+          workspace.documents[fresh.id] = fresh;
+          workspace.activeDocId = fresh.id;
+        }
+        lastPrivateJSON = stableStringify({ docs: remote, folders: remoteFolders });
+        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+      } finally {
+        applyingRemote = false;
+      }
+      renderDocList();
+      renderTreePreservingFocus();
+      setSyncState('synced', 'Synced');
+    }).catch(err=>{
+      console.error('Load from cloud failed', err);
+      setSyncState('error', 'Load failed: ' + err.message);
+    });
+  }
+
   function triggerCloudSync(){
-    if(!firebaseReady || !currentUser || applyingRemote) return;
-    Object.keys(workspace.documents).forEach(id => {
+    if(!firebaseReady || !currentUser || applyingRemote) return;    Object.keys(workspace.documents).forEach(id => {
       cloudSyncQueue.add(id);
     });
     if(!cloudSyncScheduled) {
