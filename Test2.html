@@ -253,6 +253,7 @@
   #loadCloudBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
   #loadCloudBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
   .sync-label{font-size:11px; color:var(--ink-faint); white-space:nowrap; margin-right:2px;}
+  .sync-label[data-state="error"]{cursor:pointer; text-decoration:underline dotted;}
   .sync-label[data-state="synced"]{color:var(--accent);}
   .sync-label[data-state="syncing"]{color:var(--accent);}
   .sync-label[data-state="error"]{color:var(--danger);}
@@ -5532,6 +5533,30 @@
   // actually deleted (or edited) on another device while this one was
   // offline — see the guard in triggerCloudSync/forceCloudSync below.
   let pendingSyncAfterInitial = false;
+  let pendingSyncFallbackScheduled = false;
+  let lastAlertedSyncError = null;
+
+  // Reconciliation should normally complete within a second or two. If it
+  // hasn't after a generous wait (e.g. a permission error or dropped
+  // connection is silently stalling the listener), don't leave local edits
+  // stuck in limbo forever — proceed anyway. This still closes the
+  // original race (which was a sub-second window); it just refuses to
+  // block indefinitely on top of that.
+  function scheduleSyncFallback(){
+    if(pendingSyncFallbackScheduled) return;
+    pendingSyncFallbackScheduled = true;
+    setTimeout(() => {
+      pendingSyncFallbackScheduled = false;
+      if(!initialSyncDone){
+        console.warn('Threadline: cloud reconciliation did not complete in time; syncing anyway.');
+        initialSyncDone = true;
+        if(pendingSyncAfterInitial){
+          pendingSyncAfterInitial = false;
+          triggerCloudSync();
+        }
+      }
+    }, 8000);
+  }
 
   function formatSyncAgo(date){
     if(!date) return '';
@@ -5553,7 +5578,7 @@
     }
   }
 
-  function setSyncState(state, label){
+  function setSyncState(state, label, silent){
     if(!syncDotEl) return;
     syncDotEl.dataset.state = state;
     syncDotEl.title = label || state;
@@ -5577,9 +5602,16 @@
         clearInterval(syncLabelTicker);
         syncLabelEl.title = label || state;
         if(state === 'syncing') syncLabelEl.textContent = 'Saving…';
-        else if(state === 'error') syncLabelEl.textContent = 'Sync error';
+        else if(state === 'error') syncLabelEl.textContent = 'Sync error (tap for details)';
         else syncLabelEl.textContent = 'Offline';
       }
+    }
+    // Errors are easy to miss in a small toolbar label. Surface the exact
+    // message once (not on every retry) so a real problem doesn't sit
+    // silently unnoticed across every device.
+    if(state === 'error' && label && !silent && label !== lastAlertedSyncError){
+      lastAlertedSyncError = label;
+      setTimeout(() => { alert('Cloud sync problem:\n\n' + label + '\n\nYour changes are still saved on this device. Please share this exact message so it can be fixed.'); }, 50);
     }
   }
 
@@ -5591,6 +5623,11 @@
     userNameEl = document.getElementById('userName');
     syncNowBtnEl = document.getElementById('syncNowBtn');
     syncLabelEl = document.getElementById('syncLabel');
+    syncLabelEl.addEventListener('click', ()=>{
+      if(syncLabelEl.dataset.state === 'error'){
+        alert('Cloud sync problem:\n\n' + (syncLabelEl.title || 'Unknown error') + '\n\nYour changes are still saved on this device.');
+      }
+    });
     loadCloudBtnEl = document.getElementById('loadCloudBtn');
 
     if(typeof firebase === 'undefined'){
@@ -5670,7 +5707,7 @@
   // bypassing the debounce delay and the "unchanged since last save" skip.
   function forceCloudSync(){
     if(!firebaseReady || !currentUser){
-      setSyncState('error', 'Sign in first to sync');
+      setSyncState('error', 'Sign in first to sync', true);
       return;
     }
     if(applyingRemote) return;
@@ -5682,6 +5719,7 @@
       // triggerCloudSync then is correct (it'll simply no-op if nothing
       // actually changed).
       pendingSyncAfterInitial = true;
+      scheduleSyncFallback();
       setSyncState('syncing', 'Waiting for initial sync…');
       return;
     }
@@ -5707,7 +5745,7 @@
   // whenever this device's local copy might have drifted from the cloud.
   function loadFromCloudNow(){
     if(!firebaseReady || !currentUser){
-      setSyncState('error', 'Sign in first to load from the cloud');
+      setSyncState('error', 'Sign in first to load from the cloud', true);
       return;
     }
     if(!confirm('Load from the cloud? This will replace everything on this device with what\'s currently saved in the cloud. Any local changes here that have not synced yet will be lost.')) return;
@@ -5763,6 +5801,7 @@
       // resurrect them in the cloud. Defer until the first snapshot from
       // subscribeToUserDoc has been merged in.
       pendingSyncAfterInitial = true;
+      scheduleSyncFallback();
       return;
     }
     Object.keys(workspace.documents).forEach(id => {
@@ -5803,6 +5842,7 @@
       }
     });
     
+    let oversizedError = null;
     if(Object.keys(privateDocs).length > 0) {
       const out = {};
       Object.values(workspace.documents).forEach(d=>{ 
@@ -5814,15 +5854,29 @@
       });
       const json = stableStringify({ docs: out, folders });
       if(json !== lastPrivateJSON) {
-        promises.push(
-          db.collection('users').doc(currentUser.uid).set({
-            threadlineDocs: out,
-            threadlineFolders: folders,
-            threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge:true }).then(() => {
-            lastPrivateJSON = json;
-          })
-        );
+        // Firestore caps a single document at ~1 MiB, and this app stores
+        // the entire private workspace as one field on one document. Check
+        // the actual serialized size (UTF-8 bytes, not JS string length —
+        // multi-byte characters like Chinese text would otherwise be
+        // undercounted) before writing, so a too-large workspace produces
+        // a clear, actionable message instead of a cryptic Firestore error
+        // that then just repeats forever on every retry.
+        const approxBytes = new TextEncoder().encode(JSON.stringify(out) + JSON.stringify(folders)).length;
+        const FIRESTORE_DOC_LIMIT = 1048576;
+        if(approxBytes > FIRESTORE_DOC_LIMIT * 0.9){
+          const kb = Math.round(approxBytes / 1024);
+          oversizedError = 'Workspace is too large to sync (~' + kb + ' KB, limit ~1024 KB). Try archiving or exporting older documents to shrink it.';
+        } else {
+          promises.push(
+            db.collection('users').doc(currentUser.uid).set({
+              threadlineDocs: out,
+              threadlineFolders: folders,
+              threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge:true }).then(() => {
+              lastPrivateJSON = json;
+            })
+          );
+        }
       }
     }
     
@@ -5842,13 +5896,15 @@
     
     if(promises.length === 0) {
       cloudSyncPending = false;
-      setSyncState('synced', 'Synced');
+      if(oversizedError) setSyncState('error', oversizedError);
+      else setSyncState('synced', 'Synced');
       return;
     }
     
     Promise.all(promises).then(() => {
       cloudSyncPending = false;
-      setSyncState('synced', 'Synced');
+      if(oversizedError) setSyncState('error', oversizedError);
+      else setSyncState('synced', 'Synced');
     }).catch(err => {
       cloudSyncPending = false;
       console.error('Cloud sync failed', err);
@@ -5882,6 +5938,15 @@
       const remoteFolders = data.threadlineFolders || {};
       if(snap.metadata.hasPendingWrites){
         setSyncState('synced', 'Synced');
+        if(!initialSyncDone){
+          // This is our own optimistic echo of a write we just made, not
+          // stale/foreign data, so it's safe to treat as "reconciled".
+          initialSyncDone = true;
+          if(pendingSyncAfterInitial) {
+            pendingSyncAfterInitial = false;
+            triggerCloudSync();
+          }
+        }
         return;
       }
       if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
