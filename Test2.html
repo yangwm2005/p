@@ -5648,13 +5648,40 @@
       return;
     }
 
+    // Safari (especially iOS) aggressively blocks cross-site storage
+    // access. signInWithPopup's handshake round-trips through this app's
+    // Firebase authDomain in a popup window, and Safari's tracking
+    // prevention can silently break that hand-off — sign-in *looks* like
+    // it succeeded (onAuthStateChanged fires with a user) but the
+    // resulting session is incomplete, so real Firestore requests later
+    // fail with "Missing or insufficient permissions." signInWithRedirect
+    // avoids the popup hand-off entirely (it's a full page navigation),
+    // which Safari doesn't interfere with. Chrome and other browsers keep
+    // using the popup flow, which is smoother when it isn't broken.
+    const ua = navigator.userAgent || '';
+    const isSafari = /^((?!chrome|android|crios|fxios|edgios).)*safari/i.test(ua);
+    const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const useRedirectAuth = isSafari || isIOS;
+
+    auth.getRedirectResult().catch(err=>{
+      console.error('Sign-in (redirect) failed', err);
+      setSyncState('error', 'Sign-in failed: ' + err.message);
+    });
+
     signInBtnEl.addEventListener('click', ()=>{
       const provider = new firebase.auth.GoogleAuthProvider();
       setSyncState('syncing', 'Signing in…');
-      auth.signInWithPopup(provider).catch(err=>{
-        console.error('Sign-in failed', err);
-        setSyncState('error', 'Sign-in failed: ' + err.message);
-      });
+      if(useRedirectAuth){
+        auth.signInWithRedirect(provider).catch(err=>{
+          console.error('Sign-in failed', err);
+          setSyncState('error', 'Sign-in failed: ' + err.message);
+        });
+      } else {
+        auth.signInWithPopup(provider).catch(err=>{
+          console.error('Sign-in failed', err);
+          setSyncState('error', 'Sign-in failed: ' + err.message);
+        });
+      }
     });
     userChipEl.addEventListener('click', ()=>{
       if(!confirm('Sign out of Google? Your documents stay saved on this device either way.')) return;
@@ -5821,7 +5848,7 @@
     }
   }
 
-  function performCloudSync(docIds){
+  function performCloudSync(docIds, isTokenRefreshRetry){
     if(!firebaseReady || !currentUser || applyingRemote) {
       cloudSyncPending = false;
       return;
@@ -5908,6 +5935,22 @@
     }).catch(err => {
       cloudSyncPending = false;
       console.error('Cloud sync failed', err);
+      // "permission-denied" from an authenticated user usually means their
+      // ID token went stale/invalid client-side (a known Safari issue with
+      // the popup sign-in hand-off — see the note near signInWithRedirect
+      // above) rather than an actual rules rejection. Try one forced token
+      // refresh + retry before surfacing this as a real error — this lets
+      // an already-broken session self-heal without requiring the user to
+      // manually sign out and back in.
+      if(err.code === 'permission-denied' && !isTokenRefreshRetry && currentUser){
+        currentUser.getIdToken(true).then(()=>{
+          performCloudSync(docIds, true);
+        }).catch(refreshErr=>{
+          console.error('Token refresh retry failed', refreshErr);
+          setSyncState('error', 'Save failed: ' + err.message + ' (Try signing out and back in.)');
+        });
+        return;
+      }
       setSyncState('error', 'Save failed: ' + err.message);
       setTimeout(() => {
         if(cloudSyncQueue.size === 0) {
