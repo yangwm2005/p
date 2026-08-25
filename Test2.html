@@ -5638,6 +5638,7 @@
         initialSyncDone = false;
         subscribeToUserDoc(user.uid);
         subscribeToSharedIndex((user.email || '').toLowerCase());
+        startCloudPolling();
         // NOTE: we intentionally do NOT force a push here. subscribeToUserDoc's
         // onSnapshot handler already pushes local docs to the cloud if (and only
         // if) the cloud copy is genuinely empty (see initialSyncDone branch
@@ -5657,6 +5658,7 @@
         sharedDocUnsubs = {};
         lastPrivateJSON = null;
         initialSyncDone = false;
+        stopCloudPolling();
         setSyncState('offline', 'Not signed in');
       }
       renderDocList();
@@ -5848,106 +5850,159 @@
     });
   }
 
+  // Applies a {threadlineDocs, threadlineFolders} payload from Firestore to the
+  // local workspace via the same per-node last-write-wins merge used everywhere
+  // else. Shared by the realtime listener AND by manual/periodic pulls, so a
+  // reconnect, a focus event, or a stalled websocket all funnel through one
+  // code path instead of duplicating (and risking drifting) the merge logic.
+  function applyRemotePrivateData(data){
+    const remote = data.threadlineDocs;
+    const remoteFolders = data.threadlineFolders || {};
+
+    if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
+      setSyncState('synced', 'Synced');
+      if(Object.keys(workspace.documents).length > 0 && !initialSyncDone) {
+        initialSyncDone = true;
+        triggerCloudSync();
+      }
+      return;
+    }
+    const json = stableStringify({ docs: remote, folders: remoteFolders });
+    if(json === lastPrivateJSON){
+      setSyncState('synced', 'Synced');
+      initialSyncDone = true;
+      return;
+    }
+
+    applyingRemote = true;
+    let changed = false;
+    try{
+      const localDocIds = new Set(Object.keys(workspace.documents));
+      const remoteDocIds = new Set(Object.keys(remote));
+
+      localDocIds.forEach(id => {
+        if(!workspace.documents[id].shareId && !remoteDocIds.has(id)) {
+          delete workspace.documents[id];
+          changed = true;
+        }
+      });
+
+      Object.keys(remote).forEach(id=>{
+        const merged = mergeDoc(workspace.documents[id], remote[id]);
+        if(!workspace.documents[id] || stableStringify(merged) !== stableStringify(workspace.documents[id])) {
+          workspace.documents[id] = merged;
+          changed = true;
+        }
+      });
+
+      const localFolderIds = new Set(Object.keys(workspace.folders || {}));
+      const remoteFolderIds = new Set(Object.keys(remoteFolders));
+
+      localFolderIds.forEach(id => {
+        if(!workspace.folders[id].shareId && !remoteFolderIds.has(id)) {
+          delete workspace.folders[id];
+          changed = true;
+        }
+      });
+
+      Object.keys(remoteFolders).forEach(id=>{
+        if(workspace.folders[id]) {
+          if(stableStringify(workspace.folders[id]) !== stableStringify(remoteFolders[id])) {
+            Object.assign(workspace.folders[id], remoteFolders[id]);
+            changed = true;
+          }
+        } else {
+          workspace.folders[id] = remoteFolders[id];
+          changed = true;
+        }
+      });
+
+      if(!workspace.documents[workspace.activeDocId]){
+        const ids = Object.keys(workspace.documents);
+        workspace.activeDocId = ids.length ? ids[0] : null;
+        changed = true;
+      }
+      if(!workspace.activeDocId){
+        const fresh = makeDoc('Untitled');
+        workspace.documents[fresh.id] = fresh;
+        workspace.activeDocId = fresh.id;
+        changed = true;
+      }
+      lastPrivateJSON = json;
+      if(changed) {
+        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+      }
+    } catch(mergeErr){
+      console.error('Private doc merge failed — keeping local copy as-is', mergeErr);
+    } finally {
+      applyingRemote = false;
+    }
+    if(changed) {
+      renderDocList();
+      renderTreePreservingFocus();
+    }
+    initialSyncDone = true;
+    setSyncState('synced', 'Synced');
+  }
+
   function subscribeToUserDoc(uid){
     if(userDocUnsub) userDocUnsub();
     setSyncState('syncing', 'Connecting…');
     userDocUnsub = db.collection('users').doc(uid).onSnapshot(snap=>{
       const data = snap.data() || {};
-      const remote = data.threadlineDocs;
-      const remoteFolders = data.threadlineFolders || {};
       if(snap.metadata.hasPendingWrites){
         setSyncState('synced', 'Synced');
         return;
       }
-      if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
-        setSyncState('synced', 'Synced');
-        if(Object.keys(workspace.documents).length > 0 && !initialSyncDone) {
-          initialSyncDone = true;
-          triggerCloudSync();
-        }
-        return;
-      }
-      const json = stableStringify({ docs: remote, folders: remoteFolders });
-      if(json === lastPrivateJSON){ 
-        setSyncState('synced', 'Synced');
-        initialSyncDone = true;
-        return; 
-      }
-
-      applyingRemote = true;
-      let changed = false;
-      try{
-        const localDocIds = new Set(Object.keys(workspace.documents));
-        const remoteDocIds = new Set(Object.keys(remote));
-        
-        localDocIds.forEach(id => {
-          if(!workspace.documents[id].shareId && !remoteDocIds.has(id)) {
-            delete workspace.documents[id];
-            changed = true;
-          }
-        });
-        
-        Object.keys(remote).forEach(id=>{
-          const merged = mergeDoc(workspace.documents[id], remote[id]);
-          if(!workspace.documents[id] || stableStringify(merged) !== stableStringify(workspace.documents[id])) {
-            workspace.documents[id] = merged;
-            changed = true;
-          }
-        });
-        
-        const localFolderIds = new Set(Object.keys(workspace.folders || {}));
-        const remoteFolderIds = new Set(Object.keys(remoteFolders));
-        
-        localFolderIds.forEach(id => {
-          if(!workspace.folders[id].shareId && !remoteFolderIds.has(id)) {
-            delete workspace.folders[id];
-            changed = true;
-          }
-        });
-        
-        Object.keys(remoteFolders).forEach(id=>{
-          if(workspace.folders[id]) {
-            if(stableStringify(workspace.folders[id]) !== stableStringify(remoteFolders[id])) {
-              Object.assign(workspace.folders[id], remoteFolders[id]);
-              changed = true;
-            }
-          } else {
-            workspace.folders[id] = remoteFolders[id];
-            changed = true;
-          }
-        });
-        
-        if(!workspace.documents[workspace.activeDocId]){
-          const ids = Object.keys(workspace.documents);
-          workspace.activeDocId = ids.length ? ids[0] : null;
-          changed = true;
-        }
-        if(!workspace.activeDocId){
-          const fresh = makeDoc('Untitled');
-          workspace.documents[fresh.id] = fresh;
-          workspace.activeDocId = fresh.id;
-          changed = true;
-        }
-        lastPrivateJSON = json;
-        if(changed) {
-          try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
-        }
-      } catch(mergeErr){
-        console.error('Private doc merge failed — keeping local copy as-is', mergeErr);
-      } finally {
-        applyingRemote = false;
-      }
-      if(changed) {
-        renderDocList();
-        renderTreePreservingFocus();
-      }
-      initialSyncDone = true;
-      setSyncState('synced', 'Synced');
+      applyRemotePrivateData(data);
     }, err=>{
       console.error('Cloud sync error', err);
       setSyncState('error', 'Sync error: ' + err.message);
     });
   }
+
+  // Realtime listeners ride on a persistent websocket, and that connection can
+  // silently stall — a laptop sleeping, a tab backgrounded, Wi-Fi dropping —
+  // without Firestore always reconnecting on its own (this is a known issue,
+  // especially on Safari/macOS). Rather than rely purely on the socket staying
+  // alive, do a direct server read whenever there's a good reason to believe
+  // we might be behind: the tab regains focus/visibility, the browser reports
+  // we're back online, or just periodically as a backstop. This is what a
+  // manual refresh was doing for you — now it happens automatically.
+  let cloudPollTimer = null;
+  let pullInFlight = false;
+
+  function pullFromCloudSilently(){
+    if(!firebaseReady || !currentUser || applyingRemote || pullInFlight) return;
+    pullInFlight = true;
+    db.collection('users').doc(currentUser.uid).get({ source: 'server' }).then(snap=>{
+      pullInFlight = false;
+      applyRemotePrivateData(snap.data() || {});
+    }).catch(err=>{
+      pullInFlight = false;
+      // Transient network errors here are expected (e.g. briefly offline) —
+      // the realtime listener or the next poll will catch up. Only log it.
+      console.warn('Background sync pull failed', err);
+    });
+  }
+
+  function startCloudPolling(){
+    clearInterval(cloudPollTimer);
+    cloudPollTimer = setInterval(()=>{
+      if(document.visibilityState === 'visible') pullFromCloudSilently();
+    }, 45000);
+  }
+
+  function stopCloudPolling(){
+    clearInterval(cloudPollTimer);
+    cloudPollTimer = null;
+  }
+
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState === 'visible') pullFromCloudSilently();
+  });
+  window.addEventListener('focus', pullFromCloudSilently);
+  window.addEventListener('online', pullFromCloudSilently);
 
   function deletePrivateDocRemote(docId){
     if(!firebaseReady || !currentUser) return;
