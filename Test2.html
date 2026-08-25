@@ -5982,25 +5982,54 @@
   let cloudPollTimer = null;
   let pullInFlight = false;
 
+  // A stalled Firestore connection doesn't just break the realtime listener —
+  // any get() issued on the SAME client instance rides the same broken
+  // connection and can hang silently forever, no error, nothing. That's why
+  // a manual "Sync now" button that only called .get() didn't help: it hit
+  // the exact same stuck pipe. A page reload "fixes" this because it throws
+  // away the whole Firestore client and builds a fresh one. We can get the
+  // same effect without reloading by explicitly disabling and re-enabling
+  // the network (which tears down and rebuilds the underlying connection)
+  // and re-subscribing the realtime listener, before attempting the pull —
+  // plus a hard timeout so we never hang silently again even if this doesn't
+  // fully recover.
+  function reconnectAndFetch(uid){
+    return db.disableNetwork()
+      .then(()=> db.enableNetwork())
+      .then(()=>{
+        subscribeToUserDoc(uid); // rebuild the realtime listener too
+        return db.collection('users').doc(uid).get({ source: 'server' });
+      });
+  }
+
+  function withTimeout(promise, ms, timeoutMsg){
+    let timer;
+    const timeout = new Promise((_, reject)=>{
+      timer = setTimeout(()=> reject(new Error(timeoutMsg)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(()=> clearTimeout(timer));
+  }
+
   function pullFromCloudSilently(){
     if(!firebaseReady || !currentUser || applyingRemote || pullInFlight) return;
     pullInFlight = true;
-    db.collection('users').doc(currentUser.uid).get({ source: 'server' }).then(snap=>{
-      pullInFlight = false;
-      applyRemotePrivateData(snap.data() || {});
-    }).catch(err=>{
-      pullInFlight = false;
-      // Transient network errors here are expected (e.g. briefly offline) —
-      // the realtime listener or the next poll will catch up. Only log it.
-      console.warn('Background sync pull failed', err);
-    });
+    withTimeout(reconnectAndFetch(currentUser.uid), 15000, 'Background sync pull timed out')
+      .then(snap=>{
+        pullInFlight = false;
+        applyRemotePrivateData(snap.data() || {});
+      }).catch(err=>{
+        pullInFlight = false;
+        // Transient network errors here are expected (e.g. briefly offline) —
+        // the next focus/visibility/poll trigger will retry. Only log it.
+        console.warn('Background sync pull failed', err);
+      });
   }
 
-  // User-triggered "Sync now": pull the latest from the cloud and merge it in
-  // (same safe per-node merge as everything else — never destructive), then
-  // push anything local that hasn't gone up yet. Unlike a page refresh, this
-  // gives visible feedback via the sync dot/label and surfaces errors instead
-  // of failing silently.
+  // User-triggered "Sync now": force-reconnect, pull the latest from the
+  // cloud and merge it in (same safe per-node merge as everything else —
+  // never destructive), then push anything local that hasn't gone up yet.
+  // Always resolves within the timeout, with a visible error if it can't
+  // recover — this should never again look like "nothing happened."
   function fullSyncNow(){
     if(!firebaseReady || !currentUser){
       setSyncState('error', 'Sign in first to sync');
@@ -6008,13 +6037,14 @@
     }
     if(applyingRemote) return;
     setSyncState('syncing', 'Syncing…');
-    db.collection('users').doc(currentUser.uid).get({ source: 'server' }).then(snap=>{
-      applyRemotePrivateData(snap.data() || {});
-      forceCloudSync();
-    }).catch(err=>{
-      console.error('Manual sync failed', err);
-      setSyncState('error', 'Sync failed: ' + err.message);
-    });
+    withTimeout(reconnectAndFetch(currentUser.uid), 15000, 'Sync timed out — check your connection and try again')
+      .then(snap=>{
+        applyRemotePrivateData(snap.data() || {});
+        forceCloudSync();
+      }).catch(err=>{
+        console.error('Manual sync failed', err);
+        setSyncState('error', err.message || 'Sync failed');
+      });
   }
 
   function startCloudPolling(){
