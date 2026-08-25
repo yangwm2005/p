@@ -250,6 +250,8 @@
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
   #syncNowBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
   #syncNowBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
+  #forceSyncBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
+  #forceSyncBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
   #loadCloudBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
   #loadCloudBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
   .sync-label{font-size:11px; color:var(--ink-faint); white-space:nowrap; margin-right:2px;}
@@ -1138,7 +1140,7 @@
     #topbar{padding:8px 10px; gap:6px;}
     #undoBtn, #redoBtn{flex-shrink:0;}
     #themeBtn, #linesBtn, #collapseAllBtn, #shareBtn, .signin-btn{flex-shrink:0; padding:6px 8px;}
-    #syncNowBtn, #loadCloudBtn{flex-shrink:0; padding:6px 8px;}
+    #syncNowBtn, #forceSyncBtn, #loadCloudBtn{flex-shrink:0; padding:6px 8px;}
     .auth-group .user-name{display:none;}
     .sync-label{display:none;}
   }
@@ -1212,6 +1214,7 @@
     <span class="sync-dot" id="syncDot" data-state="offline" title="Not signed in"></span>
     <span class="sync-label" id="syncLabel">Offline</span>
     <button id="syncNowBtn" class="topbtn" title="Save current content to the cloud now" style="display:none;">Save</button>
+    <button id="forceSyncBtn" class="topbtn" title="Save instantly and reload the page — guaranteed to pick up the other computer's changes, same as pressing your browser's refresh button" style="display:none;">Sync now</button>
     <button id="loadCloudBtn" class="topbtn" title="Replace this device's content with what's saved in the cloud" style="display:none;">Load</button>
     <button id="signInBtn" class="topbtn signin-btn">
       <svg width="14" height="14" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.95v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.95A9 9 0 0 0 0 9c0 1.45.35 2.83.95 4.05l3.02-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .95 4.95L3.97 7.28C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
@@ -5519,7 +5522,7 @@
   let shareModalKind = 'doc';
   let initialSyncDone = false;
 
-  let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, syncLabelEl, loadCloudBtnEl;
+  let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, forceSyncBtnEl, syncLabelEl, loadCloudBtnEl;
   let syncWatchdogTimer = null;
   let syncLabelTicker = null;
   let lastSyncedAt = null;
@@ -5584,6 +5587,7 @@
     userAvatarEl = document.getElementById('userAvatar');
     userNameEl = document.getElementById('userName');
     syncNowBtnEl = document.getElementById('syncNowBtn');
+    forceSyncBtnEl = document.getElementById('forceSyncBtn');
     syncLabelEl = document.getElementById('syncLabel');
     loadCloudBtnEl = document.getElementById('loadCloudBtn');
 
@@ -5622,42 +5626,55 @@
       forceCloudSync();
     });
 
+    forceSyncBtnEl.addEventListener('click', ()=>{
+      fullSyncNow();
+    });
+
     loadCloudBtnEl.addEventListener('click', ()=>{
       loadFromCloudNow();
     });
 
-    auth.onAuthStateChanged(user=>{
-      currentUser = user;
-      if(user){
-        signInBtnEl.style.display = 'none';
-        userChipEl.style.display = 'flex';
-        syncNowBtnEl.style.display = 'inline-flex';
-        loadCloudBtnEl.style.display = 'inline-flex';
-        userAvatarEl.src = user.photoURL || '';
-        userNameEl.textContent = user.displayName || user.email || 'Signed in';
-        initialSyncDone = false;
-        subscribeToUserDoc(user.uid);
-        subscribeToSharedIndex((user.email || '').toLowerCase());
-        setTimeout(() => {
-          if(!applyingRemote && firebaseReady && currentUser) {
-            triggerCloudSync();
-          }
-        }, 1000);
-      } else {
-        signInBtnEl.style.display = 'flex';
-        userChipEl.style.display = 'none';
-        syncNowBtnEl.style.display = 'none';
-        loadCloudBtnEl.style.display = 'none';
-        if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
-        if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
-        Object.values(sharedDocUnsubs).forEach(fn=>fn());
-        sharedDocUnsubs = {};
-        lastPrivateJSON = null;
-        initialSyncDone = false;
-        setSyncState('offline', 'Not signed in');
-      }
-      renderDocList();
-    });
+    auth.onAuthStateChanged(handleAuthStateChanged);
+  }
+
+  function handleAuthStateChanged(user){
+    currentUser = user;
+    if(user){
+      signInBtnEl.style.display = 'none';
+      userChipEl.style.display = 'flex';
+      syncNowBtnEl.style.display = 'inline-flex';
+      forceSyncBtnEl.style.display = 'inline-flex';
+      loadCloudBtnEl.style.display = 'inline-flex';
+      userAvatarEl.src = user.photoURL || '';
+      userNameEl.textContent = user.displayName || user.email || 'Signed in';
+      initialSyncDone = false;
+      subscribeToUserDoc(user.uid);
+      subscribeToSharedIndex((user.email || '').toLowerCase());
+      startCloudPolling();
+      // NOTE: we intentionally do NOT force a push here. subscribeToUserDoc's
+      // onSnapshot handler already pushes local docs to the cloud if (and only
+      // if) the cloud copy is genuinely empty (see initialSyncDone branch
+      // below). Forcing a push on a fixed timer race against that first
+      // snapshot: if the snapshot hadn't arrived yet, this device's stale
+      // local copy would get written over whatever the *other* device had
+      // just saved to the cloud, silently discarding it. That was the cause
+      // of the two-Mac desync.
+    } else {
+      signInBtnEl.style.display = 'flex';
+      userChipEl.style.display = 'none';
+      syncNowBtnEl.style.display = 'none';
+      forceSyncBtnEl.style.display = 'none';
+      loadCloudBtnEl.style.display = 'none';
+      if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
+      if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
+      Object.values(sharedDocUnsubs).forEach(fn=>fn());
+      sharedDocUnsubs = {};
+      lastPrivateJSON = null;
+      initialSyncDone = false;
+      stopCloudPolling();
+      setSyncState('offline', 'Not signed in');
+    }
+    renderDocList();
   }
 
   // Manually force an immediate SAVE of every local document to the cloud,
@@ -5818,7 +5835,12 @@
       return;
     }
     
-    Promise.all(promises).then(() => {
+    // Wrapped in a timeout: an outright rejection is already handled below,
+    // but a wedged connection can leave a write neither resolving nor
+    // rejecting — without this, that would leave cloudSyncPending stuck
+    // true forever, silently blocking every future save from this device
+    // until the page was reloaded.
+    withTimeout(Promise.all(promises), 15000, 'Save timed out').then(() => {
       cloudSyncPending = false;
       setSyncState('synced', 'Synced');
     }).catch(err => {
@@ -5845,106 +5867,237 @@
     });
   }
 
+  // Applies a {threadlineDocs, threadlineFolders} payload from Firestore to the
+  // local workspace via the same per-node last-write-wins merge used everywhere
+  // else. Shared by the realtime listener AND by manual/periodic pulls, so a
+  // reconnect, a focus event, or a stalled websocket all funnel through one
+  // code path instead of duplicating (and risking drifting) the merge logic.
+  function applyRemotePrivateData(data){
+    const remote = data.threadlineDocs;
+    const remoteFolders = data.threadlineFolders || {};
+
+    if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
+      setSyncState('synced', 'Synced');
+      if(Object.keys(workspace.documents).length > 0 && !initialSyncDone) {
+        initialSyncDone = true;
+        triggerCloudSync();
+      }
+      return;
+    }
+    const json = stableStringify({ docs: remote, folders: remoteFolders });
+    if(json === lastPrivateJSON){
+      setSyncState('synced', 'Synced');
+      initialSyncDone = true;
+      return;
+    }
+
+    applyingRemote = true;
+    let changed = false;
+    try{
+      const localDocIds = new Set(Object.keys(workspace.documents));
+      const remoteDocIds = new Set(Object.keys(remote));
+
+      localDocIds.forEach(id => {
+        if(!workspace.documents[id].shareId && !remoteDocIds.has(id)) {
+          delete workspace.documents[id];
+          changed = true;
+        }
+      });
+
+      Object.keys(remote).forEach(id=>{
+        const merged = mergeDoc(workspace.documents[id], remote[id]);
+        if(!workspace.documents[id] || stableStringify(merged) !== stableStringify(workspace.documents[id])) {
+          workspace.documents[id] = merged;
+          changed = true;
+        }
+      });
+
+      const localFolderIds = new Set(Object.keys(workspace.folders || {}));
+      const remoteFolderIds = new Set(Object.keys(remoteFolders));
+
+      localFolderIds.forEach(id => {
+        if(!workspace.folders[id].shareId && !remoteFolderIds.has(id)) {
+          delete workspace.folders[id];
+          changed = true;
+        }
+      });
+
+      Object.keys(remoteFolders).forEach(id=>{
+        if(workspace.folders[id]) {
+          if(stableStringify(workspace.folders[id]) !== stableStringify(remoteFolders[id])) {
+            Object.assign(workspace.folders[id], remoteFolders[id]);
+            changed = true;
+          }
+        } else {
+          workspace.folders[id] = remoteFolders[id];
+          changed = true;
+        }
+      });
+
+      if(!workspace.documents[workspace.activeDocId]){
+        const ids = Object.keys(workspace.documents);
+        workspace.activeDocId = ids.length ? ids[0] : null;
+        changed = true;
+      }
+      if(!workspace.activeDocId){
+        const fresh = makeDoc('Untitled');
+        workspace.documents[fresh.id] = fresh;
+        workspace.activeDocId = fresh.id;
+        changed = true;
+      }
+      lastPrivateJSON = json;
+      if(changed) {
+        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
+      }
+    } catch(mergeErr){
+      console.error('Private doc merge failed — keeping local copy as-is', mergeErr);
+    } finally {
+      applyingRemote = false;
+    }
+    if(changed) {
+      renderDocList();
+      renderTreePreservingFocus();
+    }
+    initialSyncDone = true;
+    setSyncState('synced', 'Synced');
+  }
+
   function subscribeToUserDoc(uid){
     if(userDocUnsub) userDocUnsub();
     setSyncState('syncing', 'Connecting…');
     userDocUnsub = db.collection('users').doc(uid).onSnapshot(snap=>{
       const data = snap.data() || {};
-      const remote = data.threadlineDocs;
-      const remoteFolders = data.threadlineFolders || {};
       if(snap.metadata.hasPendingWrites){
         setSyncState('synced', 'Synced');
         return;
       }
-      if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
-        setSyncState('synced', 'Synced');
-        if(Object.keys(workspace.documents).length > 0 && !initialSyncDone) {
-          initialSyncDone = true;
-          triggerCloudSync();
-        }
-        return;
-      }
-      const json = stableStringify({ docs: remote, folders: remoteFolders });
-      if(json === lastPrivateJSON){ 
-        setSyncState('synced', 'Synced');
-        initialSyncDone = true;
-        return; 
-      }
-
-      applyingRemote = true;
-      let changed = false;
-      try{
-        const localDocIds = new Set(Object.keys(workspace.documents));
-        const remoteDocIds = new Set(Object.keys(remote));
-        
-        localDocIds.forEach(id => {
-          if(!workspace.documents[id].shareId && !remoteDocIds.has(id)) {
-            delete workspace.documents[id];
-            changed = true;
-          }
-        });
-        
-        Object.keys(remote).forEach(id=>{
-          const merged = mergeDoc(workspace.documents[id], remote[id]);
-          if(!workspace.documents[id] || stableStringify(merged) !== stableStringify(workspace.documents[id])) {
-            workspace.documents[id] = merged;
-            changed = true;
-          }
-        });
-        
-        const localFolderIds = new Set(Object.keys(workspace.folders || {}));
-        const remoteFolderIds = new Set(Object.keys(remoteFolders));
-        
-        localFolderIds.forEach(id => {
-          if(!workspace.folders[id].shareId && !remoteFolderIds.has(id)) {
-            delete workspace.folders[id];
-            changed = true;
-          }
-        });
-        
-        Object.keys(remoteFolders).forEach(id=>{
-          if(workspace.folders[id]) {
-            if(stableStringify(workspace.folders[id]) !== stableStringify(remoteFolders[id])) {
-              Object.assign(workspace.folders[id], remoteFolders[id]);
-              changed = true;
-            }
-          } else {
-            workspace.folders[id] = remoteFolders[id];
-            changed = true;
-          }
-        });
-        
-        if(!workspace.documents[workspace.activeDocId]){
-          const ids = Object.keys(workspace.documents);
-          workspace.activeDocId = ids.length ? ids[0] : null;
-          changed = true;
-        }
-        if(!workspace.activeDocId){
-          const fresh = makeDoc('Untitled');
-          workspace.documents[fresh.id] = fresh;
-          workspace.activeDocId = fresh.id;
-          changed = true;
-        }
-        lastPrivateJSON = json;
-        if(changed) {
-          try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
-        }
-      } catch(mergeErr){
-        console.error('Private doc merge failed — keeping local copy as-is', mergeErr);
-      } finally {
-        applyingRemote = false;
-      }
-      if(changed) {
-        renderDocList();
-        renderTreePreservingFocus();
-      }
-      initialSyncDone = true;
-      setSyncState('synced', 'Synced');
+      applyRemotePrivateData(data);
     }, err=>{
       console.error('Cloud sync error', err);
       setSyncState('error', 'Sync error: ' + err.message);
     });
   }
+
+  // Realtime listeners ride on a persistent websocket, and that connection can
+  // silently stall — a laptop sleeping, a tab backgrounded, Wi-Fi dropping —
+  // without Firestore always reconnecting on its own (this is a known issue,
+  // especially on Safari/macOS). Rather than rely purely on the socket staying
+  // alive, do a direct server read whenever there's a good reason to believe
+  // we might be behind: the tab regains focus/visibility, the browser reports
+  // we're back online, or just periodically as a backstop. This is what a
+  // manual refresh was doing for you — now it happens automatically.
+  let cloudPollTimer = null;
+  let pullInFlight = false;
+  let reinitInFlight = null;
+
+  function withTimeout(promise, ms, timeoutMsg){
+    let timer;
+    const timeout = new Promise((_, reject)=>{
+      timer = setTimeout(()=> reject(new Error(timeoutMsg)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(()=> clearTimeout(timer));
+  }
+
+  // toggling disableNetwork/enableNetwork on the existing client turned out
+  // not to be enough — the client can wedge in a way that survives that.
+  // The one thing we know for certain fixes it is a full page reload, which
+  // works because it throws away the entire Firebase client and builds a new
+  // one. This reproduces that at the Firebase-app level, without reloading
+  // the page or touching your unsaved local edits: delete the app instance,
+  // create a brand new one, get fresh auth/db handles, and re-subscribe
+  // everything. auth/db are declared with `let` in the outer scope, so every
+  // other function that closes over them (click handlers, subscribeToUserDoc,
+  // performCloudSync, etc.) automatically starts using the new instances the
+  // moment we reassign them here — nothing else needs to change.
+  function reinitFirebaseConnection(){
+    if(reinitInFlight) return reinitInFlight;
+    if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
+    if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
+    Object.values(sharedDocUnsubs).forEach(fn=>fn());
+    sharedDocUnsubs = {};
+    stopCloudPolling();
+
+    const oldApp = (typeof firebase !== 'undefined' && firebase.apps && firebase.apps.length) ? firebase.app() : null;
+    const teardown = oldApp ? oldApp.delete().catch(()=>{}) : Promise.resolve();
+
+    reinitInFlight = teardown.then(()=>{
+      firebase.initializeApp(FIREBASE_CONFIG);
+      auth = firebase.auth();
+      db = firebase.firestore();
+      return new Promise(resolve=>{
+        // onAuthStateChanged fires once immediately with the restored,
+        // persisted sign-in (or null) — that's our signal the new client is
+        // actually live, same as what happens on a real page load.
+        const unsub = auth.onAuthStateChanged(user=>{
+          unsub();
+          auth.onAuthStateChanged(handleAuthStateChanged); // re-attach for the rest of the session
+          handleAuthStateChanged(user);
+          resolve(user);
+        });
+      });
+    }).finally(()=>{ reinitInFlight = null; });
+
+    return reinitInFlight;
+  }
+
+  function pullFromCloudSilently(){
+    if(!firebaseReady || !currentUser || applyingRemote || pullInFlight) return;
+    pullInFlight = true;
+    withTimeout(reinitFirebaseConnection(), 15000, 'Background reconnect timed out')
+      .then(user=>{
+        if(!user){ pullInFlight = false; return; }
+        return withTimeout(db.collection('users').doc(user.uid).get({ source: 'server' }), 12000, 'Background sync pull timed out')
+          .then(snap=>{
+            pullInFlight = false;
+            applyRemotePrivateData(snap.data() || {});
+          });
+      }).catch(err=>{
+        pullInFlight = false;
+        // Transient network errors here are expected (e.g. briefly offline) —
+        // the next focus/visibility/poll trigger will retry. Only log it.
+        console.warn('Background sync pull failed', err);
+      });
+  }
+
+  // User-triggered "Sync now": we tried rebuilding the Firebase connection
+  // in-place (network toggling, then a full app delete+recreate) and neither
+  // reliably matched what an actual browser refresh does. Rather than keep
+  // chasing that, this now does the guaranteed thing: flush whatever you
+  // just typed to localStorage immediately (bypassing the normal 200ms
+  // debounce, so nothing is lost even if you click right after typing), then
+  // reload the page for real. On load, the app reads that flushed workspace
+  // back from localStorage and the normal startup flow (sign-in restore →
+  // subscribeToUserDoc's first snapshot → merge) runs exactly as it does on
+  // a manual refresh — because it IS a manual refresh, just triggered by a
+  // button instead of your fingers.
+  function fullSyncNow(){
+    if(savePending){
+      clearTimeout(saveTimer);
+      savePending = false;
+      touchDoc(activeDoc());
+    }
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
+    catch(e){ console.warn('pre-reload save failed', e); }
+    location.reload();
+  }
+
+  function startCloudPolling(){
+    clearInterval(cloudPollTimer);
+    cloudPollTimer = setInterval(()=>{
+      if(document.visibilityState === 'visible') pullFromCloudSilently();
+    }, 45000);
+  }
+
+  function stopCloudPolling(){
+    clearInterval(cloudPollTimer);
+    cloudPollTimer = null;
+  }
+
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState === 'visible') pullFromCloudSilently();
+  });
+  window.addEventListener('focus', pullFromCloudSilently);
+  window.addEventListener('online', pullFromCloudSilently);
 
   function deletePrivateDocRemote(docId){
     if(!firebaseReady || !currentUser) return;
