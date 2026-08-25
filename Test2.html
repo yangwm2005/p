@@ -250,6 +250,8 @@
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
   #syncNowBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
   #syncNowBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
+  #forceSyncBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
+  #forceSyncBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
   #loadCloudBtn{display:inline-flex; align-items:center; gap:5px; font-weight:500;}
   #loadCloudBtn:active{background:var(--accent-soft); color:var(--accent-ink);}
   .sync-label{font-size:11px; color:var(--ink-faint); white-space:nowrap; margin-right:2px;}
@@ -1138,7 +1140,7 @@
     #topbar{padding:8px 10px; gap:6px;}
     #undoBtn, #redoBtn{flex-shrink:0;}
     #themeBtn, #linesBtn, #collapseAllBtn, #shareBtn, .signin-btn{flex-shrink:0; padding:6px 8px;}
-    #syncNowBtn, #loadCloudBtn{flex-shrink:0; padding:6px 8px;}
+    #syncNowBtn, #forceSyncBtn, #loadCloudBtn{flex-shrink:0; padding:6px 8px;}
     .auth-group .user-name{display:none;}
     .sync-label{display:none;}
   }
@@ -1212,6 +1214,7 @@
     <span class="sync-dot" id="syncDot" data-state="offline" title="Not signed in"></span>
     <span class="sync-label" id="syncLabel">Offline</span>
     <button id="syncNowBtn" class="topbtn" title="Save current content to the cloud now" style="display:none;">Save</button>
+    <button id="forceSyncBtn" class="topbtn" title="Pull the latest from the cloud and push any unsaved local changes — same as a refresh, without reloading the page" style="display:none;">Sync now</button>
     <button id="loadCloudBtn" class="topbtn" title="Replace this device's content with what's saved in the cloud" style="display:none;">Load</button>
     <button id="signInBtn" class="topbtn signin-btn">
       <svg width="14" height="14" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.95v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.95A9 9 0 0 0 0 9c0 1.45.35 2.83.95 4.05l3.02-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.59-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .95 4.95L3.97 7.28C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
@@ -5519,7 +5522,7 @@
   let shareModalKind = 'doc';
   let initialSyncDone = false;
 
-  let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, syncLabelEl, loadCloudBtnEl;
+  let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, forceSyncBtnEl, syncLabelEl, loadCloudBtnEl;
   let syncWatchdogTimer = null;
   let syncLabelTicker = null;
   let lastSyncedAt = null;
@@ -5584,6 +5587,7 @@
     userAvatarEl = document.getElementById('userAvatar');
     userNameEl = document.getElementById('userName');
     syncNowBtnEl = document.getElementById('syncNowBtn');
+    forceSyncBtnEl = document.getElementById('forceSyncBtn');
     syncLabelEl = document.getElementById('syncLabel');
     loadCloudBtnEl = document.getElementById('loadCloudBtn');
 
@@ -5622,6 +5626,10 @@
       forceCloudSync();
     });
 
+    forceSyncBtnEl.addEventListener('click', ()=>{
+      fullSyncNow();
+    });
+
     loadCloudBtnEl.addEventListener('click', ()=>{
       loadFromCloudNow();
     });
@@ -5632,6 +5640,7 @@
         signInBtnEl.style.display = 'none';
         userChipEl.style.display = 'flex';
         syncNowBtnEl.style.display = 'inline-flex';
+        forceSyncBtnEl.style.display = 'inline-flex';
         loadCloudBtnEl.style.display = 'inline-flex';
         userAvatarEl.src = user.photoURL || '';
         userNameEl.textContent = user.displayName || user.email || 'Signed in';
@@ -5651,6 +5660,7 @@
         signInBtnEl.style.display = 'flex';
         userChipEl.style.display = 'none';
         syncNowBtnEl.style.display = 'none';
+        forceSyncBtnEl.style.display = 'none';
         loadCloudBtnEl.style.display = 'none';
         if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
         if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
@@ -5983,6 +5993,27 @@
       // Transient network errors here are expected (e.g. briefly offline) —
       // the realtime listener or the next poll will catch up. Only log it.
       console.warn('Background sync pull failed', err);
+    });
+  }
+
+  // User-triggered "Sync now": pull the latest from the cloud and merge it in
+  // (same safe per-node merge as everything else — never destructive), then
+  // push anything local that hasn't gone up yet. Unlike a page refresh, this
+  // gives visible feedback via the sync dot/label and surfaces errors instead
+  // of failing silently.
+  function fullSyncNow(){
+    if(!firebaseReady || !currentUser){
+      setSyncState('error', 'Sign in first to sync');
+      return;
+    }
+    if(applyingRemote) return;
+    setSyncState('syncing', 'Syncing…');
+    db.collection('users').doc(currentUser.uid).get({ source: 'server' }).then(snap=>{
+      applyRemotePrivateData(snap.data() || {});
+      forceCloudSync();
+    }).catch(err=>{
+      console.error('Manual sync failed', err);
+      setSyncState('error', 'Sync failed: ' + err.message);
     });
   }
 
