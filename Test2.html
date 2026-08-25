@@ -5634,45 +5634,47 @@
       loadFromCloudNow();
     });
 
-    auth.onAuthStateChanged(user=>{
-      currentUser = user;
-      if(user){
-        signInBtnEl.style.display = 'none';
-        userChipEl.style.display = 'flex';
-        syncNowBtnEl.style.display = 'inline-flex';
-        forceSyncBtnEl.style.display = 'inline-flex';
-        loadCloudBtnEl.style.display = 'inline-flex';
-        userAvatarEl.src = user.photoURL || '';
-        userNameEl.textContent = user.displayName || user.email || 'Signed in';
-        initialSyncDone = false;
-        subscribeToUserDoc(user.uid);
-        subscribeToSharedIndex((user.email || '').toLowerCase());
-        startCloudPolling();
-        // NOTE: we intentionally do NOT force a push here. subscribeToUserDoc's
-        // onSnapshot handler already pushes local docs to the cloud if (and only
-        // if) the cloud copy is genuinely empty (see initialSyncDone branch
-        // below). Forcing a push on a fixed timer race against that first
-        // snapshot: if the snapshot hadn't arrived yet, this device's stale
-        // local copy would get written over whatever the *other* device had
-        // just saved to the cloud, silently discarding it. That was the cause
-        // of the two-Mac desync.
-      } else {
-        signInBtnEl.style.display = 'flex';
-        userChipEl.style.display = 'none';
-        syncNowBtnEl.style.display = 'none';
-        forceSyncBtnEl.style.display = 'none';
-        loadCloudBtnEl.style.display = 'none';
-        if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
-        if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
-        Object.values(sharedDocUnsubs).forEach(fn=>fn());
-        sharedDocUnsubs = {};
-        lastPrivateJSON = null;
-        initialSyncDone = false;
-        stopCloudPolling();
-        setSyncState('offline', 'Not signed in');
-      }
-      renderDocList();
-    });
+    auth.onAuthStateChanged(handleAuthStateChanged);
+  }
+
+  function handleAuthStateChanged(user){
+    currentUser = user;
+    if(user){
+      signInBtnEl.style.display = 'none';
+      userChipEl.style.display = 'flex';
+      syncNowBtnEl.style.display = 'inline-flex';
+      forceSyncBtnEl.style.display = 'inline-flex';
+      loadCloudBtnEl.style.display = 'inline-flex';
+      userAvatarEl.src = user.photoURL || '';
+      userNameEl.textContent = user.displayName || user.email || 'Signed in';
+      initialSyncDone = false;
+      subscribeToUserDoc(user.uid);
+      subscribeToSharedIndex((user.email || '').toLowerCase());
+      startCloudPolling();
+      // NOTE: we intentionally do NOT force a push here. subscribeToUserDoc's
+      // onSnapshot handler already pushes local docs to the cloud if (and only
+      // if) the cloud copy is genuinely empty (see initialSyncDone branch
+      // below). Forcing a push on a fixed timer race against that first
+      // snapshot: if the snapshot hadn't arrived yet, this device's stale
+      // local copy would get written over whatever the *other* device had
+      // just saved to the cloud, silently discarding it. That was the cause
+      // of the two-Mac desync.
+    } else {
+      signInBtnEl.style.display = 'flex';
+      userChipEl.style.display = 'none';
+      syncNowBtnEl.style.display = 'none';
+      forceSyncBtnEl.style.display = 'none';
+      loadCloudBtnEl.style.display = 'none';
+      if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
+      if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
+      Object.values(sharedDocUnsubs).forEach(fn=>fn());
+      sharedDocUnsubs = {};
+      lastPrivateJSON = null;
+      initialSyncDone = false;
+      stopCloudPolling();
+      setSyncState('offline', 'Not signed in');
+    }
+    renderDocList();
   }
 
   // Manually force an immediate SAVE of every local document to the cloud,
@@ -5833,7 +5835,12 @@
       return;
     }
     
-    Promise.all(promises).then(() => {
+    // Wrapped in a timeout: an outright rejection is already handled below,
+    // but a wedged connection can leave a write neither resolving nor
+    // rejecting — without this, that would leave cloudSyncPending stuck
+    // true forever, silently blocking every future save from this device
+    // until the page was reloaded.
+    withTimeout(Promise.all(promises), 15000, 'Save timed out').then(() => {
       cloudSyncPending = false;
       setSyncState('synced', 'Synced');
     }).catch(err => {
@@ -5981,26 +5988,7 @@
   // manual refresh was doing for you — now it happens automatically.
   let cloudPollTimer = null;
   let pullInFlight = false;
-
-  // A stalled Firestore connection doesn't just break the realtime listener —
-  // any get() issued on the SAME client instance rides the same broken
-  // connection and can hang silently forever, no error, nothing. That's why
-  // a manual "Sync now" button that only called .get() didn't help: it hit
-  // the exact same stuck pipe. A page reload "fixes" this because it throws
-  // away the whole Firestore client and builds a fresh one. We can get the
-  // same effect without reloading by explicitly disabling and re-enabling
-  // the network (which tears down and rebuilds the underlying connection)
-  // and re-subscribing the realtime listener, before attempting the pull —
-  // plus a hard timeout so we never hang silently again even if this doesn't
-  // fully recover.
-  function reconnectAndFetch(uid){
-    return db.disableNetwork()
-      .then(()=> db.enableNetwork())
-      .then(()=>{
-        subscribeToUserDoc(uid); // rebuild the realtime listener too
-        return db.collection('users').doc(uid).get({ source: 'server' });
-      });
-  }
+  let reinitInFlight = null;
 
   function withTimeout(promise, ms, timeoutMsg){
     let timer;
@@ -6010,13 +5998,59 @@
     return Promise.race([promise, timeout]).finally(()=> clearTimeout(timer));
   }
 
+  // toggling disableNetwork/enableNetwork on the existing client turned out
+  // not to be enough — the client can wedge in a way that survives that.
+  // The one thing we know for certain fixes it is a full page reload, which
+  // works because it throws away the entire Firebase client and builds a new
+  // one. This reproduces that at the Firebase-app level, without reloading
+  // the page or touching your unsaved local edits: delete the app instance,
+  // create a brand new one, get fresh auth/db handles, and re-subscribe
+  // everything. auth/db are declared with `let` in the outer scope, so every
+  // other function that closes over them (click handlers, subscribeToUserDoc,
+  // performCloudSync, etc.) automatically starts using the new instances the
+  // moment we reassign them here — nothing else needs to change.
+  function reinitFirebaseConnection(){
+    if(reinitInFlight) return reinitInFlight;
+    if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
+    if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
+    Object.values(sharedDocUnsubs).forEach(fn=>fn());
+    sharedDocUnsubs = {};
+    stopCloudPolling();
+
+    const oldApp = (typeof firebase !== 'undefined' && firebase.apps && firebase.apps.length) ? firebase.app() : null;
+    const teardown = oldApp ? oldApp.delete().catch(()=>{}) : Promise.resolve();
+
+    reinitInFlight = teardown.then(()=>{
+      firebase.initializeApp(FIREBASE_CONFIG);
+      auth = firebase.auth();
+      db = firebase.firestore();
+      return new Promise(resolve=>{
+        // onAuthStateChanged fires once immediately with the restored,
+        // persisted sign-in (or null) — that's our signal the new client is
+        // actually live, same as what happens on a real page load.
+        const unsub = auth.onAuthStateChanged(user=>{
+          unsub();
+          auth.onAuthStateChanged(handleAuthStateChanged); // re-attach for the rest of the session
+          handleAuthStateChanged(user);
+          resolve(user);
+        });
+      });
+    }).finally(()=>{ reinitInFlight = null; });
+
+    return reinitInFlight;
+  }
+
   function pullFromCloudSilently(){
     if(!firebaseReady || !currentUser || applyingRemote || pullInFlight) return;
     pullInFlight = true;
-    withTimeout(reconnectAndFetch(currentUser.uid), 15000, 'Background sync pull timed out')
-      .then(snap=>{
-        pullInFlight = false;
-        applyRemotePrivateData(snap.data() || {});
+    withTimeout(reinitFirebaseConnection(), 15000, 'Background reconnect timed out')
+      .then(user=>{
+        if(!user){ pullInFlight = false; return; }
+        return withTimeout(db.collection('users').doc(user.uid).get({ source: 'server' }), 12000, 'Background sync pull timed out')
+          .then(snap=>{
+            pullInFlight = false;
+            applyRemotePrivateData(snap.data() || {});
+          });
       }).catch(err=>{
         pullInFlight = false;
         // Transient network errors here are expected (e.g. briefly offline) —
@@ -6025,22 +6059,30 @@
       });
   }
 
-  // User-triggered "Sync now": force-reconnect, pull the latest from the
-  // cloud and merge it in (same safe per-node merge as everything else —
-  // never destructive), then push anything local that hasn't gone up yet.
-  // Always resolves within the timeout, with a visible error if it can't
-  // recover — this should never again look like "nothing happened."
+  // User-triggered "Sync now": fully rebuild the Firebase connection (see
+  // reinitFirebaseConnection above), pull the latest from the cloud and merge
+  // it in (same safe per-node merge as everything else — never destructive),
+  // then push anything local that hasn't gone up yet. This is deliberately
+  // built to do everything a page reload does for sync purposes, so it
+  // should never again require an actual refresh to catch up.
   function fullSyncNow(){
-    if(!firebaseReady || !currentUser){
-      setSyncState('error', 'Sign in first to sync');
+    if(!firebaseReady){
+      setSyncState('error', 'Firebase not ready');
       return;
     }
-    if(applyingRemote) return;
-    setSyncState('syncing', 'Syncing…');
-    withTimeout(reconnectAndFetch(currentUser.uid), 15000, 'Sync timed out — check your connection and try again')
-      .then(snap=>{
-        applyRemotePrivateData(snap.data() || {});
-        forceCloudSync();
+    setSyncState('syncing', 'Reconnecting…');
+    withTimeout(reinitFirebaseConnection(), 15000, 'Reconnect timed out — check your connection and try again')
+      .then(user=>{
+        if(!user){
+          setSyncState('error', 'Not signed in — sign in and try again');
+          return;
+        }
+        setSyncState('syncing', 'Syncing…');
+        return withTimeout(db.collection('users').doc(user.uid).get({ source: 'server' }), 12000, 'Sync timed out — check your connection and try again')
+          .then(snap=>{
+            applyRemotePrivateData(snap.data() || {});
+            forceCloudSync();
+          });
       }).catch(err=>{
         console.error('Manual sync failed', err);
         setSyncState('error', err.message || 'Sync failed');
