@@ -5742,6 +5742,14 @@
   let shareModalDocId = null;
   let shareModalKind = 'doc';
   let initialSyncDone = false;
+  // Doc/folder ids we've confirmed the cloud has actually seen at least once
+  // (either via a remote snapshot that contained them, or a push we
+  // confirmed succeeded). The deletion-diff in applyRemotePrivateData only
+  // deletes a local id that's missing from a remote snapshot if it's in this
+  // set — a brand-new local doc that simply hasn't reached the cloud yet is
+  // never in this set, so it can't be mistaken for one deleted elsewhere.
+  let knownRemoteDocIds = new Set();
+  let knownRemoteFolderIds = new Set();
 
   let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, forceSyncBtnEl, floatingSyncBtnEl, syncLabelEl, loadCloudBtnEl;
   let syncWatchdogTimer = null;
@@ -5898,6 +5906,8 @@
       sharedDocUnsubs = {};
       lastPrivateJSON = null;
       initialSyncDone = false;
+      knownRemoteDocIds = new Set();
+      knownRemoteFolderIds = new Set();
       setSyncState('offline', 'Not signed in');
     }
     renderDocList();
@@ -6047,6 +6057,8 @@
             threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
           }, { merge:true }).then(() => {
             lastPrivateJSON = json;
+            Object.keys(out).forEach(id => knownRemoteDocIds.add(id));
+            Object.keys(folders).forEach(id => knownRemoteFolderIds.add(id));
           })
         );
       }
@@ -6135,11 +6147,12 @@
       const remoteDocIds = new Set(Object.keys(remote));
 
       localDocIds.forEach(id => {
-        if(!workspace.documents[id].shareId && !remoteDocIds.has(id)) {
+        if(!workspace.documents[id].shareId && !remoteDocIds.has(id) && knownRemoteDocIds.has(id)) {
           delete workspace.documents[id];
           changed = true;
         }
       });
+      remoteDocIds.forEach(id => knownRemoteDocIds.add(id));
 
       Object.keys(remote).forEach(id=>{
         const merged = mergeDoc(workspace.documents[id], remote[id]);
@@ -6153,11 +6166,12 @@
       const remoteFolderIds = new Set(Object.keys(remoteFolders));
 
       localFolderIds.forEach(id => {
-        if(!workspace.folders[id].shareId && !remoteFolderIds.has(id)) {
+        if(!workspace.folders[id].shareId && !remoteFolderIds.has(id) && knownRemoteFolderIds.has(id)) {
           delete workspace.folders[id];
           changed = true;
         }
       });
+      remoteFolderIds.forEach(id => knownRemoteFolderIds.add(id));
 
       Object.keys(remoteFolders).forEach(id=>{
         if(workspace.folders[id]) {
@@ -6231,6 +6245,32 @@
   // ordinary debounced push in scheduleSave/triggerCloudSync, is what
   // actually keeps things synced while you're typing; this button is just a
   // guaranteed-to-work manual catch-up on top of that.
+  // Unconditionally pushes every current private doc/folder to the cloud and
+  // resolves only once Firestore has actually confirmed the write. Used
+  // right before a reload (see fullSyncNow below) — reloading the page
+  // cancels any in-flight network request, so if we reloaded without
+  // waiting for this, a just-created document that hadn't reached the cloud
+  // yet would come back from the fresh cloud read looking exactly like a
+  // document deleted on another device (see the deletion diff in
+  // applyRemotePrivateData) and get wiped out locally too. Waiting here is
+  // what closes that gap.
+  function pushAllPrivateDataNow(){
+    if(!firebaseReady || !currentUser) return Promise.resolve();
+    const out = {};
+    Object.values(workspace.documents).forEach(d=>{ if(!d.shareId) out[d.id] = d; });
+    const folders = {};
+    Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
+    return db.collection('users').doc(currentUser.uid).set({
+      threadlineDocs: out,
+      threadlineFolders: folders,
+      threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge:true }).then(()=>{
+      lastPrivateJSON = stableStringify({ docs: out, folders });
+      Object.keys(out).forEach(id => knownRemoteDocIds.add(id));
+      Object.keys(folders).forEach(id => knownRemoteFolderIds.add(id));
+    });
+  }
+
   function fullSyncNow(){
     if(floatingSyncBtnEl) floatingSyncBtnEl.classList.add('spinning');
     if(savePending){
@@ -6240,7 +6280,23 @@
     }
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
     catch(e){ console.warn('pre-reload save failed', e); }
-    location.reload();
+
+    const doReload = () => location.reload();
+
+    if(firebaseReady && currentUser){
+      withPromiseTimeout(pushAllPrivateDataNow(), 10000, 'push before reload timed out')
+        .then(doReload)
+        .catch(err=>{
+          // Your content is already safe in localStorage regardless — reload
+          // anyway rather than leaving the button stuck spinning. Worst case
+          // this reload doesn't pick up the very latest push, and a second
+          // Sync now click will.
+          console.warn('Pre-reload push to the cloud failed or timed out; reloading anyway', err);
+          doReload();
+        });
+    } else {
+      doReload();
+    }
   }
 
   function deletePrivateDocRemote(docId){
