@@ -976,6 +976,8 @@
   }
   #floatingSyncBtn:hover{ transform:translateY(-50%) scale(1.06); }
   #floatingSyncBtn:active{ transform:translateY(-50%) scale(0.94); }
+  #floatingSyncBtn:disabled{ opacity:0.7; cursor:default; }
+  #floatingSyncBtn:disabled:hover{ transform:translateY(-50%); }
   #floatingSyncBtn svg{ width:20px; height:20px; }
   #floatingSyncBtn.spinning svg{ animation:fsb-spin 0.8s linear infinite; }
   @keyframes fsb-spin{ to{ transform:rotate(360deg); } }
@@ -1830,8 +1832,22 @@
       }
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
       catch(e){ console.warn("save failed", e); }
-      if(firebaseReady && currentUser && !applyingRemote) {
-        triggerCloudSync();
+      if(firebaseReady && currentUser){
+        if(!applyingRemote){
+          triggerCloudSync();
+        } else {
+          // A remote merge (from the realtime listener) happens to be running
+          // at this exact instant. Continuous typing "self-heals" around this
+          // because every keystroke calls scheduleSave() again — one of those
+          // retries eventually lands outside the merge window. But a one-shot
+          // action like a paste or a file import calls scheduleSave() exactly
+          // once, so without an explicit retry here, landing in this window
+          // meant the push was silently dropped and never tried again until
+          // the next edit. Retry shortly instead.
+          setTimeout(()=>{
+            if(firebaseReady && currentUser && !applyingRemote) triggerCloudSync();
+          }, 500);
+        }
       }
     }, 200);
   }
@@ -5720,14 +5736,100 @@
   let currentUser = null;
   let applyingRemote = false;
 
-  let userDocUnsub = null;
+  let userDocsUnsub = null;
+  let userFoldersUnsub = null;
   let sharedIndexUnsub = null;
   let sharedDocUnsubs = {};
-  let lastPrivateJSON = null;
+  // Private docs/folders now live one-per-Firestore-document (see
+  // migrateLegacyPrivateDataIfNeeded below for why), so change-tracking is
+  // keyed per id instead of one JSON string for the whole collection.
+  let lastPrivateDocJSON = {};
+  let lastPrivateFolderJSON = {};
   let lastSharedJSON = {};
   let shareModalDocId = null;
   let shareModalKind = 'doc';
   let initialSyncDone = false;
+  let docsSnapshotReceived = false;
+  let foldersSnapshotReceived = false;
+  // Doc/folder ids we've confirmed the cloud has actually seen at least once
+  // (either via a remote snapshot that contained them, or a push we
+  // confirmed succeeded). The deletion-diff in applyRemotePrivateDocs/Folders
+  // only deletes a local id that's missing from a remote snapshot if it's in
+  // this set — a brand-new local doc that simply hasn't reached the cloud yet
+  // is never in this set, so it can't be mistaken for one deleted elsewhere.
+  let knownRemoteDocIds = new Set();
+  let knownRemoteFolderIds = new Set();
+
+  // Firestore rejects any array that directly contains another array. Our
+  // text-formatting range fields (boldRanges, italicRanges, highlightRanges,
+  // textColorRanges, fontSizeRanges) are each stored in memory as an array
+  // of [start, end] or [start, end, value] tuples — exactly that shape. These
+  // two helpers convert between our in-memory shape and a Firestore-safe
+  // shape (array of plain objects) ONLY at the point of writing to or
+  // reading from Firestore; nothing else in the app ever needs to know this
+  // conversion happens.
+  const RANGE_FIELDS = ['boldRanges','italicRanges','highlightRanges','textColorRanges','fontSizeRanges'];
+  function tupleToFirestoreRange(tuple){
+    const o = {};
+    tuple.forEach((v,i)=>{ o['v'+i] = v; });
+    return o;
+  }
+  function firestoreRangeToTuple(obj){
+    return Object.keys(obj).sort().map(k => obj[k]);
+  }
+  // Firestore also rejects `undefined` as a field value ANYWHERE in a
+  // written document (not just at the top level) — the field simply has to
+  // be absent instead. Several node fields (boldRanges among them) are only
+  // set lazily the first time formatting is applied, and can end up present
+  // with an explicit `undefined` value rather than simply missing depending
+  // on how the object was built — Object.assign/spread do not drop those.
+  // This walks the whole structure recursively right before it's sent to
+  // Firestore and drops any key whose value is undefined, so this class of
+  // write failure can't happen regardless of where the undefined came from.
+  function stripUndefinedDeep(value){
+    if(Array.isArray(value)) return value.map(stripUndefinedDeep);
+    if(value && typeof value === 'object'){
+      const out = {};
+      Object.keys(value).forEach(k=>{
+        const v = value[k];
+        if(v === undefined) return;
+        out[k] = stripUndefinedDeep(v);
+      });
+      return out;
+    }
+    return value;
+  }
+  function sanitizeDocForFirestore(doc){
+    const out = Object.assign({}, doc);
+    const nodes = {};
+    Object.entries(doc.nodes || {}).forEach(([id, n])=>{
+      const nn = Object.assign({}, n);
+      RANGE_FIELDS.forEach(f=>{
+        if(Array.isArray(nn[f]) && nn[f].length){
+          nn[f] = nn[f].map(tupleToFirestoreRange);
+        }
+      });
+      nodes[id] = nn;
+    });
+    out.nodes = nodes;
+    return stripUndefinedDeep(out);
+  }
+  function restoreDocFromFirestore(doc){
+    if(!doc) return doc;
+    const out = Object.assign({}, doc);
+    const nodes = {};
+    Object.entries(doc.nodes || {}).forEach(([id, n])=>{
+      const nn = Object.assign({}, n);
+      RANGE_FIELDS.forEach(f=>{
+        if(Array.isArray(nn[f]) && nn[f].length && !Array.isArray(nn[f][0])){
+          nn[f] = nn[f].map(firestoreRangeToTuple);
+        }
+      });
+      nodes[id] = nn;
+    });
+    out.nodes = nodes;
+    return out;
+  }
 
   let syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, forceSyncBtnEl, floatingSyncBtnEl, syncLabelEl, loadCloudBtnEl;
   let syncWatchdogTimer = null;
@@ -5863,7 +5965,6 @@
       initialSyncDone = false;
       subscribeToUserDoc(user.uid);
       subscribeToSharedIndex((user.email || '').toLowerCase());
-      startCloudPolling();
       // NOTE: we intentionally do NOT force a push here. subscribeToUserDoc's
       // onSnapshot handler already pushes local docs to the cloud if (and only
       // if) the cloud copy is genuinely empty (see initialSyncDone branch
@@ -5879,13 +5980,18 @@
       forceSyncBtnEl.style.display = 'none';
       floatingSyncBtnEl.style.display = 'none';
       loadCloudBtnEl.style.display = 'none';
-      if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
+      if(userDocsUnsub){ userDocsUnsub(); userDocsUnsub = null; }
+      if(userFoldersUnsub){ userFoldersUnsub(); userFoldersUnsub = null; }
       if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
       Object.values(sharedDocUnsubs).forEach(fn=>fn());
       sharedDocUnsubs = {};
-      lastPrivateJSON = null;
+      lastPrivateDocJSON = {};
+      lastPrivateFolderJSON = {};
       initialSyncDone = false;
-      stopCloudPolling();
+      docsSnapshotReceived = false;
+      foldersSnapshotReceived = false;
+      knownRemoteDocIds = new Set();
+      knownRemoteFolderIds = new Set();
       setSyncState('offline', 'Not signed in');
     }
     renderDocList();
@@ -5901,7 +6007,8 @@
     if(applyingRemote) return;
     cloudSyncScheduled = false;
     cloudSyncQueue.clear();
-    lastPrivateJSON = null;
+    lastPrivateDocJSON = {};
+    lastPrivateFolderJSON = {};
     lastSharedJSON = {};
     const allIds = Object.keys(workspace.documents);
     if(cloudSyncPending){
@@ -5926,23 +6033,29 @@
     }
     if(!confirm('Load from the cloud? This will replace everything on this device with what\'s currently saved in the cloud. Any local changes here that have not synced yet will be lost.')) return;
     setSyncState('syncing', 'Loading from cloud…');
-    db.collection('users').doc(currentUser.uid).get({ source: 'server' }).then(snap=>{
-      const data = snap.data() || {};
-      const remote = data.threadlineDocs || {};
-      const remoteFolders = data.threadlineFolders || {};
+    Promise.all([
+      db.collection('users').doc(currentUser.uid).collection('docs').get({ source: 'server' }),
+      db.collection('users').doc(currentUser.uid).collection('folders').get({ source: 'server' })
+    ]).then(([docsSnap, foldersSnap])=>{
       applyingRemote = true;
       try{
         Object.keys(workspace.documents).forEach(id=>{
           if(!workspace.documents[id].shareId) delete workspace.documents[id];
         });
-        Object.keys(remote).forEach(id=>{
-          workspace.documents[id] = remote[id];
+        docsSnap.forEach(docSnap=>{
+          const restored = restoreDocFromFirestore(docSnap.data());
+          workspace.documents[docSnap.id] = restored;
+          knownRemoteDocIds.add(docSnap.id);
+          lastPrivateDocJSON[docSnap.id] = stableStringify(sanitizeDocForFirestore(restored));
         });
         Object.keys(workspace.folders || {}).forEach(id=>{
           if(!workspace.folders[id].shareId) delete workspace.folders[id];
         });
-        Object.keys(remoteFolders).forEach(id=>{
-          workspace.folders[id] = remoteFolders[id];
+        foldersSnap.forEach(docSnap=>{
+          const folder = docSnap.data();
+          workspace.folders[docSnap.id] = folder;
+          knownRemoteFolderIds.add(docSnap.id);
+          lastPrivateFolderJSON[docSnap.id] = stableStringify(folder);
         });
         if(!workspace.documents[workspace.activeDocId]){
           const ids = Object.keys(workspace.documents);
@@ -5953,7 +6066,6 @@
           workspace.documents[fresh.id] = fresh;
           workspace.activeDocId = fresh.id;
         }
-        lastPrivateJSON = stableStringify({ docs: remote, folders: remoteFolders });
         try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
       } finally {
         applyingRemote = false;
@@ -5965,6 +6077,17 @@
       console.error('Load from cloud failed', err);
       setSyncState('error', 'Load failed: ' + err.message);
     });
+  }
+
+  // Small helper kept from an earlier fix: guards a single promise with a
+  // hard timeout so a wedged connection can't leave something waiting
+  // forever with no error and no resolution.
+  function withPromiseTimeout(promise, ms, timeoutMsg){
+    let timer;
+    const timeout = new Promise((_, reject)=>{
+      timer = setTimeout(()=> reject(new Error(timeoutMsg)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(()=> clearTimeout(timer));
   }
 
   function triggerCloudSync(){
@@ -5993,55 +6116,83 @@
     
     setSyncState('syncing', 'Saving…');
     const promises = [];
-    const privateDocs = {};
+    const privateDocIds = new Set();
     const sharedDocs = {};
     
-    docIds.forEach(id => {
-      const doc = workspace.documents[id];
-      if(!doc) return;
-      if(doc.shareId) {
-        sharedDocs[doc.shareId] = doc;
-      } else {
-        privateDocs[id] = doc;
-      }
-    });
-    
-    if(Object.keys(privateDocs).length > 0) {
-      const out = {};
-      Object.values(workspace.documents).forEach(d=>{ 
-        if(!d.shareId) out[d.id] = d; 
+    try{
+      docIds.forEach(id => {
+        const doc = workspace.documents[id];
+        if(!doc) return;
+        if(doc.shareId) {
+          sharedDocs[doc.shareId] = doc;
+        } else {
+          privateDocIds.add(id);
+        }
       });
-      const folders = {};
-      Object.values(workspace.folders || {}).forEach(f=>{ 
-        if(!f.shareId) folders[f.id] = f; 
+      
+      // Each private doc is its own Firestore document (users/{uid}/docs/{id})
+      // rather than one big blob for the whole account — see
+      // migrateLegacyPrivateDataIfNeeded for why. Only push the individual
+      // docs that actually changed.
+      privateDocIds.forEach(id => {
+        const doc = workspace.documents[id];
+        if(!doc) return;
+        const sanitized = sanitizeDocForFirestore(doc);
+        const json = stableStringify(sanitized);
+        if(json !== lastPrivateDocJSON[id]){
+          promises.push(
+            db.collection('users').doc(currentUser.uid).collection('docs').doc(id).set(sanitized)
+              .then(() => {
+                lastPrivateDocJSON[id] = json;
+                knownRemoteDocIds.add(id);
+              })
+          );
+        }
       });
-      const json = stableStringify({ docs: out, folders });
-      if(json !== lastPrivateJSON) {
-        promises.push(
-          db.collection('users').doc(currentUser.uid).set({
-            threadlineDocs: out,
-            threadlineFolders: folders,
-            threadlineUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge:true }).then(() => {
-            lastPrivateJSON = json;
-          })
-        );
+
+      if(privateDocIds.size > 0){
+        // Folders are small and few, so it's simplest to keep them in step
+        // with any private-doc sync rather than tracking them separately.
+        const folders = {};
+        Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
+        Object.entries(folders).forEach(([id, folder]) => {
+          const json = stableStringify(folder);
+          if(json !== lastPrivateFolderJSON[id]){
+            promises.push(
+              db.collection('users').doc(currentUser.uid).collection('folders').doc(id).set(stripUndefinedDeep(folder))
+                .then(() => {
+                  lastPrivateFolderJSON[id] = json;
+                  knownRemoteFolderIds.add(id);
+                })
+            );
+          }
+        });
       }
+      
+      Object.entries(sharedDocs).forEach(([shareId, doc]) => {
+        const sanitized = sanitizeDocForFirestore(doc);
+        const json = stableStringify(sanitized);
+        if(json !== lastSharedJSON[shareId]) {
+          promises.push(
+            db.collection('shared_projects').doc(shareId).set({
+              doc: sanitized,
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge:true }).then(() => {
+              lastSharedJSON[shareId] = json;
+            })
+          );
+        }
+      });
+    } catch(buildErr){
+      // A synchronous throw here (e.g. Firestore rejecting a malformed
+      // field) used to be an uncaught exception that silently killed the
+      // whole sync with no error shown anywhere. Catching it here means it
+      // now surfaces as a normal, visible sync error instead.
+      cloudSyncPending = false;
+      console.error('Cloud sync failed while preparing the write', buildErr);
+      setSyncState('error', 'Save failed: ' + buildErr.message);
+      return;
     }
-    
-    Object.entries(sharedDocs).forEach(([shareId, doc]) => {
-      const json = stableStringify(doc);
-      if(json !== lastSharedJSON[shareId]) {
-        promises.push(
-          db.collection('shared_projects').doc(shareId).set({
-            doc: doc,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge:true }).then(() => {
-            lastSharedJSON[shareId] = json;
-          })
-        );
-      }
-    });
     
     if(promises.length === 0) {
       cloudSyncPending = false;
@@ -6054,7 +6205,7 @@
     // rejecting — without this, that would leave cloudSyncPending stuck
     // true forever, silently blocking every future save from this device
     // until the page was reloaded.
-    withTimeout(Promise.all(promises), 15000, 'Save timed out').then(() => {
+    withPromiseTimeout(Promise.all(promises), 15000, 'Save timed out').then(() => {
       cloudSyncPending = false;
       setSyncState('synced', 'Synced');
     }).catch(err => {
@@ -6081,69 +6232,44 @@
     });
   }
 
-  // Applies a {threadlineDocs, threadlineFolders} payload from Firestore to the
-  // local workspace via the same per-node last-write-wins merge used everywhere
-  // else. Shared by the realtime listener AND by manual/periodic pulls, so a
-  // reconnect, a focus event, or a stalled websocket all funnel through one
-  // code path instead of duplicating (and risking drifting) the merge logic.
-  function applyRemotePrivateData(data){
-    const remote = data.threadlineDocs;
-    const remoteFolders = data.threadlineFolders || {};
-
-    if(!remote || typeof remote !== 'object' || !Object.keys(remote).length){
-      setSyncState('synced', 'Synced');
-      if(Object.keys(workspace.documents).length > 0 && !initialSyncDone) {
-        initialSyncDone = true;
-        triggerCloudSync();
-      }
-      return;
-    }
-    const json = stableStringify({ docs: remote, folders: remoteFolders });
-    if(json === lastPrivateJSON){
-      setSyncState('synced', 'Synced');
-      initialSyncDone = true;
-      return;
-    }
-
+  // Applies a docs-subcollection snapshot to the local workspace via the same
+  // per-node last-write-wins merge used everywhere else. Each Firestore doc
+  // in the snapshot is one outline document (users/{uid}/docs/{docId}).
+  function applyRemotePrivateDocs(snap){
     applyingRemote = true;
     let changed = false;
     try{
-      const localDocIds = new Set(Object.keys(workspace.documents));
-      const remoteDocIds = new Set(Object.keys(remote));
-
-      localDocIds.forEach(id => {
-        if(!workspace.documents[id].shareId && !remoteDocIds.has(id)) {
-          delete workspace.documents[id];
-          changed = true;
-        }
-      });
-
-      Object.keys(remote).forEach(id=>{
-        const merged = mergeDoc(workspace.documents[id], remote[id]);
-        if(!workspace.documents[id] || stableStringify(merged) !== stableStringify(workspace.documents[id])) {
+      const remoteIds = new Set();
+      snap.forEach(docSnap=>{
+        const id = docSnap.id;
+        remoteIds.add(id);
+        knownRemoteDocIds.add(id);
+        const rawRemoteData = docSnap.data();
+        const remoteDoc = restoreDocFromFirestore(rawRemoteData);
+        const local = workspace.documents[id];
+        if(local && local.shareId) return; // shouldn't happen, but never clobber a shared doc from here
+        const merged = mergeDoc(local, remoteDoc);
+        if(!local || stableStringify(merged) !== stableStringify(local)){
           workspace.documents[id] = merged;
           changed = true;
         }
+        // IMPORTANT: track what the server actually confirmed having
+        // (rawRemoteData — this callback only runs for confirmed,
+        // non-pending snapshots), never what we just merged locally. If a
+        // local edit hasn't been pushed yet and this listener happens to
+        // fire for an unrelated reason (another doc created or deleted
+        // elsewhere re-fires the whole collection query), merged would
+        // reflect the local edit under last-write-wins — recording THAT as
+        // "last known synced" would make the next push think there's
+        // nothing new to send, silently dropping the edit from ever
+        // reaching the cloud even though the server never actually got it.
+        lastPrivateDocJSON[id] = stableStringify(rawRemoteData);
       });
 
-      const localFolderIds = new Set(Object.keys(workspace.folders || {}));
-      const remoteFolderIds = new Set(Object.keys(remoteFolders));
-
-      localFolderIds.forEach(id => {
-        if(!workspace.folders[id].shareId && !remoteFolderIds.has(id)) {
-          delete workspace.folders[id];
-          changed = true;
-        }
-      });
-
-      Object.keys(remoteFolders).forEach(id=>{
-        if(workspace.folders[id]) {
-          if(stableStringify(workspace.folders[id]) !== stableStringify(remoteFolders[id])) {
-            Object.assign(workspace.folders[id], remoteFolders[id]);
-            changed = true;
-          }
-        } else {
-          workspace.folders[id] = remoteFolders[id];
+      Object.keys(workspace.documents).forEach(id=>{
+        if(!workspace.documents[id].shareId && !remoteIds.has(id) && knownRemoteDocIds.has(id)){
+          delete workspace.documents[id];
+          delete lastPrivateDocJSON[id];
           changed = true;
         }
       });
@@ -6159,133 +6285,255 @@
         workspace.activeDocId = fresh.id;
         changed = true;
       }
-      lastPrivateJSON = json;
-      if(changed) {
-        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){}
-      }
+      if(changed){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){} }
     } catch(mergeErr){
-      console.error('Private doc merge failed — keeping local copy as-is', mergeErr);
+      console.error('Private docs merge failed — keeping local copy as-is', mergeErr);
     } finally {
       applyingRemote = false;
     }
-    if(changed) {
-      renderDocList();
-      renderTreePreservingFocus();
+    if(changed){ renderDocList(); renderTreePreservingFocus(); }
+    docsSnapshotReceived = true;
+    if(docsSnapshotReceived && foldersSnapshotReceived && !initialSyncDone){
+      initialSyncDone = true;
+      // First-ever sign-in on a device with local docs but nothing in the
+      // cloud yet — push them up.
+      if(Object.keys(workspace.documents).some(id=>!workspace.documents[id].shareId) && !knownRemoteDocIds.size){
+        triggerCloudSync();
+      }
     }
-    initialSyncDone = true;
     setSyncState('synced', 'Synced');
   }
 
-  function subscribeToUserDoc(uid){
-    if(userDocUnsub) userDocUnsub();
-    setSyncState('syncing', 'Connecting…');
-    userDocUnsub = db.collection('users').doc(uid).onSnapshot(snap=>{
+  // Same idea as applyRemotePrivateDocs, for the folders subcollection.
+  function applyRemotePrivateFolders(snap){
+    applyingRemote = true;
+    let changed = false;
+    try{
+      const remoteIds = new Set();
+      snap.forEach(docSnap=>{
+        const id = docSnap.id;
+        remoteIds.add(id);
+        knownRemoteFolderIds.add(id);
+        const remoteFolder = docSnap.data();
+        if(workspace.folders[id]){
+          if(stableStringify(workspace.folders[id]) !== stableStringify(remoteFolder)){
+            Object.assign(workspace.folders[id], remoteFolder);
+            changed = true;
+          }
+        } else {
+          workspace.folders[id] = remoteFolder;
+          changed = true;
+        }
+        lastPrivateFolderJSON[id] = stableStringify(remoteFolder);
+      });
+
+      Object.keys(workspace.folders || {}).forEach(id=>{
+        if(!workspace.folders[id].shareId && !remoteIds.has(id) && knownRemoteFolderIds.has(id)){
+          delete workspace.folders[id];
+          delete lastPrivateFolderJSON[id];
+          changed = true;
+        }
+      });
+
+      if(changed){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }catch(e){} }
+    } catch(mergeErr){
+      console.error('Private folders merge failed — keeping local copy as-is', mergeErr);
+    } finally {
+      applyingRemote = false;
+    }
+    if(changed) renderDocList();
+    foldersSnapshotReceived = true;
+  }
+
+  // Firestore documents are capped at 1MB. The app used to store every
+  // private document for an account in one big record (users/{uid} with a
+  // threadlineDocs map field holding all of them) — fine at first, but any
+  // account with enough content eventually crosses that cap, and every save
+  // then fails outright with no way to add anything new. This moves private
+  // storage to one Firestore document per outline document
+  // (users/{uid}/docs/{docId}) and per folder (users/{uid}/folders/{id}),
+  // which has no such shared ceiling. This runs once per sign-in: if the
+  // legacy fields are still present on the account doc, it copies them into
+  // the new per-document layout, then clears the legacy fields so this is a
+  // no-op on every later sign-in.
+  function migrateLegacyPrivateDataIfNeeded(uid){
+    return db.collection('users').doc(uid).get({ source: 'server' }).then(snap=>{
       const data = snap.data() || {};
-      if(snap.metadata.hasPendingWrites){
-        setSyncState('synced', 'Synced');
-        return;
+      const legacyDocs = data.threadlineDocs;
+      const legacyFolders = data.threadlineFolders;
+      if(!legacyDocs && !legacyFolders) return;
+      const batch = db.batch();
+      let opCount = 0;
+      Object.entries(legacyDocs || {}).forEach(([id, doc])=>{
+        batch.set(db.collection('users').doc(uid).collection('docs').doc(id), sanitizeDocForFirestore(doc));
+        opCount++;
+      });
+      Object.entries(legacyFolders || {}).forEach(([id, folder])=>{
+        batch.set(db.collection('users').doc(uid).collection('folders').doc(id), stripUndefinedDeep(folder));
+        opCount++;
+      });
+      if(opCount === 0){
+        return db.collection('users').doc(uid).update({
+          threadlineDocs: firebase.firestore.FieldValue.delete(),
+          threadlineFolders: firebase.firestore.FieldValue.delete()
+        });
       }
-      applyRemotePrivateData(data);
-    }, err=>{
-      console.error('Cloud sync error', err);
-      setSyncState('error', 'Sync error: ' + err.message);
-    });
-  }
-
-  // Realtime listeners ride on a persistent websocket, and that connection can
-  // silently stall — a laptop sleeping, a tab backgrounded, Wi-Fi dropping —
-  // without Firestore always reconnecting on its own (this is a known issue,
-  // especially on Safari/macOS). Rather than rely purely on the socket staying
-  // alive, do a direct server read whenever there's a good reason to believe
-  // we might be behind: the tab regains focus/visibility, the browser reports
-  // we're back online, or just periodically as a backstop. This is what a
-  // manual refresh was doing for you — now it happens automatically.
-  let cloudPollTimer = null;
-  let pullInFlight = false;
-  let reinitInFlight = null;
-
-  function withTimeout(promise, ms, timeoutMsg){
-    let timer;
-    const timeout = new Promise((_, reject)=>{
-      timer = setTimeout(()=> reject(new Error(timeoutMsg)), ms);
-    });
-    return Promise.race([promise, timeout]).finally(()=> clearTimeout(timer));
-  }
-
-  // toggling disableNetwork/enableNetwork on the existing client turned out
-  // not to be enough — the client can wedge in a way that survives that.
-  // The one thing we know for certain fixes it is a full page reload, which
-  // works because it throws away the entire Firebase client and builds a new
-  // one. This reproduces that at the Firebase-app level, without reloading
-  // the page or touching your unsaved local edits: delete the app instance,
-  // create a brand new one, get fresh auth/db handles, and re-subscribe
-  // everything. auth/db are declared with `let` in the outer scope, so every
-  // other function that closes over them (click handlers, subscribeToUserDoc,
-  // performCloudSync, etc.) automatically starts using the new instances the
-  // moment we reassign them here — nothing else needs to change.
-  function reinitFirebaseConnection(){
-    if(reinitInFlight) return reinitInFlight;
-    if(userDocUnsub){ userDocUnsub(); userDocUnsub = null; }
-    if(sharedIndexUnsub){ sharedIndexUnsub(); sharedIndexUnsub = null; }
-    Object.values(sharedDocUnsubs).forEach(fn=>fn());
-    sharedDocUnsubs = {};
-    stopCloudPolling();
-
-    const oldApp = (typeof firebase !== 'undefined' && firebase.apps && firebase.apps.length) ? firebase.app() : null;
-    const teardown = oldApp ? oldApp.delete().catch(()=>{}) : Promise.resolve();
-
-    reinitInFlight = teardown.then(()=>{
-      firebase.initializeApp(FIREBASE_CONFIG);
-      auth = firebase.auth();
-      db = firebase.firestore();
-      return new Promise(resolve=>{
-        // onAuthStateChanged fires once immediately with the restored,
-        // persisted sign-in (or null) — that's our signal the new client is
-        // actually live, same as what happens on a real page load.
-        const unsub = auth.onAuthStateChanged(user=>{
-          unsub();
-          auth.onAuthStateChanged(handleAuthStateChanged); // re-attach for the rest of the session
-          handleAuthStateChanged(user);
-          resolve(user);
+      return batch.commit().then(()=>{
+        return db.collection('users').doc(uid).update({
+          threadlineDocs: firebase.firestore.FieldValue.delete(),
+          threadlineFolders: firebase.firestore.FieldValue.delete()
         });
       });
-    }).finally(()=>{ reinitInFlight = null; });
-
-    return reinitInFlight;
+    }).catch(err=>{
+      // Don't block normal sync on a failed migration attempt — the legacy
+      // data (if any) stays put on the account doc and this just retries
+      // again next sign-in.
+      console.error('Legacy private-data migration failed', err);
+    });
   }
 
-  function pullFromCloudSilently(){
-    if(!firebaseReady || !currentUser || applyingRemote || pullInFlight) return;
-    pullInFlight = true;
-    withTimeout(reinitFirebaseConnection(), 15000, 'Background reconnect timed out')
-      .then(user=>{
-        if(!user){ pullInFlight = false; return; }
-        return withTimeout(db.collection('users').doc(user.uid).get({ source: 'server' }), 12000, 'Background sync pull timed out')
-          .then(snap=>{
-            pullInFlight = false;
-            applyRemotePrivateData(snap.data() || {});
-          });
-      }).catch(err=>{
-        pullInFlight = false;
-        // Transient network errors here are expected (e.g. briefly offline) —
-        // the next focus/visibility/poll trigger will retry. Only log it.
-        console.warn('Background sync pull failed', err);
+  function subscribeToUserDoc(uid){
+    if(userDocsUnsub){ userDocsUnsub(); userDocsUnsub = null; }
+    if(userFoldersUnsub){ userFoldersUnsub(); userFoldersUnsub = null; }
+    docsSnapshotReceived = false;
+    foldersSnapshotReceived = false;
+    setSyncState('syncing', 'Connecting…');
+
+    migrateLegacyPrivateDataIfNeeded(uid).finally(()=>{
+      userDocsUnsub = db.collection('users').doc(uid).collection('docs').onSnapshot(snap=>{
+        if(snap.metadata.hasPendingWrites) return; // skip echoes of our own writes
+        applyRemotePrivateDocs(snap);
+      }, err=>{
+        console.error('Cloud sync error (docs)', err);
+        setSyncState('error', 'Sync error: ' + err.message);
       });
+
+      userFoldersUnsub = db.collection('users').doc(uid).collection('folders').onSnapshot(snap=>{
+        if(snap.metadata.hasPendingWrites) return;
+        applyRemotePrivateFolders(snap);
+      }, err=>{
+        console.error('Cloud sync error (folders)', err);
+        setSyncState('error', 'Sync error: ' + err.message);
+      });
+    });
   }
 
-  // User-triggered "Sync now": we tried rebuilding the Firebase connection
-  // in-place (network toggling, then a full app delete+recreate) and neither
-  // reliably matched what an actual browser refresh does. Rather than keep
-  // chasing that, this now does the guaranteed thing: flush whatever you
-  // just typed to localStorage immediately (bypassing the normal 200ms
-  // debounce, so nothing is lost even if you click right after typing), then
-  // reload the page for real. On load, the app reads that flushed workspace
-  // back from localStorage and the normal startup flow (sign-in restore →
-  // subscribeToUserDoc's first snapshot → merge) runs exactly as it does on
-  // a manual refresh — because it IS a manual refresh, just triggered by a
-  // button instead of your fingers.
+  // Re-subscribe the realtime listener specifically when you switch BACK to
+  // a tab that had actually been hidden (backgrounded, laptop slept, etc.) —
+  // never on a timer, never on an innocuous focus event while you're already
+  // here. An earlier version of this fired much more aggressively (a timer,
+  // plus focus/online events, plus fully tearing down and rebuilding the
+  // whole Firebase app each time) and that ended up periodically colliding
+  // with the normal typing → auto-save flow and dropping saves. This is
+  // deliberately much narrower: it only touches the read-side listener
+  // (never auth/db, never the write path), and it only fires on a genuine
+  // hidden→visible transition, which by definition can't happen while
+  // you're actively typing in this tab. If a connection is stale in a way
+  // this doesn't catch, "Sync now" remains the guaranteed fallback.
+  let tabWasHidden = false;
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState === 'hidden'){
+      tabWasHidden = true;
+    } else if(document.visibilityState === 'visible' && tabWasHidden){
+      tabWasHidden = false;
+      if(firebaseReady && currentUser){
+        subscribeToUserDoc(currentUser.uid);
+      }
+    }
+  });
+
+  // User-triggered "Sync now": flush whatever you just typed to localStorage
+  // immediately (bypassing the normal 200ms debounce, so nothing is lost even
+  // if you click right after typing), then reload the page for real. On
+  // load, the app reads that flushed workspace back from localStorage and
+  // the normal startup flow (sign-in restore → subscribeToUserDoc's first
+  // snapshot → merge) runs exactly as it does on a manual refresh — because
+  // it IS a manual refresh, just triggered by a button instead of your
+  // fingers. We deliberately do NOT run any background reconnect/poll logic
+  // between clicks — an earlier version of this did (tearing down and
+  // rebuilding the whole Firebase connection on every tab focus, visibility
+  // change, and a 45-second timer), and that turned out to periodically land
+  // in the middle of the normal debounced auto-save and silently drop it.
+  // The plain realtime listener set up in subscribeToUserDoc, plus the
+  // ordinary debounced push in scheduleSave/triggerCloudSync, is what
+  // actually keeps things synced while you're typing; this button is just a
+  // guaranteed-to-work manual catch-up on top of that.
+  // Unconditionally pushes every current private doc/folder to the cloud and
+  // resolves only once Firestore has actually confirmed the write. Used
+  // right before a reload (see fullSyncNow below) — reloading the page
+  // cancels any in-flight network request, so if we reloaded without
+  // waiting for this, a just-created document that hadn't reached the cloud
+  // yet would come back from the fresh cloud read looking exactly like a
+  // document deleted on another device (see the deletion diff in
+  // applyRemotePrivateDocs) and get wiped out locally too. Waiting here is
+  // what closes that gap.
+  function pushAllPrivateDataNow(){
+    if(!firebaseReady || !currentUser) return Promise.resolve();
+    const docs = Object.values(workspace.documents).filter(d=>!d.shareId);
+    const folders = Object.values(workspace.folders || {}).filter(f=>!f.shareId);
+    if(docs.length === 0 && folders.length === 0) return Promise.resolve();
+    // Called directly (not from inside a .then()), so unlike
+    // migrateLegacyPrivateDataIfNeeded above, a synchronous throw while
+    // building the batch here would NOT be caught by a promise chain — it
+    // would be a genuine uncaught exception, silently aborting the whole
+    // "Sync now" flow with no error shown anywhere. Wrapping it converts
+    // that into a normal rejected promise instead.
+    try{
+      const batch = db.batch();
+      const sanitizedById = {};
+      docs.forEach(d=>{
+        const sanitized = sanitizeDocForFirestore(d);
+        sanitizedById[d.id] = sanitized;
+        batch.set(db.collection('users').doc(currentUser.uid).collection('docs').doc(d.id), sanitized);
+      });
+      folders.forEach(f=>{
+        batch.set(db.collection('users').doc(currentUser.uid).collection('folders').doc(f.id), stripUndefinedDeep(f));
+      });
+      return batch.commit().then(()=>{
+        docs.forEach(d=>{
+          lastPrivateDocJSON[d.id] = stableStringify(sanitizedById[d.id]);
+          knownRemoteDocIds.add(d.id);
+        });
+        folders.forEach(f=>{
+          lastPrivateFolderJSON[f.id] = stableStringify(f);
+          knownRemoteFolderIds.add(f.id);
+        });
+      });
+    } catch(buildErr){
+      return Promise.reject(buildErr);
+    }
+  }
+
+  let syncNowInProgress = false;
+
   function fullSyncNow(){
-    if(floatingSyncBtnEl) floatingSyncBtnEl.classList.add('spinning');
+    if(syncNowInProgress) return; // ignore repeat clicks while one is already running
+    syncNowInProgress = true;
+    if(floatingSyncBtnEl){
+      floatingSyncBtnEl.classList.add('spinning');
+      floatingSyncBtnEl.disabled = true;
+    }
+    if(forceSyncBtnEl) forceSyncBtnEl.disabled = true;
+
+    // Safety net: the normal path always ends in location.reload(), which
+    // wipes this state for free. But if the reload is ever blocked or
+    // doesn't fire for some reason, nothing else would ever turn the
+    // spinner back off — leaving it stuck with no way to tell whether sync
+    // actually happened. This guarantees it stops within ~11s no matter
+    // what, and surfaces a real error instead of spinning forever.
+    const stopSpinning = ()=>{
+      syncNowInProgress = false;
+      if(floatingSyncBtnEl){
+        floatingSyncBtnEl.classList.remove('spinning');
+        floatingSyncBtnEl.disabled = false;
+      }
+      if(forceSyncBtnEl) forceSyncBtnEl.disabled = false;
+    };
+    const stuckGuard = setTimeout(()=>{
+      stopSpinning();
+      setSyncState('error', 'Sync didn\'t complete — try again');
+    }, 11000);
+
     if(savePending){
       clearTimeout(saveTimer);
       savePending = false;
@@ -6293,41 +6541,37 @@
     }
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
     catch(e){ console.warn('pre-reload save failed', e); }
-    location.reload();
-  }
 
-  function startCloudPolling(){
-    clearInterval(cloudPollTimer);
-    cloudPollTimer = setInterval(()=>{
-      if(document.visibilityState === 'visible') pullFromCloudSilently();
-    }, 45000);
-  }
+    const doReload = () => { clearTimeout(stuckGuard); location.reload(); };
 
-  function stopCloudPolling(){
-    clearInterval(cloudPollTimer);
-    cloudPollTimer = null;
+    if(firebaseReady && currentUser){
+      withPromiseTimeout(pushAllPrivateDataNow(), 10000, 'push before reload timed out')
+        .then(doReload)
+        .catch(err=>{
+          // Your content is already safe in localStorage regardless — reload
+          // anyway rather than leaving the button stuck spinning. Worst case
+          // this reload doesn't pick up the very latest push, and a second
+          // Sync now click will.
+          console.warn('Pre-reload push to the cloud failed or timed out; reloading anyway', err);
+          doReload();
+        });
+    } else {
+      doReload();
+    }
   }
-
-  document.addEventListener('visibilitychange', ()=>{
-    if(document.visibilityState === 'visible') pullFromCloudSilently();
-  });
-  window.addEventListener('focus', pullFromCloudSilently);
-  window.addEventListener('online', pullFromCloudSilently);
 
   function deletePrivateDocRemote(docId){
     if(!firebaseReady || !currentUser) return;
-    const path = 'threadlineDocs.' + docId;
-    db.collection('users').doc(currentUser.uid).update({
-      [path]: firebase.firestore.FieldValue.delete()
-    }).catch(err=> console.error('Could not remove document from cloud', err));
+    delete lastPrivateDocJSON[docId];
+    db.collection('users').doc(currentUser.uid).collection('docs').doc(docId).delete()
+      .catch(err=> console.error('Could not remove document from cloud', err));
   }
 
   function deletePrivateFolderRemote(folderId){
     if(!firebaseReady || !currentUser) return;
-    const path = 'threadlineFolders.' + folderId;
-    db.collection('users').doc(currentUser.uid).update({
-      [path]: firebase.firestore.FieldValue.delete()
-    }).catch(err=> console.error('Could not remove folder from cloud', err));
+    delete lastPrivateFolderJSON[folderId];
+    db.collection('users').doc(currentUser.uid).collection('folders').doc(folderId).delete()
+      .catch(err=> console.error('Could not remove folder from cloud', err));
   }
 
   function subscribeToSharedIndex(email){
@@ -6446,13 +6690,13 @@
         return;
       }
 
-      const json = stableStringify(data.doc);
+      const json = stableStringify(data.doc); // data.doc is in Firestore (sanitized) shape
       if(json === lastSharedJSON[shareId]) return;
 
       applyingRemote = true;
       let merged;
       try{
-        const remoteDoc = Object.assign({}, data.doc, {
+        const remoteDoc = Object.assign({}, restoreDocFromFirestore(data.doc), {
           id: shareId, shareId,
           ownerUid: data.ownerUid, ownerEmail: data.ownerEmail
         });
@@ -6471,7 +6715,11 @@
       if(workspace.activeDocId === shareId) renderTreePreservingFocus();
       setSyncState('synced', 'Synced');
 
-      const mergedJSON = stableStringify(merged);
+      // Compare in the same (sanitized) shape as `json` above — merged is in
+      // our in-memory shape, so it needs converting first, or an identical
+      // doc would spuriously look different just because of range-field
+      // shape and trigger a needless push straight back to the cloud.
+      const mergedJSON = stableStringify(sanitizeDocForFirestore(merged));
       if(mergedJSON === json){
         lastSharedJSON[shareId] = json;
       } else {
@@ -6589,6 +6837,7 @@
     const invites = (Array.isArray(inviteEmails) ? inviteEmails : [inviteEmails]).filter(Boolean);
     const collaboratorEmails = [ownerEmail, ...invites].filter((e,i,arr)=> e && arr.indexOf(e) === i);
     const payload = Object.assign({}, doc, { id: shareId, shareId, ownerUid: currentUser.uid, ownerEmail });
+    const sanitizedPayload = sanitizeDocForFirestore(payload);
     return ref.set({
       kind: 'doc',
       ownerUid: currentUser.uid,
@@ -6597,14 +6846,14 @@
       collaborators: [currentUser.uid],
       linkSharing: false,
       shareToken: shareId,
-      doc: payload,
+      doc: sanitizedPayload,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }).then(()=>{
       const oldDocId = doc.id;
       delete workspace.documents[oldDocId];
       workspace.documents[shareId] = payload;
       if(workspace.activeDocId === oldDocId) workspace.activeDocId = shareId;
-      lastSharedJSON[shareId] = stableStringify(payload);
+      lastSharedJSON[shareId] = stableStringify(sanitizedPayload);
       if(!sharedDocUnsubs[shareId]) subscribeToSharedDoc(shareId);
       deletePrivateDocRemote(oldDocId);
       scheduleSave();
