@@ -1830,8 +1830,22 @@
       }
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
       catch(e){ console.warn("save failed", e); }
-      if(firebaseReady && currentUser && !applyingRemote) {
-        triggerCloudSync();
+      if(firebaseReady && currentUser){
+        if(!applyingRemote){
+          triggerCloudSync();
+        } else {
+          // A remote merge (from the realtime listener) happens to be running
+          // at this exact instant. Continuous typing "self-heals" around this
+          // because every keystroke calls scheduleSave() again — one of those
+          // retries eventually lands outside the merge window. But a one-shot
+          // action like a paste or a file import calls scheduleSave() exactly
+          // once, so without an explicit retry here, landing in this window
+          // meant the push was silently dropped and never tried again until
+          // the next edit. Retry shortly instead.
+          setTimeout(()=>{
+            if(firebaseReady && currentUser && !applyingRemote) triggerCloudSync();
+          }, 500);
+        }
       }
     }, 200);
   }
