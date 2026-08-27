@@ -5777,6 +5777,28 @@
   function firestoreRangeToTuple(obj){
     return Object.keys(obj).sort().map(k => obj[k]);
   }
+  // Firestore also rejects `undefined` as a field value ANYWHERE in a
+  // written document (not just at the top level) — the field simply has to
+  // be absent instead. Several node fields (boldRanges among them) are only
+  // set lazily the first time formatting is applied, and can end up present
+  // with an explicit `undefined` value rather than simply missing depending
+  // on how the object was built — Object.assign/spread do not drop those.
+  // This walks the whole structure recursively right before it's sent to
+  // Firestore and drops any key whose value is undefined, so this class of
+  // write failure can't happen regardless of where the undefined came from.
+  function stripUndefinedDeep(value){
+    if(Array.isArray(value)) return value.map(stripUndefinedDeep);
+    if(value && typeof value === 'object'){
+      const out = {};
+      Object.keys(value).forEach(k=>{
+        const v = value[k];
+        if(v === undefined) return;
+        out[k] = stripUndefinedDeep(v);
+      });
+      return out;
+    }
+    return value;
+  }
   function sanitizeDocForFirestore(doc){
     const out = Object.assign({}, doc);
     const nodes = {};
@@ -5790,7 +5812,7 @@
       nodes[id] = nn;
     });
     out.nodes = nodes;
-    return out;
+    return stripUndefinedDeep(out);
   }
   function restoreDocFromFirestore(doc){
     if(!doc) return doc;
@@ -6097,69 +6119,80 @@
     const privateDocIds = new Set();
     const sharedDocs = {};
     
-    docIds.forEach(id => {
-      const doc = workspace.documents[id];
-      if(!doc) return;
-      if(doc.shareId) {
-        sharedDocs[doc.shareId] = doc;
-      } else {
-        privateDocIds.add(id);
-      }
-    });
-    
-    // Each private doc is its own Firestore document (users/{uid}/docs/{id})
-    // rather than one big blob for the whole account — see
-    // migrateLegacyPrivateDataIfNeeded for why. Only push the individual
-    // docs that actually changed.
-    privateDocIds.forEach(id => {
-      const doc = workspace.documents[id];
-      if(!doc) return;
-      const sanitized = sanitizeDocForFirestore(doc);
-      const json = stableStringify(sanitized);
-      if(json !== lastPrivateDocJSON[id]){
-        promises.push(
-          db.collection('users').doc(currentUser.uid).collection('docs').doc(id).set(sanitized)
-            .then(() => {
-              lastPrivateDocJSON[id] = json;
-              knownRemoteDocIds.add(id);
-            })
-        );
-      }
-    });
-
-    if(privateDocIds.size > 0){
-      // Folders are small and few, so it's simplest to keep them in step
-      // with any private-doc sync rather than tracking them separately.
-      const folders = {};
-      Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
-      Object.entries(folders).forEach(([id, folder]) => {
-        const json = stableStringify(folder);
-        if(json !== lastPrivateFolderJSON[id]){
+    try{
+      docIds.forEach(id => {
+        const doc = workspace.documents[id];
+        if(!doc) return;
+        if(doc.shareId) {
+          sharedDocs[doc.shareId] = doc;
+        } else {
+          privateDocIds.add(id);
+        }
+      });
+      
+      // Each private doc is its own Firestore document (users/{uid}/docs/{id})
+      // rather than one big blob for the whole account — see
+      // migrateLegacyPrivateDataIfNeeded for why. Only push the individual
+      // docs that actually changed.
+      privateDocIds.forEach(id => {
+        const doc = workspace.documents[id];
+        if(!doc) return;
+        const sanitized = sanitizeDocForFirestore(doc);
+        const json = stableStringify(sanitized);
+        if(json !== lastPrivateDocJSON[id]){
           promises.push(
-            db.collection('users').doc(currentUser.uid).collection('folders').doc(id).set(folder)
+            db.collection('users').doc(currentUser.uid).collection('docs').doc(id).set(sanitized)
               .then(() => {
-                lastPrivateFolderJSON[id] = json;
-                knownRemoteFolderIds.add(id);
+                lastPrivateDocJSON[id] = json;
+                knownRemoteDocIds.add(id);
               })
           );
         }
       });
-    }
-    
-    Object.entries(sharedDocs).forEach(([shareId, doc]) => {
-      const sanitized = sanitizeDocForFirestore(doc);
-      const json = stableStringify(sanitized);
-      if(json !== lastSharedJSON[shareId]) {
-        promises.push(
-          db.collection('shared_projects').doc(shareId).set({
-            doc: sanitized,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge:true }).then(() => {
-            lastSharedJSON[shareId] = json;
-          })
-        );
+
+      if(privateDocIds.size > 0){
+        // Folders are small and few, so it's simplest to keep them in step
+        // with any private-doc sync rather than tracking them separately.
+        const folders = {};
+        Object.values(workspace.folders || {}).forEach(f=>{ if(!f.shareId) folders[f.id] = f; });
+        Object.entries(folders).forEach(([id, folder]) => {
+          const json = stableStringify(folder);
+          if(json !== lastPrivateFolderJSON[id]){
+            promises.push(
+              db.collection('users').doc(currentUser.uid).collection('folders').doc(id).set(stripUndefinedDeep(folder))
+                .then(() => {
+                  lastPrivateFolderJSON[id] = json;
+                  knownRemoteFolderIds.add(id);
+                })
+            );
+          }
+        });
       }
-    });
+      
+      Object.entries(sharedDocs).forEach(([shareId, doc]) => {
+        const sanitized = sanitizeDocForFirestore(doc);
+        const json = stableStringify(sanitized);
+        if(json !== lastSharedJSON[shareId]) {
+          promises.push(
+            db.collection('shared_projects').doc(shareId).set({
+              doc: sanitized,
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge:true }).then(() => {
+              lastSharedJSON[shareId] = json;
+            })
+          );
+        }
+      });
+    } catch(buildErr){
+      // A synchronous throw here (e.g. Firestore rejecting a malformed
+      // field) used to be an uncaught exception that silently killed the
+      // whole sync with no error shown anywhere. Catching it here means it
+      // now surfaces as a normal, visible sync error instead.
+      cloudSyncPending = false;
+      console.error('Cloud sync failed while preparing the write', buildErr);
+      setSyncState('error', 'Save failed: ' + buildErr.message);
+      return;
+    }
     
     if(promises.length === 0) {
       cloudSyncPending = false;
@@ -6211,7 +6244,8 @@
         const id = docSnap.id;
         remoteIds.add(id);
         knownRemoteDocIds.add(id);
-        const remoteDoc = restoreDocFromFirestore(docSnap.data());
+        const rawRemoteData = docSnap.data();
+        const remoteDoc = restoreDocFromFirestore(rawRemoteData);
         const local = workspace.documents[id];
         if(local && local.shareId) return; // shouldn't happen, but never clobber a shared doc from here
         const merged = mergeDoc(local, remoteDoc);
@@ -6219,7 +6253,17 @@
           workspace.documents[id] = merged;
           changed = true;
         }
-        lastPrivateDocJSON[id] = stableStringify(sanitizeDocForFirestore(merged));
+        // IMPORTANT: track what the server actually confirmed having
+        // (rawRemoteData — this callback only runs for confirmed,
+        // non-pending snapshots), never what we just merged locally. If a
+        // local edit hasn't been pushed yet and this listener happens to
+        // fire for an unrelated reason (another doc created or deleted
+        // elsewhere re-fires the whole collection query), merged would
+        // reflect the local edit under last-write-wins — recording THAT as
+        // "last known synced" would make the next push think there's
+        // nothing new to send, silently dropping the edit from ever
+        // reaching the cloud even though the server never actually got it.
+        lastPrivateDocJSON[id] = stableStringify(rawRemoteData);
       });
 
       Object.keys(workspace.documents).forEach(id=>{
@@ -6325,7 +6369,7 @@
         opCount++;
       });
       Object.entries(legacyFolders || {}).forEach(([id, folder])=>{
-        batch.set(db.collection('users').doc(uid).collection('folders').doc(id), folder);
+        batch.set(db.collection('users').doc(uid).collection('folders').doc(id), stripUndefinedDeep(folder));
         opCount++;
       });
       if(opCount === 0){
@@ -6428,26 +6472,36 @@
     const docs = Object.values(workspace.documents).filter(d=>!d.shareId);
     const folders = Object.values(workspace.folders || {}).filter(f=>!f.shareId);
     if(docs.length === 0 && folders.length === 0) return Promise.resolve();
-    const batch = db.batch();
-    const sanitizedById = {};
-    docs.forEach(d=>{
-      const sanitized = sanitizeDocForFirestore(d);
-      sanitizedById[d.id] = sanitized;
-      batch.set(db.collection('users').doc(currentUser.uid).collection('docs').doc(d.id), sanitized);
-    });
-    folders.forEach(f=>{
-      batch.set(db.collection('users').doc(currentUser.uid).collection('folders').doc(f.id), f);
-    });
-    return batch.commit().then(()=>{
+    // Called directly (not from inside a .then()), so unlike
+    // migrateLegacyPrivateDataIfNeeded above, a synchronous throw while
+    // building the batch here would NOT be caught by a promise chain — it
+    // would be a genuine uncaught exception, silently aborting the whole
+    // "Sync now" flow with no error shown anywhere. Wrapping it converts
+    // that into a normal rejected promise instead.
+    try{
+      const batch = db.batch();
+      const sanitizedById = {};
       docs.forEach(d=>{
-        lastPrivateDocJSON[d.id] = stableStringify(sanitizedById[d.id]);
-        knownRemoteDocIds.add(d.id);
+        const sanitized = sanitizeDocForFirestore(d);
+        sanitizedById[d.id] = sanitized;
+        batch.set(db.collection('users').doc(currentUser.uid).collection('docs').doc(d.id), sanitized);
       });
       folders.forEach(f=>{
-        lastPrivateFolderJSON[f.id] = stableStringify(f);
-        knownRemoteFolderIds.add(f.id);
+        batch.set(db.collection('users').doc(currentUser.uid).collection('folders').doc(f.id), stripUndefinedDeep(f));
       });
-    });
+      return batch.commit().then(()=>{
+        docs.forEach(d=>{
+          lastPrivateDocJSON[d.id] = stableStringify(sanitizedById[d.id]);
+          knownRemoteDocIds.add(d.id);
+        });
+        folders.forEach(f=>{
+          lastPrivateFolderJSON[f.id] = stableStringify(f);
+          knownRemoteFolderIds.add(f.id);
+        });
+      });
+    } catch(buildErr){
+      return Promise.reject(buildErr);
+    }
   }
 
   let syncNowInProgress = false;
