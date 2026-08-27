@@ -976,6 +976,8 @@
   }
   #floatingSyncBtn:hover{ transform:translateY(-50%) scale(1.06); }
   #floatingSyncBtn:active{ transform:translateY(-50%) scale(0.94); }
+  #floatingSyncBtn:disabled{ opacity:0.7; cursor:default; }
+  #floatingSyncBtn:disabled:hover{ transform:translateY(-50%); }
   #floatingSyncBtn svg{ width:20px; height:20px; }
   #floatingSyncBtn.spinning svg{ animation:fsb-spin 0.8s linear infinite; }
   @keyframes fsb-spin{ to{ transform:rotate(360deg); } }
@@ -6271,8 +6273,36 @@
     });
   }
 
+  let syncNowInProgress = false;
+
   function fullSyncNow(){
-    if(floatingSyncBtnEl) floatingSyncBtnEl.classList.add('spinning');
+    if(syncNowInProgress) return; // ignore repeat clicks while one is already running
+    syncNowInProgress = true;
+    if(floatingSyncBtnEl){
+      floatingSyncBtnEl.classList.add('spinning');
+      floatingSyncBtnEl.disabled = true;
+    }
+    if(forceSyncBtnEl) forceSyncBtnEl.disabled = true;
+
+    // Safety net: the normal path always ends in location.reload(), which
+    // wipes this state for free. But if the reload is ever blocked or
+    // doesn't fire for some reason, nothing else would ever turn the
+    // spinner back off — leaving it stuck with no way to tell whether sync
+    // actually happened. This guarantees it stops within ~11s no matter
+    // what, and surfaces a real error instead of spinning forever.
+    const stopSpinning = ()=>{
+      syncNowInProgress = false;
+      if(floatingSyncBtnEl){
+        floatingSyncBtnEl.classList.remove('spinning');
+        floatingSyncBtnEl.disabled = false;
+      }
+      if(forceSyncBtnEl) forceSyncBtnEl.disabled = false;
+    };
+    const stuckGuard = setTimeout(()=>{
+      stopSpinning();
+      setSyncState('error', 'Sync didn\'t complete — try again');
+    }, 11000);
+
     if(savePending){
       clearTimeout(saveTimer);
       savePending = false;
@@ -6281,7 +6311,7 @@
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
     catch(e){ console.warn('pre-reload save failed', e); }
 
-    const doReload = () => location.reload();
+    const doReload = () => { clearTimeout(stuckGuard); location.reload(); };
 
     if(firebaseReady && currentUser){
       withPromiseTimeout(pushAllPrivateDataNow(), 10000, 'push before reload timed out')
