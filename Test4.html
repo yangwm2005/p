@@ -36,7 +36,6 @@
             border: 1px solid rgba(255, 255, 255, 0.8);
             position: relative;
         }
-        /* Auth bar */
         .auth-bar {
             display: flex;
             justify-content: flex-end;
@@ -401,11 +400,6 @@
         .icon-picker-wrapper::-webkit-scrollbar-thumb { background: #b0c6e8; border-radius: 10px; }
         .icon-picker-wrapper::-webkit-scrollbar-track { background: transparent; }
 
-        /* Custom scrollbar */
-        .icon-picker-wrapper::-webkit-scrollbar { width: 4px; }
-        .icon-picker-wrapper::-webkit-scrollbar-thumb { background: #b0c6e8; border-radius: 10px; }
-        .icon-picker-wrapper::-webkit-scrollbar-track { background: transparent; }
-
         @media (max-width: 640px) {
             .dashboard { padding: 1.5rem 1rem; }
             .icon-card { width: 90px; min-height: 110px; }
@@ -418,7 +412,6 @@
 </head>
 <body>
 <div class="dashboard">
-    <!-- Auth Bar -->
     <div class="auth-bar" id="authBar">
         <div class="user-info" id="userInfo">
             <span id="userName">Not signed in</span>
@@ -438,7 +431,6 @@
     <div class="icon-grid" id="iconGrid"></div>
 </div>
 
-<!-- Modal with icon picker -->
 <div class="modal-overlay" id="modalOverlay">
     <div class="modal-box">
         <h2><i class="fas fa-pen-fancy"></i> <span id="modalTitle">Add website</span></h2>
@@ -482,6 +474,7 @@ let ylSelectedIcon = 'fa-solid fa-globe';
 let ylListeners = {};
 let ylPushing = false;
 let ylLastPush = 0;
+let ylIsInitialLoad = true; // Track first load to prevent overwrites
 
 // ── DOM refs ────────────────────────────────────────────────
 const grid = document.getElementById('iconGrid');
@@ -604,6 +597,7 @@ function ylPushToCloud() {
     ylPushing = true;
     ylSetSyncStatus('syncing');
     
+    // Store items with their order preserved
     const data = {
         items: ylItems,
         updatedAt: Date.now()
@@ -620,7 +614,7 @@ function ylPushToCloud() {
     });
 }
 
-function ylLoadFromCloud() {
+function ylLoadFromCloud(forceLoad = false) {
     if (!ylUser) return;
     const ref = ylGetRef();
     if (!ref) return;
@@ -629,23 +623,36 @@ function ylLoadFromCloud() {
     ref.get().then((doc) => {
         if (doc.exists) {
             const data = doc.data();
-            if (data.items && Array.isArray(data.items)) {
+            if (data.items && Array.isArray(data.items) && data.items.length > 0) {
+                // Preserve the exact order from cloud
                 ylItems = data.items;
+                ylLastPush = data.updatedAt || Date.now();
                 render();
                 ylSetSyncStatus('synced');
-                ylLastPush = data.updatedAt || Date.now();
+                ylIsInitialLoad = false;
+            } else {
+                // Cloud has empty data, keep local or seed
+                if (ylItems.length === 0) {
+                    seedDefault();
+                    ylPushToCloud();
+                }
+                ylIsInitialLoad = false;
             }
         } else {
             // First time user — push defaults
-            seedDefault();
-            ylPushToCloud();
+            if (ylItems.length === 0) {
+                seedDefault();
+                ylPushToCloud();
+            }
+            ylIsInitialLoad = false;
         }
     }).catch((err) => {
         console.warn('Load error:', err);
         ylSetSyncStatus('error');
-        // Still render local items if any
-        if (ylItems.length > 0) render();
-        else seedDefault();
+        if (ylItems.length === 0) {
+            seedDefault();
+        }
+        ylIsInitialLoad = false;
     });
 }
 
@@ -658,12 +665,18 @@ function ylStartListening() {
         if (!snap.exists) return;
         const data = snap.data();
         const remoteTs = data.updatedAt || 0;
-        // Ignore if this is our own push or if remote is older
+        
+        // Skip if this is our own push or initial load
+        if (ylPushing) return;
+        if (ylIsInitialLoad) return;
         if (remoteTs <= ylLastPush) return;
+        
         if (data.items && Array.isArray(data.items)) {
+            // Only update if remote is newer and not our own change
             ylItems = data.items;
-            render();
             ylLastPush = remoteTs;
+            render();
+            ylSetSyncStatus('synced');
         }
     }, (err) => {
         console.warn('Listener error:', err);
@@ -684,19 +697,26 @@ function updateAuthUI() {
         userName.textContent = '👤 ' + name;
         authBtn.textContent = '🚪 Sign Out';
         authBtn.className = 'auth-btn sign-out';
-        // Load data if not loaded yet
-        if (ylItems.length === 0) {
-            ylLoadFromCloud();
+        
+        // Load data if not loaded yet or if we just signed in
+        if (ylItems.length === 0 || ylIsInitialLoad) {
+            ylLoadFromCloud(true);
             ylStartListening();
         }
     } else {
         userName.textContent = '🔓 Not signed in';
         authBtn.textContent = '🔑 Sign In';
         authBtn.className = 'auth-btn';
-        ylItems = [];
         ylStopListening();
         ylSetSyncStatus('offline');
-        seedDefault();
+        
+        // Only reset to defaults if we're actually signed out
+        if (ylItems.length > 0) {
+            // Keep local items but mark as offline
+        } else {
+            seedDefault();
+        }
+        ylIsInitialLoad = true;
     }
 }
 
@@ -704,6 +724,9 @@ function toggleAuth() {
     if (ylUser) {
         ylStopListening();
         ylAuth.signOut();
+        ylItems = [];
+        ylIsInitialLoad = true;
+        seedDefault();
         return;
     }
     const provider = new firebase.auth.GoogleAuthProvider();
@@ -778,8 +801,7 @@ function render() {
         });
     });
     
-    // Edit
-    grid.querySelectorAll('.edit-btn').forEach(btn => {
+    // Edit    grid.querySelectorAll('.edit-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             const id = btn.getAttribute('data-id');
@@ -810,7 +832,7 @@ function render() {
         });
     });
     
-    // Drag and drop
+    // Drag and drop - preserve order
     const cards = grid.querySelectorAll('.icon-card');
     let dragSrcId = null;
     cards.forEach(card => {
@@ -837,7 +859,10 @@ function render() {
             const [removed] = ylItems.splice(srcIndex, 1);
             ylItems.splice(targetIndex, 0, removed);
             render();
-            if (ylUser) ylPushToCloud();
+            if (ylUser) {
+                // Update cloud with new order
+                ylPushToCloud();
+            }
         });
     });
 }
@@ -924,7 +949,46 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ── INIT ────────────────────────────────────────────────────
-seedDefault();
+// Load from localStorage if available, then sync with cloud
+const saved = localStorage.getItem('yanglab_items');
+if (saved) {
+    try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+            ylItems = parsed;
+            render();
+        }
+    } catch(e) {}
+}
+
+// If no saved items, seed defaults
+if (ylItems.length === 0) {
+    seedDefault();
+}
+
+// Save to localStorage on any change (backup)
+function saveToLocalStorage() {
+    localStorage.setItem('yanglab_items', JSON.stringify(ylItems));
+}
+
+// Override render to also save to localStorage
+const originalRender = render;
+render = function() {
+    originalRender();
+    saveToLocalStorage();
+};
+
+// Override push to update localStorage
+const originalPush = ylPushToCloud;
+ylPushToCloud = function() {
+    saveToLocalStorage();
+    originalPush.call(this);
+};
+
+// Set initial sync status
+ylSetSyncStatus('offline');
+
+console.log('🧪 YangLab v3 — All changes are saved locally and synced to cloud when signed in.');
 </script>
 </body>
 </html>
