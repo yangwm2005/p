@@ -46,6 +46,7 @@
             background: rgba(255,255,255,0.4);
             border-radius: 40px;
             border: 1px solid rgba(255,255,255,0.5);
+            flex-wrap: wrap;
         }
         .auth-bar .user-info {
             font-size: 0.85rem;
@@ -80,6 +81,7 @@
         .auth-btn:hover { background: #142d5a; transform: scale(0.96); }
         .auth-btn.sign-out { background: #546e7a; }
         .auth-btn.sign-out:hover { background: #455a64; }
+        .auth-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
         h1 {
             display: flex;
             align-items: center;
@@ -474,7 +476,8 @@ let ylSelectedIcon = 'fa-solid fa-globe';
 let ylListeners = {};
 let ylPushing = false;
 let ylLastPush = 0;
-let ylIsInitialLoad = true; // Track first load to prevent overwrites
+let ylIsInitialLoad = true;
+let ylIsSigningIn = false;
 
 // ── DOM refs ────────────────────────────────────────────────
 const grid = document.getElementById('iconGrid');
@@ -597,7 +600,6 @@ function ylPushToCloud() {
     ylPushing = true;
     ylSetSyncStatus('syncing');
     
-    // Store items with their order preserved
     const data = {
         items: ylItems,
         updatedAt: Date.now()
@@ -624,28 +626,23 @@ function ylLoadFromCloud(forceLoad = false) {
         if (doc.exists) {
             const data = doc.data();
             if (data.items && Array.isArray(data.items) && data.items.length > 0) {
-                // Preserve the exact order from cloud
                 ylItems = data.items;
                 ylLastPush = data.updatedAt || Date.now();
                 render();
                 ylSetSyncStatus('synced');
-                ylIsInitialLoad = false;
             } else {
-                // Cloud has empty data, keep local or seed
                 if (ylItems.length === 0) {
                     seedDefault();
                     ylPushToCloud();
                 }
-                ylIsInitialLoad = false;
             }
         } else {
-            // First time user — push defaults
             if (ylItems.length === 0) {
                 seedDefault();
                 ylPushToCloud();
             }
-            ylIsInitialLoad = false;
         }
+        ylIsInitialLoad = false;
     }).catch((err) => {
         console.warn('Load error:', err);
         ylSetSyncStatus('error');
@@ -666,13 +663,11 @@ function ylStartListening() {
         const data = snap.data();
         const remoteTs = data.updatedAt || 0;
         
-        // Skip if this is our own push or initial load
         if (ylPushing) return;
         if (ylIsInitialLoad) return;
         if (remoteTs <= ylLastPush) return;
         
         if (data.items && Array.isArray(data.items)) {
-            // Only update if remote is newer and not our own change
             ylItems = data.items;
             ylLastPush = remoteTs;
             render();
@@ -697,49 +692,97 @@ function updateAuthUI() {
         userName.textContent = '👤 ' + name;
         authBtn.textContent = '🚪 Sign Out';
         authBtn.className = 'auth-btn sign-out';
+        authBtn.disabled = false;
         
-        // Load data if not loaded yet or if we just signed in
         if (ylItems.length === 0 || ylIsInitialLoad) {
             ylLoadFromCloud(true);
-            ylStartListening();
+            setTimeout(ylStartListening, 500);
         }
     } else {
         userName.textContent = '🔓 Not signed in';
         authBtn.textContent = '🔑 Sign In';
         authBtn.className = 'auth-btn';
+        authBtn.disabled = false;
         ylStopListening();
         ylSetSyncStatus('offline');
         
-        // Only reset to defaults if we're actually signed out
-        if (ylItems.length > 0) {
-            // Keep local items but mark as offline
-        } else {
+        // Don't reset items on sign out - keep them visible
+        if (ylItems.length === 0) {
             seedDefault();
         }
         ylIsInitialLoad = true;
     }
+    ylIsSigningIn = false;
 }
 
 function toggleAuth() {
+    if (ylIsSigningIn) return;
+    
     if (ylUser) {
         ylStopListening();
-        ylAuth.signOut();
-        ylItems = [];
-        ylIsInitialLoad = true;
-        seedDefault();
+        ylAuth.signOut().then(() => {
+            ylUser = null;
+            updateAuthUI();
+        }).catch((e) => {
+            console.warn('Sign out error:', e);
+            // Force sign out locally
+            ylUser = null;
+            updateAuthUI();
+        });
         return;
     }
+    
+    // Sign in
+    ylIsSigningIn = true;
+    authBtn.disabled = true;
+    authBtn.textContent = '⏳ Signing...';
+    
     const provider = new firebase.auth.GoogleAuthProvider();
-    ylAuth.signInWithPopup(provider).catch((e) => {
-        if (e.code !== 'auth/popup-closed-by-user') {
-            alert('Sign-in failed: ' + e.message);
-        }
+    provider.setCustomParameters({
+        prompt: 'select_account'
     });
+    
+    ylAuth.signInWithPopup(provider)
+        .then((result) => {
+            ylUser = result.user;
+            ylIsSigningIn = false;
+            updateAuthUI();
+        })
+        .catch((error) => {
+            ylIsSigningIn = false;
+            authBtn.disabled = false;
+            
+            if (error.code === 'auth/popup-blocked') {
+                alert('⚠️ Popup was blocked. Please allow popups for this site and try again.');
+                authBtn.textContent = '🔑 Sign In';
+                authBtn.className = 'auth-btn';
+                return;
+            }
+            
+            if (error.code === 'auth/popup-closed-by-user') {
+                authBtn.textContent = '🔑 Sign In';
+                authBtn.className = 'auth-btn';
+                return;
+            }
+            
+            if (error.code === 'auth/unauthorized-domain') {
+                alert('⚠️ This domain is not authorized for Firebase authentication. Please open this page from a local server or authorized domain.');
+                authBtn.textContent = '🔑 Sign In';
+                authBtn.className = 'auth-btn';
+                return;
+            }
+            
+            console.error('Sign-in error:', error);
+            alert('❌ Sign in failed: ' + error.message);
+            authBtn.textContent = '🔑 Sign In';
+            authBtn.className = 'auth-btn';
+        });
 }
 
 // Auth state listener
 ylAuth.onAuthStateChanged((user) => {
     ylUser = user;
+    // If we were in the middle of signing in, don't reset the button state
     updateAuthUI();
 });
 
@@ -792,7 +835,6 @@ function render() {
     });
     grid.innerHTML = html;
     
-    // Popup on icon click
     grid.querySelectorAll('.icon-wrap').forEach(el => {
         el.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -801,7 +843,7 @@ function render() {
         });
     });
     
-    // Edit    grid.querySelectorAll('.edit-btn').forEach(btn => {
+    grid.querySelectorAll('.edit-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             const id = btn.getAttribute('data-id');
@@ -814,7 +856,6 @@ function render() {
         });
     });
     
-    // Delete
     grid.querySelectorAll('.delete-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -828,11 +869,11 @@ function render() {
                 ylItems = ylItems.filter(it => it.id !== id);
                 render();
                 if (ylUser) ylPushToCloud();
+                saveToLocalStorage();
             }
         });
     });
     
-    // Drag and drop - preserve order
     const cards = grid.querySelectorAll('.icon-card');
     let dragSrcId = null;
     cards.forEach(card => {
@@ -859,10 +900,8 @@ function render() {
             const [removed] = ylItems.splice(srcIndex, 1);
             ylItems.splice(targetIndex, 0, removed);
             render();
-            if (ylUser) {
-                // Update cloud with new order
-                ylPushToCloud();
-            }
+            saveToLocalStorage();
+            if (ylUser) ylPushToCloud();
         });
     });
 }
@@ -921,7 +960,28 @@ function saveFromModal() {
     }
     closeModal();
     render();
+    saveToLocalStorage();
     if (ylUser) ylPushToCloud();
+}
+
+// ── LOCAL STORAGE ──────────────────────────────────────────
+function saveToLocalStorage() {
+    localStorage.setItem('yanglab_items', JSON.stringify(ylItems));
+}
+
+function loadFromLocalStorage() {
+    const saved = localStorage.getItem('yanglab_items');
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                ylItems = parsed;
+                render();
+                return true;
+            }
+        } catch(e) {}
+    }
+    return false;
 }
 
 // ── SEED ────────────────────────────────────────────────────
@@ -935,6 +995,7 @@ function seedDefault() {
         { id: generateId(), icon: 'fa-solid fa-flask', title: 'YangLab', url: 'https://github.com', protected: false },
     ];
     render();
+    saveToLocalStorage();
 }
 
 // ── EVENT BINDING ──────────────────────────────────────────
@@ -949,46 +1010,14 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ── INIT ────────────────────────────────────────────────────
-// Load from localStorage if available, then sync with cloud
-const saved = localStorage.getItem('yanglab_items');
-if (saved) {
-    try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-            ylItems = parsed;
-            render();
-        }
-    } catch(e) {}
-}
-
-// If no saved items, seed defaults
-if (ylItems.length === 0) {
+// Load from localStorage first
+const loaded = loadFromLocalStorage();
+if (!loaded) {
     seedDefault();
 }
 
-// Save to localStorage on any change (backup)
-function saveToLocalStorage() {
-    localStorage.setItem('yanglab_items', JSON.stringify(ylItems));
-}
-
-// Override render to also save to localStorage
-const originalRender = render;
-render = function() {
-    originalRender();
-    saveToLocalStorage();
-};
-
-// Override push to update localStorage
-const originalPush = ylPushToCloud;
-ylPushToCloud = function() {
-    saveToLocalStorage();
-    originalPush.call(this);
-};
-
-// Set initial sync status
 ylSetSyncStatus('offline');
-
-console.log('🧪 YangLab v3 — All changes are saved locally and synced to cloud when signed in.');
+console.log('🧪 YangLab v3 — Ready. Click "Sign In" to sync with cloud.');
 </script>
 </body>
 </html>
