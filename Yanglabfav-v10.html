@@ -1,0 +1,2878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧪 YangLab · Icon Dashboard</title>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <!-- Font Awesome 6 (free) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+        }
+        body {
+            background: linear-gradient(145deg, #f0f4fe 0%, #e2e9fa 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 2rem 1rem;
+        }
+        .dashboard {
+            max-width: 1200px;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(4px);
+            border-radius: 48px;
+            padding: 2rem 2rem 2.5rem;
+            box-shadow: 0 20px 40px rgba(0, 10, 30, 0.12), 0 6px 16px rgba(0, 0, 0, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            position: relative;
+        }
+        .auth-bar {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+            padding: 6px 12px;
+            background: rgba(255,255,255,0.4);
+            border-radius: 40px;
+            border: 1px solid rgba(255,255,255,0.5);
+            flex-wrap: wrap;
+        }
+        .auth-bar .user-info {
+            font-size: 0.85rem;
+            color: #1f3357;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .auth-bar .user-info .sync-status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-left: 4px;
+        }
+        .sync-status.synced { background: #4caf50; }
+        .sync-status.syncing { background: #ff9800; animation: pulse 1s infinite; }
+        .sync-status.error { background: #f44336; }
+        .sync-status.offline { background: #9e9e9e; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .auth-btn {
+            padding: 4px 16px;
+            border: none;
+            border-radius: 30px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: 0.15s;
+            background: #0a1a3a;
+            color: white;
+        }
+        .auth-btn:hover { background: #142d5a; transform: scale(0.96); }
+        .auth-btn.sign-out { background: #546e7a; }
+        .auth-btn.sign-out:hover { background: #455a64; }
+        .auth-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        h1 {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 700;
+            font-size: 2rem;
+            color: #0a1a3a;
+            letter-spacing: -0.02em;
+            margin-bottom: 1.8rem;
+        }
+        h1 i {
+            color: #3a6bf0;
+            font-size: 2.2rem;
+        }
+        h1 .brand-accent {
+            background: linear-gradient(135deg, #1a3a7a, #3a6bf0);
+            color: white;
+            font-size: 0.7rem;
+            padding: 0.2rem 1rem;
+            border-radius: 60px;
+            margin-left: 6px;
+            letter-spacing: 0.5px;
+        }
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px 12px;
+            margin-bottom: 2.2rem;
+        }
+        .add-btn {
+            background: #0a1a3a;
+            color: white;
+            border: none;
+            padding: 0.7rem 1.8rem;
+            border-radius: 60px;
+            font-weight: 500;
+            font-size: 1rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 6px 12px rgba(26, 67, 153, 0.25);
+            cursor: pointer;
+            transition: 0.2s;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .add-btn:hover {
+            background: #142d5a;
+            transform: scale(0.97);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        .add-btn i { font-size: 1.1rem; }
+        .toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .settings-menu {
+            position: relative;
+            display: inline-block;
+        }
+        .settings-btn {
+            background: rgba(10, 26, 58, 0.06);
+            color: #4a5b7a;
+            border: 1px solid rgba(10, 26, 58, 0.1);
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            font-size: 1.1rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .settings-btn:hover {
+            background: #0a1a3a;
+            color: white;
+            transform: rotate(45deg);
+        }
+        .settings-dropdown {
+            display: none;
+            position: absolute;
+            top: calc(100% + 8px);
+            min-width: 220px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 12px 28px rgba(0, 10, 30, 0.18), 0 4px 10px rgba(0,0,0,0.08);
+            border: 1px solid rgba(0,0,0,0.06);
+            padding: 8px;
+            z-index: 50;
+        }
+        .settings-dropdown-right {
+            right: 0;
+        }
+        .settings-dropdown.open { display: block; }
+        .settings-dropdown button {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: transparent;
+            border: none;
+            padding: 10px 12px;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: #1d2b44;
+            cursor: pointer;
+            transition: 0.12s;
+            text-align: left;
+        }
+        .settings-dropdown button:hover {
+            background: #eef2fc;
+        }
+        .settings-dropdown button i {
+            width: 18px;
+            text-align: center;
+        }
+        .settings-dropdown button.danger i { color: #b13e4b; }
+        .settings-dropdown button.warn i { color: #e67e22; }
+        .settings-dropdown button.severe {
+            color: #8a1f1f;
+        }
+        .settings-dropdown button.severe i { color: #8a1f1f; }
+        .settings-dropdown button.severe:hover { background: #fce8e8; }
+        .settings-dropdown button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .settings-dropdown button:disabled:hover { background: transparent; }
+        .settings-section-label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+            color: #9aa5b8;
+            padding: 6px 12px 2px;
+        }
+        .settings-dropdown hr {
+            border: none;
+            border-top: 1px solid rgba(0,0,0,0.08);
+            margin: 6px 4px;
+        }
+        .empty-hint {
+            color: #4a6188;
+            font-style: italic;
+            padding: 0.5rem 0;
+            font-size: 0.95rem;
+        }
+        
+        .section-container {
+            margin-bottom: 24px;
+        }
+        .section-container:last-child {
+            margin-bottom: 0;
+        }
+        
+        .section-label {
+            width: 100%;
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #1a3a7a;
+            padding: 12px 16px 10px 16px;
+            border-bottom: 2px solid #3a6bf0;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            user-select: none;
+            border-radius: 8px;
+            transition: background 0.15s;
+            background: rgba(255,255,255,0.3);
+        }
+        .section-label:hover {
+            background: rgba(58, 107, 240, 0.1);
+        }
+        .section-label i:first-child {
+            color: #3a6bf0;
+            font-size: 1.4rem;
+        }
+        .section-label .badge {
+            background: #3a6bf0;
+            color: white;
+            font-size: 0.75rem;
+            padding: 2px 12px;
+            border-radius: 20px;
+            margin-left: auto;
+        }
+        .section-label .toggle-icon {
+            font-size: 1rem;
+            color: #6c7a8a;
+            transition: transform 0.3s ease;
+            margin-left: 4px;
+        }
+        .section-label .toggle-icon.collapsed {
+            transform: rotate(-90deg);
+        }
+        
+        .section-content {
+            overflow: hidden;
+            transition: max-height 0.4s ease, opacity 0.3s ease, margin 0.3s ease;
+            max-height: 5000px;
+            opacity: 1;
+        }
+        .section-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+            margin: 0;
+            padding: 0;
+        }
+        .add-section-row {
+            display: flex;
+            justify-content: center;
+            margin: -6px 0 28px;
+        }
+        .add-section-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: transparent;
+            border: 2px dashed #b0c6e8;
+            color: #3a6bf0;
+            font-weight: 600;
+            font-size: 0.9rem;
+            padding: 0.6rem 1.4rem;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: 0.15s;
+        }
+        .add-section-btn:hover {
+            background: rgba(58, 107, 240, 0.08);
+            border-color: #3a6bf0;
+        }
+        .section-label .section-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: 6px;
+        }
+        .section-icon-btn {
+            background: rgba(255, 255, 255, 0.6);
+            border: 1px solid rgba(0, 0, 0, 0.06);
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            color: #3a6bf0;
+            cursor: pointer;
+            transition: 0.15s;
+            flex-shrink: 0;
+        }
+        .section-icon-btn:hover { background: #3a6bf0; color: white; }
+        .section-icon-btn.danger { color: #b13e4b; }
+        .section-icon-btn.danger:hover { background: #b13e4b; color: white; }
+        .section-label .section-title-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .icon-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px 20px;
+            align-items: stretch;
+            min-height: 80px;
+            padding: 10px 4px 6px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 40px;
+            transition: 0.1s;
+        }
+        .icon-grid.drop-target {
+            background: rgba(58, 107, 240, 0.12);
+            box-shadow: inset 0 0 0 2px #3a6bf0;
+        }
+        
+        .icon-card {
+            background: white;
+            width: 120px;
+            min-height: 150px;
+            border-radius: 28px;
+            padding: 18px 8px 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.02);
+            transition: 0.15s;
+            cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(2px);
+            position: relative;
+            word-break: break-word;
+            text-align: center;
+        }
+        .icon-card.dragging {
+            opacity: 0.3;
+            transform: scale(0.94);
+            border: 2px dashed #3a6bf0;
+        }
+        .icon-card:active { transform: scale(0.97); }
+        .drag-handle {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: rgba(120, 130, 145, 0.14);
+            color: #8a94a6;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.72rem;
+            cursor: grab;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+            z-index: 5;
+        }
+        .icon-card:hover .drag-handle {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .drag-handle:hover {
+            background: rgba(120, 130, 145, 0.28);
+            color: #5c6578;
+        }
+        .drag-handle:active { cursor: grabbing; }
+        .icon-card .protected-badge {
+            display: none;
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            background: #2a4b9b;
+            color: white;
+            font-size: 0.6rem;
+            padding: 2px 10px;
+            border-radius: 40px;
+            letter-spacing: 0.3px;
+            font-weight: 600;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            cursor: pointer;
+            transition: 0.15s;
+        }
+        .icon-card .protected-badge:hover {
+            background: #142d5a;
+            transform: scale(1.08);
+        }
+        .icon-card .freq-badge {
+            position: absolute;
+            bottom: -6px;
+            right: -6px;
+            background: #ff6b6b;
+            color: white;
+            font-size: 0.6rem;
+            padding: 2px 10px;
+            border-radius: 40px;
+            font-weight: 600;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .icon-card .recent-badge {
+            position: absolute;
+            bottom: -6px;
+            right: -6px;
+            background: #4a9eff;
+            color: white;
+            font-size: 0.6rem;
+            padding: 2px 10px;
+            border-radius: 40px;
+            font-weight: 600;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .icon-card.protected .protected-badge { display: inline-block; }
+        .icon-card .icon-wrap {
+            font-size: 3.2rem;
+            color: #0a1a3a;
+            line-height: 1;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 60px;
+            cursor: pointer;
+        }
+        .icon-card .icon-wrap i { filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.05)); }
+        .icon-card .title {
+            font-weight: 600;
+            font-size: 1.05rem;
+            color: #1d2b44;
+            background: rgba(240, 245, 255, 0.5);
+            padding: 0.25rem 0.7rem;
+            border-radius: 14px;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            white-space: normal;
+            overflow-wrap: break-word;
+            line-height: 1.25;
+            cursor: default;
+        }
+        .icon-card .sub-info {
+            font-size: 0.7rem;
+            color: #888;
+            line-height: 1.2;
+        }
+        .more-menu {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            z-index: 5;
+        }
+        .icon-card:hover .more-menu {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .more-btn {
+            background: rgba(255, 255, 255, 0.85);
+            border: 1px solid rgba(0, 0, 0, 0.06);
+            font-size: 0.85rem;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: 0.1s;
+            color: #2c3f66;
+            backdrop-filter: blur(2px);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .more-btn:hover {
+            background: #0a1a3a;
+            color: white;
+            border-color: transparent;
+        }
+        .more-dropdown {
+            display: none;
+            position: absolute;
+            top: calc(100% + 6px);
+            right: 0;
+            min-width: 130px;
+            background: white;
+            border-radius: 14px;
+            box-shadow: 0 10px 24px rgba(0, 10, 30, 0.16), 0 3px 8px rgba(0,0,0,0.08);
+            border: 1px solid rgba(0,0,0,0.06);
+            padding: 6px;
+            z-index: 20;
+        }
+        .more-dropdown.open { display: block; }
+        .more-dropdown button {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: transparent;
+            border: none;
+            padding: 7px 10px;
+            border-radius: 10px;
+            font-size: 0.82rem;
+            font-weight: 500;
+            color: #1d2b44;
+            cursor: pointer;
+            transition: 0.1s;
+            text-align: left;
+        }
+        .more-dropdown button:hover { background: #eef2fc; }
+        .more-dropdown .edit-btn i { color: #2a4b9b; width: 14px; }
+        .more-dropdown .lock-btn i { color: #6c7a8a; width: 14px; }
+        .more-dropdown .delete-btn i { color: #b13e4b; width: 14px; }
+        .more-dropdown .delete-btn:hover { background: #ffe2e5; }
+        .icon-card.protected .more-menu { display: none; }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(10, 18, 36, 0.5);
+            backdrop-filter: blur(6px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: 0.2s ease;
+        }
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+        .modal-box {
+            background: white;
+            max-width: 520px;
+            width: 94%;
+            padding: 2rem 1.8rem 1.8rem;
+            border-radius: 48px;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.25);
+            transform: scale(0.92);
+            transition: 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .modal-overlay.active .modal-box { transform: scale(1); }
+        .modal-box h2 {
+            font-weight: 600;
+            color: #0a1a3a;
+            margin-bottom: 1.4rem;
+            font-size: 1.6rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .modal-box h2 i { color: #3a6bf0; }
+        .modal-box label {
+            font-weight: 500;
+            color: #1f3357;
+            display: block;
+            margin: 0.8rem 0 0.2rem 0.2rem;
+            font-size: 0.9rem;
+        }
+        .modal-box input {
+            width: 100%;
+            padding: 0.9rem 1rem;
+            border: 1px solid #d7e0ee;
+            border-radius: 40px;
+            font-size: 1rem;
+            background: #f3f7fe;
+            transition: 0.15s;
+            outline: none;
+            margin-bottom: 0.2rem;
+        }
+        .modal-box input:focus {
+            border-color: #3a6bf0;
+            background: white;
+            box-shadow: 0 0 0 4px rgba(58, 107, 240, 0.12);
+        }
+        .browser-picker-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin: 0.6rem 0 1rem;
+        }
+        .browser-picker-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            padding: 1rem 0.5rem;
+            border: 1px solid #d7e0ee;
+            border-radius: 24px;
+            background: #f3f7fe;
+            cursor: pointer;
+            transition: 0.15s;
+            text-align: center;
+        }
+        .browser-picker-item:hover {
+            background: #eaf0fd;
+            border-color: #b0c6e8;
+            transform: translateY(-2px);
+        }
+        .browser-picker-item i {
+            font-size: 1.8rem;
+        }
+        .browser-picker-item span {
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: #1f3357;
+        }
+        .browser-picker-item.chrome i { color: #ea4335; }
+        .browser-picker-item.edge i { color: #0078d7; }
+        .browser-picker-item.brave i { color: #fb542b; }
+        .browser-picker-item.firefox i { color: #ff7139; }
+        .browser-picker-item.safari i { color: #157dee; }
+        .history-path-box {
+            background: #f3f7fe;
+            border: 1px solid #d7e0ee;
+            border-radius: 20px;
+            padding: 0.9rem 1rem;
+            margin: 0.6rem 0 0.4rem;
+        }
+        .history-path-box code {
+            display: block;
+            font-size: 0.82rem;
+            word-break: break-all;
+            color: #1f3357;
+            background: white;
+            border: 1px solid #d7e0ee;
+            border-radius: 12px;
+            padding: 0.6rem 0.7rem;
+            margin-top: 0.4rem;
+        }
+        .history-path-box .copy-hint {
+            font-size: 0.78rem;
+            color: #5d6f8f;
+            margin-top: 0.5rem;
+        }
+        .history-copy-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 0.6rem;
+            background: #eaf0fd;
+            border: 1px solid #b0c6e8;
+            color: #1f3357;
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 0.5rem 0.9rem;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: 0.15s;
+        }
+        .history-copy-btn:hover { background: #d3def5; }
+        .history-copy-btn.copied {
+            background: #d7f5df;
+            border-color: #7fd99a;
+            color: #146c2e;
+        }
+        .history-step-back {
+            background: none;
+            border: none;
+            color: #5d6f8f;
+            font-size: 0.85rem;
+            cursor: pointer;
+            padding: 0;
+            margin-bottom: 0.6rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .history-step-back:hover { color: #1f3357; }
+        .icon-picker-wrapper {
+            margin: 0.4rem 0 0.6rem;
+            border: 1px solid #d7e0ee;
+            border-radius: 30px;
+            padding: 8px 6px;
+            background: #f3f7fe;
+            max-height: 260px;
+            overflow-y: auto;
+        }
+        .icon-picker-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            padding: 4px;
+        }
+        .picker-section-label {
+            width: 100%;
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #5d6f8f;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 6px 0 2px 6px;
+            border-bottom: 1px solid #d7e0ee;
+            margin-bottom: 4px;
+        }
+        .picker-item {
+            width: 44px;
+            height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+            background: white;
+            border-radius: 16px;
+            cursor: pointer;
+            transition: 0.1s;
+            border: 2px solid transparent;
+            color: #1b2b4e;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+            flex-shrink: 0;
+        }
+        .picker-item:hover {
+            transform: scale(1.08);
+            border-color: #3a6bf0;
+            background: #eef3ff;
+            box-shadow: 0 4px 12px rgba(58, 107, 240, 0.15);
+        }
+        .picker-item.selected {
+            border-color: #1a3a7a;
+            background: #d6e4ff;
+            box-shadow: 0 0 0 3px rgba(58, 107, 240, 0.2);
+        }
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 1.8rem;
+        }
+        .modal-actions button {
+            border: none;
+            padding: 0.7rem 1.6rem;
+            border-radius: 60px;
+            font-weight: 500;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: 0.1s;
+        }
+        .modal-actions .btn-cancel {
+            background: #eaeef7;
+            color: #1e3457;
+        }
+        .modal-actions .btn-cancel:hover { background: #d5def0; }
+        .modal-actions .btn-save {
+            background: #0a1a3a;
+            color: white;
+            box-shadow: 0 6px 12px rgba(26, 67, 153, 0.25);
+        }
+        .modal-actions .btn-save:hover { background: #142d5a; }
+        .icon-picker-wrapper::-webkit-scrollbar { width: 4px; }
+        .icon-picker-wrapper::-webkit-scrollbar-thumb { background: #b0c6e8; border-radius: 10px; }
+        .icon-picker-wrapper::-webkit-scrollbar-track { background: transparent; }
+
+        .footer {
+            margin-top: 30px;
+            padding: 16px 0 8px 0;
+            border-top: 1px solid rgba(58, 107, 240, 0.15);
+            text-align: center;
+            font-size: 0.8rem;
+            color: #6c7a8a;
+        }
+        .footer .copyright {
+            font-weight: 500;
+            color: #3a6bf0;
+        }
+
+        @media (max-width: 640px) {
+            .dashboard { padding: 1.5rem 1rem; }
+            .icon-card { width: 100px; min-height: 130px; }
+            .icon-card .icon-wrap { font-size: 2.6rem; }
+            .icon-card .title { font-size: 0.8rem; }
+            .picker-item { width: 38px; height: 38px; font-size: 1.2rem; }
+            .modal-box { padding: 1.5rem 1rem; }
+            .auth-bar { flex-wrap: wrap; justify-content: center; }
+            .section-label { font-size: 1rem; padding: 10px 12px 8px 12px; }
+            .section-label i:first-child { font-size: 1.2rem; }
+        }
+    </style>
+</head>
+<body>
+<div class="dashboard">
+    <div class="auth-bar" id="authBar">
+        <div class="user-info" id="userInfo">
+            <span id="userName">Not signed in</span>
+            <span class="sync-status offline" id="syncStatus"></span>
+        </div>
+        <button class="auth-btn" id="authBtn" onclick="toggleAuth()">🔑 Sign In</button>
+    </div>
+
+    <h1>
+        <i class="fas fa-flask"></i> YangLab
+        <span class="brand-accent">v3</span>
+    </h1>
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <button class="add-btn" id="addNewBtn"><i class="fas fa-plus-circle"></i> Add website</button>
+            <span class="empty-hint" id="emptyHint">🔒 locked · drag to reorder · click to open</span>
+        </div>
+        <div class="settings-menu">
+            <button class="settings-btn" id="settingsBtn" onclick="toggleSettingsMenu(event)" title="Settings" aria-label="Settings">
+                <i class="fas fa-gear"></i>
+            </button>
+            <div class="settings-dropdown settings-dropdown-right" id="settingsDropdown">
+                <button onclick="closeSettingsMenu(); resetFrequentSites();" class="warn">
+                    <i class="fas fa-chart-simple"></i> Reset Tracking
+                </button>
+                <hr>
+                <button onclick="closeSettingsMenu(); resetToDefault();" class="danger">
+                    <i class="fas fa-rotate-left"></i> Reset Websites
+                </button>
+                <hr>
+                <div class="settings-section-label">Backup</div>
+                <button onclick="closeSettingsMenu(); exportData();">
+                    <i class="fas fa-file-export"></i> Export Data
+                </button>
+                <button onclick="closeSettingsMenu(); document.getElementById('importFileInput').click();">
+                    <i class="fas fa-file-import"></i> Import Data
+                </button>
+                <input type="file" id="importFileInput" accept="application/json,.json" style="display:none;" onchange="importData(event)">
+                <hr>
+                <div class="settings-section-label">Browser History</div>
+                <button onclick="closeSettingsMenu(); openHistoryImportModal();">
+                    <i class="fas fa-clock-rotate-left"></i> Import Browser History
+                </button>
+                <input type="file" id="historyFileInput" style="display:none;" onchange="importBrowserHistory(event)">
+                <hr>
+                <div class="settings-section-label">Cloud Account</div>
+                <button onclick="closeSettingsMenu(); deleteCloudData();" class="danger" id="deleteCloudBtn" disabled>
+                    <i class="fas fa-cloud-arrow-down"></i> Delete Cloud Data
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- SECTION 1: My Websites (Top) -->
+    <div class="section-container" id="mySection">
+        <div class="section-label" onclick="toggleSection('mySection')">
+            <i class="fas fa-star"></i> My Websites
+            <span class="badge" id="myCount">0</span>
+            <span class="toggle-icon" id="myToggle">▼</span>
+        </div>
+        <div class="section-content" id="myContent">
+            <div class="icon-grid" id="iconGrid"></div>
+        </div>
+    </div>
+    
+    <div id="customSectionsContainer"></div>
+    <div class="add-section-row">
+        <button class="add-section-btn" id="addSectionBtn" onclick="addCustomSection()">
+            <i class="fas fa-layer-group"></i> Add Section
+        </button>
+    </div>
+    
+    <!-- SECTION 2: Frequent 10 (Middle) -->
+    <div class="section-container" id="freqSection">
+        <div class="section-label" onclick="toggleSection('freqSection')">
+            <i class="fas fa-fire"></i> Top 10 Frequent
+            <span class="badge" id="freqCount">0</span>
+            <span class="toggle-icon" id="freqToggle">▼</span>
+        </div>
+        <div class="section-content" id="freqContent">
+            <div class="icon-grid" id="frequentGrid"></div>
+        </div>
+    </div>
+    
+    <!-- SECTION 3: Recent 20 (Bottom) -->
+    <div class="section-container" id="recentSection">
+        <div class="section-label" onclick="toggleSection('recentSection')">
+            <i class="fas fa-clock"></i> Recent 20
+            <span class="badge" id="recentCount">0</span>
+            <span class="toggle-icon" id="recentToggle">▼</span>
+        </div>
+        <div class="section-content" id="recentContent">
+            <div class="icon-grid" id="recentGrid"></div>
+        </div>
+    </div>
+    
+    <!-- FOOTER -->
+    <div class="footer">
+        <span class="copyright">© 2026 Dr. Wen-Ming Yang</span>
+        <span style="margin: 0 8px;">·</span>
+        <span>Yanglabfav dev</span>
+    </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+    <div class="modal-box">
+        <h2><i class="fas fa-pen-fancy"></i> <span id="modalTitle">Add website</span></h2>
+        <label for="modalTitleInput">Title</label>
+        <input type="text" id="modalTitleInput" placeholder="My site" value="Website" />
+        <label for="modalUrlInput">URL (https://...)</label>
+        <input type="url" id="modalUrlInput" placeholder="https://example.com" value="https://example.com" />
+        <label>Choose an icon <span style="font-weight:400;color:#5d6f8f;font-size:0.8rem;">(click to select)</span></label>
+        <div class="icon-picker-wrapper">
+            <div class="icon-picker-grid" id="iconPickerGrid"></div>
+        </div>
+        <div class="modal-actions">
+            <button class="btn-cancel" id="modalCancelBtn">Cancel</button>
+            <button class="btn-save" id="modalSaveBtn">Save</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="historyModalOverlay">
+    <div class="modal-box">
+        <div id="historyStepBrowser">
+            <h2><i class="fas fa-clock-rotate-left"></i> Import Browser History</h2>
+            <p style="color:#5d6f8f; font-size:0.9rem; margin-bottom:0.4rem;">Which browser do you want to import history from?</p>
+            <div class="browser-picker-grid">
+                <div class="browser-picker-item chrome" data-browser="chrome"><i class="fa-brands fa-chrome"></i><span>Chrome</span></div>
+                <div class="browser-picker-item edge" data-browser="edge"><i class="fa-brands fa-edge"></i><span>Edge</span></div>
+                <div class="browser-picker-item brave" data-browser="brave"><i class="fa-brands fa-brave"></i><span>Brave</span></div>
+                <div class="browser-picker-item firefox" data-browser="firefox"><i class="fa-brands fa-firefox-browser"></i><span>Firefox</span></div>
+                <div class="browser-picker-item safari" data-browser="safari"><i class="fa-brands fa-safari"></i><span>Safari</span></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-cancel" id="historyModalCancelBtn">Cancel</button>
+            </div>
+        </div>
+        <div id="historyStepPath" style="display:none;">
+            <button class="history-step-back" id="historyStepBackBtn"><i class="fas fa-arrow-left"></i> Choose a different browser</button>
+            <h2><i class="fas fa-folder-open"></i> <span id="historyPathBrowserName">Locate the file</span></h2>
+            <div class="history-path-box">
+                <strong style="font-size:0.85rem; color:#1f3357;">File path:</strong>
+                <code id="historyPathText" onclick="this.focus(); window.getSelection().selectAllChildren(this);" style="cursor: text;" title="Click to select"></code>
+                <button class="history-copy-btn" id="historyCopyBtn" type="button">
+                    <i class="fas fa-copy"></i> <span id="historyCopyBtnLabel">Copy path</span>
+                </button>
+                <div class="copy-hint" id="historyPathHint">Click "Copy path" above, then in the file picker press <strong>Cmd+Shift+G</strong> (Mac) or click the file name box (Windows), paste, and press Enter.</div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-cancel" id="historyPathCancelBtn">Cancel</button>
+                <button class="btn-save" id="historyPathOpenBtn"><i class="fas fa-file-import"></i> Open File Picker</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── Firebase Config ──────────────────────────────────────────
+const YL_FB_CONFIG = {
+    apiKey:            "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
+    authDomain:        "qtodo-syn.firebaseapp.com",
+    projectId:         "qtodo-syn",
+    storageBucket:     "qtodo-syn.firebasestorage.app",
+    messagingSenderId: "663058774385",
+    appId:             "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
+};
+
+let ylApp, ylAuth, ylDb;
+try { ylApp = firebase.app('yanglab'); }
+catch(e) { ylApp = firebase.initializeApp(YL_FB_CONFIG, 'yanglab'); }
+ylAuth = firebase.auth(ylApp);
+ylDb = firebase.firestore(ylApp);
+
+// ── State ────────────────────────────────────────────────────
+let ylUser = null;
+let ylItems = [];
+let ylCurrentEditId = null;
+let ylDragData = null; // { type: 'own', id } or { type: 'external', title, url, icon }
+let ylSelectedIcon = 'fa-solid fa-globe';
+let ylListeners = {};
+let ylPushing = false;
+let ylLastPush = 0;
+let ylIsInitialLoad = true;
+let ylIsSigningIn = false;
+
+// ── Frequency & Recent Tracking ────────────────────────────
+let ylFrequentSites = {}; // url -> { title, icon, count, lastVisit }
+let ylTopFrequent = [];
+let ylRecentSites = []; // Array of { title, icon, url, timestamp }
+
+// ── Section Toggle State ───────────────────────────────────
+let ylSectionStates = {
+    mySection: true,
+    freqSection: true,
+    recentSection: true
+};
+let ylCustomSections = []; // [{ id, title, items: [{id, icon, title, url, protected}] }]
+
+// ── DOM refs ────────────────────────────────────────────────
+const grid = document.getElementById('iconGrid');
+const frequentGrid = document.getElementById('frequentGrid');
+const recentGrid = document.getElementById('recentGrid');
+const freqCount = document.getElementById('freqCount');
+const recentCount = document.getElementById('recentCount');
+const myCount = document.getElementById('myCount');
+const overlay = document.getElementById('modalOverlay');
+const modalTitle = document.getElementById('modalTitle');
+const inputTitle = document.getElementById('modalTitleInput');
+const inputUrl = document.getElementById('modalUrlInput');
+const pickerGrid = document.getElementById('iconPickerGrid');
+const addBtn = document.getElementById('addNewBtn');
+const saveBtn = document.getElementById('modalSaveBtn');
+const cancelBtn = document.getElementById('modalCancelBtn');
+const emptyHint = document.getElementById('emptyHint');
+const authBtn = document.getElementById('authBtn');
+const userName = document.getElementById('userName');
+const syncStatus = document.getElementById('syncStatus');
+
+// ── ICON LIBRARY ────────────────────────────────────────────
+const ICON_CATEGORIES = [
+    { label: '⭐ Popular', icons: [
+        'fa-solid fa-globe', 'fa-solid fa-house', 'fa-solid fa-envelope',
+        'fa-solid fa-cloud', 'fa-solid fa-folder', 'fa-solid fa-file',
+        'fa-solid fa-star', 'fa-solid fa-heart', 'fa-solid fa-bolt',
+        'fa-solid fa-gear', 'fa-solid fa-user', 'fa-solid fa-users',
+        'fa-solid fa-message', 'fa-solid fa-phone', 'fa-solid fa-location-dot',
+        'fa-solid fa-calendar', 'fa-solid fa-clock', 'fa-solid fa-pen',
+    ] },
+    { label: '📁 Business & Tools', icons: [
+        'fa-solid fa-briefcase', 'fa-solid fa-chart-line', 'fa-solid fa-chart-pie',
+        'fa-solid fa-coins', 'fa-solid fa-credit-card', 'fa-solid fa-wallet',
+        'fa-solid fa-cart-shopping', 'fa-solid fa-bag-shopping', 'fa-solid fa-gift',
+        'fa-solid fa-truck', 'fa-solid fa-store', 'fa-solid fa-shop',
+        'fa-solid fa-calculator', 'fa-solid fa-print', 'fa-solid fa-scroll',
+    ] },
+    { label: '🎨 Creative & Media', icons: [
+        'fa-solid fa-camera', 'fa-solid fa-camera-retro', 'fa-solid fa-image',
+        'fa-solid fa-video', 'fa-solid fa-film', 'fa-solid fa-music',
+        'fa-solid fa-headphones', 'fa-solid fa-palette', 'fa-solid fa-paintbrush',
+        'fa-solid fa-pen-fancy', 'fa-solid fa-pencil', 'fa-solid fa-edit',
+        'fa-solid fa-brush', 'fa-solid fa-highlighter', 'fa-solid fa-marker',
+    ] },
+    { label: '📚 Education & Science', icons: [
+        'fa-solid fa-book', 'fa-solid fa-book-open', 'fa-solid fa-graduation-cap',
+        'fa-solid fa-school', 'fa-solid fa-flask', 'fa-solid fa-microscope',
+        'fa-solid fa-dna', 'fa-solid fa-atom', 'fa-solid fa-brain',
+        'fa-solid fa-lightbulb', 'fa-solid fa-chart-simple', 'fa-solid fa-diagram-project',
+        'fa-solid fa-robot', 'fa-solid fa-microchip', 'fa-solid fa-cpu',
+    ] },
+    { label: '🌿 Nature & Weather', icons: [
+        'fa-solid fa-leaf', 'fa-solid fa-tree', 'fa-solid fa-mountain',
+        'fa-solid fa-sun', 'fa-solid fa-moon', 'fa-solid fa-cloud-sun',
+        'fa-solid fa-cloud-rain', 'fa-solid fa-snowflake', 'fa-solid fa-umbrella',
+        'fa-solid fa-water', 'fa-solid fa-fire', 'fa-solid fa-seedling',
+        'fa-solid fa-paw', 'fa-solid fa-fish', 'fa-solid fa-dog',
+    ] },
+    { label: '🏠 Lifestyle & Objects', icons: [
+        'fa-solid fa-couch', 'fa-solid fa-bed', 'fa-solid fa-chair',
+        'fa-solid fa-laptop', 'fa-solid fa-computer', 'fa-solid fa-tablet',
+        'fa-solid fa-mobile', 'fa-solid fa-tv', 'fa-solid fa-radio',
+        'fa-solid fa-crown', 'fa-solid fa-gem', 'fa-solid fa-ring',
+        'fa-solid fa-key', 'fa-solid fa-lock', 'fa-solid fa-unlock',
+    ] },
+    { label: '🚀 Tech & Dev (Brands)', icons: [
+        'fa-brands fa-github', 'fa-brands fa-twitter', 'fa-brands fa-dev',
+        'fa-brands fa-youtube', 'fa-brands fa-linkedin', 'fa-brands fa-instagram',
+        'fa-brands fa-facebook', 'fa-brands fa-tiktok', 'fa-brands fa-reddit',
+        'fa-brands fa-discord', 'fa-brands fa-slack', 'fa-brands fa-google',
+        'fa-brands fa-apple', 'fa-brands fa-windows', 'fa-brands fa-linux',
+        'fa-brands fa-android', 'fa-brands fa-chrome', 'fa-brands fa-firefox',
+        'fa-brands fa-edge', 'fa-brands fa-safari', 'fa-brands fa-node',
+        'fa-brands fa-python', 'fa-brands fa-js', 'fa-brands fa-react',
+        'fa-brands fa-vuejs', 'fa-brands fa-angular', 'fa-brands fa-docker',
+        'fa-brands fa-aws', 'fa-brands fa-azure', 'fa-brands fa-git-alt',
+    ] },
+    { label: '💬 Communication', icons: [
+        'fa-solid fa-comment', 'fa-solid fa-comments', 'fa-solid fa-comment-dots',
+        'fa-solid fa-envelope', 'fa-solid fa-paper-plane', 'fa-solid fa-share',
+        'fa-solid fa-share-alt', 'fa-solid fa-reply', 'fa-solid fa-reply-all',
+        'fa-solid fa-bell', 'fa-solid fa-bell-slash', 'fa-solid fa-bullhorn',
+        'fa-solid fa-megaphone', 'fa-solid fa-phone', 'fa-solid fa-phone-volume',
+    ] },
+    { label: '🏷️ More Solid', icons: [
+        'fa-solid fa-circle', 'fa-solid fa-square', 'fa-solid fa-circle-check',
+        'fa-solid fa-circle-xmark', 'fa-solid fa-circle-plus', 'fa-solid fa-circle-minus',
+        'fa-solid fa-check', 'fa-solid fa-xmark', 'fa-solid fa-plus',
+        'fa-solid fa-minus', 'fa-solid fa-arrow-right', 'fa-solid fa-arrow-left',
+        'fa-solid fa-arrow-up', 'fa-solid fa-arrow-down', 'fa-solid fa-rotate',
+        'fa-solid fa-spinner', 'fa-solid fa-magnifying-glass', 'fa-solid fa-filter',
+    ] }
+];
+
+// ── HELPERS ─────────────────────────────────────────────────
+function generateId() { return Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+
+function getDomain(url) {
+    try {
+        const u = new URL(url);
+        return u.hostname.replace('www.', '');
+    } catch { return url; }
+}
+
+function openPopup(url) {
+    if (!url) return;
+    let fullUrl = url;
+    if (!/^https?:\/\//i.test(url)) fullUrl = 'https://' + url;
+    window.open(fullUrl, '_blank', 'width=700,height=600,scrollbars=yes,resizable=yes,status=no,toolbar=no,menubar=no,location=yes');
+    
+    // Track frequency and recent
+    trackVisit(url);
+}
+
+// ── SECTION TOGGLE ──────────────────────────────────────────
+// Make toggleSection globally accessible
+window.toggleSection = function(sectionId) {
+    console.log('Toggling section:', sectionId);
+    const baseId = sectionId.replace(/Section$/, '');
+    const content = document.getElementById(baseId + 'Content');
+    const toggle = document.getElementById(baseId + 'Toggle');
+    
+    if (!content || !toggle) {
+        console.warn('Section not found:', sectionId);
+        return;
+    }
+    
+    const isCollapsed = content.classList.contains('collapsed');
+    console.log('Current state:', isCollapsed ? 'collapsed' : 'expanded');
+    
+    if (isCollapsed) {
+        content.classList.remove('collapsed');
+        toggle.classList.remove('collapsed');
+        ylSectionStates[sectionId] = true;
+    } else {
+        content.classList.add('collapsed');
+        toggle.classList.add('collapsed');
+        ylSectionStates[sectionId] = false;
+    }
+    
+    // Save state
+    localStorage.setItem('yanglab_section_states', JSON.stringify(ylSectionStates));
+    console.log('New state:', ylSectionStates[sectionId] ? 'expanded' : 'collapsed');
+};
+
+function loadSectionStates() {
+    const saved = localStorage.getItem('yanglab_section_states');
+    if (saved) {
+        try {
+            const states = JSON.parse(saved);
+            Object.keys(states).forEach(key => {
+                if (ylSectionStates.hasOwnProperty(key)) {
+                    ylSectionStates[key] = states[key];
+                    const baseKey = key.replace(/Section$/, '');
+                    const content = document.getElementById(baseKey + 'Content');
+                    const toggle = document.getElementById(baseKey + 'Toggle');
+                    if (content && toggle) {
+                        if (!states[key]) {
+                            content.classList.add('collapsed');
+                            toggle.classList.add('collapsed');
+                        } else {
+                            content.classList.remove('collapsed');
+                            toggle.classList.remove('collapsed');
+                        }
+                    }
+                }
+            });
+        } catch(e) {
+            console.warn('Error loading section states:', e);
+        }
+    }
+}
+
+// ── FREQUENCY & RECENT TRACKING ────────────────────────────
+function trackVisit(url) {
+    if (!url) return;
+    const domain = getDomain(url);
+    
+    // Find the item in My Websites or any custom section to get title/icon
+    let item = ylItems.find(i => i.url === url || getDomain(i.url) === domain);
+    if (!item) {
+        for (const sec of ylCustomSections) {
+            item = sec.items.find(i => i.url === url || getDomain(i.url) === domain);
+            if (item) break;
+        }
+    }
+    const title = item ? item.title : domain;
+    const icon = item ? item.icon : 'fa-solid fa-globe';
+    
+    // Update frequent
+    if (!ylFrequentSites[domain]) {
+        ylFrequentSites[domain] = { 
+            title: title, 
+            icon: icon, 
+            url: url,
+            count: 0, 
+            lastVisit: Date.now() 
+        };
+    }
+    ylFrequentSites[domain].count++;
+    ylFrequentSites[domain].lastVisit = Date.now();
+    ylFrequentSites[domain].title = title;
+    ylFrequentSites[domain].icon = icon;
+    ylFrequentSites[domain].url = url;
+    
+    // Update recent - add to front, keep max 20
+    const recentEntry = { title, icon, url, timestamp: Date.now() };
+    ylRecentSites = ylRecentSites.filter(s => s.url !== url);
+    ylRecentSites.unshift(recentEntry);
+    if (ylRecentSites.length > 20) {
+        ylRecentSites = ylRecentSites.slice(0, 20);
+    }
+    
+    // Save to localStorage
+    saveFrequentSites();
+    saveRecentSites();
+    
+    // Update top 10 and recent
+    updateTopFrequent();
+    renderRecent();
+}
+
+function updateTopFrequent() {
+    const sites = Object.values(ylFrequentSites);
+    sites.sort((a, b) => b.count - a.count || b.lastVisit - a.lastVisit);
+    ylTopFrequent = sites.slice(0, 10);
+    renderFrequent();
+}
+
+function resetFrequentSites() {
+    if (confirm('Reset all tracking data? This will clear your Top 10 Frequent and Recent 20 history.')) {
+        ylFrequentSites = {};
+        ylTopFrequent = [];
+        ylRecentSites = [];
+        localStorage.removeItem('yanglab_frequent');
+        localStorage.removeItem('yanglab_recent');
+        renderFrequent();
+        renderRecent();
+        render();
+    }
+}
+
+function saveFrequentSites() {
+    localStorage.setItem('yanglab_frequent', JSON.stringify(ylFrequentSites));
+}
+
+function saveRecentSites() {
+    localStorage.setItem('yanglab_recent', JSON.stringify(ylRecentSites));
+}
+
+function loadFrequentSites() {
+    const saved = localStorage.getItem('yanglab_frequent');
+    if (saved) {
+        try {
+            ylFrequentSites = JSON.parse(saved);
+            updateTopFrequent();
+            return true;
+        } catch(e) {}
+    }
+    return false;
+}
+
+function loadRecentSites() {
+    const saved = localStorage.getItem('yanglab_recent');
+    if (saved) {
+        try {
+            ylRecentSites = JSON.parse(saved);
+            renderRecent();
+            return true;
+        } catch(e) {}
+    }
+    return false;
+}
+
+function renderFrequent() {
+    if (ylTopFrequent.length === 0) {
+        frequentGrid.innerHTML = `<div style="width:100%; padding:1rem 0; text-align:center; color:#4a6188;">No frequent sites yet. Start clicking on websites to track!</div>`;
+        freqCount.textContent = '0';
+        return;
+    }
+    freqCount.textContent = ylTopFrequent.length;
+    
+    let html = '';
+    ylTopFrequent.forEach((item, index) => {
+        const iconHtml = item.icon ? `<i class="${item.icon}"></i>` : '🌐';
+        const rank = index + 1;
+        const rankColor = rank === 1 ? '#ff6b6b' : rank === 2 ? '#ffa94d' : rank === 3 ? '#ffd93d' : '#6c5ce7';
+        html += `
+            <div class="icon-card" data-url="${item.url}" data-title="${item.title}" data-icon="${item.icon || ''}">
+                <span class="freq-badge" style="background:${rankColor};">#${rank}</span>
+                <span class="drag-handle" draggable="true" title="Drag to pin in My Websites"><i class="fas fa-hand"></i></span>
+                <div class="icon-wrap" data-url="${item.url}" data-title="${item.title}">${iconHtml}</div>
+                <div class="title" title="${item.title}">${item.title}</div>
+                <div class="sub-info">${item.count} visits</div>
+            </div>
+        `;
+    });
+    frequentGrid.innerHTML = html;
+    
+    frequentGrid.querySelectorAll('.icon-card').forEach(card => {
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('.drag-handle')) return;
+            const url = card.getAttribute('data-url');
+            if (url) openPopup(url);
+        });
+    });
+    
+    frequentGrid.querySelectorAll('.icon-wrap').forEach(el => {
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const url = el.getAttribute('data-url');
+            if (url) openPopup(url);
+        });
+    });
+    
+    frequentGrid.querySelectorAll('.icon-card').forEach(card => {
+        const handle = card.querySelector('.drag-handle');
+        if (!handle) return;
+        handle.addEventListener('dragstart', (e) => {
+            e.stopPropagation();
+            ylDragData = {
+                type: 'external',
+                title: card.getAttribute('data-title'),
+                url: card.getAttribute('data-url'),
+                icon: card.getAttribute('data-icon'),
+            };
+            card.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'copy';
+            e.dataTransfer.setData('text/plain', card.getAttribute('data-url'));
+            const rect = card.getBoundingClientRect();
+            e.dataTransfer.setDragImage(card, rect.width / 2, rect.height / 2);
+        });
+        handle.addEventListener('dragend', (e) => {
+            e.stopPropagation();
+            card.classList.remove('dragging');
+        });
+    });
+}
+
+function renderRecent() {
+    if (ylRecentSites.length === 0) {
+        recentGrid.innerHTML = `<div style="width:100%; padding:1rem 0; text-align:center; color:#4a6188;">No recent sites yet. Start clicking on websites to track!</div>`;
+        recentCount.textContent = '0';
+        return;
+    }
+    recentCount.textContent = ylRecentSites.length;
+    
+    let html = '';
+    ylRecentSites.forEach((item, index) => {
+        const iconHtml = item.icon ? `<i class="${item.icon}"></i>` : '🌐';
+        const rank = index + 1;
+        const timeAgo = getTimeAgo(item.timestamp);
+        html += `
+            <div class="icon-card" data-url="${item.url}" data-title="${item.title}" data-icon="${item.icon || ''}">
+                <span class="recent-badge">#${rank}</span>
+                <span class="drag-handle" draggable="true" title="Drag to pin in My Websites"><i class="fas fa-hand"></i></span>
+                <div class="icon-wrap" data-url="${item.url}" data-title="${item.title}">${iconHtml}</div>
+                <div class="title" title="${item.title}">${item.title}</div>
+                <div class="sub-info">${timeAgo}</div>
+            </div>
+        `;
+    });
+    recentGrid.innerHTML = html;
+    
+    recentGrid.querySelectorAll('.icon-card').forEach(card => {
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('.drag-handle')) return;
+            const url = card.getAttribute('data-url');
+            if (url) openPopup(url);
+        });
+    });
+    
+    recentGrid.querySelectorAll('.icon-wrap').forEach(el => {
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const url = el.getAttribute('data-url');
+            if (url) openPopup(url);
+        });
+    });
+    
+    recentGrid.querySelectorAll('.icon-card').forEach(card => {
+        const handle = card.querySelector('.drag-handle');
+        if (!handle) return;
+        handle.addEventListener('dragstart', (e) => {
+            e.stopPropagation();
+            ylDragData = {
+                type: 'external',
+                title: card.getAttribute('data-title'),
+                url: card.getAttribute('data-url'),
+                icon: card.getAttribute('data-icon'),
+            };
+            card.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'copy';
+            e.dataTransfer.setData('text/plain', card.getAttribute('data-url'));
+            const rect = card.getBoundingClientRect();
+            e.dataTransfer.setDragImage(card, rect.width / 2, rect.height / 2);
+        });
+        handle.addEventListener('dragend', (e) => {
+            e.stopPropagation();
+            card.classList.remove('dragging');
+        });
+    });
+}
+
+function getTimeAgo(timestamp) {
+    const now = Date.now();
+    const diff = now - timestamp;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return minutes + 'm ago';
+    if (hours < 24) return hours + 'h ago';
+    return days + 'd ago';
+}
+
+// ── FIRESTORE HELPERS ──────────────────────────────────────
+function ylGetRef() {
+    if (!ylUser) return null;
+    return ylDb.collection('users').doc(ylUser.uid)
+               .collection('yanglab').doc('websites');
+}
+
+function ylSetSyncStatus(status) {
+    syncStatus.className = 'sync-status ' + status;
+    syncStatus.title = status === 'synced' ? 'Synced to cloud' :
+                       status === 'syncing' ? 'Syncing...' :
+                       status === 'error' ? 'Sync error' : 'Offline';
+}
+
+function ylPushToCloud() {
+    if (!ylUser || ylPushing) return;
+    const ref = ylGetRef();
+    if (!ref) return;
+    
+    ylPushing = true;
+    ylSetSyncStatus('syncing');
+    
+    const data = {
+        items: ylItems,
+        frequent: ylFrequentSites,
+        recent: ylRecentSites,
+        updatedAt: Date.now()
+    };
+    
+    ref.set(data).then(() => {
+        ylLastPush = Date.now();
+        ylPushing = false;
+        ylSetSyncStatus('synced');
+    }).catch((err) => {
+        console.warn('Push error:', err);
+        ylPushing = false;
+        ylSetSyncStatus('error');
+    });
+}
+
+function ylLoadFromCloud(forceLoad = false) {
+    if (!ylUser) return;
+    const ref = ylGetRef();
+    if (!ref) return;
+    
+    ylSetSyncStatus('syncing');
+    ref.get().then((doc) => {
+        if (doc.exists) {
+            const data = doc.data();
+            if (data.items && Array.isArray(data.items) && data.items.length > 0) {
+                ylItems = data.items;
+                ylLastPush = data.updatedAt || Date.now();
+            }
+            if (data.frequent) {
+                ylFrequentSites = data.frequent;
+                updateTopFrequent();
+            }
+            if (data.recent) {
+                ylRecentSites = data.recent;
+                renderRecent();
+            }
+            render();
+            ylSetSyncStatus('synced');
+        } else {
+            if (ylItems.length === 0) {
+                seedDefault();
+                ylPushToCloud();
+            }
+        }
+        ylIsInitialLoad = false;
+    }).catch((err) => {
+        console.warn('Load error:', err);
+        ylSetSyncStatus('error');
+        if (ylItems.length === 0) {
+            seedDefault();
+        }
+        ylIsInitialLoad = false;
+    });
+}
+
+function ylStartListening() {
+    if (ylListeners.unsubscribe) return;
+    const ref = ylGetRef();
+    if (!ref) return;
+    
+    ylListeners.unsubscribe = ref.onSnapshot((snap) => {
+        if (!snap.exists) return;
+        const data = snap.data();
+        const remoteTs = data.updatedAt || 0;
+        
+        if (ylPushing) return;
+        if (ylIsInitialLoad) return;
+        if (remoteTs <= ylLastPush) return;
+        
+        if (data.items && Array.isArray(data.items)) {
+            ylItems = data.items;
+            ylLastPush = remoteTs;
+        }
+        if (data.frequent) {
+            ylFrequentSites = data.frequent;
+            updateTopFrequent();
+        }
+        if (data.recent) {
+            ylRecentSites = data.recent;
+            renderRecent();
+        }
+        render();
+        ylSetSyncStatus('synced');
+    }, (err) => {
+        console.warn('Listener error:', err);
+    });
+}
+
+function ylStopListening() {
+    if (ylListeners.unsubscribe) {
+        ylListeners.unsubscribe();
+        ylListeners.unsubscribe = null;
+    }
+}
+
+// ── AUTH ────────────────────────────────────────────────────
+function updateAuthUI() {
+    const deleteCloudBtn = document.getElementById('deleteCloudBtn');
+    if (ylUser) {
+        const name = ylUser.displayName || ylUser.email || 'User';
+        userName.textContent = '👤 ' + name;
+        authBtn.textContent = '🚪 Sign Out';
+        authBtn.className = 'auth-btn sign-out';
+        authBtn.disabled = false;
+        if (deleteCloudBtn) deleteCloudBtn.disabled = false;
+        
+        if (ylItems.length === 0 || ylIsInitialLoad) {
+            ylLoadFromCloud(true);
+            setTimeout(ylStartListening, 500);
+        }
+    } else {
+        userName.textContent = '🔓 Not signed in';
+        authBtn.textContent = '🔑 Sign In';
+        authBtn.className = 'auth-btn';
+        authBtn.disabled = false;
+        if (deleteCloudBtn) deleteCloudBtn.disabled = true;
+        ylStopListening();
+        ylSetSyncStatus('offline');
+        
+        if (ylItems.length === 0) {
+            seedDefault();
+        }
+        ylIsInitialLoad = true;
+    }
+    ylIsSigningIn = false;
+}
+
+function toggleAuth() {
+    if (ylIsSigningIn) return;
+    
+    if (ylUser) {
+        ylStopListening();
+        ylAuth.signOut().then(() => {
+            ylUser = null;
+            updateAuthUI();
+        }).catch((e) => {
+            console.warn('Sign out error:', e);
+            ylUser = null;
+            updateAuthUI();
+        });
+        return;
+    }
+    
+    ylIsSigningIn = true;
+    authBtn.disabled = true;
+    authBtn.textContent = '⏳ Signing...';
+    
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    
+    ylAuth.signInWithPopup(provider)
+        .then((result) => {
+            ylUser = result.user;
+            ylIsSigningIn = false;
+            updateAuthUI();
+        })
+        .catch((error) => {
+            ylIsSigningIn = false;
+            authBtn.disabled = false;
+            
+            if (error.code === 'auth/popup-blocked') {
+                alert('⚠️ Popup was blocked. Please allow popups for this site and try again.');
+                authBtn.textContent = '🔑 Sign In';
+                return;
+            }
+            if (error.code === 'auth/popup-closed-by-user') {
+                authBtn.textContent = '🔑 Sign In';
+                return;
+            }
+            if (error.code === 'auth/unauthorized-domain') {
+                alert('⚠️ This domain is not authorized for Firebase authentication.');
+                authBtn.textContent = '🔑 Sign In';
+                return;
+            }
+            console.error('Sign-in error:', error);
+            alert('❌ Sign in failed: ' + error.message);
+            authBtn.textContent = '🔑 Sign In';
+        });
+}
+
+ylAuth.onAuthStateChanged((user) => {
+    ylUser = user;
+    updateAuthUI();
+});
+
+// ── RENDER ──────────────────────────────────────────────────
+function renderPicker(selectedClass) {
+    pickerGrid.innerHTML = '';
+    ICON_CATEGORIES.forEach(category => {
+        const label = document.createElement('div');
+        label.className = 'picker-section-label';
+        label.textContent = category.label;
+        pickerGrid.appendChild(label);
+        
+        category.icons.forEach(cls => {
+            const div = document.createElement('div');
+            div.className = 'picker-item' + (cls === selectedClass ? ' selected' : '');
+            div.innerHTML = `<i class="${cls}"></i>`;
+            div.dataset.iconClass = cls;
+            div.addEventListener('click', () => {
+                ylSelectedIcon = cls;
+                renderPicker(ylSelectedIcon);
+            });
+            pickerGrid.appendChild(div);
+        });
+    });
+}
+
+function render() {
+    myCount.textContent = ylItems.length;
+    
+    if (ylItems.length === 0) {
+        grid.innerHTML = `<div style="width:100%; padding:2rem 0; text-align:center; color:#4a6188;">🧪 No websites yet. Click "Add website" to start.</div>`;
+        emptyHint.style.display = 'block';
+    } else {
+        emptyHint.style.display = 'block';
+        let html = '';
+        ylItems.forEach((item, index) => {
+            const iconHtml = item.icon ? `<i class="${item.icon}"></i>` : '🌐';
+            const protectedClass = item.protected ? 'protected' : '';
+            const protectedBadge = item.protected ? `<span class="protected-badge" data-id="${item.id}" title="Click to unlock"><i class="fas fa-lock"></i> </span>` : '';
+            html += `
+                <div class="icon-card ${protectedClass}" data-id="${item.id}" data-index="${index}" data-url="${item.url}">
+                    ${protectedBadge}
+                    <span class="drag-handle" draggable="true" title="Drag to reorder"><i class="fas fa-hand"></i></span>
+                    <div class="icon-wrap" data-url="${item.url}" data-title="${item.title}">${iconHtml}</div>
+                    <div class="title" title="${item.title}">${item.title}</div>
+                    <div class="more-menu">
+                        <button class="more-btn" data-id="${item.id}" title="Options"><i class="fas fa-ellipsis-vertical"></i></button>
+                        <div class="more-dropdown" data-id="${item.id}">
+                            <button class="edit-btn" data-id="${item.id}"><i class="fas fa-edit"></i> Edit</button>
+                            <button class="lock-btn" data-id="${item.id}"><i class="fas fa-lock-open"></i> Lock</button>
+                            <button class="delete-btn" data-id="${item.id}"><i class="fas fa-trash-alt"></i> Delete</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        grid.innerHTML = html;
+        
+        grid.querySelectorAll('.icon-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                if (e.target.closest('.more-menu') || e.target.closest('.drag-handle') || e.target.closest('.protected-badge')) return;
+                const url = card.getAttribute('data-url');
+                if (url) openPopup(url);
+            });
+        });
+        
+        grid.querySelectorAll('.icon-wrap').forEach(el => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const url = el.getAttribute('data-url');
+                if (url) openPopup(url);
+            });
+        });
+        
+        grid.querySelectorAll('.protected-badge').forEach(badge => {
+            badge.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const id = badge.getAttribute('data-id');
+                const item = ylItems.find(it => it.id === id);
+                if (item && confirm(`🔓 Unlock "${item.title}"? This will allow it to be edited or deleted.`)) {
+                    item.protected = false;
+                    render();
+                    saveToLocalStorage();
+                    if (ylUser) ylPushToCloud();
+                }
+            });
+        });
+        
+        grid.querySelectorAll('.more-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const dropdown = btn.nextElementSibling;
+                const wasOpen = dropdown.classList.contains('open');
+                closeAllMoreMenus();
+                if (!wasOpen) dropdown.classList.add('open');
+            });
+        });
+        
+        grid.querySelectorAll('.edit-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeAllMoreMenus();
+                const id = btn.getAttribute('data-id');
+                const item = ylItems.find(it => it.id === id);
+                if (item && !item.protected) {
+                    openEditModal(id, item);
+                } else {
+                    alert('⛔ This icon is locked and cannot be edited.');
+                }
+            });
+        });
+        
+        grid.querySelectorAll('.lock-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeAllMoreMenus();
+                const id = btn.getAttribute('data-id');
+                const item = ylItems.find(it => it.id === id);
+                if (item) {
+                    item.protected = true;
+                    render();
+                    saveToLocalStorage();
+                    if (ylUser) ylPushToCloud();
+                }
+            });
+        });
+        
+        grid.querySelectorAll('.delete-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                closeAllMoreMenus();
+                const id = btn.getAttribute('data-id');
+                const item = ylItems.find(it => it.id === id);
+                if (item && item.protected) {
+                    alert('⛔ This icon is locked and cannot be deleted.');
+                    return;
+                }
+                if (confirm('Delete this website?')) {
+                    ylItems = ylItems.filter(it => it.id !== id);
+                    render();
+                    saveToLocalStorage();
+                    if (ylUser) ylPushToCloud();
+                }
+            });
+        });
+        
+        const cards = grid.querySelectorAll('.icon-card');
+        cards.forEach(card => {
+            const handle = card.querySelector('.drag-handle');
+            if (handle) {
+                handle.addEventListener('dragstart', (e) => {
+                    e.stopPropagation();
+                    const id = card.getAttribute('data-id');
+                    ylDragData = { type: 'own', id };
+                    card.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', id);
+                    const rect = card.getBoundingClientRect();
+                    e.dataTransfer.setDragImage(card, rect.width / 2, rect.height / 2);
+                });
+                handle.addEventListener('dragend', (e) => {
+                    e.stopPropagation();
+                    card.classList.remove('dragging');
+                    grid.classList.remove('drop-target');
+                });
+            }
+            card.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+            });
+            card.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!ylDragData) return;
+                const targetId = card.getAttribute('data-id');
+                if (ylDragData.type === 'own') {
+                    if (ylDragData.id === targetId) return;
+                    const srcIndex = ylItems.findIndex(it => it.id === ylDragData.id);
+                    const targetIndex = ylItems.findIndex(it => it.id === targetId);
+                    if (srcIndex === -1 || targetIndex === -1) return;
+                    const [removed] = ylItems.splice(srcIndex, 1);
+                    ylItems.splice(targetIndex, 0, removed);
+                } else if (ylDragData.type === 'external') {
+                    pinExternalItem(ylDragData);
+                } else if (ylDragData.type === 'ownCustom') {
+                    const data = ylDragData;
+                    ylDragData = null;
+                    moveCustomItemToMyWebsites(data.sectionId, data.id, targetId);
+                    return;
+                }
+                ylDragData = null;
+                render();
+                saveToLocalStorage();
+                if (ylUser) ylPushToCloud();
+            });
+        });
+    }
+    
+    renderFrequent();
+    renderRecent();
+}
+
+// Grid-level drop support (bound once) — lets items be dropped onto empty
+// space in My Websites, and accepts external drags from Frequent/Recent.
+grid.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    grid.classList.add('drop-target');
+});
+grid.addEventListener('dragleave', (e) => {
+    if (e.target === grid) grid.classList.remove('drop-target');
+});
+grid.addEventListener('drop', (e) => {
+    e.preventDefault();
+    grid.classList.remove('drop-target');
+    if (!ylDragData) return;
+    if (ylDragData.type === 'external') {
+        pinExternalItem(ylDragData);
+        ylDragData = null;
+        render();
+        saveToLocalStorage();
+        if (ylUser) ylPushToCloud();
+    } else if (ylDragData.type === 'ownCustom') {
+        const data = ylDragData;
+        ylDragData = null;
+        moveCustomItemToMyWebsites(data.sectionId, data.id, null);
+    } else {
+        ylDragData = null;
+    }
+});
+
+function pinExternalItem(data) {
+    const exists = ylItems.some(it => it.url === data.url);
+    if (exists) return;
+    ylItems.push({
+        id: generateId(),
+        icon: data.icon,
+        title: data.title,
+        url: data.url,
+        protected: false,
+    });
+}
+
+function moveCustomItemToMyWebsites(sectionId, itemId, insertBeforeId) {
+    const sec = ylCustomSections.find(s => s.id === sectionId);
+    if (!sec) return;
+    const idx = sec.items.findIndex(it => it.id === itemId);
+    if (idx === -1) return;
+    const item = sec.items[idx];
+    
+    const exists = ylItems.some(it => it.url === item.url);
+    if (exists) {
+        alert(`"${item.title}" is already in My Websites.`);
+        return;
+    }
+    
+    sec.items.splice(idx, 1);
+    const newItem = { id: item.id, icon: item.icon, title: item.title, url: item.url, protected: false };
+    
+    if (insertBeforeId) {
+        const targetIndex = ylItems.findIndex(it => it.id === insertBeforeId);
+        if (targetIndex !== -1) {
+            ylItems.splice(targetIndex, 0, newItem);
+        } else {
+            ylItems.push(newItem);
+        }
+    } else {
+        ylItems.push(newItem);
+    }
+    
+    renderCustomSectionGrid(sectionId);
+    saveCustomSections();
+    render();
+    saveToLocalStorage();
+    if (ylUser) ylPushToCloud();
+}
+
+// ── CUSTOM SECTIONS ──────────────────────────────────────────
+// User-defined sections that live between "My Websites" and "Top 10
+// Frequent". Each behaves like a mini My-Websites list: add/edit/
+// delete/lock items, drag to reorder within the section, click to
+// open. The section itself can be renamed or deleted. Local-only
+// (not synced to the cloud) for now.
+function generateSectionId() { return 'cs_' + generateId(); }
+
+function saveCustomSections() {
+    localStorage.setItem('yanglab_custom_sections', JSON.stringify(ylCustomSections));
+}
+
+function loadCustomSectionsData() {
+    try {
+        const saved = localStorage.getItem('yanglab_custom_sections');
+        ylCustomSections = saved ? (JSON.parse(saved) || []) : [];
+    } catch (e) {
+        console.warn('Error loading custom sections:', e);
+        ylCustomSections = [];
+    }
+    ylCustomSections.forEach(sec => {
+        if (!ylSectionStates.hasOwnProperty(sec.id + 'Section')) {
+            ylSectionStates[sec.id + 'Section'] = true;
+        }
+    });
+}
+
+function ylEscapeHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str == null ? '' : String(str);
+    return d.innerHTML;
+}
+
+function addCustomSection() {
+    const title = prompt('Name your new section:', 'New Section');
+    if (title === null) return;
+    const sec = { id: generateSectionId(), title: title.trim() || 'New Section', items: [] };
+    ylCustomSections.push(sec);
+    ylSectionStates[sec.id + 'Section'] = true;
+    saveCustomSections();
+    renderCustomSections();
+}
+
+function renameCustomSection(sectionId) {
+    const sec = ylCustomSections.find(s => s.id === sectionId);
+    if (!sec) return;
+    const title = prompt('Rename section:', sec.title);
+    if (title === null) return;
+    sec.title = title.trim() || sec.title;
+    saveCustomSections();
+    renderCustomSections();
+}
+
+function deleteCustomSection(sectionId) {
+    const sec = ylCustomSections.find(s => s.id === sectionId);
+    if (!sec) return;
+    const ok = confirm(
+        `Delete section "${sec.title}"?\n\n` +
+        `This will permanently remove it and all ${sec.items.length} website(s) inside it. This cannot be undone.`
+    );
+    if (!ok) return;
+    ylCustomSections = ylCustomSections.filter(s => s.id !== sectionId);
+    delete ylSectionStates[sectionId + 'Section'];
+    localStorage.setItem('yanglab_section_states', JSON.stringify(ylSectionStates));
+    saveCustomSections();
+    renderCustomSections();
+}
+
+function renderCustomSections() {
+    const container = document.getElementById('customSectionsContainer');
+    if (!container) return;
+    
+    let html = '';
+    ylCustomSections.forEach(sec => {
+        html += `
+            <div class="section-container" id="${sec.id}Section">
+                <div class="section-label" onclick="toggleSection('${sec.id}Section')">
+                    <i class="fas fa-layer-group"></i>
+                    <span class="section-title-text">${ylEscapeHtml(sec.title)}</span>
+                    <span class="section-header-actions">
+                        <button class="section-icon-btn" title="Add website" onclick="event.stopPropagation(); openAddModal('${sec.id}')"><i class="fas fa-plus"></i></button>
+                        <button class="section-icon-btn" title="Rename section" onclick="event.stopPropagation(); renameCustomSection('${sec.id}')"><i class="fas fa-pen"></i></button>
+                        <button class="section-icon-btn danger" title="Delete section" onclick="event.stopPropagation(); deleteCustomSection('${sec.id}')"><i class="fas fa-trash-alt"></i></button>
+                    </span>
+                    <span class="badge" id="${sec.id}Count">${sec.items.length}</span>
+                    <span class="toggle-icon" id="${sec.id}Toggle">▼</span>
+                </div>
+                <div class="section-content" id="${sec.id}Content">
+                    <div class="icon-grid" id="${sec.id}Grid"></div>
+                </div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+    
+    ylCustomSections.forEach(sec => {
+        const secGrid = document.getElementById(sec.id + 'Grid');
+        if (!secGrid) return;
+        // Grid-level drop support (bound once per freshly created grid element)
+        secGrid.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            secGrid.classList.add('drop-target');
+        });
+        secGrid.addEventListener('dragleave', (e) => {
+            if (e.target === secGrid) secGrid.classList.remove('drop-target');
+        });
+        secGrid.addEventListener('drop', (e) => {
+            e.preventDefault();
+            secGrid.classList.remove('drop-target');
+            ylDragData = null;
+        });
+        renderCustomSectionGrid(sec.id);
+    });
+    
+    // Re-apply any saved collapse states for sections that already existed
+    ylCustomSections.forEach(sec => {
+        const key = sec.id + 'Section';
+        if (ylSectionStates[key] === false) {
+            const content = document.getElementById(sec.id + 'Content');
+            const toggle = document.getElementById(sec.id + 'Toggle');
+            if (content && toggle) {
+                content.classList.add('collapsed');
+                toggle.classList.add('collapsed');
+            }
+        }
+    });
+}
+
+function renderCustomSectionGrid(sectionId) {
+    const sec = ylCustomSections.find(s => s.id === sectionId);
+    const secGrid = document.getElementById(sectionId + 'Grid');
+    const countBadge = document.getElementById(sectionId + 'Count');
+    if (!sec || !secGrid) return;
+    
+    if (countBadge) countBadge.textContent = sec.items.length;
+    
+    if (sec.items.length === 0) {
+        secGrid.innerHTML = `<div style="width:100%; padding:2rem 0; text-align:center; color:#4a6188;">📂 No websites yet. Click the + above to add one.</div>`;
+        return;
+    }
+    
+    let html = '';
+    sec.items.forEach((item, index) => {
+        const iconHtml = item.icon ? `<i class="${item.icon}"></i>` : '🌐';
+        const protectedClass = item.protected ? 'protected' : '';
+        const protectedBadge = item.protected ? `<span class="protected-badge" data-id="${item.id}" title="Click to unlock"><i class="fas fa-lock"></i> </span>` : '';
+        html += `
+            <div class="icon-card ${protectedClass}" data-id="${item.id}" data-index="${index}" data-url="${item.url}">
+                ${protectedBadge}
+                <span class="drag-handle" draggable="true" title="Drag to reorder"><i class="fas fa-hand"></i></span>
+                <div class="icon-wrap" data-url="${item.url}" data-title="${item.title}">${iconHtml}</div>
+                <div class="title" title="${item.title}">${item.title}</div>
+                <div class="more-menu">
+                    <button class="more-btn" data-id="${item.id}" title="Options"><i class="fas fa-ellipsis-vertical"></i></button>
+                    <div class="more-dropdown" data-id="${item.id}">
+                        <button class="edit-btn" data-id="${item.id}"><i class="fas fa-edit"></i> Edit</button>
+                        <button class="lock-btn" data-id="${item.id}"><i class="fas fa-lock-open"></i> Lock</button>
+                        <button class="delete-btn" data-id="${item.id}"><i class="fas fa-trash-alt"></i> Delete</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    secGrid.innerHTML = html;
+    
+    secGrid.querySelectorAll('.icon-card').forEach(card => {
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('.more-menu') || e.target.closest('.drag-handle') || e.target.closest('.protected-badge')) return;
+            const url = card.getAttribute('data-url');
+            if (url) openPopup(url);
+        });
+    });
+    
+    secGrid.querySelectorAll('.icon-wrap').forEach(el => {
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const url = el.getAttribute('data-url');
+            if (url) openPopup(url);
+        });
+    });
+    
+    secGrid.querySelectorAll('.protected-badge').forEach(badge => {
+        badge.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = badge.getAttribute('data-id');
+            const item = sec.items.find(it => it.id === id);
+            if (item && confirm(`🔓 Unlock "${item.title}"? This will allow it to be edited or deleted.`)) {
+                item.protected = false;
+                renderCustomSectionGrid(sectionId);
+                saveCustomSections();
+            }
+        });
+    });
+    
+    secGrid.querySelectorAll('.more-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const dropdown = btn.nextElementSibling;
+            const wasOpen = dropdown.classList.contains('open');
+            closeAllMoreMenus();
+            if (!wasOpen) dropdown.classList.add('open');
+        });
+    });
+    
+    secGrid.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeAllMoreMenus();
+            const id = btn.getAttribute('data-id');
+            const item = sec.items.find(it => it.id === id);
+            if (item && !item.protected) {
+                openEditModal(id, item, sectionId);
+            } else {
+                alert('⛔ This icon is locked and cannot be edited.');
+            }
+        });
+    });
+    
+    secGrid.querySelectorAll('.lock-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeAllMoreMenus();
+            const id = btn.getAttribute('data-id');
+            const item = sec.items.find(it => it.id === id);
+            if (item) {
+                item.protected = true;
+                renderCustomSectionGrid(sectionId);
+                saveCustomSections();
+            }
+        });
+    });
+    
+    secGrid.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeAllMoreMenus();
+            const id = btn.getAttribute('data-id');
+            const item = sec.items.find(it => it.id === id);
+            if (item && item.protected) {
+                alert('⛔ This icon is locked and cannot be deleted.');
+                return;
+            }
+            if (confirm('Delete this website?')) {
+                sec.items = sec.items.filter(it => it.id !== id);
+                renderCustomSectionGrid(sectionId);
+                saveCustomSections();
+            }
+        });
+    });
+    
+    secGrid.querySelectorAll('.icon-card').forEach(card => {
+        const handle = card.querySelector('.drag-handle');
+        if (handle) {
+            handle.addEventListener('dragstart', (e) => {
+                e.stopPropagation();
+                const id = card.getAttribute('data-id');
+                ylDragData = { type: 'ownCustom', sectionId, id };
+                card.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', id);
+                const rect = card.getBoundingClientRect();
+                e.dataTransfer.setDragImage(card, rect.width / 2, rect.height / 2);
+            });
+            handle.addEventListener('dragend', (e) => {
+                e.stopPropagation();
+                card.classList.remove('dragging');
+                secGrid.classList.remove('drop-target');
+            });
+        }
+        card.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+        });
+        card.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!ylDragData || ylDragData.type !== 'ownCustom' || ylDragData.sectionId !== sectionId) return;
+            const targetId = card.getAttribute('data-id');
+            if (ylDragData.id === targetId) return;
+            const srcIndex = sec.items.findIndex(it => it.id === ylDragData.id);
+            const targetIndex = sec.items.findIndex(it => it.id === targetId);
+            if (srcIndex === -1 || targetIndex === -1) return;
+            const [removed] = sec.items.splice(srcIndex, 1);
+            sec.items.splice(targetIndex, 0, removed);
+            ylDragData = null;
+            renderCustomSectionGrid(sectionId);
+            saveCustomSections();
+        });
+    });
+}
+
+// ── MODAL ──────────────────────────────────────────────────
+let ylModalTarget = 'my';
+
+function ylItemsArrayFor(target) {
+    if (target === 'my') return ylItems;
+    const sec = ylCustomSections.find(s => s.id === target);
+    return sec ? sec.items : null;
+}
+
+function openEditModal(id, item, target = 'my') {
+    ylCurrentEditId = id;
+    ylModalTarget = target;
+    modalTitle.textContent = 'Edit website';
+    inputTitle.value = item.title || '';
+    inputUrl.value = item.url || '';
+    ylSelectedIcon = item.icon || 'fa-solid fa-globe';
+    renderPicker(ylSelectedIcon);
+    overlay.classList.add('active');
+}
+
+function openAddModal(target = 'my') {
+    ylCurrentEditId = null;
+    ylModalTarget = target;
+    modalTitle.textContent = 'Add website';
+    inputTitle.value = 'My website';
+    inputUrl.value = 'https://example.com';
+    ylSelectedIcon = 'fa-solid fa-globe';
+    renderPicker(ylSelectedIcon);
+    overlay.classList.add('active');
+}
+
+function closeModal() {
+    overlay.classList.remove('active');
+    ylCurrentEditId = null;
+    ylModalTarget = 'my';
+}
+
+function saveFromModal() {
+    const icon = ylSelectedIcon;
+    const title = inputTitle.value.trim() || 'Untitled';
+    let url = inputUrl.value.trim();
+    if (!url) {
+        alert('Please enter a URL.');
+        return;
+    }
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    
+    const target = ylModalTarget;
+    const itemsArr = ylItemsArrayFor(target);
+    if (!itemsArr) { closeModal(); return; }
+    
+    if (ylCurrentEditId) {
+        const item = itemsArr.find(it => it.id === ylCurrentEditId);
+        if (item && !item.protected) {
+            item.icon = icon;
+            item.title = title;
+            item.url = url;
+        }
+    } else {
+        itemsArr.push({
+            id: generateId(),
+            icon: icon,
+            title: title,
+            url: url,
+            protected: false,
+        });
+    }
+    closeModal();
+    
+    if (target === 'my') {
+        render();
+        saveToLocalStorage();
+        if (ylUser) ylPushToCloud();
+    } else {
+        renderCustomSectionGrid(target);
+        saveCustomSections();
+    }
+}
+
+// ── LOCAL STORAGE ──────────────────────────────────────────
+function saveToLocalStorage() {
+    localStorage.setItem('yanglab_items', JSON.stringify(ylItems));
+    saveFrequentSites();
+    saveRecentSites();
+}
+
+function loadFromLocalStorage() {
+    const saved = localStorage.getItem('yanglab_items');
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                ylItems = parsed;
+                render();
+                return true;
+            }
+        } catch(e) {}
+    }
+    return false;
+}
+
+// ── SEED ────────────────────────────────────────────────────
+function seedDefault() {
+    ylItems = [
+        { id: generateId(), icon: 'fa-solid fa-calendar', title: 'Google Calendar', url: 'https://calendar.google.com/calendar/u/0/r', protected: true },
+        { id: generateId(), icon: 'fa-solid fa-d', title: 'Dynalist', url: 'https://dynalist.io/', protected: true },
+        { id: generateId(), icon: 'fa-solid fa-list', title: 'Outliner', url: 'https://yangwm2005.github.io/p/Outliner-v14.html', protected: true },
+        { id: generateId(), icon: 'fa-solid fa-chart-gantt', title: 'Gantt', url: 'https://yangwm2005.github.io/p/Gantt-v14.html', protected: true },
+        { id: generateId(), icon: 'fa-regular fa-comment-dots', title: 'Selfchat', url: 'https://yangwm2005.github.io/p/Selfchat-v24.html', protected: true },
+		{ id: generateId(), icon: 'fa-solid fa-bullseye', title: 'Weekgoal', url: 'https://yangwm2005.github.io/p/Weekgoal-v23.html', protected: true },
+        { id: generateId(), icon: 'fa-solid fa-tree', title: 'TreeWM', url: 'https://yangwm2005.github.io/p/Treewm-v23.html', protected: true },
+        { id: generateId(), icon: 'fa-brands fa-readme', title: 'Yanglab-Learning', url: 'https://www.facebook.com/messages/t/3074982265876658', protected: true },
+        { id: generateId(), icon: 'fa-solid fa-clipboard-check', title: 'Yanglab-Business', url: 'https://www.facebook.com/messages/t/5725621170812826', protected: true },
+        { id: generateId(), icon: 'fa-solid fa-chalkboard', title: 'Yanglab-Week-Reports', url: 'https://www.facebook.com/messages/t/3191707910937983', protected: true },
+
+        
+        { id: generateId(), icon: 'fa-solid fa-book', title: 'Pubmed', url: 'https://pubmed.ncbi.nlm.nih.gov/', protected: false },
+        { id: generateId(), icon: 'fa-solid fa-robot', title: 'ChatGPT', url: 'https://chatgpt.com/', protected: false },
+        { id: generateId(), icon: 'fa-solid fa-robot', title: 'Claude', url: 'https://claude.ai/chat/', protected: false },
+        { id: generateId(), icon: 'fa-solid fa-robot', title: 'Perplexity', url: 'https://www.perplexity.ai/', protected: false },
+        { id: generateId(), icon: 'fa-solid fa-robot', title: 'Gemini', url: 'https://gemini.google.com/', protected: false },
+        { id: generateId(), icon: 'fa-solid fa-robot', title: 'Gemini Notebook', url: 'https://notebook.google.com/', protected: false },
+        { id: generateId(), icon: 'fa-brands fa-mendeley', title: 'Liner', url: 'https://app.liner.com/', protected: false },
+        { id: generateId(), icon: 'fa-brands fa-mendeley', title: 'Elicit', url: 'https://elicit.com/', protected: false },
+        { id: generateId(), icon: 'fa-brands fa-mendeley', title: 'Consensus', url: 'https://consensus.app/', protected: false },
+        { id: generateId(), icon: 'fa-brands fa-mendeley', title: 'Elicit', url: 'https://elicit.com/', protected: false },
+    ];
+    render();
+    saveToLocalStorage();
+}
+
+// ── SETTINGS MENU ───────────────────────────────────────────
+function toggleSettingsMenu(e) {
+    e.stopPropagation();
+    document.getElementById('settingsDropdown').classList.toggle('open');
+}
+function closeSettingsMenu() {
+    document.getElementById('settingsDropdown').classList.remove('open');
+}
+document.addEventListener('click', (e) => {
+    const menu = document.querySelector('.settings-menu');
+    if (menu && !menu.contains(e.target)) closeSettingsMenu();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSettingsMenu();
+});
+
+// ── PER-CARD OPTIONS MENU (edit/lock/delete) ────────────────
+function closeAllMoreMenus() {
+    document.querySelectorAll('.more-dropdown.open').forEach(d => d.classList.remove('open'));
+}
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.more-menu')) closeAllMoreMenus();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAllMoreMenus();
+});
+
+function resetToDefault() {
+    if (confirm('⚠️ Reset all websites back to the original default set? This will permanently remove any websites you added, edited, reordered, locked, or unlocked.')) {
+        localStorage.removeItem('yanglab_items');
+        seedDefault();
+        if (ylUser) ylPushToCloud();
+    }
+}
+
+// ── BACKUP: Export / Import ─────────────────────────────────
+function exportData() {
+    const payload = {
+        app: 'YangLab',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        items: ylItems,
+        customSections: ylCustomSections,
+        frequentSites: ylFrequentSites,
+        recentSites: ylRecentSites,
+        sectionStates: ylSectionStates,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `yanglab-backup-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function importData(event) {
+    const file = event.target.files[0];
+    event.target.value = ''; // allow re-selecting the same file later
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        let data;
+        try {
+            data = JSON.parse(e.target.result);
+        } catch (err) {
+            alert('⚠️ That file isn\'t valid JSON. Please choose a YangLab export file.');
+            return;
+        }
+        if (!data || !Array.isArray(data.items)) {
+            alert('⚠️ This doesn\'t look like a YangLab backup file (missing "items" array).');
+            return;
+        }
+        
+        const ok = confirm(
+            `Import this backup?\n\n` +
+            `• ${data.items.length} website(s)\n` +
+            (Array.isArray(data.customSections) ? `• ${data.customSections.length} custom section(s)\n` : '') +
+            (data.exportedAt ? `• Exported: ${new Date(data.exportedAt).toLocaleString()}\n` : '') +
+            `\nThis will REPLACE your current My Websites` +
+            (Array.isArray(data.customSections) ? ', Custom Sections' : '') +
+            (data.frequentSites ? ', Frequent' : '') +
+            (data.recentSites ? ', and Recent' : '') +
+            ` data. This cannot be undone.`
+        );
+        if (!ok) return;
+        
+        ylItems = data.items;
+        saveToLocalStorage();
+        
+        if (Array.isArray(data.customSections)) {
+            ylCustomSections = data.customSections;
+            saveCustomSections();
+        }
+        
+        if (data.frequentSites && typeof data.frequentSites === 'object') {
+            ylFrequentSites = data.frequentSites;
+            saveFrequentSites();
+        }
+        if (Array.isArray(data.recentSites)) {
+            ylRecentSites = data.recentSites;
+            saveRecentSites();
+        }
+        if (data.sectionStates && typeof data.sectionStates === 'object') {
+            localStorage.setItem('yanglab_section_states', JSON.stringify(data.sectionStates));
+            loadSectionStates();
+        }
+        
+        render();
+        renderCustomSections();
+        loadSectionStates();
+        if (ylUser) ylPushToCloud();
+        alert('✅ Backup imported successfully.');
+    };
+    reader.onerror = () => alert('⚠️ Could not read that file.');
+    reader.readAsText(file);
+}
+
+// ── BROWSER HISTORY IMPORT ───────────────────────────────────
+// Reads the browser's own History database file (SQLite) that the
+// user selects via a native file picker, and merges real visit
+// counts/timestamps into Frequent & Recent. Supports Chrome/Edge/
+// Brave (chromium 'urls' table) and Firefox ('moz_places' table).
+let ylSqlJsPromise = null;
+function ylLoadSqlJs() {
+    if (ylSqlJsPromise) return ylSqlJsPromise;
+    ylSqlJsPromise = new Promise((resolve, reject) => {
+        if (window.initSqlJs) { resolve(window.initSqlJs); return; }
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js';
+        script.onload = () => resolve(window.initSqlJs);
+        script.onerror = () => reject(new Error('Could not load the SQLite reader from the CDN.'));
+        document.head.appendChild(script);
+    });
+    return ylSqlJsPromise;
+}
+
+// ── Browser-picker modal ─────────────────────────────────────
+function ylDetectOS() {
+    const s = (navigator.userAgent || navigator.platform || '').toLowerCase();
+    if (s.includes('mac')) return 'mac';
+    if (s.includes('win')) return 'windows';
+    return 'other';
+}
+
+function ylHistoryPathInfo(browser, os) {
+    const HOME = os === 'mac' ? '~' : '%USERPROFILE%';
+    const paths = {
+        mac: {
+            chrome:  '~/Library/Application Support/Google/Chrome/Default/History',
+            edge:    '~/Library/Application Support/Microsoft Edge/Default/History',
+            brave:   '~/Library/Application Support/BraveSoftware/Brave-Browser/Default/History',
+            firefox: '~/Library/Application Support/Firefox/Profiles/  (open the folder ending in ".default-release", then select "places.sqlite" inside it)',
+            safari:  '~/Library/Safari/History.db',
+        },
+        windows: {
+            chrome:  '%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History',
+            edge:    '%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\History',
+            brave:   '%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data\\Default\\History',
+            firefox: '%APPDATA%\\Mozilla\\Firefox\\Profiles\\  (open the folder ending in ".default-release", then select "places.sqlite" inside it)',
+            safari:  '(Safari for Windows has been discontinued)',
+        },
+        other: {
+            chrome:  '~/.config/google-chrome/Default/History',
+            edge:    '~/.config/microsoft-edge/Default/History',
+            brave:   '~/.config/BraveSoftware/Brave-Browser/Default/History',
+            firefox: '~/.mozilla/firefox/  (open the folder ending in ".default-release", then select "places.sqlite" inside it)',
+            safari:  '(Safari is not available on this platform)',
+        },
+    };
+    const table = paths[os] || paths.other;
+    return table[browser] || '';
+}
+
+const YL_BROWSER_NAMES = { chrome: 'Chrome', edge: 'Edge', brave: 'Brave', firefox: 'Firefox', safari: 'Safari' };
+let ylHistorySelectedBrowser = null;
+
+function openHistoryImportModal() {
+    document.getElementById('historyStepBrowser').style.display = 'block';
+    document.getElementById('historyStepPath').style.display = 'none';
+    document.getElementById('historyModalOverlay').classList.add('active');
+}
+function closeHistoryImportModal() {
+    document.getElementById('historyModalOverlay').classList.remove('active');
+}
+
+function ylSelectHistoryBrowser(browser) {
+    ylHistorySelectedBrowser = browser;
+    const os = ylDetectOS();
+    const path = ylHistoryPathInfo(browser, os);
+    const name = YL_BROWSER_NAMES[browser];
+    
+    document.getElementById('historyPathBrowserName').textContent = `Locate ${name}'s history file`;
+    document.getElementById('historyPathText').textContent = path;
+    
+    const copyBtn = document.getElementById('historyCopyBtn');
+    const copyLabel = document.getElementById('historyCopyBtnLabel');
+    copyBtn.classList.remove('copied');
+    copyLabel.textContent = 'Copy path';
+    
+    const hint = document.getElementById('historyPathHint');
+    const openBtn = document.getElementById('historyPathOpenBtn');
+    if (browser === 'safari') {
+        hint.textContent = 'Safari stores history in a format this importer doesn\'t support yet. Try Chrome, Edge, Brave, or Firefox instead for now.';
+        openBtn.style.display = 'none';
+        copyBtn.style.display = 'none';
+    } else {
+        hint.textContent = os === 'mac'
+            ? 'Click "Copy path" above. Then in the file picker, press Cmd+Shift+G, paste, and press Enter.'
+            : 'Click "Copy path" above. Then in the file picker, click the file name box, paste, and press Enter.';
+        openBtn.style.display = 'inline-flex';
+        copyBtn.style.display = 'inline-flex';
+    }
+    
+    document.getElementById('historyStepBrowser').style.display = 'none';
+    document.getElementById('historyStepPath').style.display = 'block';
+}
+
+function ylCopyHistoryPath() {
+    const text = document.getElementById('historyPathText').textContent;
+    const copyBtn = document.getElementById('historyCopyBtn');
+    const copyLabel = document.getElementById('historyCopyBtnLabel');
+    
+    const showCopied = () => {
+        copyBtn.classList.add('copied');
+        copyLabel.textContent = 'Copied!';
+        setTimeout(() => {
+            copyBtn.classList.remove('copied');
+            copyLabel.textContent = 'Copy path';
+        }, 1800);
+    };
+    const showFailed = () => {
+        copyLabel.textContent = 'Select text above & Ctrl/Cmd+C';
+        setTimeout(() => { copyLabel.textContent = 'Copy path'; }, 2500);
+    };
+    
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(showCopied).catch(() => ylCopyFallback(text, showCopied, showFailed));
+    } else {
+        ylCopyFallback(text, showCopied, showFailed);
+    }
+}
+
+function ylCopyFallback(text, onSuccess, onFail) {
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) onSuccess(); else onFail();
+    } catch {
+        onFail();
+    }
+}
+
+document.querySelectorAll('.browser-picker-item').forEach(el => {
+    el.addEventListener('click', () => ylSelectHistoryBrowser(el.getAttribute('data-browser')));
+});
+document.getElementById('historyCopyBtn').addEventListener('click', ylCopyHistoryPath);
+document.getElementById('historyModalCancelBtn').addEventListener('click', closeHistoryImportModal);
+document.getElementById('historyPathCancelBtn').addEventListener('click', closeHistoryImportModal);
+document.getElementById('historyStepBackBtn').addEventListener('click', () => {
+    document.getElementById('historyStepBrowser').style.display = 'block';
+    document.getElementById('historyStepPath').style.display = 'none';
+});
+document.getElementById('historyPathOpenBtn').addEventListener('click', () => {
+    closeHistoryImportModal();
+    document.getElementById('historyFileInput').click();
+});
+
+function importBrowserHistory(event) {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        try {
+            const initSqlJs = await ylLoadSqlJs();
+            const SQL = await initSqlJs({
+                locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}`
+            });
+            const db = new SQL.Database(new Uint8Array(e.target.result));
+            
+            const tableNames = new Set();
+            db.exec("SELECT name FROM sqlite_master WHERE type='table'")[0]?.values.forEach(row => tableNames.add(row[0]));
+            
+            let rows = [];
+            if (tableNames.has('urls')) {
+                // Chromium-based (Chrome, Edge, Brave, etc.)
+                const res = db.exec(
+                    "SELECT url, title, visit_count, last_visit_time FROM urls WHERE hidden = 0 ORDER BY visit_count DESC LIMIT 500"
+                );
+                if (res[0]) {
+                    rows = res[0].values.map(([url, title, count, lastVisitTime]) => ({
+                        url, title,
+                        count: count || 0,
+                        // WebKit epoch (microseconds since 1601-01-01) -> JS ms since 1970
+                        timestamp: lastVisitTime ? (lastVisitTime / 1000 - 11644473600000) : 0,
+                    }));
+                }
+            } else if (tableNames.has('moz_places')) {
+                // Firefox
+                const res = db.exec(
+                    "SELECT url, title, visit_count, last_visit_date FROM moz_places WHERE hidden = 0 ORDER BY visit_count DESC LIMIT 500"
+                );
+                if (res[0]) {
+                    rows = res[0].values.map(([url, title, count, lastVisitDate]) => ({
+                        url, title,
+                        count: count || 0,
+                        // microseconds since 1970 -> JS ms
+                        timestamp: lastVisitDate ? (lastVisitDate / 1000) : 0,
+                    }));
+                }
+            } else {
+                alert('⚠️ This doesn\'t look like a recognized Chrome or Firefox history file.');
+                db.close();
+                return;
+            }
+            db.close();
+            
+            rows = rows.filter(r => r.url && /^https?:\/\//i.test(r.url) && r.count > 0);
+            if (rows.length === 0) {
+                alert('No usable history entries were found in that file.');
+                return;
+            }
+            
+            mergeImportedHistory(rows);
+            alert(`✅ Imported history from ${rows.length} site(s) into Frequent & Recent.`);
+        } catch (err) {
+            console.warn('Browser history import error:', err);
+            alert('⚠️ Could not read that file as a browser history database. Make sure you selected the right file, and that it isn\'t locked by a running browser.');
+        }
+    };
+    reader.onerror = () => alert('⚠️ Could not read that file.');
+    reader.readAsArrayBuffer(file);
+}
+
+function mergeImportedHistory(rows) {
+    // Merge into Frequent (keyed by domain, like trackVisit())
+    rows.forEach(row => {
+        const domain = getDomain(row.url);
+        const existingItem = ylItems.find(i => i.url === row.url || getDomain(i.url) === domain);
+        const title = row.title || (existingItem ? existingItem.title : domain);
+        const icon = existingItem ? existingItem.icon : 'fa-solid fa-globe';
+        
+        if (!ylFrequentSites[domain]) {
+            ylFrequentSites[domain] = { title, icon, url: row.url, count: 0, lastVisit: 0 };
+        }
+        const entry = ylFrequentSites[domain];
+        entry.count = Math.max(entry.count, row.count);
+        entry.lastVisit = Math.max(entry.lastVisit, row.timestamp);
+        entry.title = entry.title || title;
+        entry.icon = entry.icon || icon;
+    });
+    saveFrequentSites();
+    updateTopFrequent();
+    
+    // Merge into Recent (by most recent timestamp, capped at 20)
+    const byUrl = new Map(ylRecentSites.map(s => [s.url, s]));
+    rows.forEach(row => {
+        const domain = getDomain(row.url);
+        const existingItem = ylItems.find(i => i.url === row.url || getDomain(i.url) === domain);
+        const title = row.title || (existingItem ? existingItem.title : domain);
+        const icon = existingItem ? existingItem.icon : 'fa-solid fa-globe';
+        const prior = byUrl.get(row.url);
+        if (!prior || row.timestamp > prior.timestamp) {
+            byUrl.set(row.url, { title, icon, url: row.url, timestamp: row.timestamp || Date.now() });
+        }
+    });
+    ylRecentSites = Array.from(byUrl.values())
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 20);
+    saveRecentSites();
+    renderRecent();
+}
+
+// ── DANGER ZONE: Cloud data / account deletion ──────────────
+function deleteCloudData() {
+    if (!ylUser) return;
+    const ok = confirm(
+        '☁️ Delete this app\'s cloud data?\n\n' +
+        'This permanently deletes YangLab\'s synced websites, frequent, and ' +
+        'recent history stored in the cloud for your account.\n\n' +
+        '• Your sign-in stays active.\n' +
+        '• Other apps in the suite (Gantt, Idealog, Selfchat, Threadline, ' +
+        'TreeWM, WeekGoals, etc.) are NOT affected — this only touches ' +
+        'YangLab\'s own data.\n' +
+        '• Your local browser data stays as-is (use "Reset Websites" ' +
+        'separately if you also want to reset what\'s shown on screen).\n\n' +
+        'This cannot be undone. Continue?'
+    );
+    if (!ok) return;
+    
+    ylStopListening();
+    const ref = ylGetRef();
+    if (!ref) return;
+    ref.delete().then(() => {
+        ylSetSyncStatus('offline');
+        alert('Cloud data for YangLab has been deleted.');
+        setTimeout(ylStartListening, 500);
+    }).catch((err) => {
+        console.warn('Delete cloud data error:', err);
+        alert('⚠️ Could not delete cloud data: ' + err.message);
+        setTimeout(ylStartListening, 500);
+    });
+}
+
+function deleteAccount() {
+    if (!ylUser) return;
+    const name = ylUser.displayName || ylUser.email || 'this account';
+    
+    const understood = confirm(
+        '🚫 Delete your account?\n\n' +
+        'IMPORTANT: This is your shared sign-in (' + name + ') used across ' +
+        'your ENTIRE app suite — Gantt, Idealog, Selfchat, Threadline, ' +
+        'TreeWM, WeekGoals, and more, not just YangLab.\n\n' +
+        'Deleting it will:\n' +
+        '• Permanently remove this sign-in credential from Firebase.\n' +
+        '• Sign you out of every app that uses it — you won\'t be able to ' +
+        'sign back in with this account anywhere in the suite.\n' +
+        '• NOT delete other apps\' stored data (it becomes orphaned under ' +
+        'a uid you can no longer authenticate as).\n' +
+        '• Also delete YangLab\'s own cloud data as part of this.\n\n' +
+        'This does NOT delete anything local to this browser.\n\n' +
+        'Are you sure you want to continue?'
+    );
+    if (!understood) return;
+    
+    const typed = prompt('Type DELETE (all caps) to confirm permanent account deletion:');
+    if (typed !== 'DELETE') {
+        if (typed !== null) alert('Confirmation text did not match. Account was not deleted.');
+        return;
+    }
+    
+    ylStopListening();
+    const ref = ylGetRef();
+    const finishDelete = () => {
+        ylUser.delete().then(() => {
+            ylUser = null;
+            updateAuthUI();
+            alert('Your account has been permanently deleted.');
+        }).catch((err) => {
+            if (err.code === 'auth/requires-recent-login') {
+                alert('For security, please sign in again to confirm this action, then retry Delete Account.');
+                const provider = new firebase.auth.GoogleAuthProvider();
+                ylAuth.signInWithPopup(provider).catch(() => {});
+            } else {
+                console.warn('Delete account error:', err);
+                alert('⚠️ Could not delete account: ' + err.message);
+            }
+        });
+    };
+    
+    if (ref) {
+        ref.delete().then(finishDelete).catch(finishDelete);
+    } else {
+        finishDelete();
+    }
+}
+
+// ── EVENT BINDING ──────────────────────────────────────────
+addBtn.addEventListener('click', openAddModal);
+saveBtn.addEventListener('click', saveFromModal);
+cancelBtn.addEventListener('click', closeModal);
+overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeModal();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && overlay.classList.contains('active')) closeModal();
+});
+
+// ── INIT ────────────────────────────────────────────────────
+// Load custom sections first so their DOM exists before section
+// states (including their collapsed/expanded state) are applied.
+loadCustomSectionsData();
+renderCustomSections();
+
+// Load section states
+loadSectionStates();
+
+// Load items from localStorage
+const loaded = loadFromLocalStorage();
+if (!loaded) {
+    seedDefault();
+}
+
+// Load frequent and recent sites
+loadFrequentSites();
+loadRecentSites();
+
+ylSetSyncStatus('offline');
+console.log('🧪 YangLab v3 — Three sections with toggle buttons: My Websites (top), Frequent 10 (middle), Recent 20 (bottom)');
+console.log('Click section headers to collapse/expand each section.');
+console.log('Toggle function is now globally accessible.');
+</script>
+</body>
+</html>
