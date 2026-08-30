@@ -426,34 +426,13 @@
             white-space: nowrap;
         }
         .tag-row {
-            position: absolute;
-            left: 50%;
-            bottom: 0;
-            transform: translate(-50%, 100%);
+            display: none;
+        }
+        .tag-row.tag-row-static {
             display: flex;
             flex-direction: column;
             align-items: center;
             gap: 4px;
-            width: max-content;
-            max-width: 220px;
-            margin-top: 6px;
-            padding: 8px 10px;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 6px 16px rgba(0, 10, 30, 0.15), 0 2px 6px rgba(0, 0, 0, 0.08);
-            opacity: 0;
-            visibility: hidden;
-            pointer-events: none;
-            transition: opacity 0.15s ease;
-            z-index: 15;
-        }
-        .icon-card:hover .tag-row {
-            opacity: 1;
-            visibility: visible;
-        }
-        .tag-row.tag-row-static {
-            position: static;
-            transform: none;
             width: auto;
             max-width: 100%;
             margin-top: 3px;
@@ -462,6 +441,27 @@
             box-shadow: none;
             opacity: 1;
             visibility: visible;
+        }
+        .hover-info-tooltip {
+            position: fixed;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            width: max-content;
+            max-width: 220px;
+            padding: 8px 10px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 6px 16px rgba(0, 10, 30, 0.15), 0 2px 6px rgba(0, 0, 0, 0.08);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            z-index: 9999;
+        }
+        .hover-info-tooltip.visible {
+            display: flex;
+            opacity: 1;
         }
         .hover-info-title {
             font-size: 0.78rem;
@@ -1163,6 +1163,8 @@
         </div>
     </div>
 </div>
+
+<div id="hoverInfoTooltip" class="hover-info-tooltip"></div>
 
 <script>
 // ── Firebase Config ──────────────────────────────────────────
@@ -1897,12 +1899,11 @@ function render() {
             const protectedClass = item.protected ? 'protected' : '';
             const protectedBadge = item.protected ? `<span class="protected-badge" data-id="${item.id}" title="Click to unlock"><i class="fas fa-lock"></i> </span>` : '';
             html += `
-                <div class="icon-card ${protectedClass}" data-id="${item.id}" data-index="${index}" data-url="${item.url}">
+                <div class="icon-card ${protectedClass}" data-id="${item.id}" data-index="${index}" data-url="${item.url}" data-title="${ylEscapeHtml(item.title)}" data-tags="${ylEscapeHtml((item.tags || []).join(','))}">
                     ${protectedBadge}
                     <span class="drag-handle" draggable="true" title="Drag to reorder"><i class="fas fa-hand"></i></span>
                     <div class="icon-wrap" data-url="${item.url}" data-title="${item.title}">${iconHtml}</div>
                     <div class="title" title="${item.title}">${item.title}</div>
-                    ${renderTagsHtml(item)}
                     <div class="more-menu">
                         <button class="more-btn" data-id="${item.id}" title="Options"><i class="fas fa-ellipsis-vertical"></i></button>
                         <div class="more-dropdown" data-id="${item.id}">
@@ -2305,16 +2306,10 @@ function ylEscapeHtml(str) {
 
 function renderTagsHtml(item, staticVisible = false) {
     const tags = item && item.tags;
-    const hasTags = Array.isArray(tags) && tags.length > 0;
-    if (!staticVisible && !item) return '';
-    if (staticVisible && !hasTags) return '';
-
+    if (!Array.isArray(tags) || tags.length === 0) return '';
     const cls = staticVisible ? 'tag-row tag-row-static' : 'tag-row';
-    const titleHtml = item.title ? `<div class="hover-info-title">${ylEscapeHtml(item.title)}</div>` : '';
-    const urlHtml = item.url ? `<div class="hover-info-url">${ylEscapeHtml(item.url)}</div>` : '';
-    const tagsHtml = hasTags ? `<div class="tag-chips-wrap">${tags.map(t => `<span class="tag-chip">${ylEscapeHtml(t)}</span>`).join('')}</div>` : '';
-
-    return `<div class="${cls}">${titleHtml}${urlHtml}${tagsHtml}</div>`;
+    const tagsHtml = `<div class="tag-chips-wrap">${tags.map(t => `<span class="tag-chip">${ylEscapeHtml(t)}</span>`).join('')}</div>`;
+    return `<div class="${cls}">${tagsHtml}</div>`;
 }
 
 function addCustomSection() {
@@ -2492,12 +2487,11 @@ function renderCustomSectionGrid(sectionId) {
         const protectedClass = item.protected ? 'protected' : '';
         const protectedBadge = item.protected ? `<span class="protected-badge" data-id="${item.id}" title="Click to unlock"><i class="fas fa-lock"></i> </span>` : '';
         html += `
-            <div class="icon-card ${protectedClass}" data-id="${item.id}" data-index="${index}" data-url="${item.url}">
+            <div class="icon-card ${protectedClass}" data-id="${item.id}" data-index="${index}" data-url="${item.url}" data-title="${ylEscapeHtml(item.title)}" data-tags="${ylEscapeHtml((item.tags || []).join(','))}">
                 ${protectedBadge}
                 <span class="drag-handle" draggable="true" title="Drag to reorder"><i class="fas fa-hand"></i></span>
                 <div class="icon-wrap" data-url="${item.url}" data-title="${item.title}">${iconHtml}</div>
                 <div class="title" title="${item.title}">${item.title}</div>
-                ${renderTagsHtml(item)}
                 <div class="more-menu">
                     <button class="more-btn" data-id="${item.id}" title="Options"><i class="fas fa-ellipsis-vertical"></i></button>
                     <div class="more-dropdown" data-id="${item.id}">
@@ -3278,31 +3272,74 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && overlay.classList.contains('active')) closeModal();
 });
 
-// Keep the hover title/URL/tags popup from spilling off the left or right
-// edge of the viewport for cards near the edge of the grid (it's normally
-// centered under the card, which overflows for the first/last card in a
-// row, especially on narrow screens).
-function repositionHoverTooltip(card) {
-    const tagRow = card.querySelector('.tag-row');
-    if (!tagRow || tagRow.classList.contains('tag-row-static')) return;
-    tagRow.style.transform = ''; // reset to the default centered position before measuring
-    const rect = tagRow.getBoundingClientRect();
+// Shared floating tooltip showing an icon's full title, URL, and tags on
+// hover. It's a single element attached directly to <body> — position:fixed
+// and outside every section's DOM — rather than one embedded per card,
+// specifically so it can't be clipped by a section's `overflow: hidden`
+// (used for the collapse/expand animation) the way an embedded tooltip
+// would be for a single-row section or the last row of any section.
+const hoverInfoTooltipEl = document.getElementById('hoverInfoTooltip');
+
+function showHoverTooltip(card) {
+    if (card.closest('#searchResultsGrid')) return; // search results show tags inline already, no popup needed
+    const title = card.getAttribute('data-title') || '';
+    const url = card.getAttribute('data-url') || '';
+    const tagsAttr = card.getAttribute('data-tags') || '';
+    const tags = tagsAttr ? tagsAttr.split(',').filter(Boolean) : [];
+    if (!title && !url) return;
+
+    const titleHtml = title ? `<div class="hover-info-title">${ylEscapeHtml(title)}</div>` : '';
+    const urlHtml = url ? `<div class="hover-info-url">${ylEscapeHtml(url)}</div>` : '';
+    const tagsHtml = tags.length ? `<div class="tag-chips-wrap">${tags.map(t => `<span class="tag-chip">${ylEscapeHtml(t)}</span>`).join('')}</div>` : '';
+    hoverInfoTooltipEl.innerHTML = titleHtml + urlHtml + tagsHtml;
+
+    // Make it measurable (but still invisible) so we can read its natural size.
+    hoverInfoTooltipEl.style.left = '0px';
+    hoverInfoTooltipEl.style.top = '0px';
+    hoverInfoTooltipEl.style.display = 'flex';
+
     const margin = 8;
-    let correction = 0;
-    if (rect.left < margin) {
-        correction = margin - rect.left;
-    } else if (rect.right > window.innerWidth - margin) {
-        correction = (window.innerWidth - margin) - rect.right;
+    const gap = 8; // space between the card and the tooltip
+    const cardRect = card.getBoundingClientRect();
+    const boxRect = hoverInfoTooltipEl.getBoundingClientRect();
+
+    const spaceBelow = window.innerHeight - cardRect.bottom;
+    const spaceAbove = cardRect.top;
+    const needed = boxRect.height + gap;
+
+    let top;
+    if (spaceBelow >= needed || spaceBelow >= spaceAbove) {
+        top = cardRect.bottom + gap;
+    } else {
+        top = cardRect.top - gap - boxRect.height;
     }
-    if (correction !== 0) {
-        tagRow.style.transform = `translate(calc(-50% + ${correction}px), 100%)`;
-    }
+    // Final safety clamp so it always stays fully on-screen, even in the
+    // rare case neither side has quite enough room.
+    top = Math.max(margin, Math.min(top, window.innerHeight - margin - boxRect.height));
+
+    let left = cardRect.left + cardRect.width / 2 - boxRect.width / 2;
+    left = Math.max(margin, Math.min(left, window.innerWidth - margin - boxRect.width));
+
+    hoverInfoTooltipEl.style.left = `${left}px`;
+    hoverInfoTooltipEl.style.top = `${top}px`;
+    hoverInfoTooltipEl.classList.add('visible');
 }
+
+function hideHoverTooltip() {
+    hoverInfoTooltipEl.classList.remove('visible');
+}
+
 document.addEventListener('mouseover', (e) => {
     const card = e.target.closest && e.target.closest('.icon-card');
     if (!card) return;
     if (e.relatedTarget && card.contains(e.relatedTarget)) return; // moved within the same card, not a fresh hover
-    repositionHoverTooltip(card);
+    showHoverTooltip(card);
+});
+document.addEventListener('mouseout', (e) => {
+    const card = e.target.closest && e.target.closest('.icon-card');
+    if (!card) return;
+    if (e.relatedTarget && card.contains(e.relatedTarget)) return; // still within the same card
+    hideHoverTooltip();
 });
 
 // ── EXTERNAL DRAG-AND-DROP (link / URL text dragged in from ─
@@ -3485,5 +3522,6 @@ console.log('🧪 YangLab v3 — Three sections with toggle buttons: My Websites
 console.log('Click section headers to collapse/expand each section.');
 console.log('Toggle function is now globally accessible.');
 </script>
+
 </body>
 </html>
