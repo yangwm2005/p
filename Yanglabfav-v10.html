@@ -1025,6 +1025,7 @@ let ylUser = null;
 let ylItems = [];
 let ylCurrentEditId = null;
 let ylDragData = null; // { type: 'own', id } or { type: 'external', title, url, icon }
+let ylInternalDragActive = false; // true for the whole lifetime of any in-app drag (own/ownCustom/external), regardless of drop target
 let ylSelectedIcon = 'fa-solid fa-globe';
 let ylListeners = {};
 let ylPushing = false;
@@ -1153,7 +1154,7 @@ function openPopup(url) {
     if (!url) return;
     let fullUrl = url;
     if (!/^https?:\/\//i.test(url)) fullUrl = 'https://' + url;
-    window.open(fullUrl, '_blank', 'width=700,height=600,scrollbars=yes,resizable=yes,status=no,toolbar=no,menubar=no,location=yes');
+    window.open(fullUrl, '_blank', 'width=1000,height=700,scrollbars=yes,resizable=yes,status=no,toolbar=no,menubar=no,location=yes');
     
     // Track frequency and recent
     trackVisit(url);
@@ -1374,12 +1375,15 @@ function renderFrequent() {
             card.classList.add('dragging');
             e.dataTransfer.effectAllowed = 'copy';
             e.dataTransfer.setData('text/plain', card.getAttribute('data-url'));
+            e.dataTransfer.setData('application/x-yanglab-internal', '1');
+            ylInternalDragActive = true;
             const rect = card.getBoundingClientRect();
             e.dataTransfer.setDragImage(card, rect.width / 2, rect.height / 2);
         });
         handle.addEventListener('dragend', (e) => {
             e.stopPropagation();
             card.classList.remove('dragging');
+            ylInternalDragActive = false;
         });
     });
 }
@@ -1439,12 +1443,15 @@ function renderRecent() {
             card.classList.add('dragging');
             e.dataTransfer.effectAllowed = 'copy';
             e.dataTransfer.setData('text/plain', card.getAttribute('data-url'));
+            e.dataTransfer.setData('application/x-yanglab-internal', '1');
+            ylInternalDragActive = true;
             const rect = card.getBoundingClientRect();
             e.dataTransfer.setDragImage(card, rect.width / 2, rect.height / 2);
         });
         handle.addEventListener('dragend', (e) => {
             e.stopPropagation();
             card.classList.remove('dragging');
+            ylInternalDragActive = false;
         });
     });
 }
@@ -1826,12 +1833,15 @@ function render() {
                     card.classList.add('dragging');
                     e.dataTransfer.effectAllowed = 'move';
                     e.dataTransfer.setData('text/plain', id);
+                    e.dataTransfer.setData('application/x-yanglab-internal', '1');
+                    ylInternalDragActive = true;
                     const rect = card.getBoundingClientRect();
                     e.dataTransfer.setDragImage(card, rect.width / 2, rect.height / 2);
                 });
                 handle.addEventListener('dragend', (e) => {
                     e.stopPropagation();
                     card.classList.remove('dragging');
+                    ylInternalDragActive = false;
                     grid.classList.remove('drop-target');
                 });
             }
@@ -1840,9 +1850,9 @@ function render() {
                 e.dataTransfer.dropEffect = 'move';
             });
             card.addEventListener('drop', (e) => {
+                if (!ylDragData) return; // not an in-app drag — let it bubble (e.g. an external link/URL drop)
                 e.preventDefault();
                 e.stopPropagation();
-                if (!ylDragData) return;
                 const targetId = card.getAttribute('data-id');
                 if (ylDragData.type === 'own') {
                     if (ylDragData.id === targetId) return;
@@ -1882,9 +1892,10 @@ grid.addEventListener('dragleave', (e) => {
     if (e.target === grid) grid.classList.remove('drop-target');
 });
 grid.addEventListener('drop', (e) => {
-    e.preventDefault();
     grid.classList.remove('drop-target');
-    if (!ylDragData) return;
+    if (!ylDragData) return; // not an in-app drag — let it bubble (e.g. an external link/URL drop)
+    e.preventDefault();
+    e.stopPropagation();
     if (ylDragData.type === 'external') {
         pinExternalItem(ylDragData);
         ylDragData = null;
@@ -1944,6 +1955,102 @@ function moveCustomItemToMyWebsites(sectionId, itemId, insertBeforeId) {
     render();
     saveToLocalStorage();
     if (ylUser) ylPushToCloud();
+}
+
+// Reverse direction of the move above: a My Websites item dragged into a
+// custom section.
+function moveMyWebsiteItemToCustomSection(itemId, targetSectionId, insertBeforeId) {
+    const targetSec = ylCustomSections.find(s => s.id === targetSectionId);
+    if (!targetSec) return;
+    const idx = ylItems.findIndex(it => it.id === itemId);
+    if (idx === -1) return;
+    const item = ylItems[idx];
+
+    const exists = targetSec.items.some(it => it.url === item.url);
+    if (exists) {
+        alert(`"${item.title}" is already in that section.`);
+        return;
+    }
+
+    ylItems.splice(idx, 1);
+    const newItem = { id: item.id, icon: item.icon, title: item.title, url: item.url, protected: false };
+
+    if (insertBeforeId) {
+        const targetIndex = targetSec.items.findIndex(it => it.id === insertBeforeId);
+        if (targetIndex !== -1) {
+            targetSec.items.splice(targetIndex, 0, newItem);
+        } else {
+            targetSec.items.push(newItem);
+        }
+    } else {
+        targetSec.items.push(newItem);
+    }
+
+    render();
+    saveToLocalStorage();
+    if (ylUser) ylPushToCloud();
+    renderCustomSectionGrid(targetSectionId);
+    saveCustomSections();
+}
+
+// One custom section's item dragged into a different custom section.
+function moveCustomItemToCustomSection(sourceSectionId, itemId, targetSectionId, insertBeforeId) {
+    if (sourceSectionId === targetSectionId) return;
+    const sourceSec = ylCustomSections.find(s => s.id === sourceSectionId);
+    const targetSec = ylCustomSections.find(s => s.id === targetSectionId);
+    if (!sourceSec || !targetSec) return;
+    const idx = sourceSec.items.findIndex(it => it.id === itemId);
+    if (idx === -1) return;
+    const item = sourceSec.items[idx];
+
+    const exists = targetSec.items.some(it => it.url === item.url);
+    if (exists) {
+        alert(`"${item.title}" is already in that section.`);
+        return;
+    }
+
+    sourceSec.items.splice(idx, 1);
+    const newItem = { id: item.id, icon: item.icon, title: item.title, url: item.url, protected: false };
+
+    if (insertBeforeId) {
+        const targetIndex = targetSec.items.findIndex(it => it.id === insertBeforeId);
+        if (targetIndex !== -1) {
+            targetSec.items.splice(targetIndex, 0, newItem);
+        } else {
+            targetSec.items.push(newItem);
+        }
+    } else {
+        targetSec.items.push(newItem);
+    }
+
+    renderCustomSectionGrid(sourceSectionId);
+    renderCustomSectionGrid(targetSectionId);
+    saveCustomSections();
+}
+
+// A Frequent/Recent card dragged directly into a custom section.
+function pinExternalItemToCustomSection(data, targetSectionId, insertBeforeId) {
+    const targetSec = ylCustomSections.find(s => s.id === targetSectionId);
+    if (!targetSec) return;
+    const exists = targetSec.items.some(it => it.url === data.url);
+    if (exists) return;
+    const newItem = {
+        id: generateId(),
+        icon: data.icon,
+        title: data.title,
+        url: data.url,
+        protected: false,
+    };
+    if (insertBeforeId) {
+        const targetIndex = targetSec.items.findIndex(it => it.id === insertBeforeId);
+        if (targetIndex !== -1) {
+            targetSec.items.splice(targetIndex, 0, newItem);
+        } else {
+            targetSec.items.push(newItem);
+        }
+    } else {
+        targetSec.items.push(newItem);
+    }
 }
 
 // ── CUSTOM SECTIONS ──────────────────────────────────────────
@@ -2054,9 +2161,28 @@ function renderCustomSections() {
             if (e.target === secGrid) secGrid.classList.remove('drop-target');
         });
         secGrid.addEventListener('drop', (e) => {
-            e.preventDefault();
             secGrid.classList.remove('drop-target');
-            ylDragData = null;
+            if (!ylDragData) return; // not an in-app drag — let it bubble (e.g. an external link/URL drop)
+            e.preventDefault();
+            e.stopPropagation();
+            if (ylDragData.type === 'own') {
+                const data = ylDragData;
+                ylDragData = null;
+                moveMyWebsiteItemToCustomSection(data.id, sec.id, null);
+            } else if (ylDragData.type === 'ownCustom') {
+                const data = ylDragData;
+                ylDragData = null;
+                if (data.sectionId === sec.id) return;
+                moveCustomItemToCustomSection(data.sectionId, data.id, sec.id, null);
+            } else if (ylDragData.type === 'external') {
+                const data = ylDragData;
+                ylDragData = null;
+                pinExternalItemToCustomSection(data, sec.id, null);
+                renderCustomSectionGrid(sec.id);
+                saveCustomSections();
+            } else {
+                ylDragData = null;
+            }
         });
         renderCustomSectionGrid(sec.id);
     });
@@ -2207,6 +2333,8 @@ function renderCustomSectionGrid(sectionId) {
                 card.classList.add('dragging');
                 e.dataTransfer.effectAllowed = 'move';
                 e.dataTransfer.setData('text/plain', id);
+                e.dataTransfer.setData('application/x-yanglab-internal', '1');
+                ylInternalDragActive = true;
                 const rect = card.getBoundingClientRect();
                 e.dataTransfer.setDragImage(card, rect.width / 2, rect.height / 2);
             });
@@ -2214,6 +2342,7 @@ function renderCustomSectionGrid(sectionId) {
                 e.stopPropagation();
                 card.classList.remove('dragging');
                 secGrid.classList.remove('drop-target');
+                ylInternalDragActive = false;
             });
         }
         card.addEventListener('dragover', (e) => {
@@ -2221,19 +2350,37 @@ function renderCustomSectionGrid(sectionId) {
             e.dataTransfer.dropEffect = 'move';
         });
         card.addEventListener('drop', (e) => {
+            if (!ylDragData) return; // not an in-app drag — let it bubble (e.g. an external link/URL drop)
             e.preventDefault();
             e.stopPropagation();
-            if (!ylDragData || ylDragData.type !== 'ownCustom' || ylDragData.sectionId !== sectionId) return;
             const targetId = card.getAttribute('data-id');
-            if (ylDragData.id === targetId) return;
-            const srcIndex = sec.items.findIndex(it => it.id === ylDragData.id);
-            const targetIndex = sec.items.findIndex(it => it.id === targetId);
-            if (srcIndex === -1 || targetIndex === -1) return;
-            const [removed] = sec.items.splice(srcIndex, 1);
-            sec.items.splice(targetIndex, 0, removed);
-            ylDragData = null;
-            renderCustomSectionGrid(sectionId);
-            saveCustomSections();
+            if (ylDragData.type === 'ownCustom' && ylDragData.sectionId === sectionId) {
+                if (ylDragData.id === targetId) { ylDragData = null; return; }
+                const srcIndex = sec.items.findIndex(it => it.id === ylDragData.id);
+                const targetIndex = sec.items.findIndex(it => it.id === targetId);
+                if (srcIndex === -1 || targetIndex === -1) { ylDragData = null; return; }
+                const [removed] = sec.items.splice(srcIndex, 1);
+                sec.items.splice(targetIndex, 0, removed);
+                ylDragData = null;
+                renderCustomSectionGrid(sectionId);
+                saveCustomSections();
+            } else if (ylDragData.type === 'ownCustom') {
+                const data = ylDragData;
+                ylDragData = null;
+                moveCustomItemToCustomSection(data.sectionId, data.id, sectionId, targetId);
+            } else if (ylDragData.type === 'own') {
+                const data = ylDragData;
+                ylDragData = null;
+                moveMyWebsiteItemToCustomSection(data.id, sectionId, targetId);
+            } else if (ylDragData.type === 'external') {
+                const data = ylDragData;
+                ylDragData = null;
+                pinExternalItemToCustomSection(data, sectionId, targetId);
+                renderCustomSectionGrid(sectionId);
+                saveCustomSections();
+            } else {
+                ylDragData = null;
+            }
         });
     });
 }
@@ -2848,6 +2995,83 @@ overlay.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && overlay.classList.contains('active')) closeModal();
+});
+
+// ── EXTERNAL DRAG-AND-DROP (link / URL text dragged in from ─
+// ── outside the app, e.g. another browser window/tab) ───────
+function extractDroppedUrl(dt) {
+    if (!dt) return null;
+
+    // Dragging a hyperlink usually carries text/html with an <a href>.
+    try {
+        const html = dt.getData('text/html');
+        if (html) {
+            const match = html.match(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
+            if (match && /^https?:\/\//i.test(match[1])) {
+                const text = match[2].replace(/<[^>]+>/g, '').trim();
+                return { url: match[1], title: text };
+            }
+        }
+    } catch (err) { /* ignore */ }
+
+    // Dragging from the address bar, or a link, often carries text/uri-list.
+    try {
+        const uriList = dt.getData('text/uri-list');
+        if (uriList) {
+            const firstLine = uriList.split('\n').map(s => s.trim()).find(s => s && !s.startsWith('#'));
+            if (firstLine && /^https?:\/\//i.test(firstLine)) {
+                return { url: firstLine, title: '' };
+            }
+        }
+    } catch (err) { /* ignore */ }
+
+    // Fallback: plain selected text — could be a bare URL, a bare domain,
+    // or a sentence/snippet that happens to contain a URL.
+    try {
+        const plain = (dt.getData('text/plain') || '').trim();
+        if (plain) {
+            if (/^https?:\/\/\S+$/i.test(plain)) {
+                return { url: plain, title: '' };
+            }
+            if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(plain) && !plain.includes(' ')) {
+                return { url: 'https://' + plain, title: '' };
+            }
+            const urlMatch = plain.match(/https?:\/\/[^\s"'<>]+/i);
+            if (urlMatch) {
+                return { url: urlMatch[0], title: '' };
+            }
+        }
+    } catch (err) { /* ignore */ }
+
+    return null;
+}
+
+document.addEventListener('dragover', (e) => {
+    if (overlay.classList.contains('active')) return; // let modal inputs behave normally
+    if (ylInternalDragActive) return; // any in-app drag (own/ownCustom/external) — never treat as an outside link
+    if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('application/x-yanglab-internal')) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+});
+
+document.addEventListener('drop', (e) => {
+    if (overlay.classList.contains('active')) return;
+    if (ylInternalDragActive) return; // any in-app drag — its own handler already dealt with it (or the drop landed somewhere unhandled, which should be a no-op, not an "add website" prompt)
+    if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('application/x-yanglab-internal')) return;
+
+    const found = extractDroppedUrl(e.dataTransfer);
+    if (!found) return;
+    e.preventDefault();
+
+    let url = found.url;
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    const title = found.title || getDomain(url) || 'My website';
+
+    openAddModal('my');
+    inputTitle.value = title;
+    inputUrl.value = url;
+    inputTitle.focus();
+    inputTitle.select();
 });
 
 // ── INIT ────────────────────────────────────────────────────
