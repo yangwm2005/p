@@ -426,12 +426,67 @@
             white-space: nowrap;
         }
         .tag-row {
+            position: absolute;
+            left: 50%;
+            bottom: 0;
+            transform: translate(-50%, 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            width: max-content;
+            max-width: 220px;
+            margin-top: 6px;
+            padding: 8px 10px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 6px 16px rgba(0, 10, 30, 0.15), 0 2px 6px rgba(0, 0, 0, 0.08);
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            z-index: 15;
+        }
+        .icon-card:hover .tag-row {
+            opacity: 1;
+            visibility: visible;
+        }
+        .tag-row.tag-row-static {
+            position: static;
+            transform: none;
+            width: auto;
+            max-width: 100%;
+            margin-top: 3px;
+            padding: 0;
+            background: transparent;
+            box-shadow: none;
+            opacity: 1;
+            visibility: visible;
+        }
+        .hover-info-title {
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: #1e2a45;
+            text-align: center;
+            word-break: break-word;
+            max-width: 100%;
+        }
+        .hover-info-url {
+            font-size: 0.68rem;
+            color: #5d6f8f;
+            text-align: center;
+            word-break: break-all;
+            max-width: 100%;
+        }
+        .tag-row.tag-row-static .hover-info-title,
+        .tag-row.tag-row-static .hover-info-url {
+            display: none;
+        }
+        .tag-chips-wrap {
             display: flex;
             flex-wrap: wrap;
             justify-content: center;
             gap: 3px;
-            margin-top: 3px;
-            max-width: 100%;
         }
         .tag-chip {
             display: inline-block;
@@ -464,8 +519,12 @@
             border: 1px solid rgba(255, 255, 255, 0.8);
             backdrop-filter: blur(2px);
             position: relative;
+            z-index: 1;
             word-break: break-word;
             text-align: center;
+        }
+        .icon-card:hover {
+            z-index: 30;
         }
         .icon-card.dragging {
             opacity: 0.3;
@@ -1843,7 +1902,7 @@ function render() {
                     <span class="drag-handle" draggable="true" title="Drag to reorder"><i class="fas fa-hand"></i></span>
                     <div class="icon-wrap" data-url="${item.url}" data-title="${item.title}">${iconHtml}</div>
                     <div class="title" title="${item.title}">${item.title}</div>
-                    ${renderTagsHtml(item.tags)}
+                    ${renderTagsHtml(item)}
                     <div class="more-menu">
                         <button class="more-btn" data-id="${item.id}" title="Options"><i class="fas fa-ellipsis-vertical"></i></button>
                         <div class="more-dropdown" data-id="${item.id}">
@@ -2244,9 +2303,18 @@ function ylEscapeHtml(str) {
     return d.innerHTML;
 }
 
-function renderTagsHtml(tags) {
-    if (!Array.isArray(tags) || tags.length === 0) return '';
-    return `<div class="tag-row">${tags.map(t => `<span class="tag-chip">${ylEscapeHtml(t)}</span>`).join('')}</div>`;
+function renderTagsHtml(item, staticVisible = false) {
+    const tags = item && item.tags;
+    const hasTags = Array.isArray(tags) && tags.length > 0;
+    if (!staticVisible && !item) return '';
+    if (staticVisible && !hasTags) return '';
+
+    const cls = staticVisible ? 'tag-row tag-row-static' : 'tag-row';
+    const titleHtml = item.title ? `<div class="hover-info-title">${ylEscapeHtml(item.title)}</div>` : '';
+    const urlHtml = item.url ? `<div class="hover-info-url">${ylEscapeHtml(item.url)}</div>` : '';
+    const tagsHtml = hasTags ? `<div class="tag-chips-wrap">${tags.map(t => `<span class="tag-chip">${ylEscapeHtml(t)}</span>`).join('')}</div>` : '';
+
+    return `<div class="${cls}">${titleHtml}${urlHtml}${tagsHtml}</div>`;
 }
 
 function addCustomSection() {
@@ -2429,7 +2497,7 @@ function renderCustomSectionGrid(sectionId) {
                 <span class="drag-handle" draggable="true" title="Drag to reorder"><i class="fas fa-hand"></i></span>
                 <div class="icon-wrap" data-url="${item.url}" data-title="${item.title}">${iconHtml}</div>
                 <div class="title" title="${item.title}">${item.title}</div>
-                ${renderTagsHtml(item.tags)}
+                ${renderTagsHtml(item)}
                 <div class="more-menu">
                     <button class="more-btn" data-id="${item.id}" title="Options"><i class="fas fa-ellipsis-vertical"></i></button>
                     <div class="more-dropdown" data-id="${item.id}">
@@ -2661,6 +2729,9 @@ function saveFromModal() {
             tags: tags,
             protected: false,
         });
+        // A freshly added website should show up in Frequent/Recent right
+        // away rather than waiting for a first click.
+        trackVisit(url);
     }
     closeModal();
     
@@ -3207,6 +3278,33 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && overlay.classList.contains('active')) closeModal();
 });
 
+// Keep the hover title/URL/tags popup from spilling off the left or right
+// edge of the viewport for cards near the edge of the grid (it's normally
+// centered under the card, which overflows for the first/last card in a
+// row, especially on narrow screens).
+function repositionHoverTooltip(card) {
+    const tagRow = card.querySelector('.tag-row');
+    if (!tagRow || tagRow.classList.contains('tag-row-static')) return;
+    tagRow.style.transform = ''; // reset to the default centered position before measuring
+    const rect = tagRow.getBoundingClientRect();
+    const margin = 8;
+    let correction = 0;
+    if (rect.left < margin) {
+        correction = margin - rect.left;
+    } else if (rect.right > window.innerWidth - margin) {
+        correction = (window.innerWidth - margin) - rect.right;
+    }
+    if (correction !== 0) {
+        tagRow.style.transform = `translate(calc(-50% + ${correction}px), 100%)`;
+    }
+}
+document.addEventListener('mouseover', (e) => {
+    const card = e.target.closest && e.target.closest('.icon-card');
+    if (!card) return;
+    if (e.relatedTarget && card.contains(e.relatedTarget)) return; // moved within the same card, not a fresh hover
+    repositionHoverTooltip(card);
+});
+
 // ── EXTERNAL DRAG-AND-DROP (link / URL text dragged in from ─
 // ── outside the app, e.g. another browser window/tab) ───────
 function extractDroppedUrl(dt) {
@@ -3333,7 +3431,7 @@ function renderSearchResults(query) {
             <div class="icon-card" data-url="${ylEscapeHtml(it.url)}" data-title="${ylEscapeHtml(it.title)}">
                 <div class="icon-wrap" data-url="${ylEscapeHtml(it.url)}">${iconHtml}</div>
                 <div class="title" title="${ylEscapeHtml(it.title)}">${ylEscapeHtml(it.title)}</div>
-                ${renderTagsHtml(it.tags)}
+                ${renderTagsHtml(it, true)}
                 <span class="search-result-source" title="${ylEscapeHtml(it.source)}">${ylEscapeHtml(it.source)}</span>
             </div>
         `;
