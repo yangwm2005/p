@@ -364,6 +364,88 @@
             background: rgba(58, 107, 240, 0.12);
             box-shadow: inset 0 0 0 2px #3a6bf0;
         }
+        .section-container.drop-target {
+            background: rgba(58, 107, 240, 0.08);
+            box-shadow: inset 0 0 0 2px #3a6bf0;
+            border-radius: 24px;
+        }
+
+        .search-bar-row {
+            margin: 0 0 20px;
+        }
+        .search-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 40px;
+            padding: 10px 20px;
+            box-shadow: 0 2px 10px rgba(30, 50, 90, 0.08);
+        }
+        .search-bar-icon {
+            color: #4a6188;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+        .search-bar input {
+            flex: 1;
+            border: none;
+            background: transparent;
+            outline: none;
+            font-size: 1rem;
+            color: #1e2a45;
+            font-family: inherit;
+        }
+        .search-bar input::placeholder { color: #8497b8; }
+        .search-clear-btn {
+            border: none;
+            background: rgba(58, 107, 240, 0.1);
+            color: #3a6bf0;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            cursor: pointer;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: 0.15s;
+        }
+        .search-clear-btn:hover { background: #3a6bf0; color: white; }
+        .search-result-source {
+            display: inline-block;
+            font-size: 0.68rem;
+            color: #3a6bf0;
+            background: rgba(58, 107, 240, 0.1);
+            border-radius: 8px;
+            padding: 1px 7px;
+            margin-top: 2px;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .tag-row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 3px;
+            margin-top: 3px;
+            max-width: 100%;
+        }
+        .tag-chip {
+            display: inline-block;
+            font-size: 0.64rem;
+            line-height: 1.4;
+            color: #4a6188;
+            background: rgba(74, 97, 136, 0.1);
+            border-radius: 8px;
+            padding: 1px 7px;
+            max-width: 100px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
         
         .icon-card {
             background: white;
@@ -899,6 +981,24 @@
         </div>
     </div>
     
+    <div class="search-bar-row">
+        <div class="search-bar">
+            <i class="fas fa-magnifying-glass search-bar-icon"></i>
+            <input type="text" id="siteSearchInput" placeholder="Search your websites by name or URL…" autocomplete="off">
+            <button class="search-clear-btn" id="siteSearchClearBtn" title="Clear search" style="display:none;"><i class="fas fa-xmark"></i></button>
+        </div>
+    </div>
+
+    <div class="section-container" id="searchResultsSection" style="display:none;">
+        <div class="section-label">
+            <i class="fas fa-magnifying-glass"></i> Search Results
+            <span class="badge" id="searchResultsCount">0</span>
+        </div>
+        <div class="section-content">
+            <div class="icon-grid" id="searchResultsGrid"></div>
+        </div>
+    </div>
+
     <!-- SECTION 1: My Websites (Top) -->
     <div class="section-container" id="mySection">
         <div class="section-label" onclick="toggleSection('mySection')">
@@ -957,6 +1057,8 @@
         <input type="text" id="modalTitleInput" placeholder="My site" value="Website" />
         <label for="modalUrlInput">URL (https://...)</label>
         <input type="url" id="modalUrlInput" placeholder="https://example.com" value="https://example.com" />
+        <label for="modalTagsInput">Tags <span style="font-weight:400;color:#5d6f8f;font-size:0.8rem;">(comma-separated, optional)</span></label>
+        <input type="text" id="modalTagsInput" placeholder="e.g. lab, reference, tools" />
         <label>Choose an icon <span style="font-weight:400;color:#5d6f8f;font-size:0.8rem;">(click to select)</span></label>
         <div class="icon-picker-wrapper">
             <div class="icon-picker-grid" id="iconPickerGrid"></div>
@@ -1057,6 +1159,7 @@ const overlay = document.getElementById('modalOverlay');
 const modalTitle = document.getElementById('modalTitle');
 const inputTitle = document.getElementById('modalTitleInput');
 const inputUrl = document.getElementById('modalUrlInput');
+const inputTags = document.getElementById('modalTagsInput');
 const pickerGrid = document.getElementById('iconPickerGrid');
 const addBtn = document.getElementById('addNewBtn');
 const saveBtn = document.getElementById('modalSaveBtn');
@@ -1142,6 +1245,25 @@ const ICON_CATEGORIES = [
 
 // ── HELPERS ─────────────────────────────────────────────────
 function generateId() { return Date.now() + '-' + Math.random().toString(36).slice(2, 8); }
+
+function parseTagsInput(str) {
+    if (!str) return [];
+    const seen = new Set();
+    const out = [];
+    str.split(',').forEach(raw => {
+        const t = raw.trim();
+        if (!t) return;
+        const key = t.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push(t);
+    });
+    return out;
+}
+
+function formatTagsInput(tags) {
+    return Array.isArray(tags) ? tags.join(', ') : '';
+}
 
 function getDomain(url) {
     try {
@@ -1721,6 +1843,7 @@ function render() {
                     <span class="drag-handle" draggable="true" title="Drag to reorder"><i class="fas fa-hand"></i></span>
                     <div class="icon-wrap" data-url="${item.url}" data-title="${item.title}">${iconHtml}</div>
                     <div class="title" title="${item.title}">${item.title}</div>
+                    ${renderTagsHtml(item.tags)}
                     <div class="more-menu">
                         <button class="more-btn" data-id="${item.id}" title="Options"><i class="fas fa-ellipsis-vertical"></i></button>
                         <div class="more-dropdown" data-id="${item.id}">
@@ -1911,6 +2034,41 @@ grid.addEventListener('drop', (e) => {
     }
 });
 
+// Whole-section fallback: the grid itself has generous padding, but the
+// section header and the gaps around the grid have no drop handler of
+// their own. Without this, a drop that lands a few pixels outside the
+// tight grid silently does nothing and the icon appears to "stay" in its
+// original section. This catches those drops anywhere within the section.
+const mySectionEl = document.getElementById('mySection');
+mySectionEl.addEventListener('dragover', (e) => {
+    if (!ylInternalDragActive) return; // only widen the target for in-app drags; external link drops keep using the document-level handler
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    mySectionEl.classList.add('drop-target');
+});
+mySectionEl.addEventListener('dragleave', (e) => {
+    if (e.target === mySectionEl) mySectionEl.classList.remove('drop-target');
+});
+mySectionEl.addEventListener('drop', (e) => {
+    mySectionEl.classList.remove('drop-target');
+    if (!ylDragData) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (ylDragData.type === 'external') {
+        pinExternalItem(ylDragData);
+        ylDragData = null;
+        render();
+        saveToLocalStorage();
+        if (ylUser) ylPushToCloud();
+    } else if (ylDragData.type === 'ownCustom') {
+        const data = ylDragData;
+        ylDragData = null;
+        moveCustomItemToMyWebsites(data.sectionId, data.id, null);
+    } else {
+        ylDragData = null;
+    }
+});
+
 function pinExternalItem(data) {
     const exists = ylItems.some(it => it.url === data.url);
     if (exists) return;
@@ -1937,7 +2095,7 @@ function moveCustomItemToMyWebsites(sectionId, itemId, insertBeforeId) {
     }
     
     sec.items.splice(idx, 1);
-    const newItem = { id: item.id, icon: item.icon, title: item.title, url: item.url, protected: false };
+    const newItem = { id: item.id, icon: item.icon, title: item.title, url: item.url, tags: item.tags, protected: false };
     
     if (insertBeforeId) {
         const targetIndex = ylItems.findIndex(it => it.id === insertBeforeId);
@@ -1973,7 +2131,7 @@ function moveMyWebsiteItemToCustomSection(itemId, targetSectionId, insertBeforeI
     }
 
     ylItems.splice(idx, 1);
-    const newItem = { id: item.id, icon: item.icon, title: item.title, url: item.url, protected: false };
+    const newItem = { id: item.id, icon: item.icon, title: item.title, url: item.url, tags: item.tags, protected: false };
 
     if (insertBeforeId) {
         const targetIndex = targetSec.items.findIndex(it => it.id === insertBeforeId);
@@ -2010,7 +2168,7 @@ function moveCustomItemToCustomSection(sourceSectionId, itemId, targetSectionId,
     }
 
     sourceSec.items.splice(idx, 1);
-    const newItem = { id: item.id, icon: item.icon, title: item.title, url: item.url, protected: false };
+    const newItem = { id: item.id, icon: item.icon, title: item.title, url: item.url, tags: item.tags, protected: false };
 
     if (insertBeforeId) {
         const targetIndex = targetSec.items.findIndex(it => it.id === insertBeforeId);
@@ -2084,6 +2242,11 @@ function ylEscapeHtml(str) {
     const d = document.createElement('div');
     d.textContent = str == null ? '' : String(str);
     return d.innerHTML;
+}
+
+function renderTagsHtml(tags) {
+    if (!Array.isArray(tags) || tags.length === 0) return '';
+    return `<div class="tag-row">${tags.map(t => `<span class="tag-chip">${ylEscapeHtml(t)}</span>`).join('')}</div>`;
 }
 
 function addCustomSection() {
@@ -2184,6 +2347,47 @@ function renderCustomSections() {
                 ylDragData = null;
             }
         });
+
+        // Whole-section fallback (same rationale as My Websites, above): the
+        // header, padding, and gaps around this section's grid aren't
+        // covered by the grid's own listener, so a drop that lands just
+        // outside it would otherwise silently do nothing.
+        const secSectionEl = document.getElementById(sec.id + 'Section');
+        if (secSectionEl) {
+            secSectionEl.addEventListener('dragover', (e) => {
+                if (!ylInternalDragActive) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                secSectionEl.classList.add('drop-target');
+            });
+            secSectionEl.addEventListener('dragleave', (e) => {
+                if (e.target === secSectionEl) secSectionEl.classList.remove('drop-target');
+            });
+            secSectionEl.addEventListener('drop', (e) => {
+                secSectionEl.classList.remove('drop-target');
+                if (!ylDragData) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (ylDragData.type === 'own') {
+                    const data = ylDragData;
+                    ylDragData = null;
+                    moveMyWebsiteItemToCustomSection(data.id, sec.id, null);
+                } else if (ylDragData.type === 'ownCustom') {
+                    const data = ylDragData;
+                    ylDragData = null;
+                    if (data.sectionId === sec.id) return;
+                    moveCustomItemToCustomSection(data.sectionId, data.id, sec.id, null);
+                } else if (ylDragData.type === 'external') {
+                    const data = ylDragData;
+                    ylDragData = null;
+                    pinExternalItemToCustomSection(data, sec.id, null);
+                    renderCustomSectionGrid(sec.id);
+                    saveCustomSections();
+                } else {
+                    ylDragData = null;
+                }
+            });
+        }
         renderCustomSectionGrid(sec.id);
     });
     
@@ -2225,6 +2429,7 @@ function renderCustomSectionGrid(sectionId) {
                 <span class="drag-handle" draggable="true" title="Drag to reorder"><i class="fas fa-hand"></i></span>
                 <div class="icon-wrap" data-url="${item.url}" data-title="${item.title}">${iconHtml}</div>
                 <div class="title" title="${item.title}">${item.title}</div>
+                ${renderTagsHtml(item.tags)}
                 <div class="more-menu">
                     <button class="more-btn" data-id="${item.id}" title="Options"><i class="fas fa-ellipsis-vertical"></i></button>
                     <div class="more-dropdown" data-id="${item.id}">
@@ -2400,6 +2605,7 @@ function openEditModal(id, item, target = 'my') {
     modalTitle.textContent = 'Edit website';
     inputTitle.value = item.title || '';
     inputUrl.value = item.url || '';
+    inputTags.value = formatTagsInput(item.tags);
     ylSelectedIcon = item.icon || 'fa-solid fa-globe';
     renderPicker(ylSelectedIcon);
     overlay.classList.add('active');
@@ -2411,6 +2617,7 @@ function openAddModal(target = 'my') {
     modalTitle.textContent = 'Add website';
     inputTitle.value = 'My website';
     inputUrl.value = 'https://example.com';
+    inputTags.value = '';
     ylSelectedIcon = 'fa-solid fa-globe';
     renderPicker(ylSelectedIcon);
     overlay.classList.add('active');
@@ -2431,6 +2638,7 @@ function saveFromModal() {
         return;
     }
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    const tags = parseTagsInput(inputTags.value);
     
     const target = ylModalTarget;
     const itemsArr = ylItemsArrayFor(target);
@@ -2442,6 +2650,7 @@ function saveFromModal() {
             item.icon = icon;
             item.title = title;
             item.url = url;
+            item.tags = tags;
         }
     } else {
         itemsArr.push({
@@ -2449,6 +2658,7 @@ function saveFromModal() {
             icon: icon,
             title: title,
             url: url,
+            tags: tags,
             protected: false,
         });
     }
@@ -2987,7 +3197,7 @@ function deleteAccount() {
 }
 
 // ── EVENT BINDING ──────────────────────────────────────────
-addBtn.addEventListener('click', openAddModal);
+addBtn.addEventListener('click', () => openAddModal('my'));
 saveBtn.addEventListener('click', saveFromModal);
 cancelBtn.addEventListener('click', closeModal);
 overlay.addEventListener('click', (e) => {
@@ -3073,6 +3283,85 @@ document.addEventListener('drop', (e) => {
     inputTitle.focus();
     inputTitle.select();
 });
+
+// ── SITE SEARCH ─────────────────────────────────────────────
+// Searches across My Websites, every custom section, Frequent, and
+// Recent — matching against title and URL — and shows results in a
+// dedicated section, live as the user types.
+const searchInputEl = document.getElementById('siteSearchInput');
+const searchClearBtnEl = document.getElementById('siteSearchClearBtn');
+const searchResultsSectionEl = document.getElementById('searchResultsSection');
+const searchResultsGridEl = document.getElementById('searchResultsGrid');
+const searchResultsCountEl = document.getElementById('searchResultsCount');
+
+function collectSearchableItems() {
+    const items = [];
+    ylItems.forEach(it => items.push({ title: it.title, url: it.url, icon: it.icon, tags: it.tags, source: 'My Websites' }));
+    ylCustomSections.forEach(sec => {
+        sec.items.forEach(it => items.push({ title: it.title, url: it.url, icon: it.icon, tags: it.tags, source: sec.title }));
+    });
+    return items;
+}
+
+function renderSearchResults(query) {
+    const q = query.trim().toLowerCase();
+
+    if (!q) {
+        searchResultsSectionEl.style.display = 'none';
+        return;
+    }
+
+    searchResultsSectionEl.style.display = '';
+
+    const matches = collectSearchableItems().filter(it =>
+        (it.title && it.title.toLowerCase().includes(q)) ||
+        (it.url && it.url.toLowerCase().includes(q)) ||
+        (Array.isArray(it.tags) && it.tags.some(t => t.toLowerCase().includes(q)))
+    );
+
+    searchResultsCountEl.textContent = matches.length;
+
+    if (matches.length === 0) {
+        searchResultsGridEl.innerHTML = `<div style="width:100%; padding:1rem 0; text-align:center; color:#4a6188;">No websites match "${ylEscapeHtml(query.trim())}".</div>`;
+        return;
+    }
+
+    let html = '';
+    matches.forEach(it => {
+        const iconHtml = it.icon ? `<i class="${it.icon}"></i>` : '🌐';
+        html += `
+            <div class="icon-card" data-url="${ylEscapeHtml(it.url)}" data-title="${ylEscapeHtml(it.title)}">
+                <div class="icon-wrap" data-url="${ylEscapeHtml(it.url)}">${iconHtml}</div>
+                <div class="title" title="${ylEscapeHtml(it.title)}">${ylEscapeHtml(it.title)}</div>
+                ${renderTagsHtml(it.tags)}
+                <span class="search-result-source" title="${ylEscapeHtml(it.source)}">${ylEscapeHtml(it.source)}</span>
+            </div>
+        `;
+    });
+    searchResultsGridEl.innerHTML = html;
+
+    searchResultsGridEl.querySelectorAll('.icon-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const url = card.getAttribute('data-url');
+            if (url) openPopup(url);
+        });
+    });
+}
+
+if (searchInputEl) {
+    searchInputEl.addEventListener('input', () => {
+        searchClearBtnEl.style.display = searchInputEl.value ? 'flex' : 'none';
+        renderSearchResults(searchInputEl.value);
+    });
+}
+if (searchClearBtnEl) {
+    searchClearBtnEl.addEventListener('click', () => {
+        searchInputEl.value = '';
+        searchClearBtnEl.style.display = 'none';
+        renderSearchResults('');
+        searchInputEl.focus();
+    });
+}
 
 // ── INIT ────────────────────────────────────────────────────
 // Load custom sections first so their DOM exists before section
