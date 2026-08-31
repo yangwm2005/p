@@ -6027,8 +6027,32 @@ function insertNewCheckboxLine(currentLine) {
             return saveProjectNow(currentProjectId).then(doSwitch);
         }
 
+        // Guards against overlapping switches. switchProject does a
+        // save-then-fetch-then-rebuild chain (several sequential
+        // Firestore round trips) before currentProjectId updates — so a
+        // click while one is still in flight used to compare against a
+        // stale currentProjectId and kick off a second full switch on
+        // top of the first. Several of those overlapping chains could
+        // pile up and finish out of order, so nothing visibly changed
+        // until enough clicks had queued up for the right one to win the
+        // race. Now only one switch runs at a time; a click that arrives
+        // mid-switch just remembers its target and it runs next, so
+        // rapid clicking always settles on the last thing you actually
+        // clicked instead of racing.
+        let switchInFlight = false;
+        let pendingSwitchTarget = null;
+
         window.switchProjectFromMenu = function (projectId) {
-            if (projectId === currentProjectId) { closeProjectsMenu(); return; }
+            if (projectId === currentProjectId && !switchInFlight) { closeProjectsMenu(); return; }
+            if (switchInFlight) {
+                pendingSwitchTarget = projectId;
+                return;
+            }
+            performProjectSwitch(projectId);
+        };
+
+        function performProjectSwitch(projectId) {
+            switchInFlight = true;
             setStatus('Switching…');
             switchProject(projectId).then(function () {
                 renderProjectsList();
@@ -6037,8 +6061,15 @@ function insertNewCheckboxLine(currentLine) {
             }).catch(function (err) {
                 console.error('Switch project failed:', err);
                 setStatus('Switch failed');
+            }).then(function () {
+                switchInFlight = false;
+                if (pendingSwitchTarget !== null) {
+                    const next = pendingSwitchTarget;
+                    pendingSwitchTarget = null;
+                    if (next !== currentProjectId) performProjectSwitch(next);
+                }
             });
-        };
+        }
 
         function saveProjectNow(projectId) {
             const json = JSON.stringify(serializeTablesContainer());
