@@ -1033,6 +1033,9 @@
                 <input type="file" id="historyFileInput" style="display:none;" onchange="importBrowserHistory(event)">
                 <hr>
                 <div class="settings-section-label">Cloud Account</div>
+                <button onclick="closeSettingsMenu(); syncNowManual();" id="syncNowBtn" disabled>
+                    <i class="fas fa-cloud-arrow-up"></i> Sync Now
+                </button>
                 <button onclick="closeSettingsMenu(); deleteCloudData();" class="danger" id="deleteCloudBtn" disabled>
                     <i class="fas fa-cloud-arrow-down"></i> Delete Cloud Data
                 </button>
@@ -1189,6 +1192,16 @@ let ylItems = [];
 let ylCurrentEditId = null;
 let ylDragData = null; // { type: 'own', id } or { type: 'external', title, url, icon }
 let ylInternalDragActive = false; // true for the whole lifetime of any in-app drag (own/ownCustom/external), regardless of drop target
+
+// Safety net for the 'drop-target' highlight class: when a drop lands
+// directly on an existing icon (not empty grid space), the card-level
+// handler stops the event from bubbling, so the grid/section-level
+// handler that normally clears the highlight never runs. dragend always
+// fires exactly once per drag gesture regardless of where it landed, so
+// clearing every highlight there guarantees nothing is ever left stuck.
+function clearAllDropHighlights() {
+    document.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+}
 let ylSelectedIcon = 'fa-solid fa-globe';
 let ylListeners = {};
 let ylPushing = false;
@@ -1567,6 +1580,7 @@ function renderFrequent() {
             e.stopPropagation();
             card.classList.remove('dragging');
             ylInternalDragActive = false;
+            clearAllDropHighlights();
         });
     });
 }
@@ -1635,6 +1649,7 @@ function renderRecent() {
             e.stopPropagation();
             card.classList.remove('dragging');
             ylInternalDragActive = false;
+            clearAllDropHighlights();
         });
     });
 }
@@ -1678,6 +1693,7 @@ function ylPushToCloud() {
         items: ylItems,
         frequent: ylFrequentSites,
         recent: ylRecentSites,
+        customSections: ylCustomSections,
         updatedAt: Date.now()
     };
     
@@ -1690,6 +1706,14 @@ function ylPushToCloud() {
         ylPushing = false;
         ylSetSyncStatus('error');
     });
+}
+
+// One-button manual sync: pushes everything currently in memory — My
+// Websites, all custom sections, Frequent, and Recent — to the cloud right
+// now, rather than waiting for the next automatic save-triggered push.
+function syncNowManual() {
+    if (!ylUser) return;
+    ylPushToCloud();
 }
 
 function ylLoadFromCloud(forceLoad = false) {
@@ -1712,6 +1736,11 @@ function ylLoadFromCloud(forceLoad = false) {
             if (data.recent) {
                 ylRecentSites = data.recent;
                 renderRecent();
+            }
+            if (data.customSections && Array.isArray(data.customSections)) {
+                ylCustomSections = data.customSections;
+                saveCustomSectionsLocal();
+                renderCustomSections();
             }
             render();
             ylSetSyncStatus('synced');
@@ -1758,6 +1787,11 @@ function ylStartListening() {
             ylRecentSites = data.recent;
             renderRecent();
         }
+        if (data.customSections && Array.isArray(data.customSections)) {
+            ylCustomSections = data.customSections;
+            saveCustomSectionsLocal();
+            renderCustomSections();
+        }
         render();
         ylSetSyncStatus('synced');
     }, (err) => {
@@ -1775,6 +1809,7 @@ function ylStopListening() {
 // ── AUTH ────────────────────────────────────────────────────
 function updateAuthUI() {
     const deleteCloudBtn = document.getElementById('deleteCloudBtn');
+    const syncNowBtn = document.getElementById('syncNowBtn');
     if (ylUser) {
         const name = ylUser.displayName || ylUser.email || 'User';
         userName.textContent = '👤 ' + name;
@@ -1782,6 +1817,7 @@ function updateAuthUI() {
         authBtn.className = 'auth-btn sign-out';
         authBtn.disabled = false;
         if (deleteCloudBtn) deleteCloudBtn.disabled = false;
+        if (syncNowBtn) syncNowBtn.disabled = false;
         
         if (ylItems.length === 0 || ylIsInitialLoad) {
             ylLoadFromCloud(true);
@@ -1793,6 +1829,7 @@ function updateAuthUI() {
         authBtn.className = 'auth-btn';
         authBtn.disabled = false;
         if (deleteCloudBtn) deleteCloudBtn.disabled = true;
+        if (syncNowBtn) syncNowBtn.disabled = true;
         ylStopListening();
         ylSetSyncStatus('offline');
         
@@ -2026,6 +2063,7 @@ function render() {
                     card.classList.remove('dragging');
                     ylInternalDragActive = false;
                     grid.classList.remove('drop-target');
+                    clearAllDropHighlights();
                 });
             }
             card.addEventListener('dragover', (e) => {
@@ -2279,8 +2317,13 @@ function pinExternalItemToCustomSection(data, targetSectionId, insertBeforeId) {
 // (not synced to the cloud) for now.
 function generateSectionId() { return 'cs_' + generateId(); }
 
-function saveCustomSections() {
+function saveCustomSectionsLocal() {
     localStorage.setItem('yanglab_custom_sections', JSON.stringify(ylCustomSections));
+}
+
+function saveCustomSections() {
+    saveCustomSectionsLocal();
+    if (ylUser) ylPushToCloud();
 }
 
 function loadCustomSectionsData() {
@@ -2610,6 +2653,7 @@ function renderCustomSectionGrid(sectionId) {
                 card.classList.remove('dragging');
                 secGrid.classList.remove('drop-target');
                 ylInternalDragActive = false;
+                clearAllDropHighlights();
             });
         }
         card.addEventListener('dragover', (e) => {
