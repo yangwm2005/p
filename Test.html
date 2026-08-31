@@ -6108,59 +6108,91 @@ function insertNewCheckboxLine(currentLine) {
 
         function switchProject(projectId, opts) {
             opts = opts || {};
+
+            function applySwitchResult(result) {
+                suppressAutoSave = true;
+                let parsed;
+                try { parsed = JSON.parse(result.json); }
+                catch (err) { parsed = defaultProjectTablesData(); }
+                rebuildTablesContainer(parsed);
+                suppressAutoSave = false;
+                currentProjectId = projectId;
+                applyProjectNameToUI(result.name);
+                // Bookkeeping only ("which project was open last") — the
+                // switch itself doesn't need to wait on this, so it runs
+                // in the background instead of adding another round trip
+                // to the critical path.
+                db.collection('users').doc(currentUser.uid)
+                    .set({ weekgoalCurrentProjectId: projectId }, { merge: true })
+                    .catch(function (err) { console.error('Could not save current-project pointer:', err); });
+            }
+
             const doSwitch = function () {
+                const cached = currentUser ? readLocalProject(currentUser.uid, projectId) : null;
+                if (cached && cached.json) {
+                    // Local-first: this project has been opened on this
+                    // device before, so switch to it immediately from the
+                    // local backup instead of waiting on a network round
+                    // trip. Refresh the backup from the cloud in the
+                    // background afterward (in case another device
+                    // changed it) — that refresh never touches the
+                    // already-rendered view, so it can't clobber
+                    // anything mid-edit.
+                    const knownName = (projectsCache.find(function (p) { return p.id === projectId; }) || {}).name;
+                    applySwitchResult({ json: cached.json, name: cached.name || knownName });
+                    projectsCollection().doc(projectId).get().then(function (doc) {
+                        const data = doc.data();
+                        if (!data) return;
+                        writeLocalProject(currentUser.uid, projectId, {
+                            json: data.json,
+                            name: data.name,
+                            updatedAtMs: (data.updatedAt && data.updatedAt.toMillis) ? data.updatedAt.toMillis() : Date.now(),
+                            pendingSync: false
+                        });
+                    }).catch(function (err) { console.error('Background refresh failed:', err); });
+                    return Promise.resolve();
+                }
+                // Never opened on this device — no local copy to switch
+                // to instantly, so this one genuinely has to wait on the
+                // cloud (the only unavoidable case).
                 return projectsCollection().doc(projectId).get().then(function (doc) {
                     const data = doc.data();
                     if (!data) throw new Error('Project not found');
-                    // Cloud fetch worked — this is the freshest known
-                    // state, so keep the local backup in sync with it.
                     writeLocalProject(currentUser.uid, projectId, {
                         json: data.json,
                         name: data.name,
                         updatedAtMs: (data.updatedAt && data.updatedAt.toMillis) ? data.updatedAt.toMillis() : Date.now(),
                         pendingSync: false
                     });
-                    return { json: data.json, name: data.name };
+                    applySwitchResult({ json: data.json, name: data.name });
                 }).catch(function (err) {
-                    // Cloud unreachable/slow — fall back to the local
-                    // backup for this project rather than leaving the
-                    // switch stuck with no result at all.
-                    const cached = currentUser ? readLocalProject(currentUser.uid, projectId) : null;
-                    if (!cached) throw err;
-                    console.error('Cloud fetch failed, using local backup:', err);
-                    setStatus('Loaded from local backup (offline)');
-                    const knownName = (projectsCache.find(function (p) { return p.id === projectId; }) || {}).name;
-                    return { json: cached.json, name: cached.name || knownName };
-                }).then(function (result) {
-                    suppressAutoSave = true;
-                    let parsed;
-                    try { parsed = JSON.parse(result.json); }
-                    catch (err) { parsed = defaultProjectTablesData(); }
-                    rebuildTablesContainer(parsed);
-                    suppressAutoSave = false;
-                    currentProjectId = projectId;
-                    applyProjectNameToUI(result.name);
-                    return db.collection('users').doc(currentUser.uid)
-                        .set({ weekgoalCurrentProjectId: projectId }, { merge: true })
-                        .catch(function (err) { console.error('Could not save current-project pointer:', err); });
+                    console.error('Switch failed and no local backup to fall back to:', err);
+                    throw err;
                 });
             };
+
             if (opts.skipSaveCurrent || !currentProjectId) return doSwitch();
-            return saveProjectNow(currentProjectId).then(doSwitch);
+            // Save the project being left, but don't make the switch
+            // wait on its cloud round trip — saveProjectNow already
+            // writes the local backup synchronously up front, and there
+            // is no real dependency between saving project A and
+            // loading project B, so serializing them was adding a whole
+            // extra network round trip to every switch.
+            saveProjectNow(currentProjectId);
+            return doSwitch();
         }
 
-        // Guards against overlapping switches. switchProject does a
-        // save-then-fetch-then-rebuild chain (several sequential
-        // Firestore round trips) before currentProjectId updates — so a
-        // click while one is still in flight used to compare against a
-        // stale currentProjectId and kick off a second full switch on
-        // top of the first. Several of those overlapping chains could
-        // pile up and finish out of order, so nothing visibly changed
-        // until enough clicks had queued up for the right one to win the
-        // race. Now only one switch runs at a time; a click that arrives
-        // mid-switch just remembers its target and it runs next, so
-        // rapid clicking always settles on the last thing you actually
-        // clicked instead of racing.
+        // Guards against overlapping switches. Even with the local-first
+        // fast path above, a click while a switch is still resolving
+        // (e.g. the cold-start case waiting on the cloud) used to
+        // compare against a stale currentProjectId and kick off a second
+        // full switch on top of the first. Several of those overlapping
+        // chains could pile up and finish out of order, so nothing
+        // visibly changed until enough clicks had queued up for the
+        // right one to win the race. Now only one switch runs at a time;
+        // a click that arrives mid-switch just remembers its target and
+        // it runs next, so rapid clicking always settles on the last
+        // thing you actually clicked instead of racing.
         let switchInFlight = false;
         let pendingSwitchTarget = null;
 
