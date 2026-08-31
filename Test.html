@@ -5637,6 +5637,82 @@ function insertNewCheckboxLine(currentLine) {
             return db.collection('users').doc(currentUser.uid).collection('weekgoalProjects');
         }
 
+        // --- Local backup cache (localStorage) ------------------------
+        // Firestore stays the source of truth; this is a same-browser
+        // backup kept in sync on every cloud save/load, so the app can
+        // keep working — reading the last-known state, queuing writes —
+        // if the network is slow or briefly down. Keyed by uid so
+        // multiple accounts signed in on the same browser don't collide.
+        function localCacheKey(uid, projectId) { return 'wg_cache_' + uid + '_' + projectId; }
+        function localCacheIndexKey(uid) { return 'wg_cache_index_' + uid; }
+        function localListKey(uid) { return 'wg_projects_list_' + uid; }
+
+        function readLocalProject(uid, projectId) {
+            try {
+                const raw = localStorage.getItem(localCacheKey(uid, projectId));
+                return raw ? JSON.parse(raw) : null;
+            } catch (err) { return null; }
+        }
+        function writeLocalProject(uid, projectId, data) {
+            try {
+                localStorage.setItem(localCacheKey(uid, projectId), JSON.stringify(data));
+                const idx = readLocalCacheIndex(uid);
+                if (idx.indexOf(projectId) === -1) {
+                    idx.push(projectId);
+                    localStorage.setItem(localCacheIndexKey(uid), JSON.stringify(idx));
+                }
+            } catch (err) {
+                console.error('Local cache write failed:', err);
+            }
+        }
+        function removeLocalProject(uid, projectId) {
+            try {
+                localStorage.removeItem(localCacheKey(uid, projectId));
+                const idx = readLocalCacheIndex(uid).filter(function (id) { return id !== projectId; });
+                localStorage.setItem(localCacheIndexKey(uid), JSON.stringify(idx));
+            } catch (err) { /* non-fatal */ }
+        }
+        function readLocalCacheIndex(uid) {
+            try {
+                const raw = localStorage.getItem(localCacheIndexKey(uid));
+                return raw ? JSON.parse(raw) : [];
+            } catch (err) { return []; }
+        }
+        function readLocalProjectsList(uid) {
+            try {
+                const raw = localStorage.getItem(localListKey(uid));
+                return raw ? JSON.parse(raw) : null;
+            } catch (err) { return null; }
+        }
+        function writeLocalProjectsList(uid, list) {
+            try { localStorage.setItem(localListKey(uid), JSON.stringify(list)); }
+            catch (err) { console.error('Local projects-list cache write failed:', err); }
+        }
+
+        // Pushes any project that got saved locally but never made it to
+        // the cloud (saveProjectNow flags these as pendingSync when the
+        // Firestore write fails). Runs on reconnect and whenever "Sync
+        // Now" is used, so a save made while offline reliably catches up
+        // once the network's back — not just cached forever.
+        function flushPendingLocalSync() {
+            if (!currentUser) return;
+            const uid = currentUser.uid;
+            readLocalCacheIndex(uid).forEach(function (projectId) {
+                const cached = readLocalProject(uid, projectId);
+                if (!cached || !cached.pendingSync) return;
+                projectsCollection().doc(projectId).set({
+                    json: cached.json,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true }).then(function () {
+                    cached.pendingSync = false;
+                    writeLocalProject(uid, projectId, cached);
+                }).catch(function (err) {
+                    console.error('Retry sync failed for', projectId, err);
+                });
+            });
+        }
+        window.addEventListener('online', flushPendingLocalSync);
+
         function initProjectsForUser() {
             setStatus('Loading projects…');
             projectsCollection().get().then(function (snap) {
@@ -5644,6 +5720,7 @@ function insertNewCheckboxLine(currentLine) {
                     const data = d.data();
                     return { id: d.id, name: data.name || 'Untitled', updatedAt: data.updatedAt };
                 });
+                writeLocalProjectsList(currentUser.uid, projectsCache);
                 if (projectsCache.length > 0) {
                     return db.collection('users').doc(currentUser.uid).get().then(function (userDoc) {
                         const savedCurrentId = userDoc.data() && userDoc.data().weekgoalCurrentProjectId;
@@ -5666,9 +5743,32 @@ function insertNewCheckboxLine(currentLine) {
             }).then(function () {
                 renderProjectsList();
                 setStatus('');
+                flushPendingLocalSync();
             }).catch(function (err) {
                 console.error('Loading projects failed:', err);
-                setStatus('Project list failed to load');
+                // Cloud unreachable — fall back to whatever was cached
+                // locally last time, so the app still opens to something
+                // usable instead of a blank/failed state.
+                const uid = currentUser && currentUser.uid;
+                const cachedList = uid ? readLocalProjectsList(uid) : null;
+                if (cachedList && cachedList.length) {
+                    projectsCache = cachedList;
+                    const target = readLocalProject(uid, cachedList[0].id);
+                    if (target) {
+                        suppressAutoSave = true;
+                        let parsed;
+                        try { parsed = JSON.parse(target.json); }
+                        catch (e2) { parsed = defaultProjectTablesData(); }
+                        rebuildTablesContainer(parsed);
+                        suppressAutoSave = false;
+                        currentProjectId = cachedList[0].id;
+                        applyProjectNameToUI(target.name || cachedList[0].name);
+                    }
+                    renderProjectsList();
+                    setStatus('Loaded from local backup (offline)');
+                } else {
+                    setStatus('Project list failed to load');
+                }
             });
         }
 
@@ -5679,6 +5779,7 @@ function insertNewCheckboxLine(currentLine) {
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             }).then(function (docRef) {
                 projectsCache.push({ id: docRef.id, name: name, updatedAt: null });
+                if (currentUser) writeLocalProjectsList(currentUser.uid, projectsCache);
                 return switchProject(docRef.id, { skipSaveCurrent: true });
             });
         }
@@ -6011,16 +6112,37 @@ function insertNewCheckboxLine(currentLine) {
                 return projectsCollection().doc(projectId).get().then(function (doc) {
                     const data = doc.data();
                     if (!data) throw new Error('Project not found');
+                    // Cloud fetch worked — this is the freshest known
+                    // state, so keep the local backup in sync with it.
+                    writeLocalProject(currentUser.uid, projectId, {
+                        json: data.json,
+                        name: data.name,
+                        updatedAtMs: (data.updatedAt && data.updatedAt.toMillis) ? data.updatedAt.toMillis() : Date.now(),
+                        pendingSync: false
+                    });
+                    return { json: data.json, name: data.name };
+                }).catch(function (err) {
+                    // Cloud unreachable/slow — fall back to the local
+                    // backup for this project rather than leaving the
+                    // switch stuck with no result at all.
+                    const cached = currentUser ? readLocalProject(currentUser.uid, projectId) : null;
+                    if (!cached) throw err;
+                    console.error('Cloud fetch failed, using local backup:', err);
+                    setStatus('Loaded from local backup (offline)');
+                    const knownName = (projectsCache.find(function (p) { return p.id === projectId; }) || {}).name;
+                    return { json: cached.json, name: cached.name || knownName };
+                }).then(function (result) {
                     suppressAutoSave = true;
                     let parsed;
-                    try { parsed = JSON.parse(data.json); }
+                    try { parsed = JSON.parse(result.json); }
                     catch (err) { parsed = defaultProjectTablesData(); }
                     rebuildTablesContainer(parsed);
                     suppressAutoSave = false;
                     currentProjectId = projectId;
-                    applyProjectNameToUI(data.name);
+                    applyProjectNameToUI(result.name);
                     return db.collection('users').doc(currentUser.uid)
-                        .set({ weekgoalCurrentProjectId: projectId }, { merge: true });
+                        .set({ weekgoalCurrentProjectId: projectId }, { merge: true })
+                        .catch(function (err) { console.error('Could not save current-project pointer:', err); });
                 });
             };
             if (opts.skipSaveCurrent || !currentProjectId) return doSwitch();
@@ -6073,10 +6195,24 @@ function insertNewCheckboxLine(currentLine) {
 
         function saveProjectNow(projectId) {
             const json = JSON.stringify(serializeTablesContainer());
+            const nowMs = Date.now();
+            // Write the local backup first and unconditionally — this is
+            // what keeps switching/reloading working even if the cloud
+            // write below is slow or fails outright.
+            writeLocalProject(currentUser.uid, projectId, { json: json, updatedAtMs: nowMs, pendingSync: false });
             return projectsCollection().doc(projectId).set({
                 json: json,
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-            }, { merge: true }).then(function () { return json; });
+            }, { merge: true }).then(function () {
+                return json;
+            }).catch(function (err) {
+                console.error('Cloud save failed, kept locally for retry:', err);
+                const cached = readLocalProject(currentUser.uid, projectId) || { json: json, updatedAtMs: nowMs };
+                cached.pendingSync = true;
+                writeLocalProject(currentUser.uid, projectId, cached);
+                setStatus('Saved locally — will sync when back online');
+                return json;
+            });
         }
 
         window.renameProject = function (projectId, newName) {
@@ -6085,6 +6221,11 @@ function insertNewCheckboxLine(currentLine) {
             projectsCollection().doc(projectId).set({ name: newName }, { merge: true }).then(function () {
                 const p = projectsCache.find(function (x) { return x.id === projectId; });
                 if (p) p.name = newName;
+                if (currentUser) {
+                    writeLocalProjectsList(currentUser.uid, projectsCache);
+                    const cached = readLocalProject(currentUser.uid, projectId);
+                    if (cached) { cached.name = newName; writeLocalProject(currentUser.uid, projectId, cached); }
+                }
                 if (projectId === currentProjectId) applyProjectNameToUI(newName);
             }).catch(function (err) {
                 console.error('Rename project failed:', err);
@@ -6096,6 +6237,10 @@ function insertNewCheckboxLine(currentLine) {
             if (!confirm('Delete project "' + name + '"? This cannot be undone.')) return;
             projectsCollection().doc(projectId).delete().then(function () {
                 projectsCache = projectsCache.filter(function (p) { return p.id !== projectId; });
+                if (currentUser) {
+                    removeLocalProject(currentUser.uid, projectId);
+                    writeLocalProjectsList(currentUser.uid, projectsCache);
+                }
                 if (projectId === currentProjectId) {
                     currentProjectId = null;
                     if (projectsCache.length > 0) {
@@ -6278,6 +6423,7 @@ function insertNewCheckboxLine(currentLine) {
             if (!currentUser || !currentProjectId) return;
             clearTimeout(cloudSaveTimer);
             setStatus('Syncing…');
+            flushPendingLocalSync();
             saveProjectNow(currentProjectId).then(function () {
                 return projectsCollection().get();
             }).then(function (snap) {
@@ -6285,6 +6431,7 @@ function insertNewCheckboxLine(currentLine) {
                     const data = d.data();
                     return { id: d.id, name: data.name || 'Untitled', updatedAt: data.updatedAt };
                 });
+                writeLocalProjectsList(currentUser.uid, projectsCache);
                 renderProjectsList();
                 setStatus('Synced ' + new Date().toLocaleTimeString());
             }).catch(function (err) {
