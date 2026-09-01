@@ -1793,12 +1793,14 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
 </div>
 
 <!-- Floating bar shown while in select mode with 1+ items checked —
-     Copy/Move open the destination picker below; Delete removes
-     immediately after confirmation. -->
+     Copy to…/Move to… open the destination picker below (duplicates
+     within the app); Copy Text puts them on the OS clipboard as plain
+     text instead; Delete removes immediately after confirmation. -->
 <div id="bulkActionBar">
     <span class="bulk-count" id="bulkActionCount">0 selected</span>
     <button onclick="window.bulkCopyTo()">Copy to…</button>
     <button onclick="window.bulkMoveTo()">Move to…</button>
+    <button onclick="window.bulkCopyToClipboard()" title="Copy as plain text to your OS clipboard">📋 Copy Text</button>
     <button onclick="window.bulkDeleteSelected()">Delete</button>
     <button onclick="window.clearBulkSelection()" title="Clear selection">✕</button>
 </div>
@@ -6950,6 +6952,68 @@ function insertNewCheckboxLine(currentLine) {
                     return { rootId: key.slice(0, sep), nodeId: key.slice(sep + 2) };
                 });
             }
+
+            // Renders a node and its subtree as an indented plain-text
+            // outline (2 spaces per depth level, "[x]"/"[ ]" prefix for
+            // checkbox items) — the same shape someone would type this
+            // outline as in a plain-text editor, so it pastes cleanly
+            // into email, chat, docs, etc.
+            function nodeToTextLines(node, depth, lines) {
+                const prefix = node.checkbox ? (node.done ? '[x] ' : '[ ] ') : '- ';
+                lines.push('  '.repeat(depth) + prefix + (node.text || ''));
+                (node.children || []).forEach(function (child) { nodeToTextLines(child, depth + 1, lines); });
+            }
+
+            function fallbackCopyToClipboard(text) {
+                return new Promise(function (resolve, reject) {
+                    try {
+                        const ta = document.createElement('textarea');
+                        ta.value = text;
+                        // Off-screen but still focusable/selectable —
+                        // display:none elements can't be selected, which
+                        // execCommand('copy') requires.
+                        ta.style.position = 'fixed';
+                        ta.style.left = '-9999px';
+                        document.body.appendChild(ta);
+                        ta.focus();
+                        ta.select();
+                        const ok = document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        if (ok) resolve(); else reject(new Error('execCommand copy failed'));
+                    } catch (err) { reject(err); }
+                });
+            }
+
+            function copyTextToClipboard(text) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    // Some contexts (e.g. a plain file:// page without
+                    // focus, or without clipboard permission granted)
+                    // reject the async Clipboard API — fall back to the
+                    // older execCommand approach rather than failing
+                    // silently.
+                    return navigator.clipboard.writeText(text).catch(function () {
+                        return fallbackCopyToClipboard(text);
+                    });
+                }
+                return fallbackCopyToClipboard(text);
+            }
+
+            window.bulkCopyToClipboard = function () {
+                const items = selectedItemRefs();
+                if (items.length === 0) return;
+                const lines = [];
+                items.forEach(function (item) {
+                    const node = window.getLiveNode(item.rootId, item.nodeId);
+                    if (node) nodeToTextLines(node, 0, lines);
+                });
+                if (lines.length === 0) return;
+                copyTextToClipboard(lines.join('\n')).then(function () {
+                    setStatus('Copied ' + items.length + (items.length === 1 ? ' item' : ' items') + ' to clipboard');
+                }).catch(function (err) {
+                    console.error('Copy to clipboard failed:', err);
+                    setStatus('Copy to clipboard failed');
+                });
+            };
 
             window.bulkDeleteSelected = function () {
                 const items = selectedItemRefs();
