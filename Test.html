@@ -965,6 +965,106 @@ td.cell-full-height {
     background: #444;
 }
 
+/* Multi-select mode (Copy/Move/Delete across outline items). The
+   per-row checkbox always exists in the DOM (added in renderNode) but
+   stays hidden until body.select-mode-active is toggled on — avoids
+   having to re-render every row just to show/hide it. */
+.outline-select-checkbox {
+    display: none;
+    margin-right: 4px;
+    margin-top: 3px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+body.select-mode-active .outline-select-checkbox {
+    display: inline-block;
+}
+.outline-node-row.item-selected {
+    background: rgba(66, 133, 244, 0.10);
+    border-radius: 4px;
+}
+#selectModeToggle.active-toggle {
+    background: #4285F4;
+    color: #fff;
+}
+
+/* Floating bar shown while 1+ items are checked in select mode —
+   same visual language as #selection-toolbar (dark pill, fixed,
+   high z-index) but top-center so it doesn't collide with the
+   bottom "Add Table" bar. */
+#bulkActionBar {
+    position: fixed;
+    top: 56px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    align-items: center;
+    gap: 6px;
+    background: #222;
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 20px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+    z-index: 2500;
+    font-size: 13px;
+}
+#bulkActionBar.show { display: flex; }
+#bulkActionBar .bulk-count {
+    font-weight: bold;
+    margin-right: 4px;
+    white-space: nowrap;
+}
+#bulkActionBar button {
+    margin: 0;
+    padding: 5px 11px;
+    border-radius: 14px;
+    font-size: 13px;
+    background: #444;
+    color: #fff;
+    white-space: nowrap;
+}
+#bulkActionBar button:hover { background: #555; }
+
+/* Destination picker modal for bulk Copy/Move. */
+.dest-picker-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 3500;
+    align-items: center;
+    justify-content: center;
+}
+.dest-picker-overlay.active { display: flex; }
+.dest-picker-panel {
+    background: #fff;
+    border-radius: 8px;
+    padding: 18px 20px;
+    width: 320px;
+    max-width: 90vw;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+    box-sizing: border-box;
+}
+.dest-picker-panel h3 { margin: 0 0 4px; font-size: 15px; }
+.dest-picker-panel label {
+    display: block;
+    font-size: 12px;
+    color: #666;
+    margin: 10px 0 3px;
+}
+.dest-picker-panel select {
+    width: 100%;
+    padding: 5px 6px;
+    font-size: 13px;
+    box-sizing: border-box;
+}
+.dest-picker-actions {
+    margin-top: 16px;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
 /* Wrapper for deletable tables (Add New Table / Review / Summary / Single) */
 .table-wrapper {
     position: relative;
@@ -1681,10 +1781,43 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
 
     </div><!-- /#toolbarScroll -->
 
+    <!-- Multi-select mode for bulk Copy/Move/Delete across outline
+         items — see #bulkActionBar and the select-mode script near the
+         end of the file. -->
+    <button id="selectModeToggle" onclick="toggleSelectMode()" class="btn-view toolbar-pin" title="Select multiple items to copy, move, or delete">☑ Select</button>
+
     <!-- Right-pinned: Notes/Think Log sidebar toggle. Mirrors the Files
          button on the left so the two sidebar controls bookend the bar
          and stay easy to find no matter what's in between. -->
     <button onclick="toggleSidebar()" class="btn-view toolbar-pin" title="Open the Notes / Think Log side panel">📝 Notes</button>
+</div>
+
+<!-- Floating bar shown while in select mode with 1+ items checked —
+     Copy/Move open the destination picker below; Delete removes
+     immediately after confirmation. -->
+<div id="bulkActionBar">
+    <span class="bulk-count" id="bulkActionCount">0 selected</span>
+    <button onclick="window.bulkCopyTo()">Copy to…</button>
+    <button onclick="window.bulkMoveTo()">Move to…</button>
+    <button onclick="window.bulkDeleteSelected()">Delete</button>
+    <button onclick="window.clearBulkSelection()" title="Clear selection">✕</button>
+</div>
+
+<!-- Destination picker for bulk Copy/Move — pick a project (this one,
+     or any other) and which of its tables/cells to copy or move the
+     selected items into. -->
+<div id="destPickerOverlay" class="dest-picker-overlay">
+    <div class="dest-picker-panel">
+        <h3 id="destPickerTitle">Move to…</h3>
+        <label for="destPickerProject">Project</label>
+        <select id="destPickerProject"></select>
+        <label for="destPickerTable">Table</label>
+        <select id="destPickerTable"></select>
+        <div class="dest-picker-actions">
+            <button class="gray" onclick="window.closeDestPicker()">Cancel</button>
+            <button id="destPickerConfirmBtn" onclick="window.confirmDestPicker()">Move Here</button>
+        </div>
+    </div>
 </div>
 
 <div id="tablesContainer">
@@ -4952,6 +5085,29 @@ function insertNewCheckboxLine(currentLine) {
             row.dataset.rootId = rootId;
 
             let text; // forward reference for the checkbox handler below
+
+            // Multi-select checkbox for the Files sidebar's bulk Copy/
+            // Move/Delete (Select mode) — always in the DOM, hidden via
+            // CSS (body.select-mode-active) rather than only created
+            // when select mode is on, so toggling it doesn't require a
+            // full re-render. Distinct from the task-style checkbox
+            // below (n.checkbox/n.done), which is a content field, not
+            // a selection control.
+            const selectCb = document.createElement('input');
+            selectCb.type = 'checkbox';
+            selectCb.className = 'outline-select-checkbox';
+            selectCb.title = 'Select this item';
+            selectCb.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+            selectCb.addEventListener('click', function (e) { e.stopPropagation(); });
+            selectCb.addEventListener('change', function () {
+                const key = rootId + '::' + n.id;
+                const sel = (window.__bulkSelection = window.__bulkSelection || new Set());
+                if (selectCb.checked) sel.add(key); else sel.delete(key);
+                row.classList.toggle('item-selected', selectCb.checked);
+                if (window.updateBulkActionBar) window.updateBulkActionBar();
+            });
+            row.appendChild(selectCb);
+
             const bullet = document.createElement('span');
             bullet.className = 'outline-bullet';
             bullet.textContent = '•';
@@ -5450,6 +5606,53 @@ function insertNewCheckboxLine(currentLine) {
             rowEl.classList.add('search-hit-flash');
             setTimeout(function () { rowEl.classList.remove('search-hit-flash'); }, 1800);
             return true;
+        };
+
+        // --- Helpers for bulk Copy/Move/Delete (Files sidebar's Select
+        // mode) — these only ever operate on the CURRENTLY OPEN
+        // project's live trees (that's the only thing a checkbox can be
+        // sitting on to begin with); moving/copying into a *different*
+        // project reads/writes that project's JSON directly instead
+        // (see the select-mode script near the end of the file).
+        function cloneNodeWithFreshIds(n) {
+            return {
+                id: uid(),
+                text: n.text,
+                html: n.html,
+                children: (n.children || []).map(cloneNodeWithFreshIds),
+                collapsed: n.collapsed,
+                checkbox: n.checkbox,
+                done: n.done,
+                bold: n.bold,
+                textColor: n.textColor,
+                bgColor: n.bgColor
+            };
+        }
+        window.cloneOutlineNodeDeep = cloneNodeWithFreshIds;
+
+        window.getLiveNode = function (rootId, nodeId) {
+            const st = roots[rootId];
+            if (!st) return null;
+            const found = findNodeAndParent(st.tree, nodeId);
+            return found ? found.node : null;
+        };
+        window.removeLiveNode = function (rootId, nodeId) {
+            const st = roots[rootId];
+            if (!st) return false;
+            const found = findNodeAndParent(st.tree, nodeId);
+            if (!found) return false;
+            found.parentArr.splice(found.index, 1);
+            return true;
+        };
+        window.appendNodeToRoot = function (rootId, node) {
+            const st = roots[rootId];
+            if (!st) return false;
+            st.tree.push(node);
+            return true;
+        };
+        window.rerenderOutlineRoot = function (rootId) {
+            if (!roots[rootId]) return;
+            renderRoot(rootId);
         };
 
         document.addEventListener('DOMContentLoaded', function () {
@@ -6224,6 +6427,11 @@ function insertNewCheckboxLine(currentLine) {
                 suppressAutoSave = false;
                 currentProjectId = projectId;
                 applyProjectNameToUI(result.name);
+                // Every outline-root gets a fresh random id on rebuild
+                // (see initOutlineTable), so any bulk selection from the
+                // project being left behind would otherwise silently
+                // point at elements that no longer exist.
+                if (window.clearBulkSelection) window.clearBulkSelection();
                 // Bookkeeping only ("which project was open last") — the
                 // switch itself doesn't need to wait on this, so it runs
                 // in the background instead of adding another round trip
@@ -6698,6 +6906,265 @@ function insertNewCheckboxLine(currentLine) {
                 resultsEl.style.display = '';
                 renderResults(q);
             });
+        })();
+
+        // --- Multi-select: Copy/Move/Delete across outline items ------
+        // Select mode shows a checkbox on every row (see renderNode); the
+        // set of checked items lives in window.__bulkSelection as
+        // 'rootId::nodeId' keys. Delete and same-project Move/Copy
+        // operate on the live tree directly; moving/copying into a
+        // DIFFERENT project fetches and mutates that project's JSON
+        // directly (it isn't rendered on screen), then saves it back the
+        // same way saveProjectNow does for the current one.
+        (function () {
+            let destPickerMode = null; // 'move' | 'copy'
+
+            window.toggleSelectMode = function () {
+                const active = !document.body.classList.contains('select-mode-active');
+                document.body.classList.toggle('select-mode-active', active);
+                const btn = document.getElementById('selectModeToggle');
+                if (btn) btn.classList.toggle('active-toggle', active);
+                if (!active) window.clearBulkSelection();
+            };
+
+            window.clearBulkSelection = function () {
+                if (window.__bulkSelection) window.__bulkSelection.clear();
+                document.querySelectorAll('.outline-select-checkbox:checked').forEach(function (cb) { cb.checked = false; });
+                document.querySelectorAll('.outline-node-row.item-selected').forEach(function (row) { row.classList.remove('item-selected'); });
+                window.updateBulkActionBar();
+            };
+
+            window.updateBulkActionBar = function () {
+                const bar = document.getElementById('bulkActionBar');
+                const countEl = document.getElementById('bulkActionCount');
+                const n = (window.__bulkSelection && window.__bulkSelection.size) || 0;
+                if (!bar) return;
+                bar.classList.toggle('show', n > 0);
+                if (countEl) countEl.textContent = n + (n === 1 ? ' item selected' : ' items selected');
+            };
+
+            function selectedItemRefs() {
+                if (!window.__bulkSelection) return [];
+                return Array.from(window.__bulkSelection).map(function (key) {
+                    const sep = key.indexOf('::');
+                    return { rootId: key.slice(0, sep), nodeId: key.slice(sep + 2) };
+                });
+            }
+
+            window.bulkDeleteSelected = function () {
+                const items = selectedItemRefs();
+                if (items.length === 0) return;
+                if (!confirm('Delete ' + items.length + ' selected item' + (items.length === 1 ? '' : 's') + '? This cannot be undone.')) return;
+                const affectedRoots = new Set();
+                items.forEach(function (item) {
+                    window.removeLiveNode(item.rootId, item.nodeId);
+                    affectedRoots.add(item.rootId);
+                });
+                affectedRoots.forEach(function (rid) { window.rerenderOutlineRoot(rid); });
+                window.scheduleCloudAutoSave();
+                setStatus('Deleted ' + items.length + ' item' + (items.length === 1 ? '' : 's'));
+                window.clearBulkSelection();
+            };
+
+            // Every cell/"table" in the CURRENTLY OPEN project, read
+            // straight from the live DOM (same source the content-search
+            // feature uses).
+            function getLiveProjectCells() {
+                const cells = [];
+                document.querySelectorAll('#tablesContainer td').forEach(function (td) {
+                    const titleEl = td.querySelector('.cell-title');
+                    const outlineEl = td.querySelector('.outline-root');
+                    if (!outlineEl || !outlineEl.id) return;
+                    cells.push({ title: (titleEl && titleEl.textContent.trim()) || '(untitled table)', rootId: outlineEl.id });
+                });
+                return cells;
+            }
+
+            // Every cell/"table" inside another project's PARSED (not
+            // live) data — cellRef is a direct reference into that same
+            // parsed object, so pushing onto cellRef.tree and then
+            // JSON.stringify-ing the original data object picks it up.
+            function getCellsFromProjectData(data) {
+                const cells = [];
+                (data.tables || []).forEach(function (table) {
+                    (table.rows || []).forEach(function (row) {
+                        row.forEach(function (cell) {
+                            cells.push({ title: cell.title || '(untitled table)', cellRef: cell });
+                        });
+                    });
+                });
+                return cells;
+            }
+
+            function loadProjectDataForPicker(projectId) {
+                return projectsCollection().doc(projectId).get().then(function (doc) {
+                    const d = doc.data();
+                    if (!d) throw new Error('Project not found');
+                    return JSON.parse(d.json);
+                }).catch(function (err) {
+                    const cached = currentUser ? readLocalProject(currentUser.uid, projectId) : null;
+                    if (cached && cached.json) return JSON.parse(cached.json);
+                    throw err;
+                });
+            }
+
+            // Mirrors saveProjectNow, but for a project that ISN'T the
+            // one currently open/rendered — writes the local backup
+            // immediately, then the cloud, flagging for retry on
+            // failure exactly like the normal save path does.
+            function saveProjectDataDirect(projectId, dataObj) {
+                const json = JSON.stringify(dataObj);
+                if (currentUser) writeLocalProject(currentUser.uid, projectId, { json: json, updatedAtMs: Date.now(), pendingSync: false });
+                return projectsCollection().doc(projectId).set({
+                    json: json,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true }).catch(function (err) {
+                    console.error('Saving to other project failed, kept locally for retry:', err);
+                    if (currentUser) {
+                        const cached = readLocalProject(currentUser.uid, projectId) || { json: json, updatedAtMs: Date.now() };
+                        cached.pendingSync = true;
+                        writeLocalProject(currentUser.uid, projectId, cached);
+                    }
+                });
+            }
+
+            function populateTableSelect(projectId) {
+                const tableSelect = document.getElementById('destPickerTable');
+                tableSelect.innerHTML = '<option value="">Loading…</option>';
+                tableSelect.disabled = true;
+                function fillOptions(cells) {
+                    tableSelect.innerHTML = '';
+                    // Dedupe by title for a clean dropdown — first match
+                    // for a given title is what Move/Copy actually
+                    // targets if there happen to be duplicate names.
+                    const seenTitles = {};
+                    const deduped = [];
+                    cells.forEach(function (c) {
+                        if (seenTitles[c.title]) return;
+                        seenTitles[c.title] = true;
+                        deduped.push(c);
+                    });
+                    deduped.forEach(function (c, idx) {
+                        const opt = document.createElement('option');
+                        opt.value = String(idx);
+                        opt.textContent = c.title;
+                        tableSelect.appendChild(opt);
+                    });
+                    tableSelect._cells = deduped;
+                    tableSelect.disabled = false;
+                }
+                if (projectId === '__current__') {
+                    fillOptions(getLiveProjectCells());
+                } else {
+                    loadProjectDataForPicker(projectId).then(function (data) {
+                        tableSelect._projectData = data;
+                        fillOptions(getCellsFromProjectData(data));
+                    }).catch(function (err) {
+                        console.error('Loading project for destination picker failed:', err);
+                        tableSelect.innerHTML = '<option value="">Failed to load this project</option>';
+                    });
+                }
+            }
+
+            function openDestPicker(mode) {
+                const items = selectedItemRefs();
+                if (items.length === 0) return;
+                destPickerMode = mode;
+                const overlay = document.getElementById('destPickerOverlay');
+                const titleEl = document.getElementById('destPickerTitle');
+                const confirmBtn = document.getElementById('destPickerConfirmBtn');
+                titleEl.textContent = (mode === 'move' ? 'Move ' : 'Copy ') + items.length +
+                    (items.length === 1 ? ' item to…' : ' items to…');
+                confirmBtn.textContent = mode === 'move' ? 'Move Here' : 'Copy Here';
+
+                const projectSelect = document.getElementById('destPickerProject');
+                projectSelect.innerHTML = '';
+                const currentProj = projectsCache.find(function (p) { return p.id === currentProjectId; });
+                const currentOpt = document.createElement('option');
+                currentOpt.value = '__current__';
+                currentOpt.textContent = 'This project' + (currentProj ? ' (' + currentProj.name + ')' : '');
+                projectSelect.appendChild(currentOpt);
+                projectsCache.forEach(function (p) {
+                    if (p.id === currentProjectId) return;
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.name;
+                    projectSelect.appendChild(opt);
+                });
+                projectSelect.value = '__current__';
+                projectSelect.onchange = function () { populateTableSelect(projectSelect.value); };
+                populateTableSelect('__current__');
+                overlay.classList.add('active');
+            }
+            window.bulkCopyTo = function () { openDestPicker('copy'); };
+            window.bulkMoveTo = function () { openDestPicker('move'); };
+
+            window.closeDestPicker = function () {
+                document.getElementById('destPickerOverlay').classList.remove('active');
+            };
+
+            window.confirmDestPicker = function () {
+                const projectSelect = document.getElementById('destPickerProject');
+                const tableSelect = document.getElementById('destPickerTable');
+                const destProjectId = projectSelect.value;
+                const idx = Number(tableSelect.value);
+                const cells = tableSelect._cells;
+                if (!cells || !cells[idx]) return;
+                const targetCell = cells[idx];
+                const items = selectedItemRefs();
+                if (items.length === 0) return;
+
+                if (destProjectId === '__current__') {
+                    // Same project — source and destination are both
+                    // live, so this can all happen directly in memory.
+                    const affectedRoots = new Set([targetCell.rootId]);
+                    items.forEach(function (item) {
+                        const liveNode = window.getLiveNode(item.rootId, item.nodeId);
+                        if (!liveNode) return;
+                        window.appendNodeToRoot(targetCell.rootId, window.cloneOutlineNodeDeep(liveNode));
+                        if (destPickerMode === 'move') window.removeLiveNode(item.rootId, item.nodeId);
+                        affectedRoots.add(item.rootId);
+                    });
+                    affectedRoots.forEach(function (rid) { window.rerenderOutlineRoot(rid); });
+                    window.scheduleCloudAutoSave();
+                    setStatus((destPickerMode === 'move' ? 'Moved to "' : 'Copied to "') + targetCell.title + '"');
+                    window.closeDestPicker();
+                    window.clearBulkSelection();
+                } else {
+                    // Different project — it isn't rendered, so mutate
+                    // its parsed data and save that directly; only touch
+                    // the live current project afterward (for Move) once
+                    // the save against the OTHER project has actually
+                    // gone through, so a failed cross-project save never
+                    // leaves an item deleted from the source with nowhere
+                    // to land.
+                    const data = tableSelect._projectData;
+                    items.forEach(function (item) {
+                        const liveNode = window.getLiveNode(item.rootId, item.nodeId);
+                        if (!liveNode) return;
+                        targetCell.cellRef.tree.push(window.cloneOutlineNodeDeep(liveNode));
+                    });
+                    const destName = (projectsCache.find(function (p) { return p.id === destProjectId; }) || {}).name || 'other project';
+                    setStatus((destPickerMode === 'move' ? 'Moving to "' : 'Copying to "') + destName + '"…');
+                    saveProjectDataDirect(destProjectId, data).then(function () {
+                        if (destPickerMode === 'move') {
+                            const affectedRoots = new Set();
+                            items.forEach(function (item) {
+                                window.removeLiveNode(item.rootId, item.nodeId);
+                                affectedRoots.add(item.rootId);
+                            });
+                            affectedRoots.forEach(function (rid) { window.rerenderOutlineRoot(rid); });
+                            window.scheduleCloudAutoSave();
+                        }
+                        setStatus((destPickerMode === 'move' ? 'Moved to "' : 'Copied to "') + destName + '"');
+                    }).catch(function (err) {
+                        console.error('Cross-project ' + destPickerMode + ' failed:', err);
+                        setStatus((destPickerMode === 'move' ? 'Move' : 'Copy') + ' failed');
+                    });
+                    window.closeDestPicker();
+                    window.clearBulkSelection();
+                }
+            };
         })();
     })();
     </script>
