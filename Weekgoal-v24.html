@@ -373,6 +373,66 @@
             scrollbar-width: thin;
         }
 
+        /* Content search — searches the currently-open project's outline
+           text; separate from the project list above/below it. Typing in
+           #contentSearchInput hides #projectsListSide and shows
+           #contentSearchResults instead (see the search wiring script
+           near the end of the file); clearing it flips back. */
+        #fileSidebarSearchBar {
+            padding: 8px 10px 4px;
+            flex-shrink: 0;
+        }
+        #contentSearchInput {
+            width: 100%;
+            box-sizing: border-box;
+            font-size: 13px;
+            padding: 5px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .search-result-row {
+            padding: 6px 6px;
+            margin: 2px 0;
+            border-radius: 4px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .search-result-row:hover { background: rgba(0,0,0,0.05); }
+        .search-result-table {
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: #8B4513;
+            margin-bottom: 2px;
+        }
+        .search-result-text {
+            font-size: 13px;
+            color: #333;
+            line-height: 1.4;
+            white-space: normal;
+            word-break: break-word;
+        }
+        .search-result-text mark {
+            background: #fff3a3;
+            color: inherit;
+            border-radius: 2px;
+        }
+        .search-no-results {
+            padding: 10px 8px;
+            color: #888;
+            font-size: 13px;
+        }
+        /* Brief highlight when a search result is clicked and scrolled
+           into view, so it's obvious which line matched. */
+        .search-hit-flash {
+            animation: searchHitFlash 1.8s ease-out;
+        }
+        @keyframes searchHitFlash {
+            0% { background-color: #fff3a3; }
+            100% { background-color: transparent; }
+        }
+
         #fileSidebar .file-sidebar-row {
             display: flex;
             align-items: center;
@@ -452,7 +512,13 @@
             body:has(#fileSidebar:not(.collapsed)) #tablesContainer {
                 width: calc(95vw - 282px);
             }
-            body:has(#fileSidebar:not(.collapsed)) #tablesContainer table,
+            /* :not(.cell-table-small) matters here: without it, this
+               selector's two #ids out-specificity the dedicated
+               .cell-table-small rule below (one #id from :has() plus a
+               class), so it would silently win and stretch "small"
+               (half-width) tables to full width whenever the sidebar is
+               open — exactly the bug this excludes. */
+            body:has(#fileSidebar:not(.collapsed)) #tablesContainer table:not(.cell-table-small),
             body:has(#fileSidebar:not(.collapsed)) #tablesContainer .cell-table {
                 width: calc(95vw - 282px);
             }
@@ -1454,7 +1520,11 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     <div id="fileSidebarHeader">
         📁 <h3>Files</h3>
     </div>
+    <div id="fileSidebarSearchBar">
+        <input id="contentSearchInput" type="text" placeholder="🔍 Search this project…">
+    </div>
     <div class="file-sidebar-list" id="projectsListSide"></div>
+    <div class="file-sidebar-list" id="contentSearchResults" style="display:none;"></div>
     <div id="fileSidebarFooter">
         <div class="file-sidebar-add">
             <input id="newProjectNameInputSide" type="text" placeholder="New project name…">
@@ -5346,6 +5416,42 @@ function insertNewCheckboxLine(currentLine) {
             return st ? st.tree : null;
         };
 
+        // Used by the content-search feature (Files sidebar): a search
+        // result only stores a rootId + nodeId, since the underlying
+        // outline data can change between when a result is shown and
+        // when it's clicked. This resolves that pair back to a live row
+        // to scroll to — un-collapsing any collapsed ancestor nodes
+        // along the way (and the cell itself, if collapsed) so the
+        // match is actually visible once scrolled to, not just present
+        // in the DOM with display:none.
+        window.revealAndScrollToNode = function (rootId, nodeId) {
+            const st = roots[rootId];
+            if (!st) return false;
+            let changed = false;
+            let walkId = nodeId;
+            for (let guard = 0; guard < 200; guard++) {
+                const found = findNodeAndParent(st.tree, walkId);
+                if (!found || !found.parent) break;
+                if (found.parent.collapsed) { found.parent.collapsed = false; changed = true; }
+                walkId = found.parent.id;
+            }
+            if (changed) renderRoot(rootId);
+            const rootEl = document.getElementById(rootId);
+            if (!rootEl) return false;
+            const td = rootEl.closest('td');
+            if (td && td.classList.contains('cell-collapsed')) {
+                td.classList.remove('cell-collapsed');
+                const toggle = td.querySelector('.cell-toggle');
+                if (toggle) toggle.textContent = '▾';
+            }
+            const rowEl = rootEl.querySelector('.outline-node-row[data-node-id="' + nodeId + '"]');
+            if (!rowEl) return false;
+            rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            rowEl.classList.add('search-hit-flash');
+            setTimeout(function () { rowEl.classList.remove('search-hit-flash'); }, 1800);
+            return true;
+        };
+
         document.addEventListener('DOMContentLoaded', function () {
             document.querySelectorAll('.outline-root').forEach(function (el) {
                 window.initOutlineTable(el, '');
@@ -6502,6 +6608,97 @@ function insertNewCheckboxLine(currentLine) {
         });
 
         init();
+
+        // --- Content search (Files sidebar) --------------------------
+        // Searches the outline text of every cell in the CURRENTLY OPEN
+        // project only (not other projects, not project names — that's
+        // the project list above/below this). Doesn't depend on
+        // Firebase/db at all, just the already-rendered #tablesContainer
+        // DOM, so it works the same online or offline.
+        (function () {
+            const input = document.getElementById('contentSearchInput');
+            const resultsEl = document.getElementById('contentSearchResults');
+            const listEl = document.getElementById('projectsListSide');
+            if (!input || !resultsEl || !listEl) return;
+
+            function escapeHtml(s) {
+                return s.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; });
+            }
+
+            // Wraps the matched substring in <mark>, preserving the rest
+            // of the line's actual text (a full line/paragraph, not a
+            // truncated snippet — outline lines are single-line by
+            // design, so "full text of the line" is the natural unit).
+            function highlight(text, query) {
+                const escaped = escapeHtml(text);
+                const idx = escaped.toLowerCase().indexOf(query.toLowerCase());
+                if (idx === -1) return escaped;
+                return escaped.slice(0, idx) + '<mark>' + escaped.slice(idx, idx + query.length) + '</mark>' + escaped.slice(idx + query.length);
+            }
+
+            function collectMatches(query) {
+                const q = query.trim().toLowerCase();
+                const matches = [];
+                if (!q) return matches;
+                document.querySelectorAll('#tablesContainer td').forEach(function (td) {
+                    const titleEl = td.querySelector('.cell-title');
+                    const tableName = (titleEl && titleEl.textContent.trim()) || '(untitled table)';
+                    const outlineEl = td.querySelector('.outline-root');
+                    if (!outlineEl || !outlineEl.id || !window.getOutlineTree) return;
+                    const tree = window.getOutlineTree(outlineEl.id) || [];
+                    (function walk(nodes) {
+                        nodes.forEach(function (n) {
+                            if (n.text && n.text.toLowerCase().indexOf(q) !== -1) {
+                                matches.push({ rootId: outlineEl.id, nodeId: n.id, tableName: tableName, text: n.text });
+                            }
+                            if (n.children && n.children.length) walk(n.children);
+                        });
+                    })(tree);
+                });
+                return matches;
+            }
+
+            function renderResults(query) {
+                const matches = collectMatches(query);
+                resultsEl.innerHTML = '';
+                if (matches.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'search-no-results';
+                    empty.textContent = 'No matches for "' + query.trim() + '"';
+                    resultsEl.appendChild(empty);
+                    return;
+                }
+                matches.forEach(function (m) {
+                    const row = document.createElement('div');
+                    row.className = 'search-result-row';
+                    const tableLabel = document.createElement('div');
+                    tableLabel.className = 'search-result-table';
+                    tableLabel.textContent = m.tableName;
+                    const text = document.createElement('div');
+                    text.className = 'search-result-text';
+                    text.innerHTML = highlight(m.text, query.trim());
+                    row.appendChild(tableLabel);
+                    row.appendChild(text);
+                    row.addEventListener('click', function () {
+                        if (window.revealAndScrollToNode) window.revealAndScrollToNode(m.rootId, m.nodeId);
+                    });
+                    resultsEl.appendChild(row);
+                });
+            }
+
+            input.addEventListener('input', function () {
+                const q = input.value.trim();
+                if (!q) {
+                    resultsEl.style.display = 'none';
+                    resultsEl.innerHTML = '';
+                    listEl.style.display = '';
+                    return;
+                }
+                listEl.style.display = 'none';
+                resultsEl.style.display = '';
+                renderResults(q);
+            });
+        })();
     })();
     </script>
 </body>
