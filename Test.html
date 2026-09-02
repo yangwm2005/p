@@ -6085,6 +6085,60 @@ function insertNewCheckboxLine(currentLine) {
             return months[date.getMonth()] + ' ' + date.getDate() + ' ' + days[date.getDay()];
         }
 
+        // The Monday on/before the given date — weeks are always
+        // Monday-through-Sunday here regardless of which day of the
+        // week you happen to click the button on.
+        function getMonday(date) {
+            const d = new Date(date);
+            const day = d.getDay(); // 0 = Sunday
+            const diff = (day === 0 ? -6 : 1) - day;
+            d.setDate(d.getDate() + diff);
+            return d;
+        }
+
+        // Seven small single-cell tables, Monday through Sunday, each
+        // titled with that day's date (see formatWeekTitle) — laid out
+        // two-per-row the same way "Add Small" cells are (see
+        // table.cell-table-small), wrapping to a new row after every
+        // pair. Each includes a quick-add-checkbox button (+✓) since
+        // day cells are typically task/goal checklists.
+        function weeklyDayTablesData(monday) {
+            const tables = [];
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(monday);
+                d.setDate(monday.getDate() + i);
+                tables.push({
+                    wrapped: true,
+                    mainTableId: false,
+                    small: true,
+                    rows: [[{ title: formatWeekTitle(d), checkboxBtn: true, collapsed: false, fullHeight: false, tree: [] }]]
+                });
+            }
+            return { version: 1, sidebarNotes: '', thinkLog: [], tables: tables };
+        }
+
+        // Creates a brand-new project containing that structure —
+        // offsetDays days from today (0 for this week, 7 for next)
+        // before finding that week's Monday, so it always lands on the
+        // right week's Mon–Sun regardless of what day you click it.
+        function createWeeklyProject(offsetDays) {
+            if (!currentUser) { alert('Sign in first (☁ Sign in) to create a new project.'); return; }
+            const base = new Date();
+            base.setDate(base.getDate() + offsetDays);
+            const monday = getMonday(base);
+            const title = formatWeekTitle(monday);
+            setStatus('Creating…');
+            createProject(title, weeklyDayTablesData(monday)).then(function () {
+                renderProjectsList();
+                setStatus('Created "' + title + '"');
+            }).catch(function (err) {
+                console.error('Create project failed:', err);
+                setStatus('Create failed');
+            });
+        }
+        window.createThisWeekProject = function () { createWeeklyProject(0); };
+        window.createNextWeekProject = function () { createWeeklyProject(7); };
+
         // One table, one cell — a row with a single cell (colCount < 2)
         // is left alone by applyCellTableLayout (no side-by-side column
         // split happens), so it naturally spans the table's full width
