@@ -133,6 +133,27 @@
   .sync-dot[data-state="offline"]{background:var(--line-strong);}
   @keyframes pulse{0%,100%{opacity:1;} 50%{opacity:0.35;}}
   .sync-label{font-size:11px; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace; white-space:nowrap;}
+
+  /* floating sync button */
+  #floatSyncBtn{
+    position:fixed; right:22px; bottom:22px; z-index:200;
+    display:none; align-items:center; gap:8px;
+    padding:11px 18px; border-radius:999px; border:1px solid var(--accent);
+    background:var(--accent); color:#fff; font-size:13px; font-weight:600;
+    box-shadow:0 6px 18px rgba(20,26,34,0.28); cursor:pointer;
+    transition:transform .12s, box-shadow .12s, background .15s;
+  }
+  #floatSyncBtn:hover{transform:translateY(-1px); box-shadow:0 8px 22px rgba(20,26,34,0.32);}
+  #floatSyncBtn:active{transform:translateY(0);}
+  #floatSyncBtn[disabled]{cursor:default; opacity:.75; transform:none;}
+  #floatSyncBtn .fsb-icon{font-size:15px; line-height:1; display:inline-block;}
+  #floatSyncBtn.fsb-syncing .fsb-icon{animation:spin .8s linear infinite;}
+  #floatSyncBtn.fsb-error{background:var(--rust); border-color:var(--rust);}
+  @keyframes spin{from{transform:rotate(0deg);} to{transform:rotate(360deg);}}
+  @media (max-width:640px){
+    #floatSyncBtn{right:14px; bottom:14px; padding:12px 16px;}
+    #floatSyncBtn .fsb-text{display:none;}
+  }
   .signin-btn{display:flex; align-items:center; gap:7px; font-weight:500;}
   .signin-btn svg{flex-shrink:0;}
   .user-chip{display:flex; align-items:center; gap:7px; border:1px solid var(--line-strong); border-radius:20px; padding:3px 10px 3px 3px; background:var(--panel); cursor:pointer;}
@@ -616,6 +637,10 @@
 </style>
 </head>
 <body>
+
+<button id="floatSyncBtn" type="button" title="Push this device's changes to the cloud now">
+  <span class="fsb-icon">⟳</span><span class="fsb-text">Sync now</span>
+</button>
 
 <div class="topbar">
   <div class="brand">
@@ -1591,12 +1616,25 @@ function saveTasks(){
   });
 
   // ---------- firebase auth + firestore sync ----------
-  var syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, historyBtnEl, achBtnEl;
+  var syncDotEl, signInBtnEl, userChipEl, userAvatarEl, userNameEl, syncNowBtnEl, historyBtnEl, achBtnEl, floatSyncBtnEl;
 
   function setSyncState(state, label){
     if(!syncDotEl) return;
     syncDotEl.dataset.state = state;
     syncDotEl.title = label || state;
+  }
+
+  // Floating "Sync now" button — same syncNow() action as the header button,
+  // just always on-screen so it's hard to forget after editing on a device
+  // you're about to walk away from.
+  function setFloatSyncBtnText(text, opts){
+    if(!floatSyncBtnEl) return;
+    opts = opts || {};
+    var textEl = floatSyncBtnEl.querySelector(".fsb-text");
+    if(textEl) textEl.textContent = text;
+    floatSyncBtnEl.title = opts.title || text;
+    floatSyncBtnEl.classList.toggle("fsb-syncing", !!opts.syncing);
+    floatSyncBtnEl.classList.toggle("fsb-error", !!opts.error);
   }
 
   function initFirebase(){
@@ -1608,6 +1646,7 @@ function saveTasks(){
     syncNowBtnEl = document.getElementById("syncNowBtn");
     historyBtnEl = document.getElementById("historyBtn");
     achBtnEl = document.getElementById("achBtn");
+    floatSyncBtnEl = document.getElementById("floatSyncBtn");
 
     var looksUnconfigured = !FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey.indexOf("PASTE_") === 0;
     if(looksUnconfigured || typeof firebase === "undefined"){
@@ -1657,6 +1696,9 @@ function saveTasks(){
     if(syncNowBtnEl){
       syncNowBtnEl.addEventListener("click", function(){ syncNow(); });
     }
+    if(floatSyncBtnEl){
+      floatSyncBtnEl.addEventListener("click", function(){ syncNow(); });
+    }
 
     auth.onAuthStateChanged(function(user){
       currentUser = user;
@@ -1664,6 +1706,7 @@ function saveTasks(){
         signInBtnEl.style.display = "none";
         userChipEl.style.display = "flex";
         if(syncNowBtnEl) syncNowBtnEl.style.display = "inline-flex";
+        if(floatSyncBtnEl){ floatSyncBtnEl.style.display = "flex"; setFloatSyncBtnText("Sync now"); }
         if(historyBtnEl) historyBtnEl.style.display = "inline-flex";
         if(achBtnEl) achBtnEl.style.display = "inline-flex";
         userAvatarEl.src = user.photoURL || "";
@@ -1685,6 +1728,7 @@ function saveTasks(){
         signInBtnEl.style.display = "flex";
         userChipEl.style.display = "none";
         if(syncNowBtnEl) syncNowBtnEl.style.display = "none";
+        if(floatSyncBtnEl) floatSyncBtnEl.style.display = "none";
         if(historyBtnEl) historyBtnEl.style.display = "none";
         if(achBtnEl) achBtnEl.style.display = "none";
         unsubscribeCloud();
@@ -1981,6 +2025,10 @@ function pushToCloud(){
       syncNowBtnEl.disabled = true;
       syncNowBtnEl.textContent = "⟳ Syncing…";
     }
+    if(floatSyncBtnEl){
+      floatSyncBtnEl.disabled = true;
+      setFloatSyncBtnText("Syncing…", { syncing:true });
+    }
     if(cloudSaveTimer){ clearTimeout(cloudSaveTimer); cloudSaveTimer = null; }
     setSyncState("syncing", "Syncing now…");
 
@@ -2013,12 +2061,22 @@ function pushToCloud(){
         syncNowBtnEl.textContent = applied ? "✓ Updated" : "✓ Synced";
         setTimeout(function(){ if(syncNowBtnEl) syncNowBtnEl.textContent = "⟳ Sync now"; }, 1800);
       }
+      if(floatSyncBtnEl){
+        floatSyncBtnEl.disabled = false;
+        setFloatSyncBtnText(applied ? "Updated" : "Synced");
+        setTimeout(function(){ if(floatSyncBtnEl) setFloatSyncBtnText("Sync now"); }, 1800);
+      }
     }).catch(function(err){
       console.error("Manual sync failed", err);
       setSyncState("error", "Sync failed: " + err.message);
       if(syncNowBtnEl){
         syncNowBtnEl.disabled = false;
         syncNowBtnEl.textContent = "⟳ Sync now";
+      }
+      if(floatSyncBtnEl){
+        floatSyncBtnEl.disabled = false;
+        setFloatSyncBtnText("Sync failed — retry", { error:true, title:"Sync failed: " + (err && err.message || "unknown error") + " — click to retry" });
+        setTimeout(function(){ if(floatSyncBtnEl) setFloatSyncBtnText("Sync now"); }, 3000);
       }
       maybeShowSyncErrorBanner(err);
     });
