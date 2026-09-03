@@ -287,6 +287,20 @@
   .po-actions{display:flex; gap:8px; padding:14px 18px; border-top:1px solid var(--line);}
   .po-actions button{flex:1;}
 
+  /* ---------- sync conflict modal ---------- */
+  .sc-panel{width:560px;}
+  .sc-intro{font-size:12.5px; color:var(--ink-faint); line-height:1.5; margin:0 0 14px;}
+  .sc-cols{display:flex; gap:12px;}
+  .sc-col{flex:1; border:1px solid var(--line-strong); border-radius:8px; padding:12px; background:var(--bg);}
+  .sc-col h4{margin:0 0 4px; font-size:13px;}
+  .sc-col .sc-when{font-size:11px; color:var(--ink-faint); margin-bottom:10px;}
+  .sc-col ul{margin:0; padding-left:18px; font-size:12px; line-height:1.6;}
+  .sc-col ul:empty::after{content:"No changes here."; color:var(--ink-faint); font-style:italic; font-size:11.5px; margin-left:-18px;}
+  .sc-actions{display:flex; flex-direction:column; gap:8px; padding:14px 18px; border-top:1px solid var(--line);}
+  .sc-actions .sc-row{display:flex; gap:8px;}
+  .sc-actions .sc-row button{flex:1;}
+  .sc-actions .sc-later{background:none; border:none; color:var(--ink-faint); font-size:11.5px; cursor:pointer; text-decoration:underline; padding:2px;}
+
   .hist-panel{width:760px; top:6%;}
   .hist-body{display:flex; height:56vh;}
   .hist-dates{width:190px; flex:none; border-right:1px solid var(--line); overflow-y:auto; padding:8px;}
@@ -1061,6 +1075,39 @@
   </div>
 </div>
 
+<!-- Sync conflict modal -->
+<div class="po-backdrop" id="scBackdrop"></div>
+<div class="po-panel sc-panel" id="scPanel" aria-hidden="true">
+  <div class="po-header">
+    <span class="po-title">⚠️ Cloud and local copies don't match</span>
+  </div>
+  <div class="po-body">
+    <p class="sc-intro">Changes were made on another device (or session) while this device also had unsaved changes. Pick which version to keep, or keep both as separate projects so nothing is lost.</p>
+    <div class="sc-cols">
+      <div class="sc-col">
+        <h4>☁️ Cloud version</h4>
+        <div class="sc-when" id="scCloudWhen">—</div>
+        <ul id="scCloudDiff"></ul>
+      </div>
+      <div class="sc-col">
+        <h4>💻 This device</h4>
+        <div class="sc-when" id="scLocalWhen">—</div>
+        <ul id="scLocalDiff"></ul>
+      </div>
+    </div>
+  </div>
+  <div class="sc-actions">
+    <div class="sc-row">
+      <button id="scUseCloudBtn" class="ghost">Use cloud version</button>
+      <button id="scUseLocalBtn" class="ghost">Keep this device's version</button>
+    </div>
+    <div class="sc-row">
+      <button id="scKeepBothBtn" class="primary">Keep both (as separate projects)</button>
+    </div>
+    <button id="scLaterBtn" class="sc-later" type="button">Decide later — ask me again next time</button>
+  </div>
+</div>
+
 <!-- Outliner window -->
 <div class="ol-backdrop" id="olBackdrop"></div>
 <div class="ol-panel" id="olPanel" aria-hidden="true">
@@ -1770,6 +1817,7 @@ function saveTasks(){
   }
 function canApplyRemoteNow(remoteData){
   // First, do the existing checks
+  if(conflictModalOpen) return false; // user is mid-decision — don't let anything else move underneath them
   if(isUserInteracting()) return false;
   if(cloudSaveTimer) return false;
   if(cloudPushInFlight) return false;
@@ -1899,7 +1947,16 @@ function subscribeToCloud(firebaseUid){
           }
         }
         
-        applyRemoteCloudSnapshot(freshRemote, freshJSON);
+        if(conflictModalOpen) return; // already asking about a conflict — don't swap data out from under it
+        if(freshJSON === snoozedConflictKey) return; // user already said "decide later" for this exact cloud state
+        var localJSON = JSON.stringify(buildCloudPayload());
+        if(localJSON === lastSyncedJSON){
+          // We have no unsynced local edits — this is a plain fast-forward, apply it directly.
+          applyRemoteCloudSnapshot(freshRemote, freshJSON);
+        } else {
+          // Both sides changed since our last known-synced point: a genuine conflict. Ask.
+          openSyncConflictModal(freshRemote, freshJSON, freshTime);
+        }
       }).catch(function(err){ console.error("Cloud re-check failed", err); });
     });
   }, function(err){
@@ -1957,8 +2014,179 @@ function subscribeToCloud(firebaseUid){
     return out;
   }
 
+  // ---------- sync conflict detection & modal ----------
+  // A genuine conflict is: this device has edits the cloud doesn't have yet (localJSON !==
+  // lastSyncedJSON), AND the cloud has moved since our last known-synced point too
+  // (remoteJSON !== lastSyncedJSON). If only one side moved, it's a plain fast-forward and
+  // gets applied/pushed automatically as before — no need to bother the user.
+  var conflictModalOpen = false;
+  var snoozedConflictKey = null; // remembers a conflict the user chose to defer, so we don't re-nag on the identical pair
+  var pendingConflict = null; // {remote, remoteJSON, remoteTime}
+
+  function taskFingerprint(t){
+    // Deliberately excludes nothing — any field change counts as "changed" for this summary.
+    return JSON.stringify(t);
+  }
+
+  // Compares one project's local task list against its remote task list.
+  function diffTasks(localTasks, remoteTasks){
+    var lMap = {}, rMap = {};
+    (localTasks||[]).forEach(function(t){ lMap[t.id] = t; });
+    (remoteTasks||[]).forEach(function(t){ rMap[t.id] = t; });
+    var addedLocal = 0, removedLocal = 0, changed = 0;
+    Object.keys(lMap).forEach(function(id){
+      if(!rMap[id]) addedLocal++;
+      else if(taskFingerprint(lMap[id]) !== taskFingerprint(rMap[id])) changed++;
+    });
+    Object.keys(rMap).forEach(function(id){
+      if(!lMap[id]) removedLocal++;
+    });
+    return { onlyLocal: addedLocal, onlyRemote: removedLocal, changed: changed };
+  }
+
+  // Builds two parallel bullet-list arrays (cloud-side, local-side) describing what's
+  // different, project by project, for display in the conflict modal.
+  function summarizeConflict(localSet, remoteSet){
+    var cloudLines = [], localLines = [];
+    var ids = {};
+    Object.keys(localSet||{}).forEach(function(id){ ids[id] = true; });
+    Object.keys(remoteSet||{}).forEach(function(id){ ids[id] = true; });
+    Object.keys(ids).forEach(function(id){
+      var l = localSet[id], r = remoteSet[id];
+      if(l && !r){
+        localLines.push('"' + (l.name||"Untitled") + '" — a project only on this device');
+        return;
+      }
+      if(r && !l){
+        cloudLines.push('"' + (r.name||"Untitled") + '" — a project only in the cloud');
+        return;
+      }
+      var d = diffTasks(l.tasks, r.tasks);
+      var nameChanged = (l.name||"") !== (r.name||"");
+      if(!d.onlyLocal && !d.onlyRemote && !d.changed && !nameChanged) return; // identical, nothing to show
+      var label = '"' + (l.name||r.name||"Untitled") + '"';
+      if(nameChanged) label += ' (renamed to "' + (l.name||"") + '" on this device)';
+      var localBits = [], cloudBits = [];
+      if(d.onlyLocal) localBits.push(d.onlyLocal + " task" + (d.onlyLocal===1?"":"s") + " not in the cloud");
+      if(d.onlyRemote) cloudBits.push(d.onlyRemote + " task" + (d.onlyRemote===1?"":"s") + " not on this device");
+      if(d.changed) { localBits.push(d.changed + " task" + (d.changed===1?"":"s") + " edited differently"); cloudBits.push(d.changed + " task" + (d.changed===1?"":"s") + " edited differently"); }
+      if(localBits.length) localLines.push(label + " — " + localBits.join(", "));
+      if(cloudBits.length) cloudLines.push(label + " — " + cloudBits.join(", "));
+    });
+    return { cloudLines: cloudLines, localLines: localLines };
+  }
+
+  function openSyncConflictModal(remote, remoteJSON, remoteTime){
+    var localSet = buildCloudPayload();
+    var summary = summarizeConflict(localSet, remote);
+    // Nothing actually differs at the task level (e.g. only project ordering/metadata) —
+    // don't bother the user, just apply the remote copy directly.
+    if(!summary.cloudLines.length && !summary.localLines.length){
+      applyRemoteCloudSnapshot(remote, remoteJSON);
+      return;
+    }
+    pendingConflict = { remote: remote, remoteJSON: remoteJSON, remoteTime: remoteTime };
+    conflictModalOpen = true;
+    document.getElementById("scCloudWhen").textContent = (remoteTime && remoteTime.toMillis) ? ("Last saved " + new Date(remoteTime.toMillis()).toLocaleString()) : "Last saved: unknown";
+    document.getElementById("scLocalWhen").textContent = "Last edited " + new Date(lastLocalEditAt || Date.now()).toLocaleString();
+    var cloudUl = document.getElementById("scCloudDiff");
+    var localUl = document.getElementById("scLocalDiff");
+    cloudUl.innerHTML = summary.cloudLines.map(function(l){ return "<li>" + esc(l) + "</li>"; }).join("");
+    localUl.innerHTML = summary.localLines.map(function(l){ return "<li>" + esc(l) + "</li>"; }).join("");
+    document.getElementById("scBackdrop").classList.add("show");
+    document.getElementById("scPanel").classList.add("show");
+  }
+
+  function closeSyncConflictModal(){
+    conflictModalOpen = false;
+    document.getElementById("scBackdrop").classList.remove("show");
+    document.getElementById("scPanel").classList.remove("show");
+  }
+
+  function resolveConflictUseCloud(){
+    if(!pendingConflict) return;
+    var c = pendingConflict;
+    pendingConflict = null;
+    snoozedConflictKey = null;
+    applyRemoteCloudSnapshot(c.remote, c.remoteJSON);
+    try{ localStorage.removeItem(PENDING_SYNC_KEY); }catch(e){}
+    closeSyncConflictModal();
+  }
+
+  function resolveConflictUseLocal(){
+    if(!pendingConflict) return;
+    pendingConflict = null;
+    snoozedConflictKey = null;
+    lastLocalEditAt = Date.now(); // re-arm the protection window so the snapshot we just overrode can't bounce back
+    closeSyncConflictModal();
+    pushToCloud();
+  }
+
+  function resolveConflictKeepBoth(){
+    if(!pendingConflict) return;
+    var c = pendingConflict;
+    var localSet = buildCloudPayload();
+    var stamp = new Date().toLocaleString();
+    // Any project that differs between the two sides gets duplicated: the local version is
+    // kept under a new id/name so it survives, and the cloud version becomes the "real" one
+    // going forward. Projects that only exist on one side already survive automatically once
+    // both sets are merged below.
+    var summary = summarizeConflict(localSet, c.remote);
+    var changedNames = {};
+    summary.localLines.concat(summary.cloudLines).forEach(function(line){
+      var m = line.match(/^"([^"]+)"/);
+      if(m) changedNames[m[1]] = true;
+    });
+    var merged = {};
+    Object.keys(c.remote).forEach(function(id){ merged[id] = c.remote[id]; }); // cloud becomes primary
+    Object.keys(localSet).forEach(function(id){
+      var l = localSet[id];
+      var r = c.remote[id];
+      var differs = !r || JSON.stringify(l.tasks) !== JSON.stringify(r.tasks) || (l.name||"") !== (r.name||"");
+      if(differs){
+        var newId = uid();
+        merged[newId] = { name: (l.name||"Untitled") + " (kept from this device, " + stamp + ")", tasks: l.tasks, linkedPmProjectId: l.linkedPmProjectId||null, pmReturnUrl: l.pmReturnUrl||null };
+      }
+    });
+    // Rebuild `projects`, preserving shared projects untouched (they're outside this blob).
+    var newProjects = {};
+    Object.keys(projects).forEach(function(id){
+      if(projects[id].shareId) newProjects[id] = projects[id];
+    });
+    Object.keys(merged).forEach(function(id){
+      newProjects[id] = {
+        id: id,
+        name: merged[id].name || "Untitled project",
+        tasks: Array.isArray(merged[id].tasks) ? merged[id].tasks.map(normalizeTask) : [],
+        linkedPmProjectId: merged[id].linkedPmProjectId || null,
+        pmReturnUrl: merged[id].pmReturnUrl || null
+      };
+    });
+    projects = newProjects;
+    if(!projects[activeProjectId]){
+      var ids = Object.keys(projects);
+      activeProjectId = ids.length ? ids[0] : null;
+    }
+    tasks = activeProjectId ? projects[activeProjectId].tasks : [];
+    pendingConflict = null;
+    snoozedConflictKey = null;
+    saveProjectsLocal();
+    render();
+    renderProjectPicker();
+    closeSyncConflictModal();
+    lastLocalEditAt = Date.now();
+    pushToCloud(); // push the merged set (cloud data + duplicated local copies) back up
+  }
+
+  function resolveConflictLater(){
+    if(pendingConflict) snoozedConflictKey = pendingConflict.remoteJSON;
+    pendingConflict = null;
+    closeSyncConflictModal();
+  }
+
   function scheduleCloudSave(){
     if(!firebaseReady || !currentUser) return;
+    if(conflictModalOpen) return; // don't push over a conflict the user hasn't resolved yet
     if(cloudSaveTimer) clearTimeout(cloudSaveTimer);
     if(JSON.stringify(buildCloudPayload()) === lastSyncedJSON) return; // nothing actually changed — don't flash the dot
     setSyncState("syncing", "Saving…");
@@ -5413,6 +5641,14 @@ function pushToCloud(){
   document.getElementById("histBackdrop").addEventListener("click", closeHistoryModal);
   document.getElementById("histRestoreBtn").addEventListener("click", restoreHistorySnapshot);
   document.getElementById("histClearBtn").addEventListener("click", clearOldHistory);
+
+  // ---------- sync conflict modal wiring ----------
+  document.getElementById("scUseCloudBtn").addEventListener("click", resolveConflictUseCloud);
+  document.getElementById("scUseLocalBtn").addEventListener("click", resolveConflictUseLocal);
+  document.getElementById("scKeepBothBtn").addEventListener("click", resolveConflictKeepBoth);
+  document.getElementById("scLaterBtn").addEventListener("click", resolveConflictLater);
+  // Deliberately no backdrop-click-to-close and no ✕ button here — this decision shouldn't
+  // be dismissable by accident, unlike the other modals. "Decide later" is the explicit exit.
 
   // ---------- achievements modal wiring ----------
   document.getElementById("achBtn").addEventListener("click", openAchievementsModal);
