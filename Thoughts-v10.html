@@ -390,6 +390,127 @@
             border: 1px solid #ddd;
             border-radius: 4px;
         }
+
+        /* Sort control for the project list — a view preference (see
+           th_project_sort_mode in localStorage), applies to every list
+           container (sidebar + the 📁 dropdown) uniformly. */
+        #fileSidebarSortBar {
+            padding: 0 10px 8px;
+            flex-shrink: 0;
+        }
+        #projectSortSelect {
+            width: 100%;
+            box-sizing: border-box;
+            font-size: 12px;
+            padding: 4px 6px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            color: #555;
+            background: #fff;
+        }
+
+        /* Professional project-row list style: pin indicator + name +
+           a single kebab (⋮) menu for Rename/Pin/Delete, replacing the
+           old always-visible × delete button and click-name-to-edit
+           pattern. */
+        .project-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 8px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .project-row:hover {
+            background: rgba(0, 0, 0, 0.045);
+        }
+        .project-row.current {
+            background: rgba(43, 108, 255, 0.10);
+            font-weight: 600;
+        }
+        .project-row.current:hover {
+            background: rgba(43, 108, 255, 0.15);
+        }
+        .project-pin-icon {
+            flex-shrink: 0;
+            font-size: 11px;
+        }
+        .project-row-name {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            outline: none;
+        }
+        .project-row-name[contenteditable="true"] {
+            white-space: normal;
+            overflow: visible;
+            text-overflow: clip;
+            background: #fff;
+            box-shadow: 0 0 0 2px #2b6cff inset;
+            border-radius: 3px;
+            padding: 0 2px;
+            cursor: text;
+        }
+        .project-row-menu-btn {
+            flex-shrink: 0;
+            width: 22px;
+            height: 22px;
+            line-height: 22px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            color: #888;
+            font-size: 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            opacity: 0;
+        }
+        .project-row:hover .project-row-menu-btn,
+        .project-row-menu-btn:focus {
+            opacity: 1;
+        }
+        .project-row-menu-btn:hover {
+            background: rgba(0, 0, 0, 0.08);
+            color: #333;
+        }
+
+        /* Single shared floating menu (like the outline's own hover
+           toggle elsewhere in this file) repositioned under whichever
+           row's ⋮ was clicked, rather than one hidden dropdown per row. */
+        .project-row-menu {
+            display: none;
+            position: fixed;
+            z-index: 4000;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+            padding: 4px;
+            min-width: 140px;
+        }
+        .project-row-menu.show { display: block; }
+        .project-row-menu button {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 6px 8px;
+            border: none;
+            background: none;
+            font-size: 13px;
+            border-radius: 4px;
+            cursor: pointer;
+            color: #333;
+        }
+        .project-row-menu button:hover {
+            background: rgba(0, 0, 0, 0.06);
+        }
+        .project-row-menu button[data-action="delete"] {
+            color: #c33;
+        }
+
         .search-result-row {
             padding: 6px 6px;
             margin: 2px 0;
@@ -1622,6 +1743,13 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     </div>
     <div id="fileSidebarSearchBar">
         <input id="contentSearchInput" type="text" placeholder="🔍 Search this project…">
+    </div>
+    <div id="fileSidebarSortBar">
+        <select id="projectSortSelect" onchange="window.setProjectSortMode(this.value)" title="Sort projects by">
+            <option value="modified">Recently modified</option>
+            <option value="created">Recently created</option>
+            <option value="name">Name (A–Z)</option>
+        </select>
     </div>
     <div class="file-sidebar-list" id="projectsListSide"></div>
     <div class="file-sidebar-list" id="contentSearchResults" style="display:none;"></div>
@@ -5916,6 +6044,36 @@ function insertNewCheckboxLine(currentLine) {
             return db.collection('users').doc(currentUser.uid).collection('thoughtsProjects');
         }
 
+        // Normalizes a timestamp to a plain millisecond number regardless
+        // of its source: a fresh Firestore Timestamp (has .toMillis()), a
+        // plain {seconds,...} object (what a Firestore Timestamp becomes
+        // after a JSON.stringify/parse round-trip through the local
+        // backup cache), an already-plain number, or missing entirely.
+        // Sorting needs a single comparable type no matter where the
+        // value came from.
+        function tsToMillis(ts) {
+            if (!ts) return 0;
+            if (typeof ts === 'number') return ts;
+            if (typeof ts.toMillis === 'function') return ts.toMillis();
+            if (typeof ts.seconds === 'number') return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+            return 0;
+        }
+
+        // Single place that turns a Firestore project doc into a
+        // projectsCache entry — every list-loading path (initial load,
+        // Sync Now) should shape entries identically so sorting/pin
+        // display behaves the same regardless of which path populated
+        // them.
+        function projectDocToCacheEntry(id, data) {
+            return {
+                id: id,
+                name: data.name || 'Untitled',
+                updatedAt: data.updatedAt,
+                createdAt: data.createdAt,
+                pinned: !!data.pinned
+            };
+        }
+
         // --- Local backup cache (localStorage) ------------------------
         // Firestore stays the source of truth; this is a same-browser
         // backup kept in sync on every cloud save/load, so the app can
@@ -5996,8 +6154,7 @@ function insertNewCheckboxLine(currentLine) {
             setStatus('Loading projects…');
             projectsCollection().get().then(function (snap) {
                 projectsCache = snap.docs.map(function (d) {
-                    const data = d.data();
-                    return { id: d.id, name: data.name || 'Untitled', updatedAt: data.updatedAt };
+                    return projectDocToCacheEntry(d.id, d.data());
                 });
                 writeLocalProjectsList(currentUser.uid, projectsCache);
                 if (projectsCache.length > 0) {
@@ -6005,7 +6162,7 @@ function insertNewCheckboxLine(currentLine) {
                         const savedCurrentId = userDoc.data() && userDoc.data().thoughtsCurrentProjectId;
                         const targetId = (savedCurrentId && projectsCache.some(function (p) { return p.id === savedCurrentId; }))
                             ? savedCurrentId : projectsCache[0].id;
-                        return switchProject(targetId, { skipSaveCurrent: true });
+                        return switchProject(targetId, { skipSaveCurrent: true, preferCloud: true });
                     });
                 }
                 // No projects yet — check for data saved before the
@@ -6055,9 +6212,16 @@ function insertNewCheckboxLine(currentLine) {
             return projectsCollection().add({
                 name: name,
                 json: JSON.stringify(initialData || defaultProjectTablesData()),
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                pinned: false
             }).then(function (docRef) {
-                projectsCache.push({ id: docRef.id, name: name, updatedAt: null });
+                // Approximate createdAt/updatedAt with the client clock
+                // until the next full list reload resolves the real
+                // server timestamps — good enough for immediate sort
+                // placement (a brand-new project sorts as "now" either
+                // way) without waiting on a round trip.
+                projectsCache.push({ id: docRef.id, name: name, updatedAt: Date.now(), createdAt: Date.now(), pinned: false });
                 if (currentUser) writeLocalProjectsList(currentUser.uid, projectsCache);
                 return switchProject(docRef.id, { skipSaveCurrent: true });
             });
@@ -6413,32 +6577,55 @@ function insertNewCheckboxLine(currentLine) {
 
             const doSwitch = function () {
                 const cached = currentUser ? readLocalProject(currentUser.uid, projectId) : null;
-                if (cached && cached.json) {
+                // preferCloud is set for the very first project opened
+                // after signing in/loading the page (see
+                // initProjectsForUser) — using the local-first fast path
+                // there meant reopening the app could silently show
+                // whatever was last cached on THIS device, even if
+                // another device had since saved newer content, with the
+                // real cloud version only ever refreshed quietly in the
+                // background and never actually shown. A manual switch
+                // between projects later in the same session still
+                // prefers the instant local copy (see below) since we
+                // just confirmed we're current moments ago.
+                if (cached && cached.json && !opts.preferCloud) {
                     // Local-first: this project has been opened on this
                     // device before, so switch to it immediately from the
                     // local backup instead of waiting on a network round
-                    // trip. Refresh the backup from the cloud in the
-                    // background afterward (in case another device
-                    // changed it) — that refresh never touches the
-                    // already-rendered view, so it can't clobber
-                    // anything mid-edit.
+                    // trip. Refresh from the cloud in the background
+                    // afterward (in case another device changed it) —
+                    // and if it turns out to actually be newer, and nothing
+                    // has been typed here since the switch, upgrade the
+                    // view to match instead of leaving it stale. Skipped
+                    // entirely if the user has since navigated away or
+                    // started editing, so this can never clobber
+                    // in-progress work.
                     const knownName = (projectsCache.find(function (p) { return p.id === projectId; }) || {}).name;
                     applySwitchResult({ json: cached.json, name: cached.name || knownName });
+                    const renderedAtMs = cached.updatedAtMs || 0;
                     projectsCollection().doc(projectId).get().then(function (doc) {
                         const data = doc.data();
                         if (!data) return;
+                        const cloudMs = (data.updatedAt && data.updatedAt.toMillis) ? data.updatedAt.toMillis() : Date.now();
                         writeLocalProject(currentUser.uid, projectId, {
                             json: data.json,
                             name: data.name,
-                            updatedAtMs: (data.updatedAt && data.updatedAt.toMillis) ? data.updatedAt.toMillis() : Date.now(),
+                            updatedAtMs: cloudMs,
                             pendingSync: false
                         });
+                        const stillHere = currentProjectId === projectId;
+                        const noPendingEdit = !cloudSaveTimer;
+                        const actuallyNewer = cloudMs > renderedAtMs + 1000; // small slack for clock skew
+                        if (stillHere && noPendingEdit && actuallyNewer) {
+                            applySwitchResult({ json: data.json, name: data.name });
+                        }
                     }).catch(function (err) { console.error('Background refresh failed:', err); });
                     return Promise.resolve();
                 }
-                // Never opened on this device — no local copy to switch
-                // to instantly, so this one genuinely has to wait on the
-                // cloud (the only unavoidable case).
+                // Never opened on this device, or this is the initial
+                // load right after signing in (preferCloud) — either way
+                // this has to check the cloud first; local cache is only
+                // a fallback if that fails (offline).
                 return projectsCollection().doc(projectId).get().then(function (doc) {
                     const data = doc.data();
                     if (!data) throw new Error('Project not found');
@@ -6450,7 +6637,13 @@ function insertNewCheckboxLine(currentLine) {
                     });
                     applySwitchResult({ json: data.json, name: data.name });
                 }).catch(function (err) {
-                    console.error('Switch failed and no local backup to fall back to:', err);
+                    console.error('Cloud fetch failed, falling back to local backup if any:', err);
+                    if (cached && cached.json) {
+                        const knownName = (projectsCache.find(function (p) { return p.id === projectId; }) || {}).name;
+                        setStatus('Loaded from local backup (offline)');
+                        applySwitchResult({ json: cached.json, name: cached.name || knownName });
+                        return;
+                    }
                     throw err;
                 });
             };
@@ -6543,9 +6736,29 @@ function insertNewCheckboxLine(currentLine) {
                     if (cached) { cached.name = newName; writeLocalProject(currentUser.uid, projectId, cached); }
                 }
                 if (projectId === currentProjectId) applyProjectNameToUI(newName);
+                // Re-render in case name-based sorting needs to move
+                // this row.
+                renderProjectsList();
             }).catch(function (err) {
                 console.error('Rename project failed:', err);
                 setStatus('Rename failed');
+            });
+        };
+
+        // Pinned projects always sort to the top of the list regardless
+        // of the chosen sort mode (see getSortedProjectsCache) — same
+        // pattern as pinned chats/messages in most apps.
+        window.toggleProjectPin = function (projectId) {
+            const p = projectsCache.find(function (x) { return x.id === projectId; });
+            if (!p) return;
+            const newPinned = !p.pinned;
+            projectsCollection().doc(projectId).set({ pinned: newPinned }, { merge: true }).then(function () {
+                p.pinned = newPinned;
+                if (currentUser) writeLocalProjectsList(currentUser.uid, projectsCache);
+                renderProjectsList();
+            }).catch(function (err) {
+                console.error('Pin toggle failed:', err);
+                setStatus('Pin failed');
             });
         };
 
@@ -6575,68 +6788,72 @@ function insertNewCheckboxLine(currentLine) {
 
         function buildProjectRow(p) {
             const row = document.createElement('div');
-            row.className = 'file-sidebar-row';
-            row.style.cssText = 'display:flex; align-items:center; padding:3px 2px; border-radius:3px;' +
-                (p.id === currentProjectId ? 'background:rgba(0,0,0,0.08); font-weight:bold;' : '');
+            row.className = 'file-sidebar-row project-row' + (p.id === currentProjectId ? ' current' : '');
+            row.dataset.projectId = p.id;
+            row.title = 'Click to switch to this project';
+
+            if (p.pinned) {
+                const pinIcon = document.createElement('span');
+                pinIcon.className = 'project-pin-icon';
+                pinIcon.textContent = '📌';
+                pinIcon.title = 'Pinned';
+                row.appendChild(pinIcon);
+            }
 
             const nameSpan = document.createElement('span');
-            nameSpan.contentEditable = 'true';
+            nameSpan.className = 'project-row-name';
             nameSpan.textContent = p.name;
-            nameSpan.style.cssText = 'flex:1; font-size:13px; outline:none; padding:1px 3px; cursor:text;';
-            nameSpan.title = 'Click to switch to this project — type here to rename it';
-            nameSpan.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-            // The name fills almost the whole row (flex:1), so it's what
-            // most clicks actually land on — it used to be excluded from
-            // switching (reserved for renaming only), which meant nearly
-            // every click on a row did nothing. Now a click switches (if
-            // it isn't already the current project) same as clicking
-            // anywhere else on the row, while typing here still renames.
-            nameSpan.addEventListener('click', function () {
-                if (p.id !== currentProjectId) window.switchProjectFromMenu(p.id);
-            });
-            nameSpan.addEventListener('keydown', function (e) {
-                if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }
-            });
-            nameSpan.addEventListener('blur', function () {
-                if (nameSpan.textContent.trim() !== p.name) window.renameProject(p.id, nameSpan.textContent);
-            });
             row.appendChild(nameSpan);
 
-            const switchBtn = document.createElement('span');
-            const isCurrent = p.id === currentProjectId;
-            switchBtn.title = isCurrent ? 'Current project' : 'Switch to this project';
-            // Was a 16px square — doubled the width (not the height) so
-            // it's a wider, easier target to click precisely without
-            // making the row visually taller.
-            switchBtn.style.cssText = 'cursor:pointer; flex:0 0 auto; width:32px; height:16px; ' +
-                'margin:0 6px; border-radius:3px; box-sizing:border-box; ' +
-                (isCurrent
-                    ? 'background:#2b6cff; border:2px solid #2b6cff;'
-                    : 'background:transparent; border:2px solid #aaa;');
-            switchBtn.addEventListener('click', function () { window.switchProjectFromMenu(p.id); });
-            row.appendChild(switchBtn);
-
-            const delBtn = document.createElement('span');
-            delBtn.textContent = '×';
-            delBtn.title = 'Delete project';
-            delBtn.style.cssText = 'cursor:pointer; padding:0 4px; color:#c33; font-weight:bold;';
-            delBtn.addEventListener('click', function (e) {
+            // Single kebab menu replaces the old always-visible delete
+            // ("×") and click-the-name-to-rename controls — Rename,
+            // Pin/Unpin, and Delete all live behind it instead of
+            // cluttering the row itself (see openProjectRowMenu).
+            const menuBtn = document.createElement('button');
+            menuBtn.type = 'button';
+            menuBtn.className = 'project-row-menu-btn';
+            menuBtn.textContent = '⋮';
+            menuBtn.title = 'More actions';
+            menuBtn.addEventListener('click', function (e) {
                 e.stopPropagation();
-                window.deleteProjectFromMenu(p.id, p.name);
+                openProjectRowMenu(menuBtn, p);
             });
-            row.appendChild(delBtn);
+            row.appendChild(menuBtn);
 
-            // The name itself now also switches on click (see nameSpan
-            // above) — this row-level listener just covers clicks on
-            // the row's own padding/background outside any child.
-            row.style.cursor = 'pointer';
             row.addEventListener('click', function (e) {
-                if (e.target === nameSpan || e.target === delBtn || e.target === switchBtn) return;
-                window.switchProjectFromMenu(p.id);
+                if (e.target === menuBtn) return;
+                if (p.id !== currentProjectId) window.switchProjectFromMenu(p.id);
             });
 
             return row;
         }
+
+        // Sort mode persists locally (not synced — it's a view
+        // preference, not project data) and applies uniformly to every
+        // list container. Pinned projects always form their own group
+        // at the top regardless of mode, same as pinned items in most
+        // chat/note apps.
+        function getProjectSortMode() {
+            return localStorage.getItem('th_project_sort_mode') || 'modified';
+        }
+        function getSortedProjectsCache() {
+            const mode = getProjectSortMode();
+            const list = projectsCache.slice();
+            function cmp(a, b) {
+                if (mode === 'name') return (a.name || '').localeCompare(b.name || '');
+                if (mode === 'created') return tsToMillis(b.createdAt) - tsToMillis(a.createdAt);
+                return tsToMillis(b.updatedAt) - tsToMillis(a.updatedAt); // 'modified' default
+            }
+            list.sort(function (a, b) {
+                if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+                return cmp(a, b);
+            });
+            return list;
+        }
+        window.setProjectSortMode = function (mode) {
+            localStorage.setItem('th_project_sort_mode', mode);
+            renderProjectsList();
+        };
 
         // Renders into every list container that currently exists —
         // the 📁 dropdown's #projectsList and the left Files panel's
@@ -6645,13 +6862,94 @@ function insertNewCheckboxLine(currentLine) {
         // don't survive cloneNode, so each container gets its own set
         // rather than sharing elements).
         function renderProjectsList() {
+            const sorted = getSortedProjectsCache();
             ['projectsList', 'projectsListSide'].forEach(function (containerId) {
                 const listEl = document.getElementById(containerId);
                 if (!listEl) return;
                 listEl.innerHTML = '';
-                projectsCache.forEach(function (p) {
+                sorted.forEach(function (p) {
                     listEl.appendChild(buildProjectRow(p));
                 });
+            });
+            const sortSelect = document.getElementById('projectSortSelect');
+            if (sortSelect && sortSelect.value !== getProjectSortMode()) sortSelect.value = getProjectSortMode();
+        }
+
+        // --- Shared floating row-action menu ---------------------------
+        // One menu element repositioned under whichever row's ⋮ was
+        // clicked, rather than a hidden dropdown baked into every row
+        // (mirrors the outline's own single shared hover-toggle
+        // pattern elsewhere in this file).
+        let projectRowMenuTarget = null;
+        function ensureProjectRowMenu() {
+            let menu = document.getElementById('projectRowMenu');
+            if (menu) return menu;
+            menu = document.createElement('div');
+            menu.id = 'projectRowMenu';
+            menu.className = 'project-row-menu';
+            menu.innerHTML =
+                '<button type="button" data-action="rename">✏️ Rename</button>' +
+                '<button type="button" data-action="pin">📌 Pin</button>' +
+                '<button type="button" data-action="delete">🗑️ Delete</button>';
+            document.body.appendChild(menu);
+            menu.addEventListener('click', function (e) {
+                const btn = e.target.closest('button[data-action]');
+                if (!btn || !projectRowMenuTarget) return;
+                const action = btn.dataset.action;
+                const p = projectRowMenuTarget;
+                closeProjectRowMenu();
+                if (action === 'rename') startInlineProjectRename(p);
+                else if (action === 'pin') window.toggleProjectPin(p.id);
+                else if (action === 'delete') window.deleteProjectFromMenu(p.id, p.name);
+            });
+            return menu;
+        }
+        function openProjectRowMenu(anchorBtn, p) {
+            const menu = ensureProjectRowMenu();
+            projectRowMenuTarget = p;
+            menu.querySelector('[data-action="pin"]').textContent = p.pinned ? '📌 Unpin' : '📌 Pin';
+            const rect = anchorBtn.getBoundingClientRect();
+            menu.style.top = (rect.bottom + window.scrollY + 2) + 'px';
+            menu.style.left = Math.max(4, rect.right + window.scrollX - 150) + 'px';
+            menu.classList.add('show');
+        }
+        function closeProjectRowMenu() {
+            const menu = document.getElementById('projectRowMenu');
+            if (menu) menu.classList.remove('show');
+            projectRowMenuTarget = null;
+        }
+        document.addEventListener('click', function (e) {
+            const menu = document.getElementById('projectRowMenu');
+            if (menu && menu.classList.contains('show') &&
+                !e.target.closest('#projectRowMenu') && !e.target.closest('.project-row-menu-btn')) {
+                closeProjectRowMenu();
+            }
+        });
+
+        // Turns a row's name into an editable field on demand (triggered
+        // from the ⋮ menu's Rename action) rather than the name always
+        // being editable — every currently-rendered copy of this row
+        // (dropdown + sidebar can each have one) gets updated so
+        // renaming works from wherever it was triggered.
+        function startInlineProjectRename(p) {
+            document.querySelectorAll('.project-row[data-project-id="' + p.id + '"] .project-row-name').forEach(function (nameSpan) {
+                nameSpan.contentEditable = 'true';
+                nameSpan.focus();
+                document.execCommand('selectAll', false, null);
+                const commit = function () {
+                    nameSpan.contentEditable = 'false';
+                    nameSpan.removeEventListener('blur', commit);
+                    nameSpan.removeEventListener('keydown', onKey);
+                    const newName = nameSpan.textContent.trim();
+                    if (newName && newName !== p.name) window.renameProject(p.id, newName);
+                    else nameSpan.textContent = p.name;
+                };
+                const onKey = function (e) {
+                    if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }
+                    else if (e.key === 'Escape') { nameSpan.textContent = p.name; nameSpan.blur(); }
+                };
+                nameSpan.addEventListener('blur', commit);
+                nameSpan.addEventListener('keydown', onKey);
             });
         }
 
@@ -6753,8 +7051,7 @@ function insertNewCheckboxLine(currentLine) {
                 return projectsCollection().get();
             }).then(function (snap) {
                 projectsCache = snap.docs.map(function (d) {
-                    const data = d.data();
-                    return { id: d.id, name: data.name || 'Untitled', updatedAt: data.updatedAt };
+                    return projectDocToCacheEntry(d.id, d.data());
                 });
                 writeLocalProjectsList(currentUser.uid, projectsCache);
                 renderProjectsList();

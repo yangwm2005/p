@@ -4383,7 +4383,7 @@ function insertNewCheckboxLine(currentLine) {
 </script>
 
 <footer>
-    Copyright © 2026 Dr. Wen-Ming Yang 20260826 v2.4 Week Goals 20260902
+    Copyright © 2026 Dr. Wen-Ming Yang 20260903 v2.4 Week Goals 
     
 <!--     (Add New Table/Single/Plain/Review/Summary now scroll to and focus the newly created table) WM
 -->
@@ -6037,7 +6037,7 @@ function insertNewCheckboxLine(currentLine) {
                         const savedCurrentId = userDoc.data() && userDoc.data().weekgoalCurrentProjectId;
                         const targetId = (savedCurrentId && projectsCache.some(function (p) { return p.id === savedCurrentId; }))
                             ? savedCurrentId : projectsCache[0].id;
-                        return switchProject(targetId, { skipSaveCurrent: true });
+                        return switchProject(targetId, { skipSaveCurrent: true, preferCloud: true });
                     });
                 }
                 // No projects yet — check for data saved before the
@@ -6445,32 +6445,55 @@ function insertNewCheckboxLine(currentLine) {
 
             const doSwitch = function () {
                 const cached = currentUser ? readLocalProject(currentUser.uid, projectId) : null;
-                if (cached && cached.json) {
+                // preferCloud is set for the very first project opened
+                // after signing in/loading the page (see
+                // initProjectsForUser) — using the local-first fast path
+                // there meant reopening the app could silently show
+                // whatever was last cached on THIS device, even if
+                // another device had since saved newer content, with the
+                // real cloud version only ever refreshed quietly in the
+                // background and never actually shown. A manual switch
+                // between projects later in the same session still
+                // prefers the instant local copy (see below) since we
+                // just confirmed we're current moments ago.
+                if (cached && cached.json && !opts.preferCloud) {
                     // Local-first: this project has been opened on this
                     // device before, so switch to it immediately from the
                     // local backup instead of waiting on a network round
-                    // trip. Refresh the backup from the cloud in the
-                    // background afterward (in case another device
-                    // changed it) — that refresh never touches the
-                    // already-rendered view, so it can't clobber
-                    // anything mid-edit.
+                    // trip. Refresh from the cloud in the background
+                    // afterward (in case another device changed it) —
+                    // and if it turns out to actually be newer, and nothing
+                    // has been typed here since the switch, upgrade the
+                    // view to match instead of leaving it stale. Skipped
+                    // entirely if the user has since navigated away or
+                    // started editing, so this can never clobber
+                    // in-progress work.
                     const knownName = (projectsCache.find(function (p) { return p.id === projectId; }) || {}).name;
                     applySwitchResult({ json: cached.json, name: cached.name || knownName });
+                    const renderedAtMs = cached.updatedAtMs || 0;
                     projectsCollection().doc(projectId).get().then(function (doc) {
                         const data = doc.data();
                         if (!data) return;
+                        const cloudMs = (data.updatedAt && data.updatedAt.toMillis) ? data.updatedAt.toMillis() : Date.now();
                         writeLocalProject(currentUser.uid, projectId, {
                             json: data.json,
                             name: data.name,
-                            updatedAtMs: (data.updatedAt && data.updatedAt.toMillis) ? data.updatedAt.toMillis() : Date.now(),
+                            updatedAtMs: cloudMs,
                             pendingSync: false
                         });
+                        const stillHere = currentProjectId === projectId;
+                        const noPendingEdit = !cloudSaveTimer;
+                        const actuallyNewer = cloudMs > renderedAtMs + 1000; // small slack for clock skew
+                        if (stillHere && noPendingEdit && actuallyNewer) {
+                            applySwitchResult({ json: data.json, name: data.name });
+                        }
                     }).catch(function (err) { console.error('Background refresh failed:', err); });
                     return Promise.resolve();
                 }
-                // Never opened on this device — no local copy to switch
-                // to instantly, so this one genuinely has to wait on the
-                // cloud (the only unavoidable case).
+                // Never opened on this device, or this is the initial
+                // load right after signing in (preferCloud) — either way
+                // this has to check the cloud first; local cache is only
+                // a fallback if that fails (offline).
                 return projectsCollection().doc(projectId).get().then(function (doc) {
                     const data = doc.data();
                     if (!data) throw new Error('Project not found');
@@ -6482,7 +6505,13 @@ function insertNewCheckboxLine(currentLine) {
                     });
                     applySwitchResult({ json: data.json, name: data.name });
                 }).catch(function (err) {
-                    console.error('Switch failed and no local backup to fall back to:', err);
+                    console.error('Cloud fetch failed, falling back to local backup if any:', err);
+                    if (cached && cached.json) {
+                        const knownName = (projectsCache.find(function (p) { return p.id === projectId; }) || {}).name;
+                        setStatus('Loaded from local backup (offline)');
+                        applySwitchResult({ json: cached.json, name: cached.name || knownName });
+                        return;
+                    }
                     throw err;
                 });
             };
