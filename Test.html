@@ -6995,6 +6995,7 @@ function insertNewCheckboxLine(currentLine) {
         // being editable — every currently-rendered copy of this row
         // (dropdown + sidebar can each have one) gets updated so
         // renaming works from wherever it was triggered.
+        let sidebarRenameTimer = null;
         function startInlineProjectRename(p) {
             document.querySelectorAll('.project-row[data-project-id="' + p.id + '"] .project-row-name').forEach(function (nameSpan) {
                 nameSpan.contentEditable = 'true';
@@ -7004,6 +7005,8 @@ function insertNewCheckboxLine(currentLine) {
                     nameSpan.contentEditable = 'false';
                     nameSpan.removeEventListener('blur', commit);
                     nameSpan.removeEventListener('keydown', onKey);
+                    nameSpan.removeEventListener('input', onInput);
+                    clearTimeout(sidebarRenameTimer);
                     const newName = nameSpan.textContent.trim();
                     if (newName && newName !== p.name) window.renameProject(p.id, newName);
                     else nameSpan.textContent = p.name;
@@ -7012,8 +7015,31 @@ function insertNewCheckboxLine(currentLine) {
                     if (e.key === 'Enter') { e.preventDefault(); nameSpan.blur(); }
                     else if (e.key === 'Escape') { nameSpan.textContent = p.name; nameSpan.blur(); }
                 };
+                // Mirrors applyProjectNameToUI / the pageTitle input
+                // listener below, just in the other direction: as you
+                // type here, every other copy of this row's name (the
+                // dropdown vs. the sidebar) and the big top title update
+                // immediately, while the actual rename (Firestore write
+                // + cache update) stays debounced so it doesn't fire on
+                // every keystroke.
+                const onInput = function () {
+                    const live = nameSpan.textContent;
+                    document.querySelectorAll('.project-row[data-project-id="' + p.id + '"] .project-row-name').forEach(function (other) {
+                        if (other !== nameSpan && document.activeElement !== other) other.textContent = live;
+                    });
+                    const pageTitleEl = document.getElementById('pageTitle');
+                    if (pageTitleEl && p.id === currentProjectId && document.activeElement !== pageTitleEl) {
+                        pageTitleEl.textContent = live;
+                    }
+                    clearTimeout(sidebarRenameTimer);
+                    sidebarRenameTimer = setTimeout(function () {
+                        const trimmed = live.trim();
+                        if (trimmed && trimmed !== p.name) window.renameProject(p.id, trimmed);
+                    }, 800);
+                };
                 nameSpan.addEventListener('blur', commit);
                 nameSpan.addEventListener('keydown', onKey);
+                nameSpan.addEventListener('input', onInput);
             });
         }
 
