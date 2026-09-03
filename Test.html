@@ -908,9 +908,12 @@
     margin-top: 0;
 }
 .cell-toggle {
+    position: relative;
+    z-index: 2;
     float: right;
     cursor: pointer;
     user-select: none;
+    pointer-events: auto;
     font-size: 18px;
     line-height: 1;
     color: #999;
@@ -922,9 +925,12 @@
     color: #444;
 }
 .cell-height-toggle {
+    position: relative;
+    z-index: 2;
     float: right;
     cursor: pointer;
     user-select: none;
+    pointer-events: auto;
     font-size: 15px;
     line-height: 1;
     color: #999;
@@ -953,7 +959,8 @@ td.cell-full-height {
        just the scrollbar, or the cell keeps its old height with a
        scrollbar hidden behind an unrelated overflow setting. */
     height: auto !important;
-    overflow: visible;
+    max-height: none !important;
+    overflow: visible !important;
     resize: none;
 }
 
@@ -1208,7 +1215,7 @@ body.select-mode-active .outline-select-checkbox {
    on top of this. */
 .table-corner-btn {
     position: absolute;
-    top: -21px;
+    top: -10px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2285,7 +2292,9 @@ function quickView() {
         toggle.className = 'cell-toggle';
         toggle.title = 'Collapse/expand this cell';
         toggle.textContent = '▾';
-        toggle.addEventListener('click', function () {
+        toggle.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
             const collapsed = td.classList.toggle('cell-collapsed');
             toggle.textContent = collapsed ? '▸' : '▾';
             if (window.refreshCollapseAllLabel) window.refreshCollapseAllLabel();
@@ -2339,10 +2348,24 @@ function quickView() {
         toggle.className = 'cell-height-toggle';
         toggle.title = 'Show full content (no scrolling)';
         toggle.textContent = '⤢';
-        toggle.addEventListener('click', function () {
+        toggle.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
             const full = td.classList.toggle('cell-full-height');
             toggle.textContent = full ? '⤡' : '⤢';
             toggle.title = full ? 'Use a fixed height with scrolling' : 'Show full content (no scrolling)';
+            // Also touch the inline style directly rather than relying
+            // on the class + CSS !important alone — a cell the user
+            // manually drag-resized (native `resize: both`) carries an
+            // inline height, and this guarantees the toggle always wins
+            // over it rather than depending on cascade specificity.
+            if (full) {
+                td.style.height = 'auto';
+                td.style.maxHeight = 'none';
+            } else {
+                td.style.height = '';
+                td.style.maxHeight = '';
+            }
             if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
         });
         h3.insertBefore(toggle, h3.firstChild);
@@ -6063,6 +6086,8 @@ function insertNewCheckboxLine(currentLine) {
             }
             if (cellData.fullHeight) {
                 td.classList.add('cell-full-height');
+                td.style.height = 'auto';
+                td.style.maxHeight = 'none';
                 const heightToggle = h3.querySelector('.cell-height-toggle');
                 if (heightToggle) {
                     heightToggle.textContent = '⤡';
