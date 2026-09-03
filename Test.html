@@ -1244,6 +1244,35 @@ body.select-mode-active .outline-select-checkbox {
     background: rgba(0, 0, 0, 0.06);
 }
 
+/* Size-toggle button: sits next to the pop-out button, top-right of
+   the table/wrapper. Click flips the table between full-width
+   ("Single") and half-width ("Small", table.cell-table-small) — the
+   same distinction as the "+ Single Table" / "Add Small" creation
+   buttons, just applied after the fact to a table that already
+   exists. */
+.table-size-toggle-btn {
+    position: absolute;
+    top: -20px;
+    right: 48px;
+    width: 22px;
+    height: 18px;
+    padding: 0;
+    margin: 0;
+    line-height: 1;
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+    z-index: 5;
+}
+
+.table-size-toggle-btn:hover {
+    color: #555;
+    background: rgba(0, 0, 0, 0.06);
+}
+
 .table-popped-out {
     width: 100% !important;
     max-width: none !important;
@@ -2357,6 +2386,7 @@ function quickView() {
         document.querySelectorAll('#tablesContainer > table').forEach(window.applyCellTableLayout);
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTableDragHandle);
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTablePopoutButton);
+        document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTableSizeToggleBtn);
     }
     document.addEventListener('DOMContentLoaded', function () {
         ensureAllCellToggles();
@@ -2407,6 +2437,37 @@ function quickView() {
         btn.addEventListener('click', function (e) {
             e.preventDefault();
             openTablePopout(el);
+        });
+        el.appendChild(btn);
+    };
+
+    // Adds a small button to a top-level table/wrapper that flips the
+    // table between full-width ("Single") and half-width ("Small",
+    // table.cell-table-small). Works on either a bare <table> (the
+    // two built-in ones) or a .table-wrapper div, same as the drag
+    // handle/pop-out button above. small: table.classList.contains(
+    // 'cell-table-small') is already read straight off the class at
+    // save time (see serializeTablesContainer), so toggling the class
+    // is all that's needed — no separate data field to update.
+    window.ensureTableSizeToggleBtn = function (el) {
+        if (!el || el.querySelector(':scope > .table-size-toggle-btn')) return;
+        const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
+        if (!table) return;
+        const btn = document.createElement('button');
+        btn.className = 'table-size-toggle-btn';
+        btn.type = 'button';
+        function refreshTitle() {
+            btn.textContent = table.classList.contains('cell-table-small') ? '⇱' : '⇲';
+            btn.title = table.classList.contains('cell-table-small')
+                ? 'Switch to full width (Single)'
+                : 'Switch to half width (Small)';
+        }
+        refreshTitle();
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            table.classList.toggle('cell-table-small');
+            refreshTitle();
+            if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
         });
         el.appendChild(btn);
     };
@@ -2561,6 +2622,7 @@ function quickView() {
         window.applyCellTableLayout(newTable);
         window.ensureTableDragHandle(wrapper);
         window.ensureTablePopoutButton(wrapper);
+        window.ensureTableSizeToggleBtn(wrapper);
 
         // Scroll to the new table and drop the cursor into its first
         // cell, so you can start typing immediately instead of
@@ -6004,10 +6066,12 @@ function insertNewCheckboxLine(currentLine) {
                     wrapper.appendChild(delBtn);
                     if (window.ensureTableDragHandle) window.ensureTableDragHandle(wrapper);
                     if (window.ensureTablePopoutButton) window.ensureTablePopoutButton(wrapper);
+                    if (window.ensureTableSizeToggleBtn) window.ensureTableSizeToggleBtn(wrapper);
                     container.appendChild(wrapper);
                 } else {
                     if (window.ensureTableDragHandle) window.ensureTableDragHandle(table);
                     if (window.ensureTablePopoutButton) window.ensureTablePopoutButton(table);
+                    if (window.ensureTableSizeToggleBtn) window.ensureTableSizeToggleBtn(table);
                     container.appendChild(table);
                 }
             });
