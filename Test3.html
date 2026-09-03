@@ -1260,11 +1260,21 @@
   // ---------- state ----------
   var PROJECTS_KEY = "gantt_v2_projects";
   var ACTIVE_PROJECT_KEY = "gantt_v2_activeProject";
+  var PENDING_SYNC_KEY = "gantt_v2_pendingSync"; // survives reload/close — see saveTasks()/pushToCloud()
   var projects = {};
   var activeProjectId = null;
   var tasks = [];
   loadProjects();
   tasks = projects[activeProjectId].tasks;
+  // If the previous session ended (tab closed, refreshed, crashed) before its edit finished
+  // pushing to the cloud, PENDING_SYNC_KEY is still "1" in localStorage from that session.
+  // Treat it exactly like an edit made during sign-in (pendingPreAuthEdit): force a push as
+  // soon as we're ready, and start the local-edit protection window immediately, so the
+  // first cloud snapshot we receive can't silently overwrite this still-unsynced local data.
+  if(localStorage.getItem(PENDING_SYNC_KEY) === "1"){
+    pendingPreAuthEdit = true;
+    lastLocalEditAt = Date.now();
+  }
 
   var zoom = localStorage.getItem(ZOOM_KEY) || "day";
   var autoShift = localStorage.getItem(SHIFT_KEY) !== "0";
@@ -1383,6 +1393,11 @@ function saveTasks(){
     });
     // Update timestamp for every local edit
     lastLocalEditAt = Date.now();
+    // Flag this edit as not-yet-in-the-cloud *in localStorage itself* (not just an in-memory
+    // var) so that if the tab closes/refreshes before the cloud push completes, the next
+    // session knows on startup that it's carrying an unsynced edit — see the PENDING_SYNC_KEY
+    // check right after loadProjects(). Cleared only once pushToCloud() actually succeeds.
+    try{ localStorage.setItem(PENDING_SYNC_KEY, "1"); }catch(e){}
   }
   saveProjectsLocal();
   if(!applyingRemote){
@@ -1956,6 +1971,23 @@ function subscribeToCloud(firebaseUid){
     }, 700);
   }
 
+  // Best-effort: if the tab is being hidden/closed while a debounced cloud save is still
+  // pending, fire it immediately instead of waiting out the rest of the 700ms. This can't
+  // guarantee the write finishes before the page actually unloads (Firestore writes are
+  // async and there's no reliable way to block navigation on them), which is exactly why the
+  // PENDING_SYNC_KEY flag above exists as the real safety net — this just shrinks the window
+  // in which it's needed.
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState === "hidden" && cloudSaveTimer){
+      clearTimeout(cloudSaveTimer);
+      cloudSaveTimer = null;
+      pushToCloud();
+      Object.keys(projects).forEach(function(id){
+        if(projects[id].shareId) pushSharedGanttProjectUpdate(id);
+      });
+    }
+  });
+
 // Replace pushToCloud:
 function pushToCloud(){
   if(!firebaseReady || !currentUser) return;
@@ -1979,6 +2011,7 @@ function pushToCloud(){
       setSyncState("synced", "Synced");
       cloudSaveFailCount = 0;
       hideSyncErrorBanner();
+      try{ localStorage.removeItem(PENDING_SYNC_KEY); }catch(e){}
       maybeSaveDailySnapshot();
     })
     .catch(function(err){
@@ -1990,6 +2023,7 @@ function pushToCloud(){
             setSyncState("synced", "Synced");
             cloudSaveFailCount = 0;
             hideSyncErrorBanner();
+            try{ localStorage.removeItem(PENDING_SYNC_KEY); }catch(e){}
             maybeSaveDailySnapshot();
           })
           .catch(function(err2){
