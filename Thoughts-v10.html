@@ -20,6 +20,7 @@
 
         table {
             border-collapse: collapse;
+            table-layout: fixed;
             width: 95vw;
             max-width: 950px;
             margin-top: 20px;
@@ -66,13 +67,32 @@
             text-align: left;
             vertical-align: top;
             padding: 20px;
-            resize: both;
-            overflow: auto;
-            width: 200px;
-            height: 230px;
+            width: 100%;
             cursor: text;
             font-size: 1.0em;
             line-height: 1.2;
+        }
+
+        /* The actual fixed-height, scrollable/resizable box for a
+           cell's content, wrapping .outline-root — deliberately NOT on
+           the <td> itself. A table cell's `height` is only a minimum
+           in HTML table layout: browsers let the cell grow past it to
+           fit content no matter what `overflow` says, so a fixed
+           height + overflow:auto on a <td> directly never reliably
+           produces a scrollbar — the row just keeps growing instead.
+           A plain block-level div doesn't have that table-layout
+           quirk, so the scrolling/resizing lives here, while the
+           header (h3 + its toggles) stays outside it and always
+           visible. Padding/height/resize values match the plain td
+           this app was forked from (Weekgoal) — the visual proportions
+           are the same, only the growing-instead-of-scrolling bug is
+           fixed. */
+        .cell-scroll {
+            width: 100%;
+            box-sizing: border-box;
+            height: 190px;
+            overflow: auto;
+            resize: both;
         }
 
         table h3 {
@@ -908,9 +928,12 @@
     margin-top: 0;
 }
 .cell-toggle {
+    position: relative;
+    z-index: 2;
     float: right;
     cursor: pointer;
     user-select: none;
+    pointer-events: auto;
     font-size: 18px;
     line-height: 1;
     color: #999;
@@ -922,9 +945,12 @@
     color: #444;
 }
 .cell-height-toggle {
+    position: relative;
+    z-index: 2;
     float: right;
     cursor: pointer;
     user-select: none;
+    pointer-events: auto;
     font-size: 15px;
     line-height: 1;
     color: #999;
@@ -935,25 +961,20 @@
     background-color: rgba(0, 0, 0, 0.08);
     color: #444;
 }
-td.cell-collapsed {
-    /* td normally has a fixed height (see the base `td` rule above)
-       plus whatever a manual drag-resize set inline — both need to be
-       overridden, not just hidden content, or the box stays full size
-       with a blank gap where the content used to be. */
-    height: auto !important;
-    resize: none;
-}
-td.cell-collapsed .outline-root,
+td.cell-collapsed .cell-scroll,
 td.cell-collapsed .cell-action-button {
+    /* Collapsing hides the whole scroll box (not just .outline-root
+       inside it), or an empty fixed-height box would sit there. */
     display: none;
 }
-td.cell-full-height {
-    /* Same reasoning as .cell-collapsed above: both the base fixed
-       height and any manual drag-resize height need overriding, not
-       just the scrollbar, or the cell keeps its old height with a
-       scrollbar hidden behind an unrelated overflow setting. */
+td.cell-full-height .cell-scroll {
+    /* A manual drag-resize (the .cell-scroll corner handle) leaves an
+       inline height on .cell-scroll — override that too, not just the
+       CSS default, or the box keeps its old height with a scrollbar
+       hidden behind an unrelated overflow setting. */
     height: auto !important;
-    overflow: visible;
+    max-height: none !important;
+    overflow: visible !important;
     resize: none;
 }
 
@@ -1208,7 +1229,7 @@ body.select-mode-active .outline-select-checkbox {
    on top of this. */
 .table-corner-btn {
     position: absolute;
-    top: -21px;
+    top: -10px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1463,6 +1484,8 @@ body.select-mode-active .outline-select-checkbox {
    visual-indent contenteditable lines. Scoped to .outline-root so it
    never affects the other tables. ===== */
 .outline-root {
+    width: 100%;
+    box-sizing: border-box;
     padding: 4px 2px 6px 0;
     font-family: inherit;
 }
@@ -1474,7 +1497,11 @@ body.select-mode-active .outline-select-checkbox {
        Our bullet is a plain inline character rather than a CSS marker,
        so match that visually: keep the row itself close to flush and
        let .outline-bullet's own width push the text out to ~20px.
-       Nested levels still need a real step-in to show hierarchy. */
+       Nested levels still need a real step-in to show hierarchy.
+       Deliberately no explicit width here — width:auto already shrinks
+       correctly to account for margin-left below, reaching the same
+       right edge as everything else in the chain; forcing width:100%
+       here would overflow past it by the margin amount instead. */
     margin-left: 20px;
 }
 .outline-children.outline-top {
@@ -1482,6 +1509,8 @@ body.select-mode-active .outline-select-checkbox {
 }
 .outline-node-row {
     display: flex;
+    width: 100%;
+    box-sizing: border-box;
     align-items: flex-start;
     padding: 0px 2px 0px 0;
     border-radius: 3px;
@@ -1949,7 +1978,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
                 <h3><span class="cell-title" contenteditable="true">Notes</span>
                  <button onclick="insertCheckboxInCell(this)" class="cell-action-button" style="background-color:#4CAF50;">+✓</button>             
                 </h3>
-                <div class="outline-root" id="outline-notes"></div>
+                <div class="cell-scroll"><div class="outline-root" id="outline-notes"></div></div>
             </td>
         </tr>
     </table>
@@ -2285,7 +2314,9 @@ function quickView() {
         toggle.className = 'cell-toggle';
         toggle.title = 'Collapse/expand this cell';
         toggle.textContent = '▾';
-        toggle.addEventListener('click', function () {
+        toggle.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
             const collapsed = td.classList.toggle('cell-collapsed');
             toggle.textContent = collapsed ? '▸' : '▾';
             if (window.refreshCollapseAllLabel) window.refreshCollapseAllLabel();
@@ -2339,10 +2370,28 @@ function quickView() {
         toggle.className = 'cell-height-toggle';
         toggle.title = 'Show full content (no scrolling)';
         toggle.textContent = '⤢';
-        toggle.addEventListener('click', function () {
+        toggle.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
             const full = td.classList.toggle('cell-full-height');
             toggle.textContent = full ? '⤡' : '⤢';
             toggle.title = full ? 'Use a fixed height with scrolling' : 'Show full content (no scrolling)';
+            // Also touch .cell-scroll's inline style directly rather
+            // than relying on the class + CSS !important alone — a box
+            // the user manually drag-resized (native `resize: vertical`
+            // on .cell-scroll) carries an inline height, and this
+            // guarantees the toggle always wins over it rather than
+            // depending on cascade specificity.
+            const scrollBox = td.querySelector('.cell-scroll');
+            if (scrollBox) {
+                if (full) {
+                    scrollBox.style.height = 'auto';
+                    scrollBox.style.maxHeight = 'none';
+                } else {
+                    scrollBox.style.height = '';
+                    scrollBox.style.maxHeight = '';
+                }
+            }
             if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
         });
         h3.insertBefore(toggle, h3.firstChild);
@@ -2697,11 +2746,11 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">NewGoal</span></h3>
-                    <div class="outline-root"></div>
+                    <div class="cell-scroll"><div class="outline-root"></div></div>
                 </td>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">AnotherGoal</span></h3>
-                    <div class="outline-root"></div>
+                    <div class="cell-scroll"><div class="outline-root"></div></div>
                 </td>
             </tr>`);
     }
@@ -2711,7 +2760,7 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">New Item</span></h3>
-                    <div class="outline-root"></div>
+                    <div class="cell-scroll"><div class="outline-root"></div></div>
                 </td>
             </tr>`);
     }
@@ -2723,7 +2772,7 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">New Item</span></h3>
-                    <div class="outline-root"></div>
+                    <div class="cell-scroll"><div class="outline-root"></div></div>
                 </td>
             </tr>`, false, true);
     }
@@ -2737,7 +2786,7 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">New Item</span></h3>
-                    <div class="outline-root"></div>
+                    <div class="cell-scroll"><div class="outline-root"></div></div>
                 </td>
             </tr>`, true);
     }
@@ -2747,7 +2796,7 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">New Item</span></h3>
-                    <div class="outline-root"></div>
+                    <div class="cell-scroll"><div class="outline-root"></div></div>
                 </td>
             </tr>`);
     }
@@ -2757,11 +2806,11 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">Input</span></h3>
-                    <div class="outline-root"></div>
+                    <div class="cell-scroll"><div class="outline-root"></div></div>
                 </td>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">Output</span></h3>
-                    <div class="outline-root"></div>
+                    <div class="cell-scroll"><div class="outline-root"></div></div>
                 </td>
             </tr>`);
     }
@@ -2771,11 +2820,11 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">Summary</span></h3>
-                    <div class="outline-root"></div>
+                    <div class="cell-scroll"><div class="outline-root"></div></div>
                 </td>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">Improvement</span></h3>
-                    <div class="outline-root"></div>
+                    <div class="cell-scroll"><div class="outline-root"></div></div>
                 </td>
             </tr>`);
     }
@@ -6050,10 +6099,13 @@ function insertNewCheckboxLine(currentLine) {
                 h3.appendChild(btn);
             }
             td.appendChild(h3);
+            const scrollBox = document.createElement('div');
+            scrollBox.className = 'cell-scroll';
             const root = document.createElement('div');
             root.className = 'outline-root';
             root.dataset.tree = JSON.stringify(cellData.tree || []);
-            td.appendChild(root);
+            scrollBox.appendChild(root);
+            td.appendChild(scrollBox);
             if (window.ensureCellToggle) window.ensureCellToggle(td);
             if (window.ensureCellHeightToggle) window.ensureCellHeightToggle(td);
             if (cellData.collapsed) {
@@ -6063,6 +6115,8 @@ function insertNewCheckboxLine(currentLine) {
             }
             if (cellData.fullHeight) {
                 td.classList.add('cell-full-height');
+                scrollBox.style.height = 'auto';
+                scrollBox.style.maxHeight = 'none';
                 const heightToggle = h3.querySelector('.cell-height-toggle');
                 if (heightToggle) {
                     heightToggle.textContent = '⤡';
