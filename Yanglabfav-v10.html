@@ -299,6 +299,8 @@
         .add-section-row {
             display: flex;
             justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
             margin: -6px 0 28px;
         }
         .add-section-btn {
@@ -1078,6 +1080,10 @@
         <button class="add-section-btn" id="addSectionBtn" onclick="addCustomSection()">
             <i class="fas fa-layer-group"></i> Add Section
         </button>
+        <button class="add-section-btn" id="importSectionBtn" onclick="document.getElementById('importSectionFileInput').click()">
+            <i class="fas fa-file-import"></i> Import Section
+        </button>
+        <input type="file" id="importSectionFileInput" accept="application/json,.json" style="display:none;" onchange="importCustomSectionFile(event)">
     </div>
     
     <!-- SECTION 2: Frequent 10 (Middle) -->
@@ -2390,6 +2396,100 @@ function deleteCustomSection(sectionId) {
     renderCustomSections();
 }
 
+// ── SINGLE-SECTION EXPORT / IMPORT ─────────────────────────────
+// Lets a user share one custom section (e.g. "Lab Protocols") as its
+// own small JSON file, separate from the full-database backup above.
+// Importing always creates a brand-new section (fresh section + item
+// ids) so it never overwrites or merges into anything the importing
+// user already has.
+function exportCustomSection(sectionId) {
+    const sec = ylCustomSections.find(s => s.id === sectionId);
+    if (!sec) return;
+    const payload = {
+        app: 'YangLab',
+        type: 'section',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        section: {
+            title: sec.title,
+            items: (sec.items || []).map(it => ({
+                icon: it.icon,
+                title: it.title,
+                url: it.url,
+                tags: it.tags || []
+                // "protected" (lock) state is intentionally not exported —
+                // it's a personal setting, not part of the shared content.
+            }))
+        }
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = (sec.title || 'section').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'section';
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    a.href = url;
+    a.download = `yanglab-section-${safeName}-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function importCustomSectionFile(event) {
+    const file = event.target.files[0];
+    event.target.value = ''; // allow re-selecting the same file later
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        let data;
+        try {
+            data = JSON.parse(e.target.result);
+        } catch (err) {
+            alert('⚠️ That file isn\'t valid JSON. Please choose a YangLab section export file.');
+            return;
+        }
+        handleSectionImportData(data);
+    };
+    reader.onerror = () => alert('⚠️ Could not read that file.');
+    reader.readAsText(file);
+}
+
+// Shared by both the "Import Section" button and the general "Import Data"
+// button (which redirects here if it's handed a single-section file).
+function handleSectionImportData(data) {
+    const sectionData = data && data.type === 'section' ? data.section : null;
+    if (!sectionData || typeof sectionData.title !== 'string' || !Array.isArray(sectionData.items)) {
+        alert('⚠️ This doesn\'t look like a YangLab section export file.');
+        return;
+    }
+
+    const ok = confirm(
+        `Import section "${sectionData.title}"?\n\n` +
+        `• ${sectionData.items.length} website(s)\n\n` +
+        `This will be added as a NEW section — your existing sections and websites are untouched.`
+    );
+    if (!ok) return;
+
+    const newSec = {
+        id: generateSectionId(),
+        title: sectionData.title.trim() || 'Imported Section',
+        items: sectionData.items.map(it => ({
+            id: generateId(),
+            icon: it.icon,
+            title: it.title,
+            url: it.url,
+            tags: Array.isArray(it.tags) ? it.tags : [],
+            protected: false
+        }))
+    };
+    ylCustomSections.push(newSec);
+    ylSectionStates[newSec.id + 'Section'] = true;
+    saveCustomSections();
+    renderCustomSections();
+    alert('✅ Section imported.');
+}
+
 function renderCustomSections() {
     const container = document.getElementById('customSectionsContainer');
     if (!container) return;
@@ -2403,6 +2503,7 @@ function renderCustomSections() {
                     <span class="section-title-text">${ylEscapeHtml(sec.title)}</span>
                     <span class="section-header-actions">
                         <button class="section-icon-btn" title="Add website" onclick="event.stopPropagation(); openAddModal('${sec.id}')"><i class="fas fa-plus"></i></button>
+                        <button class="section-icon-btn" title="Export section" onclick="event.stopPropagation(); exportCustomSection('${sec.id}')"><i class="fas fa-file-export"></i></button>
                         <button class="section-icon-btn" title="Rename section" onclick="event.stopPropagation(); renameCustomSection('${sec.id}')"><i class="fas fa-pen"></i></button>
                         <button class="section-icon-btn danger" title="Delete section" onclick="event.stopPropagation(); deleteCustomSection('${sec.id}')"><i class="fas fa-trash-alt"></i></button>
                     </span>
@@ -2908,6 +3009,12 @@ function importData(event) {
             data = JSON.parse(e.target.result);
         } catch (err) {
             alert('⚠️ That file isn\'t valid JSON. Please choose a YangLab export file.');
+            return;
+        }
+        // A single-section export was dropped into the full-backup importer —
+        // hand it off to the section importer instead of erroring out.
+        if (data && data.type === 'section' && data.section) {
+            handleSectionImportData(data);
             return;
         }
         if (!data || !Array.isArray(data.items)) {
