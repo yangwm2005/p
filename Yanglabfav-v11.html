@@ -349,6 +349,12 @@
             margin: 0;
             padding: 0;
         }
+        /* While any card's options menu is open inside this section, allow the
+           dropdown to extend past the section's edge instead of being clipped
+           by the overflow:hidden used for the collapse/expand animation. */
+        .section-content.menu-open-in-section {
+            overflow: visible;
+        }
         .add-section-row {
             display: flex;
             justify-content: center;
@@ -610,6 +616,9 @@
         .icon-card:hover {
             z-index: 30;
         }
+        .icon-card.menu-open {
+            z-index: 40;
+        }
         .icon-card.dragging {
             opacity: 0.3;
             transform: scale(0.94);
@@ -848,6 +857,15 @@
         }
         .dashboard.view-list .icon-card .sub-info {
             order: 3;
+            flex-shrink: 0;
+        }
+        .dashboard.view-list .icon-card .search-result-source,
+        .dashboard.view-list .icon-card .tag-row {
+            order: 3;
+            margin-top: 0;
+        }
+        .dashboard.view-list .icon-card .tag-row.tag-row-static {
+            flex-direction: row;
             flex-shrink: 0;
         }
         .dashboard.view-list .icon-card .protected-badge,
@@ -1280,7 +1298,7 @@
     <div class="footer">
         <span class="copyright">All Rights Reserved © 2026 Dr. Wen-Ming Yang</span>
         <span style="margin: 0 8px;">·</span>
-        <span>Yanglabfav v11 dev 20260904</span>
+        <span>Yanglabfav dev 20260830</span>
     </div>
 </div>
 
@@ -2218,7 +2236,13 @@ function render() {
                 const dropdown = btn.nextElementSibling;
                 const wasOpen = dropdown.classList.contains('open');
                 closeAllMoreMenus();
-                if (!wasOpen) dropdown.classList.add('open');
+                if (!wasOpen) {
+                    dropdown.classList.add('open');
+                    btn.closest('.icon-card').classList.add('menu-open');
+                    hideHoverTooltip();
+                    const sectionContent = btn.closest('.section-content');
+                    if (sectionContent) sectionContent.classList.add('menu-open-in-section');
+                }
             });
         });
         
@@ -2979,7 +3003,13 @@ function renderCustomSectionGrid(sectionId) {
             const dropdown = btn.nextElementSibling;
             const wasOpen = dropdown.classList.contains('open');
             closeAllMoreMenus();
-            if (!wasOpen) dropdown.classList.add('open');
+            if (!wasOpen) {
+                dropdown.classList.add('open');
+                btn.closest('.icon-card').classList.add('menu-open');
+                hideHoverTooltip();
+                const sectionContent = btn.closest('.section-content');
+                if (sectionContent) sectionContent.classList.add('menu-open-in-section');
+            }
         });
     });
     
@@ -3252,6 +3282,8 @@ document.addEventListener('keydown', (e) => {
 // ── PER-CARD OPTIONS MENU (edit/lock/delete) ────────────────
 function closeAllMoreMenus() {
     document.querySelectorAll('.more-dropdown.open').forEach(d => d.classList.remove('open'));
+    document.querySelectorAll('.icon-card.menu-open').forEach(c => c.classList.remove('menu-open'));
+    document.querySelectorAll('.section-content.menu-open-in-section').forEach(s => s.classList.remove('menu-open-in-section'));
 }
 document.addEventListener('click', (e) => {
     if (!e.target.closest('.more-menu')) closeAllMoreMenus();
@@ -3730,6 +3762,7 @@ const hoverInfoTooltipEl = document.getElementById('hoverInfoTooltip');
 
 function showHoverTooltip(card) {
     if (card.closest('#searchResultsGrid')) return; // search results show tags inline already, no popup needed
+    if (card.classList.contains('menu-open')) return; // don't fight with an open options menu
     const title = card.getAttribute('data-title') || '';
     const url = card.getAttribute('data-url') || '';
     const tagsAttr = card.getAttribute('data-tags') || '';
@@ -3891,9 +3924,9 @@ const searchResultsCountEl = document.getElementById('searchResultsCount');
 
 function collectSearchableItems() {
     const items = [];
-    ylItems.forEach(it => items.push({ title: it.title, url: it.url, icon: it.icon, tags: it.tags, source: 'My Websites' }));
+    ylItems.forEach(it => items.push({ id: it.id, target: 'my', title: it.title, url: it.url, icon: it.icon, tags: it.tags, protected: it.protected, source: 'My Websites' }));
     ylCustomSections.forEach(sec => {
-        sec.items.forEach(it => items.push({ title: it.title, url: it.url, icon: it.icon, tags: it.tags, source: sec.title }));
+        sec.items.forEach(it => items.push({ id: it.id, target: sec.id, title: it.title, url: it.url, icon: it.icon, tags: it.tags, protected: it.protected, source: sec.title }));
     });
     return items;
 }
@@ -3924,23 +3957,141 @@ function renderSearchResults(query) {
     let html = '';
     matches.forEach(it => {
         const iconHtml = it.icon ? `<i class="${it.icon}"></i>` : '🌐';
+        const protectedClass = it.protected ? 'protected' : '';
+        const protectedBadge = it.protected ? `<span class="protected-badge" data-id="${it.id}" data-target="${ylEscapeHtml(it.target)}" title="Click to unlock"><i class="fas fa-lock"></i> </span>` : '';
         html += `
-            <div class="icon-card" data-url="${ylEscapeHtml(it.url)}" data-title="${ylEscapeHtml(it.title)}">
+            <div class="icon-card ${protectedClass}" data-id="${it.id}" data-target="${ylEscapeHtml(it.target)}" data-url="${ylEscapeHtml(it.url)}" data-title="${ylEscapeHtml(it.title)}">
+                ${protectedBadge}
                 <div class="icon-wrap" data-url="${ylEscapeHtml(it.url)}">${iconHtml}</div>
                 <div class="title" title="${ylEscapeHtml(it.title)}">${ylEscapeHtml(it.title)}</div>
                 ${renderTagsHtml(it, true)}
                 <span class="search-result-source" title="${ylEscapeHtml(it.source)}">${ylEscapeHtml(it.source)}</span>
+                <div class="more-menu">
+                    <button class="more-btn" data-id="${it.id}" data-target="${ylEscapeHtml(it.target)}" title="Options"><i class="fas fa-ellipsis-vertical"></i></button>
+                    <div class="more-dropdown" data-id="${it.id}" data-target="${ylEscapeHtml(it.target)}">
+                        <button class="edit-btn" data-id="${it.id}" data-target="${ylEscapeHtml(it.target)}"><i class="fas fa-edit"></i> Edit</button>
+                        <button class="lock-btn" data-id="${it.id}" data-target="${ylEscapeHtml(it.target)}"><i class="fas fa-lock-open"></i> Lock</button>
+                        <button class="delete-btn" data-id="${it.id}" data-target="${ylEscapeHtml(it.target)}"><i class="fas fa-trash-alt"></i> Delete</button>
+                    </div>
+                </div>
             </div>
         `;
     });
     searchResultsGridEl.innerHTML = html;
 
     searchResultsGridEl.querySelectorAll('.icon-card').forEach(card => {
-        card.addEventListener('click', () => {
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('.more-menu') || e.target.closest('.protected-badge')) return;
             const url = card.getAttribute('data-url');
             if (url) openPopup(url);
         });
     });
+
+    searchResultsGridEl.querySelectorAll('.icon-wrap').forEach(el => {
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const url = el.getAttribute('data-url');
+            if (url) openPopup(url);
+        });
+    });
+
+    searchResultsGridEl.querySelectorAll('.protected-badge').forEach(badge => {
+        badge.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = badge.getAttribute('data-id');
+            const target = badge.getAttribute('data-target');
+            const itemsArr = ylItemsArrayFor(target);
+            const item = itemsArr && itemsArr.find(it => it.id === id);
+            if (item && confirm(`🔓 Unlock "${item.title}"? This will allow it to be edited or deleted.`)) {
+                item.protected = false;
+                refreshAfterSearchResultEdit(target);
+            }
+        });
+    });
+
+    searchResultsGridEl.querySelectorAll('.more-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const dropdown = btn.nextElementSibling;
+            const wasOpen = dropdown.classList.contains('open');
+            closeAllMoreMenus();
+            if (!wasOpen) {
+                dropdown.classList.add('open');
+                btn.closest('.icon-card').classList.add('menu-open');
+                const sectionContent = btn.closest('.section-content');
+                if (sectionContent) sectionContent.classList.add('menu-open-in-section');
+            }
+        });
+    });
+
+    searchResultsGridEl.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeAllMoreMenus();
+            const id = btn.getAttribute('data-id');
+            const target = btn.getAttribute('data-target');
+            const itemsArr = ylItemsArrayFor(target);
+            const item = itemsArr && itemsArr.find(it => it.id === id);
+            if (item && !item.protected) {
+                openEditModal(id, item, target);
+            } else {
+                alert('⛔ This icon is locked and cannot be edited.');
+            }
+        });
+    });
+
+    searchResultsGridEl.querySelectorAll('.lock-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeAllMoreMenus();
+            const id = btn.getAttribute('data-id');
+            const target = btn.getAttribute('data-target');
+            const itemsArr = ylItemsArrayFor(target);
+            const item = itemsArr && itemsArr.find(it => it.id === id);
+            if (item) {
+                item.protected = true;
+                refreshAfterSearchResultEdit(target);
+            }
+        });
+    });
+
+    searchResultsGridEl.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeAllMoreMenus();
+            const id = btn.getAttribute('data-id');
+            const target = btn.getAttribute('data-target');
+            const itemsArr = ylItemsArrayFor(target);
+            const item = itemsArr && itemsArr.find(it => it.id === id);
+            if (item && item.protected) {
+                alert('⛔ This icon is locked and cannot be deleted.');
+                return;
+            }
+            if (item && confirm('Delete this website?')) {
+                if (target === 'my') {
+                    ylItems = ylItems.filter(it => it.id !== id);
+                } else {
+                    const sec = ylCustomSections.find(s => s.id === target);
+                    if (sec) sec.items = sec.items.filter(it => it.id !== id);
+                }
+                refreshAfterSearchResultEdit(target);
+            }
+        });
+    });
+}
+
+// After an edit/lock/delete made from within the search-results list, refresh
+// both the underlying section (so it stays in sync) and the search list itself.
+function refreshAfterSearchResultEdit(target) {
+    if (target === 'my') {
+        render();
+        saveToLocalStorage();
+        if (ylUser) ylPushToCloud();
+    } else {
+        renderCustomSectionGrid(target);
+        saveCustomSections();
+    }
+    renderSearchResults(searchInputEl.value);
 }
 
 if (searchInputEl) {
