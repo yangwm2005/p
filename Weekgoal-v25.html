@@ -105,6 +105,16 @@
             flex-wrap: nowrap;
             align-items: center;
             gap: 6px;
+            /* Sticks to the top of the viewport as the page scrolls, so
+               the control buttons (Files, New WeekGoal, Start, Quick,
+               File, project menu, Notes) stay reachable without
+               scrolling back up to find them. */
+            position: sticky;
+            top: 0;
+            z-index: 600;
+            background: #f0f0f0;
+            padding: 8px 0;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
         }
 
         #toolbarScroll {
@@ -1808,7 +1818,6 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     <button id="fileSidebarToggle" class="gray toolbar-pin" onclick="toggleFileSidebar()" title="Open a side panel with your project list">☰ Files</button>
 
     <div id="toolbarScroll">
-    <button onclick="openWin3('https://yangwm2005.github.io/p/Weekgoal-v19.html')" class="btn-link" title="New blank window for next week.">New WeekGoals</button>
     <!-- Office Starting Dropdown -->
     <div class="dropdown">
         <button class="btn btn-blue dropdown-toggle btn-link" style="width:52px;white-space:nowrap;" title="Office Starting checklist">Start ▼</button>
@@ -1892,6 +1901,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
                     <!-- New-project shortcuts, folded in here instead of
                          living as their own standalone toolbar buttons. -->
                     <div style="margin-top:6px; padding-top:6px; border-top:1px solid #eee; display:flex; flex-wrap:wrap; gap:4px;">
+                        <button id="newWeekGoalBtn" class="gray" style="font-size:12px;" onclick="createNewWeekGoalProject()" title="New project with the default template, titled with this week's ISO week number and date range">New WeekGoal</button>
                         <button id="thisWeekBtn" class="gray" style="font-size:12px;" onclick="createThisWeekProject()" title="New blank project titled with today's date">+ This Week</button>
                         <button id="nextWeekBtn" class="gray" style="font-size:12px;" onclick="createNextWeekProject()" title="New blank project titled with next week's date">+ Next Week</button>
                         <button id="singleTableBtn" class="gray" style="font-size:12px;" onclick="createSingleTableProject()" title="New project with just one full-width table (no 6-cell weekly layout)">+ Single Table</button>
@@ -6328,6 +6338,51 @@ function insertNewCheckboxLine(currentLine) {
             d.setDate(d.getDate() + diff);
             return d;
         }
+
+        // ISO-8601 week number for a date (weeks start Monday, week 1
+        // is the week containing the year's first Thursday).
+        function getISOWeekNumber(date) {
+            const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+            const dayNum = d.getUTCDay() || 7; // Sunday -> 7
+            d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+        }
+
+        // "MMDD" — zero-padded month and day, no separators.
+        function formatMMDD(date) {
+            const mm = String(date.getMonth() + 1).padStart(2, '0');
+            const dd = String(date.getDate()).padStart(2, '0');
+            return mm + dd;
+        }
+
+        // "Week37 (0907-0913)" — ISO week number of the Monday, plus
+        // that Monday-Sunday range in MMDD-MMDD form.
+        function formatWeekRangeTitle(monday) {
+            const sunday = new Date(monday);
+            sunday.setDate(monday.getDate() + 6);
+            return 'Week' + getISOWeekNumber(monday) + ' (' + formatMMDD(monday) + '-' + formatMMDD(sunday) + ')';
+        }
+
+        // "New WeekGoal" button: same default template as any other new
+        // blank project (defaultProjectTablesData — the 6-cell weekly
+        // layout), just auto-titled with this week's "Week37
+        // (0907-0913)" label instead of asking for a name. Distinct
+        // from "+ This Week", which uses the special 7-day-cell
+        // template (weeklyDayTablesData) instead.
+        window.createNewWeekGoalProject = function () {
+            if (!currentUser) { alert('Sign in first (☁ Sign in) to create a new project.'); return; }
+            const monday = getMonday(new Date());
+            const title = formatWeekRangeTitle(monday);
+            setStatus('Creating…');
+            createProject(title, defaultProjectTablesData()).then(function () {
+                renderProjectsList();
+                setStatus('Created "' + title + '"');
+            }).catch(function (err) {
+                console.error('Create project failed:', err);
+                setStatus('Create failed');
+            });
+        };
 
         // Seven small single-cell tables, Monday through Sunday, each
         // titled with that day's date (see formatWeekTitle) — laid out
