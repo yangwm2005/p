@@ -34,7 +34,7 @@
            text/dragging inside the table is completely unaffected. */
         .table-drag-handle {
             position: absolute;
-            top: -20px;
+            top: -9px;
             left: 0;
             width: 22px;
             height: 18px;
@@ -463,12 +463,23 @@
             display: flex;
             flex-direction: column;
             height: calc(100vh - 24px);
-            position: sticky;
+            /* Fixed (not sticky) to the viewport so it stays glued to
+               the same on-screen spot at all times — sticky still lets
+               an element travel with the page until it reaches its
+               offset (and un-stick again at the end of its container),
+               which read as the panel "moving" while scrolling. Fixed
+               removes it from document flow entirely, so #mainCol
+               reserves the equivalent space itself instead (see the
+               701px+ media query below) rather than relying on flex to
+               push it over. */
+            position: fixed;
             top: 12px;
+            left: 12px;
+            z-index: 500;
             overflow: hidden;
             transition: width 0.22s ease, min-width 0.22s ease, opacity 0.18s, margin 0.22s ease;
             flex-shrink: 0;
-            margin: 12px 10px 12px 12px;
+            margin: 0;
             border: 1px solid #ddd;
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             box-sizing: border-box;
@@ -780,6 +791,9 @@
            switching to a percentage, since percentages there hit a
            circular-sizing bug against .table-wrapper. */
         @media (min-width: 701px) {
+            body:has(#fileSidebar:not(.collapsed)) #mainCol {
+                margin-left: 282px;
+            }
             body:has(#fileSidebar:not(.collapsed)) #pageTitle,
             body:has(#fileSidebar:not(.collapsed)) #toolbar,
             body:has(#fileSidebar:not(.collapsed)) #tablesContainer {
@@ -1349,24 +1363,33 @@ body.select-mode-active .outline-select-checkbox {
        flex-wrap above). */
 }
 
+/* Delete button: now part of the same floating cluster as the drag
+   handle / pop-out / size-toggle buttons (same top offset, muted
+   gray by default) instead of sitting lower down as its own red
+   circle — reads as one coherent control panel. Stays calm until
+   hovered, when it turns red so the destructive action is still
+   clear without shouting for attention the rest of the time. */
 .table-delete-btn {
     position: absolute;
-    top: 18px;
-    right: -2px;
+    top: -9px;
+    right: 0;
     width: 22px;
-    height: 22px;
+    height: 18px;
     padding: 0;
     margin: 0;
     line-height: 1;
-    background-color: #dc3545;
-    color: white;
-    border-radius: 50%;
+    background: none;
+    border: none;
+    color: #aaa;
+    border-radius: 4px;
     font-size: 14px;
+    cursor: pointer;
     z-index: 10;
 }
 
 .table-delete-btn:hover {
-    background-color: #a71d2a;
+    color: #c53030;
+    background: rgba(197, 48, 48, 0.12);
 }
 
 /* Pop-out button: sits next to the drag handle, top-right of the
@@ -1375,7 +1398,7 @@ body.select-mode-active .outline-select-checkbox {
    and are already "saved" back in place the moment the overlay closes. */
 .table-popout-btn {
     position: absolute;
-    top: -20px;
+    top: -9px;
     right: 24px;
     width: 22px;
     height: 18px;
@@ -1392,6 +1415,34 @@ body.select-mode-active .outline-select-checkbox {
 }
 
 .table-popout-btn:hover {
+    color: #555;
+    background: rgba(0, 0, 0, 0.06);
+}
+
+/* Size-toggle button: sits left of the pop-out button. Flips the
+   table between full-width ("Single") and half-width ("Small",
+   table.cell-table-small) — the same distinction as the
+   "+ Single Table" / "Add Small" creation buttons, just applied
+   after the fact to a table that already exists. */
+.table-size-toggle-btn {
+    position: absolute;
+    top: -9px;
+    right: 48px;
+    width: 22px;
+    height: 18px;
+    padding: 0;
+    margin: 0;
+    line-height: 1;
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 4px;
+    z-index: 5;
+}
+
+.table-size-toggle-btn:hover {
     color: #555;
     background: rgba(0, 0, 0, 0.06);
 }
@@ -2609,6 +2660,7 @@ function quickView() {
         document.querySelectorAll('#tablesContainer > table').forEach(window.applyCellTableLayout);
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTableDragHandle);
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTablePopoutButton);
+        document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTableSizeToggleBtn);
     }
     document.addEventListener('DOMContentLoaded', function () {
         ensureAllCellToggles();
@@ -2659,6 +2711,36 @@ function quickView() {
         btn.addEventListener('click', function (e) {
             e.preventDefault();
             openTablePopout(el);
+        });
+        el.appendChild(btn);
+    };
+
+    // Adds a small button to a top-level table/wrapper that flips the
+    // table between full-width ("Single") and half-width ("Small",
+    // table.cell-table-small). Works on either a bare <table> (the
+    // six built-in ones) or a .table-wrapper div, same as the drag
+    // handle/pop-out button above. small: table.classList.contains(
+    // 'cell-table-small') is already read straight off the class at
+    // save time, so toggling the class is all that's needed — no
+    // separate data field to update.
+    window.ensureTableSizeToggleBtn = function (el) {
+        if (!el || el.querySelector(':scope > .table-size-toggle-btn')) return;
+        const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
+        if (!table) return;
+        const btn = document.createElement('button');
+        btn.className = 'table-size-toggle-btn';
+        btn.type = 'button';
+        function refreshTitle() {
+            const isSmall = table.classList.contains('cell-table-small');
+            btn.textContent = isSmall ? '▭' : '◫';
+            btn.title = isSmall ? 'Switch to full width (Single)' : 'Switch to half width (Small)';
+        }
+        refreshTitle();
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            table.classList.toggle('cell-table-small');
+            refreshTitle();
+            if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
         });
         el.appendChild(btn);
     };
@@ -2813,6 +2895,7 @@ function quickView() {
         window.applyCellTableLayout(newTable);
         window.ensureTableDragHandle(wrapper);
         window.ensureTablePopoutButton(wrapper);
+        window.ensureTableSizeToggleBtn(wrapper);
 
         // Scroll to the new table and drop the cursor into its first
         // cell, so you can start typing immediately instead of
@@ -4703,7 +4786,7 @@ function insertNewCheckboxLine(currentLine) {
 </script>
 
 <footer>
-    Copyright © 2026 Dr. Wen-Ming Yang 20260906 v2.5 Week Goals 
+    Copyright © 2026 Dr. Wen-Ming Yang 20260909 v2.5 Week Goals 
     
 <!--     (Add New Table/Single/Plain/Review/Summary now scroll to and focus the newly created table) WM
 -->
@@ -6210,10 +6293,12 @@ function insertNewCheckboxLine(currentLine) {
                     wrapper.appendChild(delBtn);
                     if (window.ensureTableDragHandle) window.ensureTableDragHandle(wrapper);
                     if (window.ensureTablePopoutButton) window.ensureTablePopoutButton(wrapper);
+                    if (window.ensureTableSizeToggleBtn) window.ensureTableSizeToggleBtn(wrapper);
                     container.appendChild(wrapper);
                 } else {
                     if (window.ensureTableDragHandle) window.ensureTableDragHandle(table);
                     if (window.ensureTablePopoutButton) window.ensureTablePopoutButton(table);
+                    if (window.ensureTableSizeToggleBtn) window.ensureTableSizeToggleBtn(table);
                     container.appendChild(table);
                 }
             });
