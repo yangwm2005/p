@@ -149,14 +149,14 @@
       margin-bottom: 10px;
     }
     .timer-display {
-      font-size: 4rem;
+      font-size: 4.8rem;
       font-weight: 600;
       letter-spacing: 2px;
       text-align: center;
       color: #2b2a27;
       font-variant-numeric: tabular-nums;
       background: #f1ebe5;
-      padding: 10px 0;
+      padding: 14px 0;
       border-radius: 60px;
       width: 100%;
       box-shadow: inset 0 4px 8px rgba(0,0,0,0.02);
@@ -191,8 +191,8 @@
       background: transparent;
       border-radius: 50%;
       box-shadow: 0 10px 28px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04);
-      width: 190px;
-      height: 190px;
+      width: 240px;
+      height: 240px;
       display: block;
     }
     .clock-view-toggle, .clock-mode-toggle {
@@ -668,7 +668,7 @@
       background: #f5efe9;
       font-size: 0.9rem;
       resize: vertical;
-      min-height: 70px;
+      min-height: 175px;
       transition: 0.15s;
       font-family: inherit;
     }
@@ -793,6 +793,28 @@
       resize: vertical;
       min-height: 50px;
       background: white;
+    }
+    .edit-time-row {
+      display: flex;
+      gap: 10px;
+      margin: 6px 0;
+    }
+    .edit-time-row label {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 0.68rem;
+      color: #6d645b;
+      font-weight: 600;
+    }
+    .edit-time-row input[type="time"] {
+      padding: 5px 8px;
+      border: 1px solid #d5cbc1;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 0.82rem;
+      background: #fff;
     }
     .edit-actions {
       display: flex;
@@ -921,7 +943,7 @@
           <div class="timer-display" id="timerDisplay">25:00</div>
           <div class="overtime-banner" id="overtimeBanner">✅ Overtime</div>
           <div class="analog-container" id="analogContainer" style="display:none;">
-            <canvas id="analogCanvas" width="190" height="190"></canvas>
+            <canvas id="analogCanvas" width="240" height="240"></canvas>
           </div>
         </div>
 
@@ -1056,6 +1078,10 @@
       <button id="scheduleModalClose" class="schedule-modal-close">✕</button>
     </div>
     <input type="text" id="scheduleModalTitleInput" class="note-title-input" placeholder="Session title" />
+    <div class="edit-time-row">
+      <label>Start <input type="time" id="scheduleModalStartInput"></label>
+      <label>End <input type="time" id="scheduleModalEndInput"></label>
+    </div>
     <textarea id="scheduleModalTextarea" placeholder="Optional details…"></textarea>
     <div class="schedule-modal-actions">
       <button id="scheduleModalSave" class="btn btn-primary btn-sm">💾 Save</button>
@@ -1118,6 +1144,8 @@
     const scheduleModalMeta = document.getElementById('scheduleModalMeta');
     const scheduleModalTextarea = document.getElementById('scheduleModalTextarea');
     const scheduleModalTitleInput = document.getElementById('scheduleModalTitleInput');
+    const scheduleModalStartInput = document.getElementById('scheduleModalStartInput');
+    const scheduleModalEndInput = document.getElementById('scheduleModalEndInput');
     const scheduleModalSave = document.getElementById('scheduleModalSave');
     const scheduleModalDelete = document.getElementById('scheduleModalDelete');
     const scheduleModalClose = document.getElementById('scheduleModalClose');
@@ -1247,7 +1275,7 @@
     }
 
     // ----- Analog clock -----
-    const ANALOG_SIZE = 190; // logical CSS pixel size — must match #analogCanvas width/height
+    const ANALOG_SIZE = 240; // logical CSS pixel size — must match #analogCanvas width/height
 
     function drawAnalog(seconds) {
       try {
@@ -1275,6 +1303,7 @@
       const w = ANALOG_SIZE, h = ANALOG_SIZE;
       const centerX = w / 2, centerY = h / 2;
       const radius = Math.min(w, h) * 0.44;
+      const scale = ANALOG_SIZE / 190; // keep stroke widths/fonts proportional at any canvas size
 
       ctx.clearRect(0, 0, w, h);
 
@@ -1318,13 +1347,13 @@
         const angle = (i / 60) * Math.PI * 2 - Math.PI / 2;
         const isMajor = i % 5 === 0;
         const len = isMajor ? radius * 0.09 : radius * 0.035;
-        const outerR = radius - 6;
+        const outerR = radius - 6 * scale;
         const innerR = outerR - len;
         ctx.beginPath();
         ctx.moveTo(centerX + Math.cos(angle) * innerR, centerY + Math.sin(angle) * innerR);
         ctx.lineTo(centerX + Math.cos(angle) * outerR, centerY + Math.sin(angle) * outerR);
         ctx.strokeStyle = isMajor ? 'rgba(60,55,50,0.55)' : 'rgba(60,55,50,0.18)';
-        ctx.lineWidth = isMajor ? 2 : 1;
+        ctx.lineWidth = (isMajor ? 2 : 1) * scale;
         ctx.lineCap = 'round';
         ctx.stroke();
       }
@@ -1382,7 +1411,7 @@
       progress = Math.max(0, Math.min(1, progress));
 
       const ringRadius = radius * 0.76;
-      const ringWidth = 8;
+      const ringWidth = 8 * scale;
       const startAngle = -Math.PI / 2;
       const endAngle = startAngle + progress * Math.PI * 2;
 
@@ -1442,7 +1471,7 @@
         ctx.stroke();
 
         // ---- Inner ring: overtime, growing in whole-minute steps ----
-        const innerRadius = ringRadius - ringWidth - 6;
+        const innerRadius = ringRadius - ringWidth - 6 * scale;
         const innerWidth = ringWidth * 0.75;
         ctx.beginPath();
         ctx.arc(centerX, centerY, innerRadius, 0, Math.PI * 2);
@@ -1469,13 +1498,13 @@
 
       // ---- Center readout (no center dot/pin — cleaner face) ----
       ctx.fillStyle = isOvertime ? progressColor : '#2b2a27';
-      ctx.font = '600 20px system-ui, sans-serif';
+      ctx.font = `600 ${Math.round(20 * scale)}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(formatTime(seconds), centerX, centerY - 3);
+      ctx.fillText(formatTime(seconds), centerX, centerY - 3 * scale);
 
       // Phase label (letter-spaced small caps for a more refined look)
-      ctx.font = '600 9px system-ui, sans-serif';
+      ctx.font = `600 ${Math.round(9 * scale)}px system-ui, sans-serif`;
       ctx.fillStyle = progressColor;
       let phaseLabelShort;
       if (isOvertime) {
@@ -1487,7 +1516,7 @@
       } else {
         phaseLabelShort = currentPhase === 'focus' ? 'FOCUS' : (currentPhase === 'shortBreak' ? 'BREAK' : 'LONG BREAK');
       }
-      ctx.fillText(phaseLabelShort, centerX, centerY + 28);
+      ctx.fillText(phaseLabelShort, centerX, centerY + 28 * scale);
     }
 
     // ----- Timer controls -----
@@ -1753,8 +1782,14 @@
         const div = document.createElement('div');
         div.className = 'note-item';
         if (note.editMode) {
+          const noteDate = new Date(note.timestamp);
+          const noteEndDate = new Date(noteDate.getTime() + note.duration * 1000);
           div.innerHTML = `
             <input type="text" class="edit-title-input" id="edit-title-${note.id}" value="${escapeHtml(getNoteTitle(note))}" placeholder="Session title" />
+            <div class="edit-time-row">
+              <label>Start <input type="time" class="edit-start-input" value="${toTimeInputValue(noteDate)}"></label>
+              <label>End <input type="time" class="edit-end-input" value="${toTimeInputValue(noteEndDate)}"></label>
+            </div>
             <textarea class="edit-textarea" id="edit-${note.id}" placeholder="Optional details…">${escapeHtml(getNoteBody(note))}</textarea>
             <div class="edit-actions">
               <button class="save-edit" data-id="${note.id}">💾 Save</button>
@@ -1765,6 +1800,8 @@
           const saveBtn = div.querySelector('.save-edit');
           const cancelBtn = div.querySelector('.cancel-edit');
           const titleInput = div.querySelector('.edit-title-input');
+          const startInput = div.querySelector('.edit-start-input');
+          const endInput = div.querySelector('.edit-end-input');
           const textarea = div.querySelector('textarea');
           saveBtn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -1774,6 +1811,11 @@
             if (idx !== -1) {
               notes[idx].title = newTitle;
               notes[idx].text = normalizeNoteText(textarea.value);
+              const timing = computeEditedTiming(notes[idx].timestamp, startInput.value, endInput.value);
+              if (timing) {
+                notes[idx].timestamp = timing.timestamp;
+                notes[idx].duration = timing.duration;
+              }
               notes[idx].editMode = false;
               renderNotes();
             }
@@ -1790,7 +1832,9 @@
         }
 
         const date = new Date(note.timestamp);
+        const endDate = new Date(date.getTime() + note.duration * 1000);
         const timeStr = date.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+        const endTimeStr = endDate.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
         const bodyText = getNoteBody(note);
         div.innerHTML = `
           <div class="note-top">
@@ -1804,7 +1848,7 @@
             </div>
           </div>
           <div class="note-meta">
-            <span>🕒 ${timeStr}</span>
+            <span>🕒 ${timeStr} – ${endTimeStr}</span>
             <span>#${note.id}</span>
           </div>
         `;
@@ -1861,6 +1905,33 @@
         return normalizeNoteText(lines.slice(1).join('\n'));
       }
       return '';
+    }
+
+    // ----- Editable start/end time helpers (used by both the Notes list
+    // inline editor and the Day Schedule popup) -----
+    function toTimeInputValue(date) {
+      return date.toTimeString().slice(0, 5); // "HH:MM"
+    }
+
+    // Given a note's current timestamp plus edited "HH:MM" start/end strings,
+    // returns a new { timestamp, duration } pair. Keeps the same calendar
+    // day the note was already on; if the end time is earlier than the
+    // start time, assumes the session ran past midnight into the next day.
+    function computeEditedTiming(originalTimestampISO, startStr, endStr) {
+      if (!startStr || !endStr) return null;
+      const sParts = startStr.split(':').map(Number);
+      const eParts = endStr.split(':').map(Number);
+      if (sParts.some(isNaN) || eParts.some(isNaN)) return null;
+      const base = new Date(originalTimestampISO);
+      const start = new Date(base);
+      start.setHours(sParts[0], sParts[1], 0, 0);
+      let end = new Date(base);
+      end.setHours(eParts[0], eParts[1], 0, 0);
+      if (end <= start) {
+        end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+      }
+      const durationSec = Math.max(60, Math.round((end - start) / 1000));
+      return { timestamp: start.toISOString(), duration: durationSec };
     }
 
     // ----- Notes / Day schedule view toggle -----
@@ -2027,10 +2098,13 @@
       if (!note) return;
       scheduleModalNoteId = noteId;
       const start = new Date(note.timestamp);
+      const end = new Date(start.getTime() + note.duration * 1000);
       const timeStr = start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       const emoji = SCHEDULE_PHASE_EMOJI[note.phase] || '🍅';
       scheduleModalMeta.textContent = `${emoji} ${timeStr}`;
       scheduleModalTitleInput.value = getNoteTitle(note);
+      scheduleModalStartInput.value = toTimeInputValue(start);
+      scheduleModalEndInput.value = toTimeInputValue(end);
       scheduleModalTextarea.value = getNoteBody(note);
       scheduleModalBackdrop.style.display = 'flex';
       scheduleModalTitleInput.focus();
@@ -2052,6 +2126,11 @@
       if (idx !== -1) {
         notes[idx].title = newTitle;
         notes[idx].text = normalizeNoteText(scheduleModalTextarea.value);
+        const timing = computeEditedTiming(notes[idx].timestamp, scheduleModalStartInput.value, scheduleModalEndInput.value);
+        if (timing) {
+          notes[idx].timestamp = timing.timestamp;
+          notes[idx].duration = timing.duration;
+        }
         renderNotes();
       }
       closeScheduleModal();
