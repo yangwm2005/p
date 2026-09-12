@@ -471,16 +471,18 @@
     .duration-item input[type="number"]::-webkit-inner-spin-button {
       opacity: 0.5;
     }
-    .quick-add-row {
+    .time-stepper {
       display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
+      gap: 10px;
       justify-content: center;
       margin-bottom: 12px;
     }
-    .quick-add-row .btn-sm {
-      padding: 4px 14px;
-      font-size: 0.75rem;
+    .stepper-btn {
+      flex: 1;
+      max-width: 140px;
+      padding: 9px 16px;
+      font-size: 0.85rem;
+      font-weight: 600;
       background: #ede7e1;
       border: 1px solid #cbc1b6;
       border-radius: 30px;
@@ -488,8 +490,11 @@
       transition: 0.15s;
       color: #2b2825;
     }
-    .quick-add-row .btn-sm:hover {
+    .stepper-btn:hover {
       background: #d9d0c6;
+    }
+    .stepper-btn:active {
+      transform: scale(0.95);
     }
     .action-row {
       display: flex;
@@ -908,12 +913,10 @@
           </div>
         </div>
 
-        <!-- Quick add duration buttons -->
-        <div class="quick-add-row">
-          <button class="btn-sm" data-minutes="5">+5 min</button>
-          <button class="btn-sm" data-minutes="10">+10 min</button>
-          <button class="btn-sm" data-minutes="15">+15 min</button>
-          <button class="btn-sm" data-minutes="25">+25 min</button>
+        <!-- Time adjustment stepper: click repeatedly to add/remove 5 min -->
+        <div class="time-stepper">
+          <button class="stepper-btn stepper-minus" data-minutes="-5" title="Remove 5 minutes">− 5 min</button>
+          <button class="stepper-btn stepper-plus" data-minutes="5" title="Add 5 minutes">+ 5 min</button>
         </div>
 
         <div class="action-row">
@@ -1085,7 +1088,7 @@
     const notesTitleInput = document.getElementById('notesTitle');
 
     // Quick add buttons
-    const quickAddButtons = document.querySelectorAll('.quick-add-row .btn-sm');
+    const quickAddButtons = document.querySelectorAll('.time-stepper .stepper-btn');
 
     // ----- State -----
     let timerInterval = null;
@@ -1104,6 +1107,7 @@
     let overtimeActive = false;  // true once a countdown section has reached 0 and is now counting up extra time
     let overtimeSeconds = 0;     // seconds accumulated since the section finished
     let overtimeStartTime = null; // ms timestamp when overtime began
+    let sessionStartTimestamp = null; // wall-clock Date when the current session truly began (not resume-from-pause) — used so logged notes show the session's real start time, not "whenever I got around to adding a note"
 
     let notes = [];
     let nextNoteId = 1;
@@ -1486,6 +1490,7 @@
     function selectPhase(phase) {
       if (isRunning || isPaused) return;
       if (phase === currentPhase) return;
+      sessionStartTimestamp = null;
       currentPhase = phase;
       overtimeActive = false;
       overtimeSeconds = 0;
@@ -1499,6 +1504,7 @@
 
     function onTimerComplete() {
       stopTimer();
+      sessionStartTimestamp = null;
       overtimeActive = false;
       overtimeSeconds = 0;
       let nextPhase = 'focus';
@@ -1591,6 +1597,7 @@
         }
         countUpStartTime = now - elapsedSeconds * 1000;
       }
+      sessionStartTimestamp = new Date();
       stopTimer();
       timerInterval = setInterval(tick, 1000);
       isRunning = true;
@@ -1623,6 +1630,7 @@
       stopTimer();
       isPaused = false;
       isRunning = false;
+      sessionStartTimestamp = null;
       // Always just restore the *current* phase's configured duration —
       // never silently advance to the next phase (that's what Finish is
       // for). Otherwise, resetting during overtime would jump you onto a
@@ -1661,16 +1669,26 @@
     }
 
     // Quick add duration
-    function addMinutes(minutes) {
-      const addSeconds = minutes * 60;
-      if (clockMode === 'countdown') {
-        remainingSeconds = Math.min(remainingSeconds + addSeconds, 120 * 60);
+    // Adjusts the current session by +/- minutes (the +5/-5 stepper).
+    // Handles all three states cleanly: normal countdown, overtime (adjusts
+    // the accumulated extra time instead), and count-up.
+    function adjustTime(minutes) {
+      const deltaSeconds = minutes * 60;
+      const isOvertime = (clockMode === 'countdown' && overtimeActive);
+      if (isOvertime) {
+        overtimeSeconds = Math.max(0, overtimeSeconds + deltaSeconds);
+        elapsedSeconds = totalDurationSeconds + overtimeSeconds;
+        if (isRunning && !isPaused) {
+          overtimeStartTime = Date.now() - overtimeSeconds * 1000;
+        }
+      } else if (clockMode === 'countdown') {
+        remainingSeconds = Math.min(Math.max(remainingSeconds + deltaSeconds, 60), 120 * 60);
         totalDurationSeconds = remainingSeconds;
         if (isRunning && !isPaused) {
           targetEndTime = Date.now() + remainingSeconds * 1000;
         }
       } else {
-        elapsedSeconds = Math.min(elapsedSeconds + addSeconds, 120 * 60);
+        elapsedSeconds = Math.min(Math.max(elapsedSeconds + deltaSeconds, 0), 120 * 60);
         if (isRunning && !isPaused) {
           countUpStartTime = Date.now() - elapsedSeconds * 1000;
         }
@@ -2012,7 +2030,12 @@
         alert('Please give this session a title.');
         return;
       }
-      const now = new Date();
+      // Timestamp the note with when this session actually STARTED (not
+      // "whenever I got around to clicking Add"), so the Day Schedule block
+      // lands on the real start time instead of appearing to begin now and
+      // run forward. Falls back to "now" if no session was ever started
+      // (e.g. a standalone note jotted down while idle).
+      const now = sessionStartTimestamp || new Date();
       // Use whichever is larger: the planned target duration, or the actual
       // elapsed time. This way a session logged mid-overtime records its
       // real total time (target + overtime) instead of just the target —
@@ -2288,7 +2311,7 @@
         btn.addEventListener('click', function() {
           const minutes = parseInt(this.dataset.minutes, 10);
           if (!isNaN(minutes)) {
-            addMinutes(minutes);
+            adjustTime(minutes);
           }
         });
       });
