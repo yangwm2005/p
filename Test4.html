@@ -126,21 +126,32 @@
             display: flex;
             gap: 10px;
             margin-bottom: 28px;
-            align-items: center;
+            align-items: flex-end;
         }
-        .add-section input {
+        .add-section textarea {
             flex: 1;
             padding: 16px 18px;
-            border-radius: 60px;
+            border-radius: 24px;
             border: 1.5px solid #e2e8f0;
             font-size: 1rem;
+            font-family: inherit;
             background: #ffffff;
             outline: none;
             transition: border 0.15s, box-shadow 0.15s;
+            resize: none;
+            min-height: 56px;
+            max-height: 220px;
+            line-height: 1.4;
+            overflow-y: auto;
         }
-        .add-section input:focus {
+        .add-section textarea:focus {
             border-color: #94a3b8;
             box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.1);
+        }
+        .action-buttons {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
         }
         .add-section button {
             width: 56px;
@@ -169,6 +180,15 @@
         .add-section button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+        }
+        .add-section button.newline-btn {
+            background: #ede7e1;
+            color: #1e293b;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
+        }
+        .add-section button.newline-btn:hover {
+            background: #d9d0c6;
         }
         .items-list {
             display: flex;
@@ -232,6 +252,7 @@
             line-height: 1.4;
             cursor: pointer;
             padding: 4px 0;
+            white-space: pre-wrap;
         }
         .item-text.done {
             text-decoration: line-through;
@@ -252,6 +273,7 @@
             flex-shrink: 0;
             transition: background 0.15s, color 0.15s;
             line-height: 1;
+            align-self: flex-start;
         }
         .item-delete:hover {
             background: #fee2e2;
@@ -293,8 +315,9 @@
             .app-container { padding: 18px 14px 24px; border-radius: 24px; }
             h1 { font-size: 1.6rem; }
             .user-name { max-width: 120px; }
-            .add-section input { padding: 14px 16px; }
+            .add-section textarea { padding: 14px 16px; min-height: 50px; }
             .add-section button { width: 50px; height: 50px; font-size: 1.6rem; }
+            .add-section button.newline-btn { font-size: 1.3rem; }
             .btn { padding: 8px 14px; font-size: 0.85rem; }
             .item { padding: 12px 14px; }
         }
@@ -326,8 +349,11 @@
 
         <!-- Add new item -->
         <div class="add-section" id="addSection">
-            <input type="text" id="itemInput" placeholder="Write a to-do or idea..." autocomplete="off" maxlength="200">
-            <button id="addBtn" aria-label="Add item">+</button>
+            <textarea id="itemInput" placeholder="Write a to-do or idea... (Shift+Enter for new line)" autocomplete="off" maxlength="2000" rows="1"></textarea>
+            <div class="action-buttons">
+                <button id="newlineBtn" class="newline-btn" aria-label="Insert new line" title="Insert a new line (Shift+Enter)">↵</button>
+                <button id="addBtn" aria-label="Add item" title="Add item (Enter)">+</button>
+            </div>
         </div>
 
         <!-- Items list -->
@@ -388,11 +414,21 @@
         const userName = document.getElementById('userName');
         const itemInput = document.getElementById('itemInput');
         const addBtn = document.getElementById('addBtn');
+        const newlineBtn = document.getElementById('newlineBtn');
         const itemsList = document.getElementById('itemsList');
         const syncStatus = document.getElementById('syncStatus');
 
         // ===================================================================
-        // 4. Authentication flow
+        // 4. Auto-resize the textarea to fit its content (grows up to
+        //    max-height, then scrolls internally)
+        // ===================================================================
+        function autoResizeInput() {
+            itemInput.style.height = 'auto';
+            itemInput.style.height = Math.min(itemInput.scrollHeight, 220) + 'px';
+        }
+
+        // ===================================================================
+        // 5. Authentication flow
         // ===================================================================
         googleSignInBtn.addEventListener('click', async () => {
             if (!cloudReady) {
@@ -436,15 +472,10 @@
         }
 
         // ===================================================================
-        // 5. Firestore realtime listener — SINGLE SOURCE OF TRUTH
+        // 6. Firestore realtime listener — SINGLE SOURCE OF TRUTH
         //    Firestore path: users/{uid}/cloud_notes/data/items
-        //
-        //    IMPORTANT: We deliberately do NOT skip snapshots with
-        //    hasPendingWrites. Firestore's local cache delivers a snapshot
-        //    the instant a local write happens (before the server round
-        //    trip), which is exactly what makes writes appear instantly in
-        //    the UI. Suppressing those snapshots was why new items only
-        //    showed up after a refresh.
+        //    (Local cache snapshots are NOT skipped — that's what makes
+        //     new items appear instantly without a refresh.)
         // ===================================================================
         function itemsCollectionRef() {
             if (!cloudUser || !cloudDb) return null;
@@ -459,10 +490,6 @@
             if (itemsUnsubscribe) itemsUnsubscribe();
 
             itemsUnsubscribe = ref.orderBy('createdAt', 'desc').onSnapshot((snapshot) => {
-                // Rebuild itemsArray straight from the snapshot every time.
-                // Local optimistic entries and server-confirmed entries carry
-                // the SAME document ID, so Firestore's snapshot is the
-                // authoritative source and duplicates are impossible.
                 const newItems = [];
                 snapshot.forEach((doc) => {
                     const data = doc.data();
@@ -498,7 +525,7 @@
         }
 
         // ===================================================================
-        // 6. Render items
+        // 7. Render items (multi-line text renders via white-space: pre-wrap)
         // ===================================================================
         function renderItems() {
             if (!itemsArray.length) {
@@ -529,7 +556,7 @@
         }
 
         // ===================================================================
-        // 7. Event delegation for item actions
+        // 8. Event delegation for item actions
         // ===================================================================
         itemsList.addEventListener('click', async (e) => {
             const target = e.target.closest('[data-id]');
@@ -556,8 +583,6 @@
                     done: !item.done,
                     updatedAt: Date.now()
                 });
-                // The listener will deliver the updated snapshot (locally
-                // right away via cache, then confirmed by the server).
             } catch (error) {
                 console.error('Error toggling item:', error);
                 alert('Could not update item. Please try again.');
@@ -569,7 +594,6 @@
             if (!confirm('Delete this item?')) return;
             try {
                 await itemsCollectionRef().doc(itemId).delete();
-                // The listener will deliver the updated snapshot.
             } catch (error) {
                 console.error('Error deleting item:', error);
                 alert('Could not delete item.');
@@ -577,18 +601,38 @@
         }
 
         // ===================================================================
-        // 8. Add new item
-        //    Key trick: pre-allocate the document ID with .doc(), insert
-        //    the item locally with that exact ID so it renders instantly,
-        //    then .set() it to Firestore. When the listener fires with the
-        //    same ID, it simply replaces the local entry — no duplicate.
+        // 9. Insert a newline at the cursor (used by the "↵" button).
+        //    Works the same as Shift+Enter, but usable on touch devices.
+        // ===================================================================
+        function insertNewlineAtCursor() {
+            const start = itemInput.selectionStart;
+            const end = itemInput.selectionEnd;
+            const value = itemInput.value;
+            itemInput.value = value.slice(0, start) + '\n' + value.slice(end);
+            itemInput.selectionStart = itemInput.selectionEnd = start + 1;
+            itemInput.focus();
+            autoResizeInput();
+        }
+
+        newlineBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            insertNewlineAtCursor();
+        });
+
+        // ===================================================================
+        // 10. Add new item
+        //     Key trick: pre-allocate the document ID with .doc(), insert
+        //     the item locally with that exact ID so it renders instantly,
+        //     then .set() it to Firestore. When the listener fires with the
+        //     same ID, it simply replaces the local entry — no duplicate.
         // ===================================================================
         async function addNewItem() {
             if (!cloudUser) {
                 alert('Please sign in with Google to save your notes.');
                 return;
             }
-            const text = itemInput.value.trim();
+            // Trim trailing whitespace per line but keep internal newlines
+            const text = itemInput.value.replace(/[ \t]+$/gm, '').trim();
             if (!text) { itemInput.focus(); return; }
 
             const ref = itemsCollectionRef();
@@ -598,8 +642,6 @@
             addBtn.innerHTML = '<span class="loading-spinner"></span>';
             setCloudStatus('pending');
 
-            // Pre-allocate a stable document ID. Firestore generates one
-            // client-side, so we can use it for the local optimistic entry.
             const newDocRef = ref.doc();
             const now = Date.now();
             const optimisticItem = {
@@ -613,6 +655,7 @@
             itemsArray.unshift(optimisticItem);
             renderItems();
             itemInput.value = '';
+            itemInput.style.height = 'auto'; // collapse back to one row
             itemInput.focus();
 
             try {
@@ -622,13 +665,10 @@
                     createdAt: now,
                     updatedAt: now,
                 });
-                // The listener will confirm and mark status as 'synced'.
             } catch (error) {
                 console.error('Error adding item:', error);
                 alert('Could not add item. Check your connection.');
                 setCloudStatus('error');
-                // Roll back the optimistic entry on failure so the UI
-                // doesn't show an item that never made it to the server.
                 itemsArray = itemsArray.filter(i => i.id !== newDocRef.id);
                 renderItems();
             } finally {
@@ -638,17 +678,40 @@
         }
 
         addBtn.addEventListener('click', addNewItem);
-        itemInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+
+        // ===================================================================
+        // 11. Keyboard handling in the textarea:
+        //     - Enter alone         → submit the item (fast capture)
+        //     - Shift+Enter         → insert a newline
+        //     - Escape              → clear the field
+        // ===================================================================
+        itemInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 addNewItem();
+                return;
+            }
+            if (e.key === 'Enter' && e.shiftKey) {
+                // Let the browser insert the newline naturally, then
+                // re-measure on the next frame so the box grows in sync.
+                requestAnimationFrame(autoResizeInput);
+                return;
+            }
+            if (e.key === 'Escape') {
+                itemInput.value = '';
+                itemInput.style.height = 'auto';
+                return;
             }
         });
 
+        // Keep the textarea height in sync when the user types/pastes too.
+        itemInput.addEventListener('input', autoResizeInput);
+
         // ===================================================================
-        // 9. Init (before auth resolves)
+        // 12. Init (before auth resolves)
         // ===================================================================
         window.addEventListener('load', () => {
+            autoResizeInput();
             setTimeout(() => {
                 if (!cloudUser) {
                     syncStatus.textContent = '☁️ Sign in to sync';
