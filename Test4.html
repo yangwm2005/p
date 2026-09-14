@@ -329,6 +329,7 @@
             background: #fee2e2;
             color: #dc2626;
         }
+        /* ---- Inline edit textarea: now visibly resizable ---- */
         .edit-textarea {
             width: 100%;
             padding: 10px 14px;
@@ -337,11 +338,16 @@
             font-size: 1rem;
             font-family: inherit;
             line-height: 1.4;
-            resize: vertical;
-            min-height: 60px;
             background: white;
             outline: none;
             white-space: pre-wrap;
+            /* Show a corner drag handle in every modern browser */
+            resize: vertical;
+            overflow: auto;
+            min-height: 70px;
+            max-height: 500px;
+            display: block;
+            box-sizing: border-box;
         }
         .edit-textarea:focus {
             border-color: #94a3b8;
@@ -465,7 +471,7 @@
             </div>
         </div>
         <div class="hint" id="hintLine">
-            <kbd>Enter</kbd> save · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> clear · click ✎ or double-click text to edit
+            <kbd>Enter</kbd> save · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> clear · click ✎ or double-click text to edit · drag edit box corner to resize
         </div>
 
         <!-- Items list -->
@@ -518,10 +524,8 @@
         let itemsUnsubscribe = null;
         let itemsArray = [];
 
-        // ID of the item currently in inline-edit mode (null = none editing)
         let editingItemId = null;
 
-        // Bullet mode + manual-resize tracking (persisted in localStorage)
         const PREF_KEY = 'cloudNotesPrefs';
         let bulletMode = false;
         let manuallyResized = false;
@@ -558,7 +562,7 @@
         const syncStatus = document.getElementById('syncStatus');
 
         // ===================================================================
-        // 4. Auto-resize the textarea (until the user drags the corner)
+        // 4. Auto-resize the main input (until the user drags the corner)
         // ===================================================================
         function autoResizeInput() {
             if (manuallyResized) return;
@@ -713,12 +717,10 @@
         }
 
         // ===================================================================
-        // 9. Date formatting helpers — always keep timestamp OUT of the
-        //    note body; it lives in `.item-meta` as a separate chip.
+        // 9. Date formatting helpers
         // ===================================================================
         function pad(n) { return String(n).padStart(2, '0'); }
 
-        // Friendly relative-ish label: Today / Yesterday / Mar 4, 2026
         function formatCreatedLabel(ts) {
             if (!ts) return '';
             const d = new Date(ts);
@@ -742,7 +744,6 @@
             return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
         }
 
-        // Full ISO-ish for the hover tooltip on the chip
         function formatFullTooltip(ts) {
             if (!ts) return '';
             const d = new Date(ts);
@@ -767,8 +768,6 @@
                 const timeLabel = formatTimeLabel(item.createdAt);
                 const fullTooltip = formatFullTooltip(item.createdAt);
 
-                // Was it edited after being created? (give or take a few ms
-                // — we set createdAt === updatedAt on first write.)
                 const wasEdited = item.updatedAt && item.createdAt &&
                                   (item.updatedAt - item.createdAt) > 1000;
 
@@ -806,10 +805,17 @@
             });
             itemsList.innerHTML = html;
 
-            // Auto-focus the textarea of whichever item is being edited
+            // Focus the edit textarea if one is open, and give it a
+            // sensible starting height based on its content.
             if (editingItemId) {
                 const ta = itemsList.querySelector(`.edit-textarea[data-id="${editingItemId}"]`);
                 if (ta) {
+                    // Auto-size once, then leave the user in control —
+                    // they can drag the corner to resize from here.
+                    ta.style.height = 'auto';
+                    const natural = ta.scrollHeight;
+                    ta.style.height = Math.min(Math.max(natural, 70), 500) + 'px';
+
                     ta.focus();
                     ta.selectionStart = ta.selectionEnd = ta.value.length;
                 }
@@ -826,7 +832,7 @@
         }
 
         // ===================================================================
-        // 11. Event delegation for item actions (view + edit modes)
+        // 11. Event delegation for item actions
         // ===================================================================
         itemsList.addEventListener('click', async (e) => {
             const target = e.target.closest('[data-id]');
@@ -834,7 +840,6 @@
             const itemId = target.dataset.id;
             if (!itemId || !cloudUser) return;
 
-            // Save / Cancel buttons inside the edit form
             if (target.dataset.action === 'save') {
                 await saveEdit(itemId);
                 return;
@@ -845,7 +850,6 @@
                 return;
             }
 
-            // While editing, don't let stray clicks toggle or delete
             if (editingItemId === itemId && !target.classList.contains('item-check')) {
                 return;
             }
@@ -866,13 +870,11 @@
             }
 
             if (target.classList.contains('item-text')) {
-                // Single click → toggle done (existing behavior)
                 await toggleItemDone(itemId);
                 return;
             }
         });
 
-        // Double-click on the text jumps straight to edit mode
         itemsList.addEventListener('dblclick', (e) => {
             const textEl = e.target.closest('.item-text');
             if (!textEl) return;
@@ -897,7 +899,6 @@
             const item = itemsArray.find(i => i.id === itemId);
             if (!item) return;
             if (newText === item.text) {
-                // No change — just leave edit mode
                 editingItemId = null;
                 renderItems();
                 return;
@@ -908,7 +909,6 @@
                     updatedAt: Date.now(),
                 });
                 editingItemId = null;
-                // The listener will re-render with the confirmed text.
             } catch (error) {
                 console.error('Error saving edit:', error);
                 alert('Could not save edit. Check your connection.');
@@ -917,7 +917,7 @@
 
         async function toggleItemDone(itemId) {
             if (!cloudUser) return;
-            if (editingItemId === itemId) return; // don't toggle while editing
+            if (editingItemId === itemId) return;
             const item = itemsArray.find(i => i.id === itemId);
             if (!item) return;
             try {
@@ -945,7 +945,6 @@
 
         // ===================================================================
         // 12. Keyboard shortcuts inside the inline edit textarea
-        //     Enter → save, Shift+Enter → newline, Escape → cancel
         // ===================================================================
         itemsList.addEventListener('keydown', (e) => {
             const ta = e.target;
