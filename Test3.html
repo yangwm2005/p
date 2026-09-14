@@ -1058,6 +1058,10 @@
         <div class="cloud-sync-panel" id="cloudSyncPanel">
           <span class="csp-status" id="cloudSyncStatus">⚫ Not signed in</span><br>
           Sign in (top right) to sync automatically across devices.
+          <div id="gcalSyncRow" style="margin-top:8px; display:none;">
+            <span class="csp-status" id="gcalSyncStatus">📅 Calendar: not connected</span><br>
+            <button class="btn btn-outline" id="gcalConnectBtn" type="button" style="margin-top:4px; font-size:0.75rem; padding:4px 12px;">Connect Calendar</button>
+          </div>
         </div>
       </div>
 
@@ -1138,6 +1142,9 @@
     const soundToggleBtn = document.getElementById('soundToggleBtn');
     const keepAwakeBtn = document.getElementById('keepAwakeBtn');
     const cloudSyncStatus = document.getElementById('cloudSyncStatus');
+    const gcalSyncRow = document.getElementById('gcalSyncRow');
+    const gcalSyncStatus = document.getElementById('gcalSyncStatus');
+    const gcalConnectBtn = document.getElementById('gcalConnectBtn');
     const clearNotesBtn = document.getElementById('clearNotesBtn');
     const countdownModeBtn = document.getElementById('countdownMode');
     const countupModeBtn = document.getElementById('countupMode');
@@ -1758,7 +1765,8 @@
       // calendar record before advancing — otherwise whatever was typed
       // would just be lost the moment the phase changes.
       if (currentPhase === 'focus' && noteTitleInput.value.trim()) {
-        addNote();
+        const finishedNote = addNote();
+        if (finishedNote) syncNoteToCalendar(finishedNote);
       }
       onTimerComplete();
     }
@@ -1850,6 +1858,7 @@
               }
               notes[idx].editMode = false;
               renderNotes();
+              syncNoteToCalendar(notes[idx]);
             }
           });
           cancelBtn.addEventListener('click', (e) => {
@@ -1899,6 +1908,7 @@
         delBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           if (confirm('Delete this note?')) {
+            deleteNoteFromCalendar(note);
             notes = notes.filter(n => n.id !== note.id);
             renderNotes();
           }
@@ -2196,6 +2206,7 @@
           notes[idx].duration = timing.duration;
         }
         renderNotes();
+        syncNoteToCalendar(notes[idx]);
       }
       closeScheduleModal();
     }
@@ -2203,6 +2214,8 @@
     function deleteScheduleModalNote() {
       if (scheduleModalNoteId === null) return;
       if (confirm('Delete this note?')) {
+        const note = notes.find(n => n.id === scheduleModalNoteId);
+        if (note) deleteNoteFromCalendar(note);
         notes = notes.filter(n => n.id !== scheduleModalNoteId);
         renderNotes();
         closeScheduleModal();
@@ -2240,6 +2253,7 @@
       noteTitleInput.value = '';
       noteInput.value = '';
       renderNotes();
+      return note;
     }
 
     // ----- Export functions -----
@@ -2322,6 +2336,7 @@
           longBreakDuration: longInput.value,
           timerTitle: timerTitleInput.value,
           notesTitle: notesTitleInput.value,
+          pomodoroCalendarId: gcalCalendarId || undefined,
         },
       };
     }
@@ -2342,6 +2357,7 @@
         if (data.settings.longBreakDuration) longInput.value = data.settings.longBreakDuration;
         if (data.settings.timerTitle) timerTitleInput.value = data.settings.timerTitle;
         if (data.settings.notesTitle) notesTitleInput.value = data.settings.notesTitle;
+        if (data.settings.pomodoroCalendarId) gcalCalendarId = data.settings.pomodoroCalendarId;
       }
       if (replace && typeof data.cycleCount === 'number') {
         cycleCount = data.cycleCount;
@@ -2694,6 +2710,7 @@
         input.addEventListener('blur', () => scheduleCloudPush());
       });
       cloudAuthBtn.addEventListener('click', () => window.toggleCloudAuth());
+      if (gcalConnectBtn) gcalConnectBtn.addEventListener('click', () => connectGoogleCalendar());
 
       // Quick add buttons
       quickAddButtons.forEach(btn => {
@@ -2820,11 +2837,14 @@
         cloudAuthBtn.style.background = '#2e7d32';
         cloudAuthBtn.title = 'Signed in as ' + cloudUser.email + ' — click to sign out';
         if (cloudSyncStatus) cloudSyncStatus.textContent = '🟢 Synced as ' + cloudUser.email;
+        if (gcalSyncRow) gcalSyncRow.style.display = 'block';
+        setCalendarConnected(gcalTokenIsFresh());
       } else {
         cloudAuthBtn.textContent = '🔑 Sign In';
         cloudAuthBtn.style.background = '#546e7a';
         cloudAuthBtn.title = 'Sign in with Google to sync across devices';
         if (cloudSyncStatus) cloudSyncStatus.textContent = '⚫ Not signed in';
+        if (gcalSyncRow) gcalSyncRow.style.display = 'none';
       }
     }
 
@@ -2907,6 +2927,194 @@
       });
     }
 
+    // ===================================================================
+    // Google Calendar sync — auto-creates a dedicated "Pomodoro Tracker"
+    // calendar and logs each finished FOCUS session there as an event
+    // the moment you click Finish. Reuses the same Google sign-in as
+    // cloud sync above, with the Calendar scope added, so one Sign In
+    // click covers both. Google's OAuth access token is only valid for
+    // about an hour and isn't reissued when a session is merely restored
+    // on reload — a client-only app with no server can't silently renew
+    // it — so calendar sync quietly pauses until you reconnect, without
+    // ever touching notes/settings sync, which keeps working either way.
+    // ===================================================================
+    const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar';
+    const GCAL_CALENDAR_NAME = 'Pomodoro Tracker';
+    let gcalAccessToken = null;
+    let gcalTokenObtainedAt = 0;
+    let gcalCalendarId = null;       // cached once found/created; also saved to cloud settings
+    let gcalCreatingCalendar = null; // in-flight promise guard so we never create two calendars
+
+    function gcalTokenIsFresh() {
+      // Tokens last ~1hr; treat anything past 50 min as stale so we fail
+      // gracefully with margin instead of mid-request.
+      return !!gcalAccessToken && (Date.now() - gcalTokenObtainedAt) < 50 * 60 * 1000;
+    }
+
+    function setCalendarConnected(connected) {
+      if (gcalSyncStatus) {
+        gcalSyncStatus.textContent = connected ? '📅 Calendar: connected' : '📅 Calendar: not connected';
+      }
+      if (gcalConnectBtn) {
+        gcalConnectBtn.textContent = connected ? 'Reconnect' : 'Connect Calendar';
+      }
+    }
+
+    function captureAccessTokenFromResult(result) {
+      const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
+      if (credential && credential.accessToken) {
+        gcalAccessToken = credential.accessToken;
+        gcalTokenObtainedAt = Date.now();
+        setCalendarConnected(true);
+        ensurePomodoroCalendarId();
+        return true;
+      }
+      return false;
+    }
+
+    async function connectGoogleCalendar() {
+      if (!cloudReady) { alert("Cloud sync is unavailable right now (couldn't load Firebase)."); return; }
+      const provider = new firebase.auth.GoogleAuthProvider();
+      provider.addScope(GCAL_SCOPE);
+      try {
+        const result = cloudUser
+          ? await cloudUser.reauthenticateWithPopup(provider)
+          : await cloudAuth.signInWithPopup(provider);
+        if (!captureAccessTokenFromResult(result)) {
+          alert("Signed in, but Google didn't grant Calendar access — please try Connect Calendar again.");
+        }
+      } catch (e) {
+        if (e.code !== 'auth/popup-closed-by-user') {
+          alert('Calendar connection failed: ' + e.message);
+        }
+      }
+    }
+
+    async function gcalFetch(path, options) {
+      if (!gcalTokenIsFresh()) {
+        setCalendarConnected(false);
+        return null;
+      }
+      let res;
+      try {
+        res = await fetch('https://www.googleapis.com/calendar/v3/' + path, Object.assign({
+          headers: Object.assign({
+            'Authorization': 'Bearer ' + gcalAccessToken,
+            'Content-Type': 'application/json',
+          }, (options && options.headers) || {}),
+        }, options || {}));
+      } catch (e) {
+        console.warn('Calendar request failed:', e);
+        return null;
+      }
+      if (res.status === 401) {
+        // Token expired or was revoked mid-session — stop trying until reconnected.
+        gcalAccessToken = null;
+        setCalendarConnected(false);
+        return null;
+      }
+      return res;
+    }
+
+    // Finds (via cloud-synced settings) or creates the dedicated calendar,
+    // caching its id so every device you sign into reuses the same one.
+    async function ensurePomodoroCalendarId() {
+      if (gcalCalendarId) return gcalCalendarId;
+      if (gcalCreatingCalendar) return gcalCreatingCalendar;
+      gcalCreatingCalendar = (async () => {
+        try {
+          if (cloudUser) {
+            const ref = cloudDocRef();
+            if (ref) {
+              const doc = await ref.get();
+              const savedId = doc.exists && doc.data().settings && doc.data().settings.pomodoroCalendarId;
+              if (savedId) {
+                gcalCalendarId = savedId;
+                return gcalCalendarId;
+              }
+            }
+          }
+          const res = await gcalFetch('calendars', {
+            method: 'POST',
+            body: JSON.stringify({
+              summary: GCAL_CALENDAR_NAME,
+              description: 'Auto-created by the Pomodoro Tracker app to log completed focus sessions.',
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            }),
+          });
+          if (!res || !res.ok) return null;
+          const created = await res.json();
+          gcalCalendarId = created.id;
+          scheduleCloudPush(); // persists pomodoroCalendarId via buildSyncPayload()
+          return gcalCalendarId;
+        } finally {
+          gcalCreatingCalendar = null;
+        }
+      })();
+      return gcalCreatingCalendar;
+    }
+
+    function gcalEventBody(note) {
+      const start = new Date(note.timestamp);
+      const end = new Date(start.getTime() + note.duration * 1000);
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const body = getNoteBody(note);
+      return {
+        summary: '🍅 ' + getNoteTitle(note),
+        description: body || '',
+        start: { dateTime: start.toISOString(), timeZone: tz },
+        end: { dateTime: end.toISOString(), timeZone: tz },
+      };
+    }
+
+    // Creates or updates the Calendar event for a finished FOCUS session.
+    // Does nothing for break sessions, when not connected, or if the
+    // request fails — calendar sync issues never block using the app.
+    async function syncNoteToCalendar(note) {
+      if (!note || note.phase !== 'focus') return;
+      if (!gcalTokenIsFresh()) return;
+      try {
+        const calendarId = await ensurePomodoroCalendarId();
+        if (!calendarId) return;
+        if (note.gcalEventId) {
+          const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(note.gcalEventId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(gcalEventBody(note)),
+          });
+          if (res && res.status === 404) {
+            // The event was removed on the Google Calendar side — recreate it.
+            note.gcalEventId = null;
+            await syncNoteToCalendar(note);
+          }
+        } else {
+          const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events`, {
+            method: 'POST',
+            body: JSON.stringify(gcalEventBody(note)),
+          });
+          if (res && res.ok) {
+            const created = await res.json();
+            note.gcalEventId = created.id;
+            scheduleCloudPush();
+          }
+        }
+      } catch (e) {
+        console.warn('Calendar sync error:', e);
+      }
+    }
+
+    async function deleteNoteFromCalendar(note) {
+      if (!note || note.phase !== 'focus' || !note.gcalEventId) return;
+      try {
+        const calendarId = await ensurePomodoroCalendarId();
+        if (!calendarId) return;
+        await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(note.gcalEventId)}`, {
+          method: 'DELETE',
+        });
+      } catch (e) {
+        console.warn('Calendar delete error:', e);
+      }
+    }
+
     window.toggleCloudAuth = async function() {
       if (!cloudReady) {
         alert("Cloud sync is unavailable right now (couldn't load Firebase). Check your connection and try again.");
@@ -2914,11 +3122,15 @@
       }
       if (cloudUser) {
         stopCloudListener();
+        gcalAccessToken = null;
+        setCalendarConnected(false);
         await cloudAuth.signOut();
       } else {
         try {
           const provider = new firebase.auth.GoogleAuthProvider();
-          await cloudAuth.signInWithPopup(provider);
+          provider.addScope(GCAL_SCOPE);
+          const result = await cloudAuth.signInWithPopup(provider);
+          captureAccessTokenFromResult(result);
         } catch (e) {
           if (e.code !== 'auth/popup-closed-by-user') {
             alert('Sign-in failed: ' + e.message);

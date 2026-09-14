@@ -220,7 +220,7 @@
             border-radius: 20px;
             padding: 14px 18px;
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             gap: 12px;
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
             transition: background 0.15s, border 0.15s;
@@ -233,6 +233,11 @@
         .item:hover {
             border-color: #cbd5e1;
             background: #fdfdfe;
+        }
+        .item.editing {
+            border-color: #94a3b8;
+            background: #f8fafc;
+            box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
         }
         .item-check {
             width: 24px;
@@ -249,7 +254,6 @@
             font-size: 14px;
             color: white;
             user-select: none;
-            align-self: flex-start;
             margin-top: 2px;
         }
         .item-check.done {
@@ -261,21 +265,48 @@
             color: white;
             font-weight: bold;
         }
-        .item-text {
+        .item-body {
             flex: 1;
+            min-width: 0;
+        }
+        .item-text {
             font-size: 1rem;
             color: #1e293b;
             word-break: break-word;
             line-height: 1.4;
             cursor: pointer;
-            padding: 4px 0;
             white-space: pre-wrap;
         }
         .item-text.done {
             text-decoration: line-through;
             color: #94a3b8;
         }
-        .item-delete {
+        .item-meta {
+            margin-top: 6px;
+            font-size: 0.72rem;
+            color: #94a3b8;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .item-meta .chip {
+            background: #f1f5f9;
+            padding: 2px 10px;
+            border-radius: 30px;
+            cursor: help;
+            user-select: none;
+        }
+        .item-meta .chip.edited {
+            background: #ede7e1;
+            color: #6d645b;
+        }
+        .item-actions {
+            display: flex;
+            gap: 2px;
+            flex-shrink: 0;
+        }
+        .item-actions button {
             background: none;
             border: none;
             width: 32px;
@@ -284,17 +315,55 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.2rem;
+            font-size: 1rem;
             color: #94a3b8;
             cursor: pointer;
-            flex-shrink: 0;
             transition: background 0.15s, color 0.15s;
             line-height: 1;
-            align-self: flex-start;
         }
-        .item-delete:hover {
+        .item-actions button:hover {
+            background: #e2e8f0;
+            color: #1e293b;
+        }
+        .item-actions button.del-btn:hover {
             background: #fee2e2;
             color: #dc2626;
+        }
+        .edit-textarea {
+            width: 100%;
+            padding: 10px 14px;
+            border-radius: 14px;
+            border: 1.5px solid #cbd5e1;
+            font-size: 1rem;
+            font-family: inherit;
+            line-height: 1.4;
+            resize: vertical;
+            min-height: 60px;
+            background: white;
+            outline: none;
+            white-space: pre-wrap;
+        }
+        .edit-textarea:focus {
+            border-color: #94a3b8;
+            box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.15);
+        }
+        .edit-buttons {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .edit-buttons .btn {
+            padding: 6px 14px;
+            font-size: 0.8rem;
+        }
+        .edit-buttons .save-btn {
+            background: #1e293b;
+            color: white;
+            border: none;
+        }
+        .edit-buttons .save-btn:hover {
+            background: #0f172a;
         }
         .empty-state {
             text-align: center;
@@ -357,6 +426,7 @@
             .add-section button.resize-btn { font-size: 1.2rem; }
             .btn { padding: 8px 14px; font-size: 0.85rem; }
             .item { padding: 12px 14px; }
+            .item-actions button { width: 28px; height: 28px; font-size: 0.9rem; }
         }
     </style>
 </head>
@@ -395,7 +465,7 @@
             </div>
         </div>
         <div class="hint" id="hintLine">
-            <kbd>Enter</kbd> save · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> clear · drag lower-right to resize
+            <kbd>Enter</kbd> save · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> clear · click ✎ or double-click text to edit
         </div>
 
         <!-- Items list -->
@@ -448,12 +518,15 @@
         let itemsUnsubscribe = null;
         let itemsArray = [];
 
+        // ID of the item currently in inline-edit mode (null = none editing)
+        let editingItemId = null;
+
         // Bullet mode + manual-resize tracking (persisted in localStorage)
         const PREF_KEY = 'cloudNotesPrefs';
         let bulletMode = false;
-        let manuallyResized = false;   // once the user drags the corner, stop auto-growing
+        let manuallyResized = false;
         let resizeCycleIndex = 0;
-        const RESIZE_CYCLE = [56, 120, 220, 340]; // px heights: 1-line / 3-line / 6-line / 10-line
+        const RESIZE_CYCLE = [56, 120, 220, 340];
 
         function loadPrefs() {
             try {
@@ -485,10 +558,7 @@
         const syncStatus = document.getElementById('syncStatus');
 
         // ===================================================================
-        // 4. Auto-resize the textarea to fit content — but ONLY until the
-        //    user manually drags the resize corner. After that, respect
-        //    their chosen height. The resize button (▤) is always available
-        //    to cycle between preset heights, which re-enables auto-grow.
+        // 4. Auto-resize the textarea (until the user drags the corner)
         // ===================================================================
         function autoResizeInput() {
             if (manuallyResized) return;
@@ -498,19 +568,14 @@
         }
 
         itemInput.addEventListener('mousedown', (e) => {
-            // A mousedown within ~18px of the bottom-right corner is the
-            // user grabbing the native resize handle. We detect it here so
-            // we can stop auto-growing and let the drag take over.
             const rect = itemInput.getBoundingClientRect();
             const nearCornerX = (rect.right - e.clientX) < 20;
             const nearCornerY = (rect.bottom - e.clientY) < 20;
-            if (nearCornerX && nearCornerY) {
-                manuallyResized = true;
-            }
+            if (nearCornerX && nearCornerY) manuallyResized = true;
         });
 
         // ===================================================================
-        // 5. Bullet-mode UI & behavior
+        // 5. Bullet mode
         // ===================================================================
         function setBulletMode(enabled, skipSave) {
             bulletMode = enabled;
@@ -518,13 +583,11 @@
             bulletBtn.title = enabled
                 ? 'Bullet mode ON — press Enter to start the next bullet; Enter on an empty bullet to save'
                 : 'Bullet mode: auto-add • at start of each line';
-            // If turning ON and the field is empty, seed it with a bullet.
             if (enabled && itemInput.value === '') {
                 itemInput.value = '• ';
                 itemInput.selectionStart = itemInput.selectionEnd = 2;
                 autoResizeInput();
             }
-            // If turning OFF and the field is just a stray bullet, clear it.
             if (!enabled && /^•\s*$/.test(itemInput.value)) {
                 itemInput.value = '';
                 autoResizeInput();
@@ -539,18 +602,15 @@
         });
 
         // ===================================================================
-        // 6. Resize-cycle button: small → medium → large → back to small.
-        //    Also turns off the "manually resized" flag so auto-grow resumes
-        //    after a fresh cycle choice.
+        // 6. Resize cycle button
         // ===================================================================
         function applyResizeCycle() {
             const h = RESIZE_CYCLE[resizeCycleIndex % RESIZE_CYCLE.length];
             itemInput.style.height = h + 'px';
             resizeCycleIndex++;
-            manuallyResized = false; // restore auto-grow when the user next types
+            manuallyResized = false;
             itemInput.focus();
         }
-
         resizeBtn.addEventListener('click', (e) => {
             e.preventDefault();
             applyResizeCycle();
@@ -595,14 +655,14 @@
                     syncStatus.textContent = '☁️ Not signed in';
                     stopCloudListener();
                     itemsArray = [];
+                    editingItemId = null;
                     renderItems();
                 }
             });
         }
 
         // ===================================================================
-        // 8. Firestore realtime listener — SINGLE SOURCE OF TRUTH
-        //    Firestore path: users/{uid}/cloud_notes/data/items
+        // 8. Firestore realtime listener
         // ===================================================================
         function itemsCollectionRef() {
             if (!cloudUser || !cloudDb) return null;
@@ -625,6 +685,7 @@
                         text: data.text || '',
                         done: data.done || false,
                         createdAt: data.createdAt || 0,
+                        updatedAt: data.updatedAt || 0,
                     });
                 });
                 itemsArray = newItems;
@@ -652,25 +713,107 @@
         }
 
         // ===================================================================
-        // 9. Render items
+        // 9. Date formatting helpers — always keep timestamp OUT of the
+        //    note body; it lives in `.item-meta` as a separate chip.
+        // ===================================================================
+        function pad(n) { return String(n).padStart(2, '0'); }
+
+        // Friendly relative-ish label: Today / Yesterday / Mar 4, 2026
+        function formatCreatedLabel(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            const now = new Date();
+            const sameDay = (a, b) =>
+                a.getFullYear() === b.getFullYear() &&
+                a.getMonth() === b.getMonth() &&
+                a.getDate() === b.getDate();
+            const yest = new Date(now); yest.setDate(now.getDate() - 1);
+            const tom  = new Date(now); tom.setDate(now.getDate() + 1);
+
+            if (sameDay(d, now)) return 'Today';
+            if (sameDay(d, yest)) return 'Yesterday';
+            if (sameDay(d, tom))  return 'Tomorrow';
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
+        function formatTimeLabel(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        }
+
+        // Full ISO-ish for the hover tooltip on the chip
+        function formatFullTooltip(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ` +
+                   `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+
+        // ===================================================================
+        // 10. Render items (with edit mode)
         // ===================================================================
         function renderItems() {
             if (!itemsArray.length) {
                 itemsList.innerHTML = `<div class="empty-state">✨ No items yet. Add a to‑do or idea above.</div>`;
                 return;
             }
+
             let html = '';
             itemsArray.forEach((item) => {
                 const doneClass = item.done ? 'done' : '';
-                html += `
-                    <div class="item" data-id="${item.id}">
-                        <div class="item-check ${doneClass}" data-id="${item.id}" role="button" aria-label="toggle done"></div>
-                        <div class="item-text ${doneClass}" data-id="${item.id}">${escapeHtml(item.text)}</div>
-                        <button class="item-delete" data-id="${item.id}" aria-label="delete">✕</button>
-                    </div>
-                `;
+                const isEditing = editingItemId === item.id;
+                const createdLabel = formatCreatedLabel(item.createdAt);
+                const timeLabel = formatTimeLabel(item.createdAt);
+                const fullTooltip = formatFullTooltip(item.createdAt);
+
+                // Was it edited after being created? (give or take a few ms
+                // — we set createdAt === updatedAt on first write.)
+                const wasEdited = item.updatedAt && item.createdAt &&
+                                  (item.updatedAt - item.createdAt) > 1000;
+
+                if (isEditing) {
+                    html += `
+                        <div class="item editing" data-id="${item.id}">
+                            <div class="item-check ${doneClass}" data-id="${item.id}" role="button" aria-label="toggle done"></div>
+                            <div class="item-body">
+                                <textarea class="edit-textarea" data-id="${item.id}" rows="2">${escapeHtml(item.text)}</textarea>
+                                <div class="edit-buttons">
+                                    <button class="btn save-btn" data-id="${item.id}" data-action="save">💾 Save</button>
+                                    <button class="btn" data-id="${item.id}" data-action="cancel">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="item" data-id="${item.id}">
+                            <div class="item-check ${doneClass}" data-id="${item.id}" role="button" aria-label="toggle done"></div>
+                            <div class="item-body">
+                                <div class="item-text ${doneClass}" data-id="${item.id}" title="Double-click to edit">${escapeHtml(item.text)}</div>
+                                <div class="item-meta">
+                                    <span class="chip" title="${escapeHtml(fullTooltip)}">🕒 ${escapeHtml(createdLabel)} · ${escapeHtml(timeLabel)}</span>
+                                    ${wasEdited ? `<span class="chip edited" title="Last edited: ${escapeHtml(formatFullTooltip(item.updatedAt))}">✎ edited</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="item-actions">
+                                <button class="edit-btn" data-id="${item.id}" aria-label="edit" title="Edit (or double-click text)">✎</button>
+                                <button class="del-btn" data-id="${item.id}" aria-label="delete" title="Delete">✕</button>
+                            </div>
+                        </div>
+                    `;
+                }
             });
             itemsList.innerHTML = html;
+
+            // Auto-focus the textarea of whichever item is being edited
+            if (editingItemId) {
+                const ta = itemsList.querySelector(`.edit-textarea[data-id="${editingItemId}"]`);
+                if (ta) {
+                    ta.focus();
+                    ta.selectionStart = ta.selectionEnd = ta.value.length;
+                }
+            }
         }
 
         function escapeHtml(unsafe) {
@@ -683,7 +826,7 @@
         }
 
         // ===================================================================
-        // 10. Event delegation for item actions
+        // 11. Event delegation for item actions (view + edit modes)
         // ===================================================================
         itemsList.addEventListener('click', async (e) => {
             const target = e.target.closest('[data-id]');
@@ -691,18 +834,90 @@
             const itemId = target.dataset.id;
             if (!itemId || !cloudUser) return;
 
-            if (target.classList.contains('item-delete')) {
+            // Save / Cancel buttons inside the edit form
+            if (target.dataset.action === 'save') {
+                await saveEdit(itemId);
+                return;
+            }
+            if (target.dataset.action === 'cancel') {
+                editingItemId = null;
+                renderItems();
+                return;
+            }
+
+            // While editing, don't let stray clicks toggle or delete
+            if (editingItemId === itemId && !target.classList.contains('item-check')) {
+                return;
+            }
+
+            if (target.classList.contains('item-check')) {
+                await toggleItemDone(itemId);
+                return;
+            }
+
+            if (target.classList.contains('edit-btn')) {
+                startEdit(itemId);
+                return;
+            }
+
+            if (target.classList.contains('del-btn')) {
                 await deleteItem(itemId);
                 return;
             }
-            if (target.classList.contains('item-check') || target.classList.contains('item-text')) {
+
+            if (target.classList.contains('item-text')) {
+                // Single click → toggle done (existing behavior)
                 await toggleItemDone(itemId);
                 return;
             }
         });
 
+        // Double-click on the text jumps straight to edit mode
+        itemsList.addEventListener('dblclick', (e) => {
+            const textEl = e.target.closest('.item-text');
+            if (!textEl) return;
+            const itemId = textEl.dataset.id;
+            if (!itemId) return;
+            startEdit(itemId);
+        });
+
+        function startEdit(itemId) {
+            editingItemId = itemId;
+            renderItems();
+        }
+
+        async function saveEdit(itemId) {
+            const ta = itemsList.querySelector(`.edit-textarea[data-id="${itemId}"]`);
+            if (!ta) return;
+            const newText = ta.value.replace(/[ \t]+$/gm, '').trim();
+            if (!newText) {
+                alert('Item text cannot be empty. Press Cancel to keep the original.');
+                return;
+            }
+            const item = itemsArray.find(i => i.id === itemId);
+            if (!item) return;
+            if (newText === item.text) {
+                // No change — just leave edit mode
+                editingItemId = null;
+                renderItems();
+                return;
+            }
+            try {
+                await itemsCollectionRef().doc(itemId).update({
+                    text: newText,
+                    updatedAt: Date.now(),
+                });
+                editingItemId = null;
+                // The listener will re-render with the confirmed text.
+            } catch (error) {
+                console.error('Error saving edit:', error);
+                alert('Could not save edit. Check your connection.');
+            }
+        }
+
         async function toggleItemDone(itemId) {
             if (!cloudUser) return;
+            if (editingItemId === itemId) return; // don't toggle while editing
             const item = itemsArray.find(i => i.id === itemId);
             if (!item) return;
             try {
@@ -721,6 +936,7 @@
             if (!confirm('Delete this item?')) return;
             try {
                 await itemsCollectionRef().doc(itemId).delete();
+                if (editingItemId === itemId) editingItemId = null;
             } catch (error) {
                 console.error('Error deleting item:', error);
                 alert('Could not delete item.');
@@ -728,9 +944,26 @@
         }
 
         // ===================================================================
-        // 11. Insert a newline at the cursor.
-        //     - Bullet mode OFF → plain newline
-        //     - Bullet mode ON  → "\n• " (or just "• " if at line start)
+        // 12. Keyboard shortcuts inside the inline edit textarea
+        //     Enter → save, Shift+Enter → newline, Escape → cancel
+        // ===================================================================
+        itemsList.addEventListener('keydown', (e) => {
+            const ta = e.target;
+            if (!ta.classList || !ta.classList.contains('edit-textarea')) return;
+            const itemId = ta.dataset.id;
+
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                saveEdit(itemId);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                editingItemId = null;
+                renderItems();
+            }
+        });
+
+        // ===================================================================
+        // 13. Newline insertion in the main input (bullet-aware)
         // ===================================================================
         function insertNewlineAtCursor() {
             const start = itemInput.selectionStart;
@@ -739,8 +972,6 @@
 
             let insertion = '\n';
             if (bulletMode) {
-                // If the cursor is at the very start of a line, don't add a
-                // newline before the bullet — just place the bullet inline.
                 const lineStart = value.lastIndexOf('\n', start - 1) + 1;
                 const beforeCursor = value.slice(lineStart, start);
                 insertion = (beforeCursor.trim() === '' && start === lineStart)
@@ -761,8 +992,7 @@
         });
 
         // ===================================================================
-        // 12. Add new item (same pattern as before: pre-allocate ID,
-        //     optimistic insert, .set() to Firestore, rollback on error)
+        // 14. Add new item
         // ===================================================================
         async function addNewItem() {
             if (!cloudUser) {
@@ -786,18 +1016,17 @@
                 text: text,
                 done: false,
                 createdAt: now,
+                updatedAt: now,
             };
 
             itemsArray.unshift(optimisticItem);
             renderItems();
 
-            // Reset the input, keeping bullet mode's seed if it's on
             itemInput.value = bulletMode ? '• ' : '';
             manuallyResized = false;
             itemInput.style.height = '';
             autoResizeInput();
             itemInput.focus();
-            // Put the caret at the end of the seed
             itemInput.selectionStart = itemInput.selectionEnd = itemInput.value.length;
 
             try {
@@ -822,11 +1051,7 @@
         addBtn.addEventListener('click', addNewItem);
 
         // ===================================================================
-        // 13. Keyboard handling in the textarea:
-        //     - Enter alone          → save the item
-        //     - Enter on empty bullet → save the item (bullet mode)
-        //     - Shift+Enter          → new line (with bullet if bullet mode)
-        //     - Escape               → clear the field
+        // 15. Main input keyboard handling
         // ===================================================================
         itemInput.addEventListener('keydown', (e) => {
             if (e.key !== 'Enter') {
@@ -840,7 +1065,6 @@
                 return;
             }
 
-            // Determine whether the current line is an empty bullet line.
             const value = itemInput.value;
             const pos = itemInput.selectionStart;
             const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
@@ -848,12 +1072,8 @@
             const isEmptyBulletLine = /^•\s*$/.test(currentLine);
 
             if (!e.shiftKey) {
-                // Plain Enter: if bullet mode is on and the current line is
-                // an empty bullet, finish the list and save.
-                // Otherwise (non-bullet mode) save the item directly.
                 e.preventDefault();
                 if (bulletMode && isEmptyBulletLine) {
-                    // Strip the trailing empty bullet before saving
                     const cleaned = value.slice(0, lineStart) + value.slice(pos);
                     itemInput.value = cleaned.replace(/[ \t]+$/gm, '').trim();
                 }
@@ -861,29 +1081,18 @@
                 return;
             }
 
-            // Shift+Enter: insert a newline (with a bullet in bullet mode).
             e.preventDefault();
-
-            if (bulletMode && isEmptyBulletLine) {
-                // Empty bullet + Shift+Enter → just move to the next bullet
-                // without stacking blank lines. Same visual result as Enter
-                // on a full line, but doesn't submit.
-                insertNewlineAtCursor();
-                return;
-            }
-
             insertNewlineAtCursor();
         });
 
-        // Keep textarea height in sync on typing/pasting (until user drags).
         itemInput.addEventListener('input', autoResizeInput);
 
         // ===================================================================
-        // 14. Init
+        // 16. Init
         // ===================================================================
         window.addEventListener('load', () => {
             loadPrefs();
-            setBulletMode(bulletMode, true); // apply without re-saving
+            setBulletMode(bulletMode, true);
             if (bulletMode && itemInput.value === '') {
                 itemInput.value = '• ';
                 itemInput.selectionStart = itemInput.selectionEnd = 2;
