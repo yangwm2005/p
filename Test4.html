@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
     <title>Cloud Notes · To-dos & Ideas</title>
-    <!-- Firebase SDK (cloud sync) - same version as your Pomodoro app -->
+    <!-- Firebase SDK (cloud sync) -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -104,15 +104,6 @@
             background: #f8fafc;
             border-color: #cbd5e1;
         }
-        .btn-primary {
-            background: #1e293b;
-            border: none;
-            color: white;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-        }
-        .btn-primary:hover {
-            background: #0f172a;
-        }
         .btn-google {
             background: white;
             border: 1px solid #dadce0;
@@ -174,6 +165,10 @@
         }
         .add-section button:active {
             transform: scale(0.94);
+        }
+        .add-section button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
         }
         .items-list {
             display: flex;
@@ -346,9 +341,7 @@
 
     <script>
         // ===================================================================
-        // 1. Firebase config — SAME project as your Pomodoro app so data
-        //    lives in the same account; different Firestore subcollection
-        //    keeps the two apps' data separate.
+        // 1. Firebase config — SAME project as your Pomodoro app
         // ===================================================================
         const FB_CONFIG = {
             apiKey: "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
@@ -360,7 +353,7 @@
         };
 
         // ===================================================================
-        // 2. Initialize Firebase with a NAMED app (like your Pomodoro app)
+        // 2. Initialize Firebase with a NAMED app
         // ===================================================================
         let cloudApp, cloudAuth, cloudDb;
         let cloudReady = false;
@@ -386,11 +379,7 @@
         let cloudUser = null;
         let itemsUnsubscribe = null;
         let itemsArray = [];
-        let cloudPushTimer = null;
-        let cloudPushing = false;
-        let cloudLastPushTs = 0;
 
-        const userBar = document.getElementById('userBar');
         const signInContainer = document.getElementById('signInContainer');
         const userProfile = document.getElementById('userProfile');
         const googleSignInBtn = document.getElementById('googleSignInBtn');
@@ -403,7 +392,7 @@
         const syncStatus = document.getElementById('syncStatus');
 
         // ===================================================================
-        // 4. Authentication flow (same pattern as Pomodoro app)
+        // 4. Authentication flow
         // ===================================================================
         googleSignInBtn.addEventListener('click', async () => {
             if (!cloudReady) {
@@ -429,15 +418,13 @@
             cloudAuth.onAuthStateChanged((user) => {
                 cloudUser = user;
                 if (user) {
-                    // Signed in — update UI
                     signInContainer.classList.add('hidden');
                     userProfile.classList.remove('hidden');
                     userAvatar.src = user.photoURL || 'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/default-avatar.png';
                     userName.textContent = user.displayName || user.email || 'User';
                     syncStatus.textContent = '☁️ Loading...';
-                    cloudLoadOnSignIn();
+                    subscribeToItems();
                 } else {
-                    // Signed out
                     signInContainer.classList.remove('hidden');
                     userProfile.classList.add('hidden');
                     syncStatus.textContent = '☁️ Not signed in';
@@ -449,8 +436,11 @@
         }
 
         // ===================================================================
-        // 5. Firestore realtime listener per user
-        //    Path: users/{uid}/cloud_notes/items  (subcollection)
+        // 5. Firestore realtime listener — SINGLE SOURCE OF TRUTH
+        //    Firestore path: users/{uid}/cloud_notes/data/items
+        //    We do NOT do any local optimistic writes. The listener is the
+        //    only thing that mutates itemsArray, which fully eliminates the
+        //    duplicate-item bug.
         // ===================================================================
         function itemsCollectionRef() {
             if (!cloudUser || !cloudDb) return null;
@@ -465,8 +455,11 @@
             if (itemsUnsubscribe) itemsUnsubscribe();
 
             itemsUnsubscribe = ref.orderBy('createdAt', 'desc').onSnapshot((snapshot) => {
-                // Skip echo of our own writes to avoid UI flicker
-                if (cloudPushing) return;
+                // Skip the local echo of our own in-flight writes to avoid
+                // any transient duplicate render. Once writes settle, the
+                // final snapshot will arrive and rebuild the list cleanly.
+                if (snapshot.metadata.hasPendingWrites) return;
+
                 const newItems = [];
                 snapshot.forEach((doc) => {
                     const data = doc.data();
@@ -474,8 +467,7 @@
                         id: doc.id,
                         text: data.text || '',
                         done: data.done || false,
-                        createdAt: data.createdAt || null,
-                        updatedAt: data.updatedAt || 0,
+                        createdAt: data.createdAt || 0,
                     });
                 });
                 itemsArray = newItems;
@@ -557,15 +549,11 @@
             const item = itemsArray.find(i => i.id === itemId);
             if (!item) return;
             try {
-                const ref = itemsCollectionRef().doc(itemId);
-                await ref.update({
+                await itemsCollectionRef().doc(itemId).update({
                     done: !item.done,
                     updatedAt: Date.now()
                 });
-                // Local optimistic update (listener skips echo)
-                item.done = !item.done;
-                renderItems();
-                setCloudStatus('synced');
+                // No local mutation — the listener will push the update.
             } catch (error) {
                 console.error('Error toggling item:', error);
                 alert('Could not update item. Please try again.');
@@ -577,9 +565,7 @@
             if (!confirm('Delete this item?')) return;
             try {
                 await itemsCollectionRef().doc(itemId).delete();
-                itemsArray = itemsArray.filter(i => i.id !== itemId);
-                renderItems();
-                setCloudStatus('synced');
+                // No local mutation — the listener will remove it from the UI.
             } catch (error) {
                 console.error('Error deleting item:', error);
                 alert('Could not delete item.');
@@ -602,25 +588,15 @@
             setCloudStatus('pending');
 
             try {
-                const ref = itemsCollectionRef();
-                const newDoc = await ref.add({
+                await itemsCollectionRef().add({
                     text: text,
                     done: false,
                     createdAt: Date.now(),
                     updatedAt: Date.now()
                 });
-                // Optimistic insert at top
-                itemsArray.unshift({
-                    id: newDoc.id,
-                    text: text,
-                    done: false,
-                    createdAt: Date.now(),
-                    updatedAt: Date.now(),
-                });
-                renderItems();
+                // No local insert — the listener will render it.
                 itemInput.value = '';
                 itemInput.focus();
-                setCloudStatus('synced');
             } catch (error) {
                 console.error('Error adding item:', error);
                 alert('Could not add item. Check your connection.');
@@ -640,23 +616,7 @@
         });
 
         // ===================================================================
-        // 9. Sign-in conflict resolution (cloud vs local)
-        //    Same pattern as Pomodoro app: prompt user which to keep.
-        //    For simplicity, we just subscribe to the cloud data and
-        //    let the user's cloud collection be the source of truth.
-        // ===================================================================
-        function cloudLoadOnSignIn() {
-            const ref = itemsCollectionRef();
-            if (!ref) return;
-            // Just attach the realtime listener — the collection holds the truth.
-            // (Unlike the Pomodoro app's single-doc design, a Firestore
-            //  subcollection is naturally multi-device merge-friendly.)
-            cloudLastPushTs = Date.now();
-            subscribeToItems();
-        }
-
-        // ===================================================================
-        // 10. Init (before auth resolves)
+        // 9. Init (before auth resolves)
         // ===================================================================
         window.addEventListener('load', () => {
             setTimeout(() => {
