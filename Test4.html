@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <title>Cloud Notes · To-dos & Ideas</title>
+    <title>Cloud Jots</title>
     <!-- Firebase SDK (cloud sync) -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -205,6 +205,53 @@
         .add-section button.bullet-btn.active:hover {
             background: #0f172a;
         }
+
+        /* ---- Search bar ---- */
+        .search-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+        .search-section input {
+            flex: 1;
+            padding: 12px 18px;
+            border-radius: 24px;
+            border: 1.5px solid #e2e8f0;
+            font-size: 0.95rem;
+            font-family: inherit;
+            background: #f8fafc;
+            outline: none;
+            transition: border 0.15s, box-shadow 0.15s, background 0.15s;
+        }
+        .search-section input:focus {
+            border-color: #94a3b8;
+            background: #ffffff;
+            box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.1);
+        }
+        .search-section .search-clear {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 1px solid #e2e8f0;
+            background: #ffffff;
+            color: #64748b;
+            font-size: 1.1rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s, color 0.15s;
+            flex-shrink: 0;
+        }
+        .search-section .search-clear:hover {
+            background: #f1f5f9;
+            color: #1e293b;
+        }
+        .search-section .search-clear.hidden {
+            display: none;
+        }
+
         .items-list {
             display: flex;
             flex-direction: column;
@@ -238,6 +285,17 @@
             border-color: #94a3b8;
             background: #f8fafc;
             box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
+        }
+
+        /* ---- Pinned item styling ---- */
+        .item.pinned {
+            border-color: #fbbf24;
+            background: #fffdf5;
+            box-shadow: 0 4px 12px rgba(251, 191, 36, 0.12);
+        }
+        .item.pinned:hover {
+            border-color: #f59e0b;
+            background: #fffdf0;
         }
         .item-check {
             width: 24px;
@@ -301,6 +359,10 @@
             background: #ede7e1;
             color: #6d645b;
         }
+        .item-meta .chip.pin-chip {
+            background: #fef3c7;
+            color: #92400e;
+        }
         .item-actions {
             display: flex;
             flex-direction: column;
@@ -330,6 +392,17 @@
         .item-actions button.del-btn:hover {
             background: #fee2e2;
             color: #dc2626;
+        }
+        .item-actions button.pin-btn.pinned {
+            color: #f59e0b;
+        }
+        .item-actions button.pin-btn.pinned:hover {
+            background: #fef3c7;
+            color: #d97706;
+        }
+        .item-actions button.pin-btn:hover {
+            background: #fef3c7;
+            color: #f59e0b;
         }
         .edit-textarea {
             width: 100%;
@@ -449,7 +522,7 @@
     <div class="app-container" id="appContainer">
         <!-- Header -->
         <h1>
-            <span>📋</span> Cloud Notes
+            <span>📋</span> Cloud Jots
         </h1>
 
         <!-- User bar / Google Sign-in area -->
@@ -481,6 +554,12 @@
         </div>
         <div class="hint" id="hintLine">
             <kbd>Enter</kbd> save · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> clear · click ✎ or double-click text to edit · drag edit box corner to resize
+        </div>
+
+        <!-- Search bar -->
+        <div class="search-section">
+            <input type="text" id="searchInput" placeholder="🔍 Search notes…" autocomplete="off">
+            <button id="searchClearBtn" class="search-clear hidden" aria-label="Clear search" title="Clear search">✕</button>
         </div>
 
         <!-- Items list -->
@@ -566,6 +645,9 @@
         let resizeCycleIndex = 0;
         const RESIZE_CYCLE = [56, 120, 220, 340];
 
+        // Search state
+        let searchQuery = '';
+
         function loadPrefs() {
             try {
                 const raw = localStorage.getItem(PREF_KEY);
@@ -594,6 +676,8 @@
         const hintLine = document.getElementById('hintLine');
         const itemsList = document.getElementById('itemsList');
         const syncStatus = document.getElementById('syncStatus');
+        const searchInput = document.getElementById('searchInput');
+        const searchClearBtn = document.getElementById('searchClearBtn');
 
         // ===================================================================
         // 4. Auto-resize the main input (until the user drags the corner)
@@ -758,6 +842,7 @@
                         id: doc.id,
                         text: data.text || '',
                         done: data.done || false,
+                        pinned: data.pinned || false,
                         createdAt: data.createdAt || 0,
                         updatedAt: data.updatedAt || 0,
                     });
@@ -825,17 +910,42 @@
         }
 
         // ===================================================================
-        // 11. Render items (with edit mode)
+        // 10b. Filtered + sorted view of itemsArray.
+        //      Pinned items always float to the top; within each group
+        //      (pinned vs unpinned) items keep the existing newest-first
+        //      order from Firestore.
+        // ===================================================================
+        function getVisibleItems() {
+            const q = searchQuery.trim().toLowerCase();
+            let list = itemsArray;
+            if (q) {
+                list = list.filter(it => it.text.toLowerCase().includes(q));
+            }
+            // Stable sort: pinned first, otherwise leave original order.
+            const pinned = list.filter(it => it.pinned);
+            const unpinned = list.filter(it => !it.pinned);
+            return pinned.concat(unpinned);
+        }
+
+        // ===================================================================
+        // 11. Render items (with edit mode + pin + search filtering)
         // ===================================================================
         function renderItems() {
-            if (!itemsArray.length) {
-                itemsList.innerHTML = `<div class="empty-state">✨ No items yet. Add a to‑do or idea above.</div>`;
+            const visible = getVisibleItems();
+
+            if (!visible.length) {
+                if (searchQuery.trim()) {
+                    itemsList.innerHTML = `<div class="empty-state">🔍 No items match "<strong>${escapeHtml(searchQuery.trim())}</strong>".</div>`;
+                } else {
+                    itemsList.innerHTML = `<div class="empty-state">✨ No items yet. Add a to‑do or idea above.</div>`;
+                }
                 return;
             }
 
             let html = '';
-            itemsArray.forEach((item) => {
+            visible.forEach((item) => {
                 const doneClass = item.done ? 'done' : '';
+                const pinnedClass = item.pinned ? 'pinned' : '';
                 const isEditing = editingItemId === item.id;
                 const createdLabel = formatCreatedLabel(item.createdAt);
                 const timeLabel = formatTimeLabel(item.createdAt);
@@ -846,7 +956,7 @@
 
                 if (isEditing) {
                     html += `
-                        <div class="item editing" data-id="${item.id}">
+                        <div class="item editing ${pinnedClass}" data-id="${item.id}">
                             <div class="item-check ${doneClass}" data-id="${item.id}" role="button" aria-label="toggle done"></div>
                             <div class="item-body">
                                 <textarea class="edit-textarea" data-id="${item.id}" rows="2">${escapeHtml(item.text)}</textarea>
@@ -859,16 +969,18 @@
                     `;
                 } else {
                     html += `
-                        <div class="item" data-id="${item.id}">
+                        <div class="item ${pinnedClass}" data-id="${item.id}">
                             <div class="item-check ${doneClass}" data-id="${item.id}" role="button" aria-label="toggle done"></div>
                             <div class="item-body">
                                 <div class="item-text ${doneClass}" data-id="${item.id}" title="Double-click to edit">${escapeHtml(item.text)}</div>
                                 <div class="item-meta">
                                     <span class="chip" title="${escapeHtml(fullTooltip)}">🕒 ${escapeHtml(createdLabel)} · ${escapeHtml(timeLabel)}</span>
+                                    ${item.pinned ? `<span class="chip pin-chip" title="Pinned to top">📌 pinned</span>` : ''}
                                     ${wasEdited ? `<span class="chip edited" title="Last edited: ${escapeHtml(formatFullTooltip(item.updatedAt))}">✎ edited</span>` : ''}
                                 </div>
                             </div>
                             <div class="item-actions">
+                                <button class="pin-btn ${item.pinned ? 'pinned' : ''}" data-id="${item.id}" aria-label="pin" title="${item.pinned ? 'Unpin' : 'Pin to top'}">${item.pinned ? '📌' : '📍'}</button>
                                 <button class="edit-btn" data-id="${item.id}" aria-label="edit" title="Edit (or double-click text)">✎</button>
                                 <button class="del-btn" data-id="${item.id}" aria-label="delete" title="Delete">✕</button>
                             </div>
@@ -892,7 +1004,7 @@
         }
 
         function escapeHtml(unsafe) {
-            return unsafe
+            return String(unsafe)
                 .replace(/&/g, "&amp;")
                 .replace(/</g, "&lt;")
                 .replace(/>/g, "&gt;")
@@ -925,6 +1037,11 @@
 
             if (target.classList.contains('item-check')) {
                 await toggleItemDone(itemId);
+                return;
+            }
+
+            if (target.classList.contains('pin-btn')) {
+                await toggleItemPin(itemId);
                 return;
             }
 
@@ -997,6 +1114,23 @@
             } catch (error) {
                 console.error('Error toggling item:', error);
                 alert('Could not update item. Please try again.');
+            }
+        }
+
+        // ---- Pin / unpin ----
+        async function toggleItemPin(itemId) {
+            if (!cloudUser) return;
+            if (editingItemId === itemId) return;
+            const item = itemsArray.find(i => i.id === itemId);
+            if (!item) return;
+            try {
+                await itemsCollectionRef().doc(itemId).update({
+                    pinned: !item.pinned,
+                    updatedAt: Date.now()
+                });
+            } catch (error) {
+                console.error('Error toggling pin:', error);
+                alert('Could not update pin. Please try again.');
             }
         }
 
@@ -1083,6 +1217,7 @@
                 id: newDocRef.id,
                 text: text,
                 done: false,
+                pinned: false,
                 createdAt: now,
                 updatedAt: now,
             };
@@ -1101,6 +1236,7 @@
                 await newDocRef.set({
                     text: text,
                     done: false,
+                    pinned: false,
                     createdAt: now,
                     updatedAt: now,
                 });
@@ -1154,6 +1290,37 @@
         });
 
         itemInput.addEventListener('input', autoResizeInput);
+
+        // ===================================================================
+        // 16b. Search input handling
+        //      Live-filters the list as you type. The clear button
+        //      appears whenever there's text, and hides again when empty.
+        //      Pressing Escape inside the search field clears it.
+        // ===================================================================
+        searchInput.addEventListener('input', () => {
+            searchQuery = searchInput.value;
+            searchClearBtn.classList.toggle('hidden', searchQuery.length === 0);
+            renderItems();
+        });
+
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                clearSearch();
+            }
+        });
+
+        searchClearBtn.addEventListener('click', () => {
+            clearSearch();
+        });
+
+        function clearSearch() {
+            searchQuery = '';
+            searchInput.value = '';
+            searchClearBtn.classList.add('hidden');
+            renderItems();
+            searchInput.focus();
+        }
 
         // ===================================================================
         // 17. Init
