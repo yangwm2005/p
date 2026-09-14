@@ -126,7 +126,7 @@
             display: flex;
             gap: 10px;
             margin-bottom: 28px;
-            align-items: flex-end;
+            align-items: flex-start;
         }
         .add-section textarea {
             flex: 1;
@@ -138,9 +138,9 @@
             background: #ffffff;
             outline: none;
             transition: border 0.15s, box-shadow 0.15s;
-            resize: none;
+            resize: vertical;
             min-height: 56px;
-            max-height: 220px;
+            max-height: 500px;
             line-height: 1.4;
             overflow-y: auto;
         }
@@ -152,6 +152,9 @@
             display: flex;
             gap: 8px;
             flex-shrink: 0;
+            flex-wrap: wrap;
+            max-width: 120px;
+            justify-content: flex-end;
         }
         .add-section button {
             width: 56px;
@@ -166,7 +169,7 @@
             flex-shrink: 0;
             cursor: pointer;
             box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-            transition: transform 0.1s, background 0.15s;
+            transition: transform 0.1s, background 0.15s, color 0.15s;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -181,14 +184,26 @@
             opacity: 0.6;
             cursor: not-allowed;
         }
-        .add-section button.newline-btn {
+        .add-section button.newline-btn,
+        .add-section button.bullet-btn,
+        .add-section button.resize-btn {
             background: #ede7e1;
             color: #1e293b;
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
         }
-        .add-section button.newline-btn:hover {
+        .add-section button.newline-btn:hover,
+        .add-section button.bullet-btn:hover,
+        .add-section button.resize-btn:hover {
             background: #d9d0c6;
+        }
+        .add-section button.bullet-btn.active {
+            background: #1e293b;
+            color: #f5efe9;
+            box-shadow: 0 6px 14px rgba(30, 41, 59, 0.25);
+        }
+        .add-section button.bullet-btn.active:hover {
+            background: #0f172a;
         }
         .items-list {
             display: flex;
@@ -234,6 +249,8 @@
             font-size: 14px;
             color: white;
             user-select: none;
+            align-self: flex-start;
+            margin-top: 2px;
         }
         .item-check.done {
             background: #1e293b;
@@ -297,6 +314,22 @@
             gap: 12px;
             flex-wrap: wrap;
         }
+        .hint {
+            font-size: 0.7rem;
+            color: #a99d92;
+            text-align: center;
+            margin: -16px 0 20px;
+            line-height: 1.5;
+        }
+        .hint kbd {
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            padding: 1px 6px;
+            font-family: inherit;
+            font-size: 0.7rem;
+            color: #1e293b;
+        }
         .hidden {
             display: none !important;
         }
@@ -311,13 +344,17 @@
         }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        @media (max-width: 480px) {
+        @media (max-width: 560px) {
             .app-container { padding: 18px 14px 24px; border-radius: 24px; }
             h1 { font-size: 1.6rem; }
             .user-name { max-width: 120px; }
+            .add-section { flex-wrap: wrap; }
             .add-section textarea { padding: 14px 16px; min-height: 50px; }
-            .add-section button { width: 50px; height: 50px; font-size: 1.6rem; }
-            .add-section button.newline-btn { font-size: 1.3rem; }
+            .action-buttons { max-width: none; width: 100%; justify-content: flex-end; }
+            .add-section button { width: 50px; height: 50px; font-size: 1.5rem; }
+            .add-section button.newline-btn,
+            .add-section button.bullet-btn,
+            .add-section button.resize-btn { font-size: 1.2rem; }
             .btn { padding: 8px 14px; font-size: 0.85rem; }
             .item { padding: 12px 14px; }
         }
@@ -349,11 +386,16 @@
 
         <!-- Add new item -->
         <div class="add-section" id="addSection">
-            <textarea id="itemInput" placeholder="Write a to-do or idea... (Shift+Enter for new line)" autocomplete="off" maxlength="2000" rows="1"></textarea>
+            <textarea id="itemInput" placeholder="Write a to-do or idea…" autocomplete="off" maxlength="5000" rows="1"></textarea>
             <div class="action-buttons">
+                <button id="bulletBtn" class="bullet-btn" aria-label="Toggle bullet mode" title="Bullet mode: auto-add • at start of each line">•</button>
                 <button id="newlineBtn" class="newline-btn" aria-label="Insert new line" title="Insert a new line (Shift+Enter)">↵</button>
+                <button id="resizeBtn" class="resize-btn" aria-label="Cycle input size" title="Cycle input height (small → medium → large)">▤</button>
                 <button id="addBtn" aria-label="Add item" title="Add item (Enter)">+</button>
             </div>
+        </div>
+        <div class="hint" id="hintLine">
+            <kbd>Enter</kbd> save · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> clear · drag lower-right to resize
         </div>
 
         <!-- Items list -->
@@ -406,6 +448,27 @@
         let itemsUnsubscribe = null;
         let itemsArray = [];
 
+        // Bullet mode + manual-resize tracking (persisted in localStorage)
+        const PREF_KEY = 'cloudNotesPrefs';
+        let bulletMode = false;
+        let manuallyResized = false;   // once the user drags the corner, stop auto-growing
+        let resizeCycleIndex = 0;
+        const RESIZE_CYCLE = [56, 120, 220, 340]; // px heights: 1-line / 3-line / 6-line / 10-line
+
+        function loadPrefs() {
+            try {
+                const raw = localStorage.getItem(PREF_KEY);
+                if (!raw) return;
+                const p = JSON.parse(raw);
+                if (typeof p.bulletMode === 'boolean') bulletMode = p.bulletMode;
+            } catch (e) { /* ignore */ }
+        }
+        function savePrefs() {
+            try {
+                localStorage.setItem(PREF_KEY, JSON.stringify({ bulletMode }));
+            } catch (e) { /* ignore */ }
+        }
+
         const signInContainer = document.getElementById('signInContainer');
         const userProfile = document.getElementById('userProfile');
         const googleSignInBtn = document.getElementById('googleSignInBtn');
@@ -415,20 +478,86 @@
         const itemInput = document.getElementById('itemInput');
         const addBtn = document.getElementById('addBtn');
         const newlineBtn = document.getElementById('newlineBtn');
+        const bulletBtn = document.getElementById('bulletBtn');
+        const resizeBtn = document.getElementById('resizeBtn');
+        const hintLine = document.getElementById('hintLine');
         const itemsList = document.getElementById('itemsList');
         const syncStatus = document.getElementById('syncStatus');
 
         // ===================================================================
-        // 4. Auto-resize the textarea to fit its content (grows up to
-        //    max-height, then scrolls internally)
+        // 4. Auto-resize the textarea to fit content — but ONLY until the
+        //    user manually drags the resize corner. After that, respect
+        //    their chosen height. The resize button (▤) is always available
+        //    to cycle between preset heights, which re-enables auto-grow.
         // ===================================================================
         function autoResizeInput() {
+            if (manuallyResized) return;
             itemInput.style.height = 'auto';
-            itemInput.style.height = Math.min(itemInput.scrollHeight, 220) + 'px';
+            const natural = itemInput.scrollHeight;
+            itemInput.style.height = Math.min(natural, 500) + 'px';
         }
 
+        itemInput.addEventListener('mousedown', (e) => {
+            // A mousedown within ~18px of the bottom-right corner is the
+            // user grabbing the native resize handle. We detect it here so
+            // we can stop auto-growing and let the drag take over.
+            const rect = itemInput.getBoundingClientRect();
+            const nearCornerX = (rect.right - e.clientX) < 20;
+            const nearCornerY = (rect.bottom - e.clientY) < 20;
+            if (nearCornerX && nearCornerY) {
+                manuallyResized = true;
+            }
+        });
+
         // ===================================================================
-        // 5. Authentication flow
+        // 5. Bullet-mode UI & behavior
+        // ===================================================================
+        function setBulletMode(enabled, skipSave) {
+            bulletMode = enabled;
+            bulletBtn.classList.toggle('active', enabled);
+            bulletBtn.title = enabled
+                ? 'Bullet mode ON — press Enter to start the next bullet; Enter on an empty bullet to save'
+                : 'Bullet mode: auto-add • at start of each line';
+            // If turning ON and the field is empty, seed it with a bullet.
+            if (enabled && itemInput.value === '') {
+                itemInput.value = '• ';
+                itemInput.selectionStart = itemInput.selectionEnd = 2;
+                autoResizeInput();
+            }
+            // If turning OFF and the field is just a stray bullet, clear it.
+            if (!enabled && /^•\s*$/.test(itemInput.value)) {
+                itemInput.value = '';
+                autoResizeInput();
+            }
+            if (!skipSave) savePrefs();
+        }
+
+        bulletBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            setBulletMode(!bulletMode);
+            itemInput.focus();
+        });
+
+        // ===================================================================
+        // 6. Resize-cycle button: small → medium → large → back to small.
+        //    Also turns off the "manually resized" flag so auto-grow resumes
+        //    after a fresh cycle choice.
+        // ===================================================================
+        function applyResizeCycle() {
+            const h = RESIZE_CYCLE[resizeCycleIndex % RESIZE_CYCLE.length];
+            itemInput.style.height = h + 'px';
+            resizeCycleIndex++;
+            manuallyResized = false; // restore auto-grow when the user next types
+            itemInput.focus();
+        }
+
+        resizeBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            applyResizeCycle();
+        });
+
+        // ===================================================================
+        // 7. Authentication flow
         // ===================================================================
         googleSignInBtn.addEventListener('click', async () => {
             if (!cloudReady) {
@@ -472,10 +601,8 @@
         }
 
         // ===================================================================
-        // 6. Firestore realtime listener — SINGLE SOURCE OF TRUTH
+        // 8. Firestore realtime listener — SINGLE SOURCE OF TRUTH
         //    Firestore path: users/{uid}/cloud_notes/data/items
-        //    (Local cache snapshots are NOT skipped — that's what makes
-        //     new items appear instantly without a refresh.)
         // ===================================================================
         function itemsCollectionRef() {
             if (!cloudUser || !cloudDb) return null;
@@ -525,7 +652,7 @@
         }
 
         // ===================================================================
-        // 7. Render items (multi-line text renders via white-space: pre-wrap)
+        // 9. Render items
         // ===================================================================
         function renderItems() {
             if (!itemsArray.length) {
@@ -556,7 +683,7 @@
         }
 
         // ===================================================================
-        // 8. Event delegation for item actions
+        // 10. Event delegation for item actions
         // ===================================================================
         itemsList.addEventListener('click', async (e) => {
             const target = e.target.closest('[data-id]');
@@ -601,15 +728,29 @@
         }
 
         // ===================================================================
-        // 9. Insert a newline at the cursor (used by the "↵" button).
-        //    Works the same as Shift+Enter, but usable on touch devices.
+        // 11. Insert a newline at the cursor.
+        //     - Bullet mode OFF → plain newline
+        //     - Bullet mode ON  → "\n• " (or just "• " if at line start)
         // ===================================================================
         function insertNewlineAtCursor() {
             const start = itemInput.selectionStart;
             const end = itemInput.selectionEnd;
             const value = itemInput.value;
-            itemInput.value = value.slice(0, start) + '\n' + value.slice(end);
-            itemInput.selectionStart = itemInput.selectionEnd = start + 1;
+
+            let insertion = '\n';
+            if (bulletMode) {
+                // If the cursor is at the very start of a line, don't add a
+                // newline before the bullet — just place the bullet inline.
+                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+                const beforeCursor = value.slice(lineStart, start);
+                insertion = (beforeCursor.trim() === '' && start === lineStart)
+                    ? '• '
+                    : '\n• ';
+            }
+
+            itemInput.value = value.slice(0, start) + insertion + value.slice(end);
+            const newPos = start + insertion.length;
+            itemInput.selectionStart = itemInput.selectionEnd = newPos;
             itemInput.focus();
             autoResizeInput();
         }
@@ -620,18 +761,14 @@
         });
 
         // ===================================================================
-        // 10. Add new item
-        //     Key trick: pre-allocate the document ID with .doc(), insert
-        //     the item locally with that exact ID so it renders instantly,
-        //     then .set() it to Firestore. When the listener fires with the
-        //     same ID, it simply replaces the local entry — no duplicate.
+        // 12. Add new item (same pattern as before: pre-allocate ID,
+        //     optimistic insert, .set() to Firestore, rollback on error)
         // ===================================================================
         async function addNewItem() {
             if (!cloudUser) {
                 alert('Please sign in with Google to save your notes.');
                 return;
             }
-            // Trim trailing whitespace per line but keep internal newlines
             const text = itemInput.value.replace(/[ \t]+$/gm, '').trim();
             if (!text) { itemInput.focus(); return; }
 
@@ -651,12 +788,17 @@
                 createdAt: now,
             };
 
-            // Instant local render — user sees their new item immediately.
             itemsArray.unshift(optimisticItem);
             renderItems();
-            itemInput.value = '';
-            itemInput.style.height = 'auto'; // collapse back to one row
+
+            // Reset the input, keeping bullet mode's seed if it's on
+            itemInput.value = bulletMode ? '• ' : '';
+            manuallyResized = false;
+            itemInput.style.height = '';
+            autoResizeInput();
             itemInput.focus();
+            // Put the caret at the end of the seed
+            itemInput.selectionStart = itemInput.selectionEnd = itemInput.value.length;
 
             try {
                 await newDocRef.set({
@@ -680,37 +822,72 @@
         addBtn.addEventListener('click', addNewItem);
 
         // ===================================================================
-        // 11. Keyboard handling in the textarea:
-        //     - Enter alone         → submit the item (fast capture)
-        //     - Shift+Enter         → insert a newline
-        //     - Escape              → clear the field
+        // 13. Keyboard handling in the textarea:
+        //     - Enter alone          → save the item
+        //     - Enter on empty bullet → save the item (bullet mode)
+        //     - Shift+Enter          → new line (with bullet if bullet mode)
+        //     - Escape               → clear the field
         // ===================================================================
         itemInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key !== 'Enter') {
+                if (e.key === 'Escape') {
+                    itemInput.value = bulletMode ? '• ' : '';
+                    manuallyResized = false;
+                    itemInput.style.height = '';
+                    autoResizeInput();
+                    itemInput.selectionStart = itemInput.selectionEnd = itemInput.value.length;
+                }
+                return;
+            }
+
+            // Determine whether the current line is an empty bullet line.
+            const value = itemInput.value;
+            const pos = itemInput.selectionStart;
+            const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
+            const currentLine = value.slice(lineStart, pos);
+            const isEmptyBulletLine = /^•\s*$/.test(currentLine);
+
+            if (!e.shiftKey) {
+                // Plain Enter: if bullet mode is on and the current line is
+                // an empty bullet, finish the list and save.
+                // Otherwise (non-bullet mode) save the item directly.
                 e.preventDefault();
+                if (bulletMode && isEmptyBulletLine) {
+                    // Strip the trailing empty bullet before saving
+                    const cleaned = value.slice(0, lineStart) + value.slice(pos);
+                    itemInput.value = cleaned.replace(/[ \t]+$/gm, '').trim();
+                }
                 addNewItem();
                 return;
             }
-            if (e.key === 'Enter' && e.shiftKey) {
-                // Let the browser insert the newline naturally, then
-                // re-measure on the next frame so the box grows in sync.
-                requestAnimationFrame(autoResizeInput);
+
+            // Shift+Enter: insert a newline (with a bullet in bullet mode).
+            e.preventDefault();
+
+            if (bulletMode && isEmptyBulletLine) {
+                // Empty bullet + Shift+Enter → just move to the next bullet
+                // without stacking blank lines. Same visual result as Enter
+                // on a full line, but doesn't submit.
+                insertNewlineAtCursor();
                 return;
             }
-            if (e.key === 'Escape') {
-                itemInput.value = '';
-                itemInput.style.height = 'auto';
-                return;
-            }
+
+            insertNewlineAtCursor();
         });
 
-        // Keep the textarea height in sync when the user types/pastes too.
+        // Keep textarea height in sync on typing/pasting (until user drags).
         itemInput.addEventListener('input', autoResizeInput);
 
         // ===================================================================
-        // 12. Init (before auth resolves)
+        // 14. Init
         // ===================================================================
         window.addEventListener('load', () => {
+            loadPrefs();
+            setBulletMode(bulletMode, true); // apply without re-saving
+            if (bulletMode && itemInput.value === '') {
+                itemInput.value = '• ';
+                itemInput.selectionStart = itemInput.selectionEnd = 2;
+            }
             autoResizeInput();
             setTimeout(() => {
                 if (!cloudUser) {
