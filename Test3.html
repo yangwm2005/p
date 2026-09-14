@@ -2962,6 +2962,7 @@
 
     function captureAccessTokenFromResult(result) {
       const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
+      console.log('[Calendar connect] credential:', credential); // remove once this is working reliably
       if (credential && credential.accessToken) {
         gcalAccessToken = credential.accessToken;
         gcalTokenObtainedAt = Date.now();
@@ -2976,12 +2977,26 @@
       if (!cloudReady) { alert("Cloud sync is unavailable right now (couldn't load Firebase)."); return; }
       const provider = new firebase.auth.GoogleAuthProvider();
       provider.addScope(GCAL_SCOPE);
+      // Force Google to show the consent screen again even for an account
+      // that already has a Firebase session. Without this, Google can
+      // silently reuse the old, narrower grant and skip straight past the
+      // new Calendar permission request instead of asking for it.
+      provider.setCustomParameters({ prompt: 'consent' });
       try {
-        const result = cloudUser
-          ? await cloudUser.reauthenticateWithPopup(provider)
-          : await cloudAuth.signInWithPopup(provider);
+        // Always go through signInWithPopup (rather than reauthenticateWithPopup)
+        // — it's the flow Firebase documents for requesting extra Google API
+        // scopes, and it works whether or not a session already exists.
+        const result = await cloudAuth.signInWithPopup(provider);
         if (!captureAccessTokenFromResult(result)) {
-          alert("Signed in, but Google didn't grant Calendar access — please try Connect Calendar again.");
+          alert(
+            "Signed in, but Google still didn't include Calendar access in the token.\n\n" +
+            "This almost always means the Calendar scope isn't enabled for this app yet in Google Cloud Console:\n\n" +
+            "1. Go to console.cloud.google.com and select the 'qtodo-syn' project\n" +
+            "2. APIs & Services → Library → enable \"Google Calendar API\"\n" +
+            "3. APIs & Services → OAuth consent screen → Edit app → Scopes → Add scope → search \"Calendar\" → add the full \".../auth/calendar\" scope → Save\n" +
+            "4. If Publishing status shows \"Testing\", scroll to Test users → add your Google account → Save\n" +
+            "5. Click Connect Calendar again — you should now see a screen listing Calendar permissions to approve."
+          );
         }
       } catch (e) {
         if (e.code !== 'auth/popup-closed-by-user') {
@@ -3129,6 +3144,7 @@
         try {
           const provider = new firebase.auth.GoogleAuthProvider();
           provider.addScope(GCAL_SCOPE);
+          provider.setCustomParameters({ prompt: 'consent' });
           const result = await cloudAuth.signInWithPopup(provider);
           captureAccessTokenFromResult(result);
         } catch (e) {
