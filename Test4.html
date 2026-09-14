@@ -438,9 +438,13 @@
         // ===================================================================
         // 5. Firestore realtime listener — SINGLE SOURCE OF TRUTH
         //    Firestore path: users/{uid}/cloud_notes/data/items
-        //    We do NOT do any local optimistic writes. The listener is the
-        //    only thing that mutates itemsArray, which fully eliminates the
-        //    duplicate-item bug.
+        //
+        //    IMPORTANT: We deliberately do NOT skip snapshots with
+        //    hasPendingWrites. Firestore's local cache delivers a snapshot
+        //    the instant a local write happens (before the server round
+        //    trip), which is exactly what makes writes appear instantly in
+        //    the UI. Suppressing those snapshots was why new items only
+        //    showed up after a refresh.
         // ===================================================================
         function itemsCollectionRef() {
             if (!cloudUser || !cloudDb) return null;
@@ -455,11 +459,10 @@
             if (itemsUnsubscribe) itemsUnsubscribe();
 
             itemsUnsubscribe = ref.orderBy('createdAt', 'desc').onSnapshot((snapshot) => {
-                // Skip the local echo of our own in-flight writes to avoid
-                // any transient duplicate render. Once writes settle, the
-                // final snapshot will arrive and rebuild the list cleanly.
-                if (snapshot.metadata.hasPendingWrites) return;
-
+                // Rebuild itemsArray straight from the snapshot every time.
+                // Local optimistic entries and server-confirmed entries carry
+                // the SAME document ID, so Firestore's snapshot is the
+                // authoritative source and duplicates are impossible.
                 const newItems = [];
                 snapshot.forEach((doc) => {
                     const data = doc.data();
@@ -472,7 +475,7 @@
                 });
                 itemsArray = newItems;
                 renderItems();
-                setCloudStatus('synced');
+                setCloudStatus(snapshot.metadata.hasPendingWrites ? 'pending' : 'synced');
             }, (error) => {
                 console.error('Firestore listener error:', error);
                 setCloudStatus('error');
@@ -553,7 +556,8 @@
                     done: !item.done,
                     updatedAt: Date.now()
                 });
-                // No local mutation — the listener will push the update.
+                // The listener will deliver the updated snapshot (locally
+                // right away via cache, then confirmed by the server).
             } catch (error) {
                 console.error('Error toggling item:', error);
                 alert('Could not update item. Please try again.');
@@ -565,7 +569,7 @@
             if (!confirm('Delete this item?')) return;
             try {
                 await itemsCollectionRef().doc(itemId).delete();
-                // No local mutation — the listener will remove it from the UI.
+                // The listener will deliver the updated snapshot.
             } catch (error) {
                 console.error('Error deleting item:', error);
                 alert('Could not delete item.');
@@ -574,6 +578,10 @@
 
         // ===================================================================
         // 8. Add new item
+        //    Key trick: pre-allocate the document ID with .doc(), insert
+        //    the item locally with that exact ID so it renders instantly,
+        //    then .set() it to Firestore. When the listener fires with the
+        //    same ID, it simply replaces the local entry — no duplicate.
         // ===================================================================
         async function addNewItem() {
             if (!cloudUser) {
@@ -583,24 +591,46 @@
             const text = itemInput.value.trim();
             if (!text) { itemInput.focus(); return; }
 
+            const ref = itemsCollectionRef();
+            if (!ref) return;
+
             addBtn.disabled = true;
             addBtn.innerHTML = '<span class="loading-spinner"></span>';
             setCloudStatus('pending');
 
+            // Pre-allocate a stable document ID. Firestore generates one
+            // client-side, so we can use it for the local optimistic entry.
+            const newDocRef = ref.doc();
+            const now = Date.now();
+            const optimisticItem = {
+                id: newDocRef.id,
+                text: text,
+                done: false,
+                createdAt: now,
+            };
+
+            // Instant local render — user sees their new item immediately.
+            itemsArray.unshift(optimisticItem);
+            renderItems();
+            itemInput.value = '';
+            itemInput.focus();
+
             try {
-                await itemsCollectionRef().add({
+                await newDocRef.set({
                     text: text,
                     done: false,
-                    createdAt: Date.now(),
-                    updatedAt: Date.now()
+                    createdAt: now,
+                    updatedAt: now,
                 });
-                // No local insert — the listener will render it.
-                itemInput.value = '';
-                itemInput.focus();
+                // The listener will confirm and mark status as 'synced'.
             } catch (error) {
                 console.error('Error adding item:', error);
                 alert('Could not add item. Check your connection.');
                 setCloudStatus('error');
+                // Roll back the optimistic entry on failure so the UI
+                // doesn't show an item that never made it to the server.
+                itemsArray = itemsArray.filter(i => i.id !== newDocRef.id);
+                renderItems();
             } finally {
                 addBtn.disabled = false;
                 addBtn.innerHTML = '+';
