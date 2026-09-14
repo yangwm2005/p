@@ -932,6 +932,7 @@
     🍅 Pomodoro Tracker
     <small>notes + Google Calendar</small>
     <button id="soundToggleBtn" class="cloud-auth-btn" style="background:#8a7a68;" title="Toggle tick / alert sounds">🔊 Sound</button>
+    <button id="keepAwakeBtn" class="cloud-auth-btn" style="background:#7a8a6e;" title="Keep the screen on while a session runs (uses more battery)">🔆 Keep awake: Off</button>
     <button id="cloudAuthBtn" class="cloud-auth-btn" title="Sign in with Google to sync across devices">🔑 Sign In</button>
   </h1>
 
@@ -1135,6 +1136,7 @@
     const importBackupFile = document.getElementById('importBackupFile');
     const cloudAuthBtn = document.getElementById('cloudAuthBtn');
     const soundToggleBtn = document.getElementById('soundToggleBtn');
+    const keepAwakeBtn = document.getElementById('keepAwakeBtn');
     const cloudSyncStatus = document.getElementById('cloudSyncStatus');
     const clearNotesBtn = document.getElementById('clearNotesBtn');
     const countdownModeBtn = document.getElementById('countdownMode');
@@ -1192,6 +1194,8 @@
     let overtimeSeconds = 0;     // seconds accumulated since the section finished
     let overtimeStartTime = null; // ms timestamp when overtime began
     let sessionStartTimestamp = null; // wall-clock Date when the current session truly began (not resume-from-pause) — used so logged notes show the session's real start time, not "whenever I got around to adding a note"
+    let keepAwakeEnabled = false; // opt-in: request a screen wake lock while running (uses more battery)
+    let wakeLock = null;
 
     let notes = [];
     let nextNoteId = 1;
@@ -1540,6 +1544,7 @@
       }
       isRunning = false;
       isPaused = false;
+      releaseWakeLock();
     }
 
     function resetTimerToPhase() {
@@ -1635,10 +1640,14 @@
         if (remainingSeconds <= 0) {
           // Target reached: don't stop — flip into overtime so the section
           // turns green and keeps counting up to track the accumulated total.
+          // Anchor overtime to the exact scheduled end time (not "now") so
+          // that if this tick fired late — e.g. right after the device woke
+          // from sleep — the overtime total still reflects the real time
+          // since the target was reached, not just since we noticed.
           remainingSeconds = 0;
           overtimeActive = true;
-          overtimeStartTime = now;
-          overtimeSeconds = 0;
+          overtimeStartTime = targetEndTime;
+          overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
           playTimeUpSound();
           updateDisplay();
           if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
@@ -1669,6 +1678,7 @@
         }
         timerInterval = setInterval(tick, 1000);
         isRunning = true;
+        requestWakeLock();
         return;
       }
       if (clockMode === 'countdown') {
@@ -1694,6 +1704,7 @@
       timerInterval = setInterval(tick, 1000);
       isRunning = true;
       isPaused = false;
+      requestWakeLock();
       updateDisplay();
       if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
     }
@@ -2395,6 +2406,7 @@
           analogMode: analogMode,
           clockMode: clockMode,
           soundEnabled: soundEnabled,
+          keepAwakeEnabled: keepAwakeEnabled,
         }));
       } catch (e) { /* localStorage unavailable — ignore, nothing to persist */ }
     }
@@ -2478,6 +2490,97 @@
       if (!skipSave) saveDisplayPrefs();
     }
 
+    // ----- Staying accurate through sleep/lock, without spending extra
+    // battery by default -----
+    //
+    // A phone or laptop that's actually asleep (screen locked, lid closed)
+    // fully suspends every web page's JavaScript — no timer, no website,
+    // can tick during real OS-level sleep, and nothing here tries to fight
+    // that. Two things soften the effect instead:
+    //
+    //  1. Free, always on: every tick already computes remaining/elapsed
+    //     time from absolute timestamps rather than counting down by 1, so
+    //     the instant the page wakes up (tab refocused, screen unlocked)
+    //     it snaps to the correct real-world time — including noticing a
+    //     session finished while you were away and firing the "time's up"
+    //     chime then, not silently.
+    //  2. Opt-in, costs battery: the "Keep awake" toggle asks the browser
+    //     to hold the screen on (Wake Lock API) while a session is running,
+    //     so the display never sleeps in the first place. Off by default;
+    //     it releases itself the moment you pause, finish, or reset.
+    function catchUpFromWallClock() {
+      if (!isRunning || isPaused) return;
+      const now = Date.now();
+      if (clockMode === 'countdown') {
+        if (overtimeActive) {
+          overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+          elapsedSeconds = totalDurationSeconds + overtimeSeconds;
+        } else {
+          const secsLeft = Math.max(0, Math.round((targetEndTime - now) / 1000));
+          const delta = remainingSeconds - secsLeft;
+          if (delta > 0) elapsedSeconds += delta;
+          remainingSeconds = secsLeft;
+          if (remainingSeconds <= 0) {
+            remainingSeconds = 0;
+            overtimeActive = true;
+            overtimeStartTime = targetEndTime;
+            overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+            playTimeUpSound();
+          }
+        }
+      } else {
+        elapsedSeconds = Math.round((now - countUpStartTime) / 1000);
+      }
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    async function requestWakeLock() {
+      if (!keepAwakeEnabled || !isRunning) return;
+      if (!('wakeLock' in navigator)) return;
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } catch (e) {
+        // Common causes: low battery mode, permission denied, or the tab
+        // isn't visible yet — none of these are worth surfacing to the user.
+        wakeLock = null;
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+        wakeLock = null;
+      }
+    }
+
+    function setKeepAwakeEnabled(enabled, skipSave) {
+      keepAwakeEnabled = enabled;
+      const supported = 'wakeLock' in navigator;
+      if (keepAwakeBtn) {
+        keepAwakeBtn.textContent = enabled ? '🔆 Keep awake: On' : '🔆 Keep awake: Off';
+        keepAwakeBtn.style.background = enabled ? '#5c7a4e' : '#7a8a6e';
+        keepAwakeBtn.title = supported
+          ? 'Keep the screen on while a session runs (uses more battery)'
+          : 'Keep the screen on while a session runs (not supported in this browser — the timer will still self-correct when you return)';
+      }
+      if (enabled) {
+        requestWakeLock();
+      } else {
+        releaseWakeLock();
+      }
+      if (!skipSave) saveDisplayPrefs();
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        catchUpFromWallClock();
+        requestWakeLock(); // the browser auto-releases the old lock once the tab is hidden
+      }
+    });
+    window.addEventListener('focus', catchUpFromWallClock);
+
     // ----- View mode -----
     function setViewMode(mode, skipSave) {
       viewMode = mode;
@@ -2543,8 +2646,10 @@
       setAnalogMode(savedPrefs && savedPrefs.analogMode ? savedPrefs.analogMode : '60min', true);
       setClockMode(savedPrefs && savedPrefs.clockMode ? savedPrefs.clockMode : 'countdown', true);
       setSoundEnabled(savedPrefs && typeof savedPrefs.soundEnabled === 'boolean' ? savedPrefs.soundEnabled : true, true);
+      setKeepAwakeEnabled(savedPrefs && typeof savedPrefs.keepAwakeEnabled === 'boolean' ? savedPrefs.keepAwakeEnabled : false, true);
 
       soundToggleBtn.addEventListener('click', () => setSoundEnabled(!soundEnabled));
+      keepAwakeBtn.addEventListener('click', () => setKeepAwakeEnabled(!keepAwakeEnabled));
 
       startBtn.addEventListener('click', startTimer);
       pauseBtn.addEventListener('click', pauseTimer);
