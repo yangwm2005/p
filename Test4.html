@@ -301,7 +301,6 @@
             background: #ede7e1;
             color: #6d645b;
         }
-        /* ---- Action buttons stacked VERTICALLY ---- */
         .item-actions {
             display: flex;
             flex-direction: column;
@@ -513,6 +512,8 @@
 
         // ===================================================================
         // 2. Initialize Firebase with a NAMED app
+        //    Wrap in try/catch so a double-init from a stale tab doesn't
+        //    crash the page and leave auth half-broken.
         // ===================================================================
         let cloudApp, cloudAuth, cloudDb;
         let cloudReady = false;
@@ -529,6 +530,16 @@
             console.warn('Cloud sync unavailable:', e);
         }
 
+        // Explicitly keep the auth session in localStorage. This is the
+        // default, but being explicit avoids surprises if some extension
+        // or prior script on the page changed the persistence mode.
+        if (cloudReady) {
+            try {
+                cloudAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+                    .catch((e) => console.warn('setPersistence failed:', e));
+            } catch (e) { /* ignore */ }
+        }
+
         const googleProvider = new firebase.auth.GoogleAuthProvider();
         googleProvider.setCustomParameters({ prompt: 'select_account' });
 
@@ -540,6 +551,14 @@
         let itemsArray = [];
 
         let editingItemId = null;
+
+        // Debounce guard for onAuthStateChanged: some popup flows briefly
+        // deliver `null` before the real user, which would make the UI
+        // flash "signed out" and then "signed in" again. We hold off
+        // acting on a null for a short grace period; if a real user
+        // arrives in that window, nothing is torn down.
+        let nullUserTimer = null;
+        const NULL_USER_GRACE_MS = 1500;
 
         const PREF_KEY = 'cloudNotesPrefs';
         let bulletMode = false;
@@ -637,6 +656,8 @@
 
         // ===================================================================
         // 7. Authentication flow
+        //    We use popup only. On error, only show an alert for real
+        //    failures (never for the "user closed the popup" case).
         // ===================================================================
         googleSignInBtn.addEventListener('click', async () => {
             if (!cloudReady) {
@@ -645,9 +666,16 @@
             }
             try {
                 await cloudAuth.signInWithPopup(googleProvider);
+                // Success. onAuthStateChanged below will handle the UI.
             } catch (e) {
-                if (e.code !== 'auth/popup-closed-by-user') {
-                    alert('Sign-in failed: ' + e.message);
+                const code = e && e.code ? e.code : '';
+                const silent = [
+                    'auth/popup-closed-by-user',
+                    'auth/cancelled-popup-request',
+                    'auth/popup-blocked',
+                ];
+                if (!silent.includes(code)) {
+                    alert('Sign-in failed: ' + (e.message || code));
                 }
             }
         });
@@ -655,33 +683,60 @@
         signOutBtn.addEventListener('click', () => {
             if (!cloudUser) return;
             stopCloudListener();
+            if (nullUserTimer) { clearTimeout(nullUserTimer); nullUserTimer = null; }
             cloudAuth.signOut().catch((e) => console.error('Sign-out error:', e));
         });
 
+        // ===================================================================
+        // 8. onAuthStateChanged with a null-user debounce.
+        //
+        //    When Firebase fires a transient `null` during a popup flow,
+        //    we hold the UI as-is for ~1.5s. If a real user arrives in that
+        //    window, we cancel the teardown. This is what stops the app
+        //    from bouncing back to the sign-in page right after sign-in.
+        // ===================================================================
         if (cloudReady) {
             cloudAuth.onAuthStateChanged((user) => {
-                cloudUser = user;
                 if (user) {
+                    // Real user — cancel any pending null teardown.
+                    if (nullUserTimer) { clearTimeout(nullUserTimer); nullUserTimer = null; }
+
+                    const wasSignedOut = !cloudUser;
+                    cloudUser = user;
+
+                    // Update UI
                     signInContainer.classList.add('hidden');
                     userProfile.classList.remove('hidden');
                     userAvatar.src = user.photoURL || 'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/default-avatar.png';
                     userName.textContent = user.displayName || user.email || 'User';
-                    syncStatus.textContent = '☁️ Loading...';
+                    if (wasSignedOut) syncStatus.textContent = '☁️ Loading...';
+
+                    // Start (or restart) the Firestore listener.
                     subscribeToItems();
                 } else {
-                    signInContainer.classList.remove('hidden');
-                    userProfile.classList.add('hidden');
-                    syncStatus.textContent = '☁️ Not signed in';
-                    stopCloudListener();
-                    itemsArray = [];
-                    editingItemId = null;
-                    renderItems();
+                    // Transient null during a popup? Wait a moment before
+                    // actually tearing the UI down.
+                    if (nullUserTimer) clearTimeout(nullUserTimer);
+                    nullUserTimer = setTimeout(() => {
+                        nullUserTimer = null;
+                        cloudUser = null;
+                        signInContainer.classList.remove('hidden');
+                        userProfile.classList.add('hidden');
+                        syncStatus.textContent = '☁️ Not signed in';
+                        stopCloudListener();
+                        itemsArray = [];
+                        editingItemId = null;
+                        renderItems();
+                    }, NULL_USER_GRACE_MS);
                 }
             });
         }
 
         // ===================================================================
-        // 8. Firestore realtime listener
+        // 9. Firestore realtime listener
+        //    Errors here are LOGGED but never sign the user out. A
+        //    permission error (e.g. while Firestore rules are being set
+        //    up) shouldn't kill the auth session.
         // ===================================================================
         function itemsCollectionRef() {
             if (!cloudUser || !cloudDb) return null;
@@ -711,6 +766,9 @@
                 renderItems();
                 setCloudStatus(snapshot.metadata.hasPendingWrites ? 'pending' : 'synced');
             }, (error) => {
+                // NEVER sign out here. Just show the error status and
+                // keep the session alive so a refresh or rule change
+                // can recover it.
                 console.error('Firestore listener error:', error);
                 setCloudStatus('error');
             });
@@ -732,7 +790,7 @@
         }
 
         // ===================================================================
-        // 9. Date formatting helpers
+        // 10. Date formatting helpers
         // ===================================================================
         function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -767,7 +825,7 @@
         }
 
         // ===================================================================
-        // 10. Render items (with edit mode)
+        // 11. Render items (with edit mode)
         // ===================================================================
         function renderItems() {
             if (!itemsArray.length) {
@@ -843,7 +901,7 @@
         }
 
         // ===================================================================
-        // 11. Event delegation for item actions
+        // 12. Event delegation for item actions
         // ===================================================================
         itemsList.addEventListener('click', async (e) => {
             const target = e.target.closest('[data-id]');
@@ -955,7 +1013,7 @@
         }
 
         // ===================================================================
-        // 12. Keyboard shortcuts inside the inline edit textarea
+        // 13. Keyboard shortcuts inside the inline edit textarea
         // ===================================================================
         itemsList.addEventListener('keydown', (e) => {
             const ta = e.target;
@@ -973,7 +1031,7 @@
         });
 
         // ===================================================================
-        // 13. Newline insertion in the main input (bullet-aware)
+        // 14. Newline insertion in the main input (bullet-aware)
         // ===================================================================
         function insertNewlineAtCursor() {
             const start = itemInput.selectionStart;
@@ -1002,7 +1060,7 @@
         });
 
         // ===================================================================
-        // 14. Add new item
+        // 15. Add new item
         // ===================================================================
         async function addNewItem() {
             if (!cloudUser) {
@@ -1061,7 +1119,7 @@
         addBtn.addEventListener('click', addNewItem);
 
         // ===================================================================
-        // 15. Main input keyboard handling
+        // 16. Main input keyboard handling
         // ===================================================================
         itemInput.addEventListener('keydown', (e) => {
             if (e.key !== 'Enter') {
@@ -1098,7 +1156,7 @@
         itemInput.addEventListener('input', autoResizeInput);
 
         // ===================================================================
-        // 16. Init
+        // 17. Init
         // ===================================================================
         window.addEventListener('load', () => {
             loadPrefs();
