@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <title>Cloud Jots</title>
+    <title>Cloud Notes · To-dos & Ideas</title>
     <!-- Firebase SDK (cloud sync) -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -301,16 +301,19 @@
             background: #ede7e1;
             color: #6d645b;
         }
+        /* ---- Action buttons stacked VERTICALLY ---- */
         .item-actions {
             display: flex;
+            flex-direction: column;
             gap: 2px;
             flex-shrink: 0;
+            align-items: center;
         }
         .item-actions button {
             background: none;
             border: none;
-            width: 32px;
-            height: 32px;
+            width: 30px;
+            height: 30px;
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -439,7 +442,7 @@
             .add-section button.resize-btn { font-size: 1.2rem; }
             .btn { padding: 8px 14px; font-size: 0.85rem; }
             .item { padding: 12px 14px; }
-            .item-actions button { width: 28px; height: 28px; font-size: 0.9rem; }
+            .item-actions button { width: 26px; height: 26px; font-size: 0.85rem; }
         }
     </style>
 </head>
@@ -447,7 +450,7 @@
     <div class="app-container" id="appContainer">
         <!-- Header -->
         <h1>
-            <span>📋</span> Cloud Jots
+            <span>📋</span> Cloud Notes
         </h1>
 
         <!-- User bar / Google Sign-in area -->
@@ -934,183 +937,4 @@
                     updatedAt: Date.now()
                 });
             } catch (error) {
-                console.error('Error toggling item:', error);
-                alert('Could not update item. Please try again.');
-            }
-        }
-
-        async function deleteItem(itemId) {
-            if (!cloudUser) return;
-            if (!confirm('Delete this item?')) return;
-            try {
-                await itemsCollectionRef().doc(itemId).delete();
-                if (editingItemId === itemId) editingItemId = null;
-            } catch (error) {
-                console.error('Error deleting item:', error);
-                alert('Could not delete item.');
-            }
-        }
-
-        // ===================================================================
-        // 12. Keyboard shortcuts inside the inline edit textarea
-        // ===================================================================
-        itemsList.addEventListener('keydown', (e) => {
-            const ta = e.target;
-            if (!ta.classList || !ta.classList.contains('edit-textarea')) return;
-            const itemId = ta.dataset.id;
-
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                saveEdit(itemId);
-            } else if (e.key === 'Escape') {
-                e.preventDefault();
-                editingItemId = null;
-                renderItems();
-            }
-        });
-
-        // ===================================================================
-        // 13. Newline insertion in the main input (bullet-aware)
-        // ===================================================================
-        function insertNewlineAtCursor() {
-            const start = itemInput.selectionStart;
-            const end = itemInput.selectionEnd;
-            const value = itemInput.value;
-
-            let insertion = '\n';
-            if (bulletMode) {
-                const lineStart = value.lastIndexOf('\n', start - 1) + 1;
-                const beforeCursor = value.slice(lineStart, start);
-                insertion = (beforeCursor.trim() === '' && start === lineStart)
-                    ? '• '
-                    : '\n• ';
-            }
-
-            itemInput.value = value.slice(0, start) + insertion + value.slice(end);
-            const newPos = start + insertion.length;
-            itemInput.selectionStart = itemInput.selectionEnd = newPos;
-            itemInput.focus();
-            autoResizeInput();
-        }
-
-        newlineBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            insertNewlineAtCursor();
-        });
-
-        // ===================================================================
-        // 14. Add new item
-        // ===================================================================
-        async function addNewItem() {
-            if (!cloudUser) {
-                alert('Please sign in with Google to save your notes.');
-                return;
-            }
-            const text = itemInput.value.replace(/[ \t]+$/gm, '').trim();
-            if (!text) { itemInput.focus(); return; }
-
-            const ref = itemsCollectionRef();
-            if (!ref) return;
-
-            addBtn.disabled = true;
-            addBtn.innerHTML = '<span class="loading-spinner"></span>';
-            setCloudStatus('pending');
-
-            const newDocRef = ref.doc();
-            const now = Date.now();
-            const optimisticItem = {
-                id: newDocRef.id,
-                text: text,
-                done: false,
-                createdAt: now,
-                updatedAt: now,
-            };
-
-            itemsArray.unshift(optimisticItem);
-            renderItems();
-
-            itemInput.value = bulletMode ? '• ' : '';
-            manuallyResized = false;
-            itemInput.style.height = '';
-            autoResizeInput();
-            itemInput.focus();
-            itemInput.selectionStart = itemInput.selectionEnd = itemInput.value.length;
-
-            try {
-                await newDocRef.set({
-                    text: text,
-                    done: false,
-                    createdAt: now,
-                    updatedAt: now,
-                });
-            } catch (error) {
-                console.error('Error adding item:', error);
-                alert('Could not add item. Check your connection.');
-                setCloudStatus('error');
-                itemsArray = itemsArray.filter(i => i.id !== newDocRef.id);
-                renderItems();
-            } finally {
-                addBtn.disabled = false;
-                addBtn.innerHTML = '+';
-            }
-        }
-
-        addBtn.addEventListener('click', addNewItem);
-
-        // ===================================================================
-        // 15. Main input keyboard handling
-        // ===================================================================
-        itemInput.addEventListener('keydown', (e) => {
-            if (e.key !== 'Enter') {
-                if (e.key === 'Escape') {
-                    itemInput.value = bulletMode ? '• ' : '';
-                    manuallyResized = false;
-                    itemInput.style.height = '';
-                    autoResizeInput();
-                    itemInput.selectionStart = itemInput.selectionEnd = itemInput.value.length;
-                }
-                return;
-            }
-
-            const value = itemInput.value;
-            const pos = itemInput.selectionStart;
-            const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
-            const currentLine = value.slice(lineStart, pos);
-            const isEmptyBulletLine = /^•\s*$/.test(currentLine);
-
-            if (!e.shiftKey) {
-                e.preventDefault();
-                if (bulletMode && isEmptyBulletLine) {
-                    const cleaned = value.slice(0, lineStart) + value.slice(pos);
-                    itemInput.value = cleaned.replace(/[ \t]+$/gm, '').trim();
-                }
-                addNewItem();
-                return;
-            }
-
-            e.preventDefault();
-            insertNewlineAtCursor();
-        });
-
-        itemInput.addEventListener('input', autoResizeInput);
-
-        // ===================================================================
-        // 16. Init
-        // ===================================================================
-        window.addEventListener('load', () => {
-            loadPrefs();
-            setBulletMode(bulletMode, true);
-            if (bulletMode && itemInput.value === '') {
-                itemInput.value = '• ';
-                itemInput.selectionStart = itemInput.selectionEnd = 2;
-            }
-            autoResizeInput();
-            setTimeout(() => {
-                if (!cloudUser) {
-                    syncStatus.textContent = '☁️ Sign in to sync';
-                }
-            }, 500);
-        });
-    </script>
-</body>
-</html>
+                console.error('
