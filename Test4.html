@@ -354,20 +354,20 @@
         }
 
         /* ============================================================
-           ITEM TEXT — single-click now enters edit mode
+           ITEM TEXT — single-click enters edit mode
            ============================================================ */
         .item-text {
             font-size: 1rem;
             color: #1e293b;
             word-break: break-word;
             line-height: 1.4;
-            cursor: text;              /* was: pointer — now signals editing */
+            cursor: text;
             white-space: pre-wrap;
         }
         .item-text:hover {
             background: #f8fafc;
             border-radius: 6px;
-            box-shadow: 0 0 0 4px #f8fafc;  /* soft highlight on hover */
+            box-shadow: 0 0 0 4px #f8fafc;
         }
         .item-text.done {
             text-decoration: line-through;
@@ -375,7 +375,7 @@
         }
 
         /* ============================================================
-           ITEM META ROW — chips on the left, action buttons on the right
+           ITEM META ROW
            ============================================================ */
         .item-meta {
             margin-top: 6px;
@@ -491,12 +491,47 @@
             margin-bottom: 6px;
             display: flex;
             align-items: flex-start;
-            gap: 8px;
+            gap: 10px;
             animation: fadeIn 0.15s ease;
+            flex-wrap: wrap;
         }
         .reply:last-child {
             margin-bottom: 0;
         }
+
+        /* ============================================================
+           REPLY CHECKBOX — mirrors the main item's circular checkbox
+           ============================================================ */
+        .reply-check {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid #cbd5e1;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background 0.1s, border 0.1s;
+            font-size: 12px;
+            color: white;
+            user-select: none;
+            margin-top: 2px;
+        }
+        .reply-check:hover {
+            border-color: #94a3b8;
+        }
+        .reply-check.done {
+            background: #16a34a;
+            border-color: #16a34a;
+        }
+        .reply-check.done::after {
+            content: "✓";
+            color: white;
+            font-weight: bold;
+        }
+
         .reply-body {
             flex: 1;
             min-width: 0;
@@ -507,7 +542,12 @@
             line-height: 1.4;
             word-break: break-word;
             white-space: pre-wrap;
-            cursor: text;              /* now signals editing, like the item text */
+            cursor: text;
+        }
+        .reply-text:hover {
+            background: #eef2f7;
+            border-radius: 6px;
+            box-shadow: 0 0 0 4px #eef2f7;
         }
         .reply-text.done {
             text-decoration: line-through;
@@ -518,7 +558,7 @@
             font-size: 0.68rem;
             color: #94a3b8;
             display: flex;
-            gap: 8px;
+            gap: 6px;
             flex-wrap: wrap;
             align-items: center;
         }
@@ -531,14 +571,23 @@
             background: #ede7e1;
             color: #6d645b;
         }
+
+        /* ============================================================
+           REPLY ACTIONS — in the meta row, right-aligned
+           (✓ removed — the checkbox on the left handles done/undone)
+           ============================================================ */
         .reply-actions {
             display: flex;
+            flex-direction: row;
             gap: 2px;
             flex-shrink: 0;
+            align-items: center;
+            margin-left: auto;
             opacity: 0;
             transition: opacity 0.15s ease;
         }
-        .reply:hover .reply-actions {
+        .reply:hover .reply-actions,
+        .reply:focus-within .reply-actions {
             opacity: 1;
         }
         .reply-actions button {
@@ -550,7 +599,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.8rem;
+            font-size: 0.78rem;
             color: #94a3b8;
             cursor: pointer;
             transition: background 0.15s, color 0.15s;
@@ -564,8 +613,9 @@
             background: #fee2e2;
             color: #dc2626;
         }
-        .reply-actions button.done-btn.done {
-            color: #16a34a;
+        .reply-actions button.edit-reply-btn:hover {
+            background: #e2e8f0;
+            color: #1e293b;
         }
 
         /* Inline "add reply" row */
@@ -748,6 +798,7 @@
             .btn { padding: 8px 14px; font-size: 0.85rem; }
             .item { padding: 12px 14px; }
             .item-actions button { width: 22px; height: 22px; font-size: 0.8rem; }
+            .reply-actions button { width: 20px; height: 20px; font-size: 0.72rem; }
             .replies-wrap { padding-left: 20px; margin-left: 6px; }
 
             .item-actions,
@@ -1144,7 +1195,7 @@
         }
 
         // ===================================================================
-        // 11. Render items (with edit mode + pin + search + replies)
+        // 11. Render items
         // ===================================================================
         function renderItems() {
             const visible = getVisibleItems();
@@ -1192,6 +1243,7 @@
                         if (rIsEditing) {
                             repliesHtml += `
                                 <div class="reply" data-reply-id="${r.id}">
+                                    <div class="reply-check ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" data-action="toggle-reply" role="button" aria-label="toggle reply done"></div>
                                     <div class="reply-body">
                                         <textarea class="edit-textarea" data-reply-edit="1" data-id="${item.id}" data-reply-id="${r.id}" rows="2">${escapeHtml(r.text || '')}</textarea>
                                         <div class="edit-buttons">
@@ -1202,19 +1254,21 @@
                                 </div>
                             `;
                         } else {
+                            // Reply now has its own circular checkbox on the left.
+                            // The ✓ button was removed from .reply-actions.
                             repliesHtml += `
                                 <div class="reply" data-reply-id="${r.id}">
+                                    <div class="reply-check ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" data-action="toggle-reply" role="button" aria-label="toggle reply done"></div>
                                     <div class="reply-body">
-                                        <div class="reply-text ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" title="Click to edit · use ✓ button to toggle done">${escapeHtml(r.text || '')}</div>
+                                        <div class="reply-text ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" title="Click to edit">${escapeHtml(r.text || '')}</div>
                                         <div class="reply-meta">
                                             <span class="chip" title="${escapeHtml(formatFullTooltip(r.createdAt))}">🕒 ${escapeHtml(rCreated)} · ${escapeHtml(rTime)}</span>
                                             ${rWasEdited ? `<span class="chip edited" title="Last edited: ${escapeHtml(formatFullTooltip(r.updatedAt))}">✎ edited</span>` : ''}
+                                            <div class="reply-actions">
+                                                <button class="edit-reply-btn" data-id="${item.id}" data-reply-id="${r.id}" data-action="edit-reply" title="Edit reply" aria-label="edit reply">✎</button>
+                                                <button class="del-btn" data-id="${item.id}" data-reply-id="${r.id}" data-action="delete-reply" title="Delete reply" aria-label="delete reply">✕</button>
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div class="reply-actions">
-                                        <button class="done-btn ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" data-action="toggle-reply" title="Mark done / undone" aria-label="toggle reply done">✓</button>
-                                        <button class="edit-reply-btn" data-id="${item.id}" data-reply-id="${r.id}" data-action="edit-reply" title="Edit reply" aria-label="edit reply">✎</button>
-                                        <button class="del-btn" data-id="${item.id}" data-reply-id="${r.id}" data-action="delete-reply" title="Delete reply" aria-label="delete reply">✕</button>
                                     </div>
                                 </div>
                             `;
@@ -1316,12 +1370,6 @@
 
         // ===================================================================
         // 12. Event delegation for item + reply actions
-        //
-        //   Behaviour change:
-        //   • Clicking .item-text  → enter edit mode (was: toggle done)
-        //   • Clicking .item-check → toggle done (unchanged)
-        //   • Clicking .reply-text → enter reply edit mode (was: toggle done)
-        //   • Clicking ✓ button on a reply → toggle reply done (unchanged)
         // ===================================================================
         itemsList.addEventListener('click', async (e) => {
             // ---- Reply-related clicks first (they carry data-reply-id) ----
@@ -1355,7 +1403,7 @@
                     await deleteReply(itemId, replyId);
                     return;
                 }
-                // Clicking the reply text now opens the reply editor
+                // Click on the reply text now opens the reply editor
                 if (replyTarget.classList.contains('reply-text')) {
                     editingReply = { itemId, replyId };
                     replyingToId = null;
@@ -1416,14 +1464,12 @@
                 await deleteItem(itemId);
                 return;
             }
-            // Clicking the item text now enters edit mode
             if (target.classList.contains('item-text')) {
                 startEdit(itemId);
                 return;
             }
         });
 
-        // Double-click on text also opens edit mode (unchanged, still convenient)
         itemsList.addEventListener('dblclick', (e) => {
             const textEl = e.target.closest('.item-text');
             if (textEl) {
