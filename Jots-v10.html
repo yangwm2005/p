@@ -361,13 +361,13 @@
             color: #1e293b;
             word-break: break-word;
             line-height: 1.4;
-            cursor: text;              /* was: pointer — now signals editing */
+            cursor: text;
             white-space: pre-wrap;
         }
         .item-text:hover {
             background: #f8fafc;
             border-radius: 6px;
-            box-shadow: 0 0 0 4px #f8fafc;  /* soft highlight on hover */
+            box-shadow: 0 0 0 4px #f8fafc;
         }
         .item-text.done {
             text-decoration: line-through;
@@ -493,6 +493,7 @@
             align-items: flex-start;
             gap: 8px;
             animation: fadeIn 0.15s ease;
+            flex-wrap: wrap;
         }
         .reply:last-child {
             margin-bottom: 0;
@@ -507,7 +508,12 @@
             line-height: 1.4;
             word-break: break-word;
             white-space: pre-wrap;
-            cursor: text;              /* now signals editing, like the item text */
+            cursor: text;
+        }
+        .reply-text:hover {
+            background: #eef2f7;
+            border-radius: 6px;
+            box-shadow: 0 0 0 4px #eef2f7;
         }
         .reply-text.done {
             text-decoration: line-through;
@@ -518,7 +524,7 @@
             font-size: 0.68rem;
             color: #94a3b8;
             display: flex;
-            gap: 8px;
+            gap: 6px;
             flex-wrap: wrap;
             align-items: center;
         }
@@ -531,14 +537,22 @@
             background: #ede7e1;
             color: #6d645b;
         }
+
+        /* ============================================================
+           REPLY ACTIONS — now in the reply meta row, right-aligned
+           ============================================================ */
         .reply-actions {
             display: flex;
+            flex-direction: row;
             gap: 2px;
             flex-shrink: 0;
+            align-items: center;
+            margin-left: auto;        /* pushes the buttons to the far right */
             opacity: 0;
             transition: opacity 0.15s ease;
         }
-        .reply:hover .reply-actions {
+        .reply:hover .reply-actions,
+        .reply:focus-within .reply-actions {
             opacity: 1;
         }
         .reply-actions button {
@@ -550,7 +564,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.8rem;
+            font-size: 0.78rem;
             color: #94a3b8;
             cursor: pointer;
             transition: background 0.15s, color 0.15s;
@@ -563,6 +577,14 @@
         .reply-actions button.del-btn:hover {
             background: #fee2e2;
             color: #dc2626;
+        }
+        .reply-actions button.edit-reply-btn:hover {
+            background: #e2e8f0;
+            color: #1e293b;
+        }
+        .reply-actions button.done-btn:hover {
+            background: #dcfce7;
+            color: #16a34a;
         }
         .reply-actions button.done-btn.done {
             color: #16a34a;
@@ -748,6 +770,7 @@
             .btn { padding: 8px 14px; font-size: 0.85rem; }
             .item { padding: 12px 14px; }
             .item-actions button { width: 22px; height: 22px; font-size: 0.8rem; }
+            .reply-actions button { width: 20px; height: 20px; font-size: 0.72rem; }
             .replies-wrap { padding-left: 20px; margin-left: 6px; }
 
             .item-actions,
@@ -1202,6 +1225,8 @@
                                 </div>
                             `;
                         } else {
+                            // Reply meta row now contains BOTH the timestamp chip
+                            // AND the three control buttons (✓ ✎ ✕), right-aligned.
                             repliesHtml += `
                                 <div class="reply" data-reply-id="${r.id}">
                                     <div class="reply-body">
@@ -1209,12 +1234,12 @@
                                         <div class="reply-meta">
                                             <span class="chip" title="${escapeHtml(formatFullTooltip(r.createdAt))}">🕒 ${escapeHtml(rCreated)} · ${escapeHtml(rTime)}</span>
                                             ${rWasEdited ? `<span class="chip edited" title="Last edited: ${escapeHtml(formatFullTooltip(r.updatedAt))}">✎ edited</span>` : ''}
+                                            <div class="reply-actions">
+                                                <button class="done-btn ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" data-action="toggle-reply" title="Mark done / undone" aria-label="toggle reply done">✓</button>
+                                                <button class="edit-reply-btn" data-id="${item.id}" data-reply-id="${r.id}" data-action="edit-reply" title="Edit reply" aria-label="edit reply">✎</button>
+                                                <button class="del-btn" data-id="${item.id}" data-reply-id="${r.id}" data-action="delete-reply" title="Delete reply" aria-label="delete reply">✕</button>
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div class="reply-actions">
-                                        <button class="done-btn ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" data-action="toggle-reply" title="Mark done / undone" aria-label="toggle reply done">✓</button>
-                                        <button class="edit-reply-btn" data-id="${item.id}" data-reply-id="${r.id}" data-action="edit-reply" title="Edit reply" aria-label="edit reply">✎</button>
-                                        <button class="del-btn" data-id="${item.id}" data-reply-id="${r.id}" data-action="delete-reply" title="Delete reply" aria-label="delete reply">✕</button>
                                     </div>
                                 </div>
                             `;
@@ -1316,12 +1341,6 @@
 
         // ===================================================================
         // 12. Event delegation for item + reply actions
-        //
-        //   Behaviour change:
-        //   • Clicking .item-text  → enter edit mode (was: toggle done)
-        //   • Clicking .item-check → toggle done (unchanged)
-        //   • Clicking .reply-text → enter reply edit mode (was: toggle done)
-        //   • Clicking ✓ button on a reply → toggle reply done (unchanged)
         // ===================================================================
         itemsList.addEventListener('click', async (e) => {
             // ---- Reply-related clicks first (they carry data-reply-id) ----
@@ -1355,7 +1374,6 @@
                     await deleteReply(itemId, replyId);
                     return;
                 }
-                // Clicking the reply text now opens the reply editor
                 if (replyTarget.classList.contains('reply-text')) {
                     editingReply = { itemId, replyId };
                     replyingToId = null;
@@ -1416,14 +1434,12 @@
                 await deleteItem(itemId);
                 return;
             }
-            // Clicking the item text now enters edit mode
             if (target.classList.contains('item-text')) {
                 startEdit(itemId);
                 return;
             }
         });
 
-        // Double-click on text also opens edit mode (unchanged, still convenient)
         itemsList.addEventListener('dblclick', (e) => {
             const textEl = e.target.closest('.item-text');
             if (textEl) {
