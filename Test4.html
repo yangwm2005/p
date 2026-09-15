@@ -364,6 +364,10 @@
             text-decoration: line-through;
             color: #94a3b8;
         }
+
+        /* ============================================================
+           ITEM META ROW — chips on the left, action buttons on the right
+           ============================================================ */
         .item-meta {
             margin-top: 6px;
             font-size: 0.72rem;
@@ -397,13 +401,16 @@
             background: #bfdbfe;
         }
 
-        /* ---- Item action buttons (tightened, show on hover) ---- */
+        /* ============================================================
+           ITEM ACTIONS — now in the meta row, horizontal, right-aligned
+           ============================================================ */
         .item-actions {
             display: flex;
-            flex-direction: column;
-            gap: 0;
+            flex-direction: row;
+            gap: 2px;
             flex-shrink: 0;
             align-items: center;
+            margin-left: auto;        /* pushes the buttons to the far right */
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.15s ease;
@@ -417,12 +424,12 @@
             background: none;
             border: none;
             width: 24px;
-            height: 26px;
+            height: 24px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             color: #94a3b8;
             cursor: pointer;
             transition: background 0.15s, color 0.15s;
@@ -459,7 +466,7 @@
         .replies-wrap {
             flex-basis: 100%;
             margin-top: 10px;
-            padding-left: 36px;           /* aligns under the item text, past the check */
+            padding-left: 36px;
             border-left: 2px solid #e2e8f0;
             margin-left: 12px;
         }
@@ -728,7 +735,7 @@
             .add-section button.resize-btn { font-size: 0.95rem; }
             .btn { padding: 8px 14px; font-size: 0.85rem; }
             .item { padding: 12px 14px; }
-            .item-actions button { width: 22px; height: 24px; font-size: 0.8rem; }
+            .item-actions button { width: 22px; height: 22px; font-size: 0.8rem; }
             .replies-wrap { padding-left: 20px; margin-left: 6px; }
 
             /* On touch devices, keep action buttons always visible */
@@ -847,8 +854,6 @@
         let editingItemId = null;
 
         // Reply state
-        // - replyingToId   : item id whose reply box is currently open
-        // - editingReply   : { itemId, replyId } when a reply is being edited
         let replyingToId = null;
         let editingReply = null;
 
@@ -1023,8 +1028,6 @@
         // 9. Firestore realtime listener
         //    Replies are stored as an array inside each item doc:
         //      replies: [{ id, text, done, createdAt, updatedAt }, ...]
-        //    This keeps everything in one document (simple, atomic) and
-        //    works fine for moderate reply counts.
         // ===================================================================
         function itemsCollectionRef() {
             if (!cloudUser || !cloudDb) return null;
@@ -1113,8 +1116,6 @@
 
         // ===================================================================
         // 10b. Filtered + sorted view of itemsArray
-        //      Search matches the item text OR any reply text, so replying
-        //      keeps items discoverable.
         // ===================================================================
         function getVisibleItems() {
             const q = searchQuery.trim().toLowerCase();
@@ -1135,6 +1136,7 @@
 
         // ===================================================================
         // 11. Render items (with edit mode + pin + search + replies)
+        //     Action buttons now live in the meta row, right-aligned.
         // ===================================================================
         function renderItems() {
             const visible = getVisibleItems();
@@ -1164,7 +1166,7 @@
                 const replyCount = replies.length;
                 const showReplyBox = replyingToId === item.id;
 
-                // ---- replies HTML (built separately for readability) ----
+                // ---- replies HTML ----
                 let repliesHtml = '';
                 if (replies.length || showReplyBox) {
                     repliesHtml += `<div class="replies-wrap">`;
@@ -1247,14 +1249,14 @@
                                     <span class="chip" title="${escapeHtml(fullTooltip)}">🕒 ${escapeHtml(createdLabel)} · ${escapeHtml(timeLabel)}</span>
                                     ${item.pinned ? `<span class="chip pin-chip" title="Pinned to top">📌 pinned</span>` : ''}
                                     ${wasEdited ? `<span class="chip edited" title="Last edited: ${escapeHtml(formatFullTooltip(item.updatedAt))}">✎ edited</span>` : ''}
-                                    ${replyCount ? `<span class="chip reply-chip" data-id="${item.id}" data-action="toggle-replies" title="Click to toggle replies">💬 ${replyCount} repl${replyCount === 1 ? 'y' : 'ies'}</span>` : ''}
+                                    ${replyCount ? `<span class="chip reply-chip" data-id="${item.id}" data-action="toggle-replies" title="Click to open the reply box">💬 ${replyCount} repl${replyCount === 1 ? 'y' : 'ies'}</span>` : ''}
+                                    <div class="item-actions">
+                                        <button class="reply-btn" data-id="${item.id}" data-action="open-reply" aria-label="reply" title="Add a reply / sub-note">💬</button>
+                                        <button class="pin-btn ${item.pinned ? 'pinned' : ''}" data-id="${item.id}" aria-label="pin" title="${item.pinned ? 'Unpin' : 'Pin to top'}">${item.pinned ? '📌' : '📍'}</button>
+                                        <button class="edit-btn" data-id="${item.id}" aria-label="edit" title="Edit (or double-click text)">✎</button>
+                                        <button class="del-btn" data-id="${item.id}" aria-label="delete" title="Delete">✕</button>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="item-actions">
-                                <button class="reply-btn" data-id="${item.id}" data-action="open-reply" aria-label="reply" title="Add a reply / sub-note">💬</button>
-                                <button class="pin-btn ${item.pinned ? 'pinned' : ''}" data-id="${item.id}" aria-label="pin" title="${item.pinned ? 'Unpin' : 'Pin to top'}">${item.pinned ? '📌' : '📍'}</button>
-                                <button class="edit-btn" data-id="${item.id}" aria-label="edit" title="Edit (or double-click text)">✎</button>
-                                <button class="del-btn" data-id="${item.id}" aria-label="delete" title="Delete">✕</button>
                             </div>
                             ${repliesHtml}
                         </div>
@@ -1274,7 +1276,6 @@
                 }
             }
 
-            // Focus the open reply box if any
             if (replyingToId) {
                 const rta = itemsList.querySelector(`textarea[data-reply-input][data-id="${replyingToId}"]`);
                 if (rta) {
@@ -1285,7 +1286,6 @@
                 }
             }
 
-            // Focus the reply being edited if any
             if (editingReply) {
                 const reta = itemsList.querySelector(`.edit-textarea[data-reply-edit][data-reply-id="${editingReply.replyId}"]`);
                 if (reta) {
@@ -1341,7 +1341,6 @@
                     await deleteReply(itemId, replyId);
                     return;
                 }
-                // Click on reply text = toggle done
                 if (replyTarget.classList.contains('reply-text')) {
                     await toggleReplyDone(itemId, replyId);
                     return;
@@ -1365,7 +1364,6 @@
                 return;
             }
             if (target.dataset.action === 'open-reply') {
-                // Toggle the reply input for this item
                 replyingToId = (replyingToId === itemId) ? null : itemId;
                 editingReply = null;
                 renderItems();
@@ -1376,8 +1374,6 @@
                 return;
             }
             if (target.dataset.action === 'toggle-replies') {
-                // Quick toggle: just open the reply box (useful when there are
-                // already replies but the box is closed).
                 replyingToId = (replyingToId === itemId) ? null : itemId;
                 renderItems();
                 return;
@@ -1534,7 +1530,6 @@
             };
             const updatedReplies = (Array.isArray(item.replies) ? item.replies : []).concat(newReply);
 
-            // Optimistic UI
             item.replies = updatedReplies;
             replyingToId = null;
             renderItems();
@@ -1635,12 +1630,10 @@
 
         // ===================================================================
         // 13. Keyboard shortcuts inside the inline edit textareas
-        //     (applies to both item edits and reply edits)
         // ===================================================================
         itemsList.addEventListener('keydown', (e) => {
             const ta = e.target;
 
-            // ---- Reply input (open reply box) ----
             if (ta.matches && ta.matches('textarea[data-reply-input]')) {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -1653,7 +1646,6 @@
                 return;
             }
 
-            // ---- Edit textareas (item or reply) ----
             if (!ta.classList || !ta.classList.contains('edit-textarea')) return;
             const itemId = ta.dataset.id;
 
@@ -1680,7 +1672,6 @@
             }
         });
 
-        // Auto-grow reply input as you type
         itemsList.addEventListener('input', (e) => {
             const ta = e.target;
             if (ta.matches && ta.matches('textarea[data-reply-input]')) {
@@ -1819,7 +1810,7 @@
         itemInput.addEventListener('input', autoResizeInput);
 
         // ===================================================================
-        // 16b. Search input handling (now in the header)
+        // 16b. Search input handling
         // ===================================================================
         searchInput.addEventListener('input', () => {
             searchQuery = searchInput.value;
