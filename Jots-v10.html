@@ -189,7 +189,7 @@
         }
 
         /* ============================================================
-           ADD SECTION — input on the left, compact round buttons on the right
+           ADD SECTION
            ============================================================ */
         .add-section {
             display: flex;
@@ -354,7 +354,7 @@
         }
 
         /* ============================================================
-           ITEM TEXT — single-click now enters edit mode
+           ITEM TEXT — single-click enters edit mode
            ============================================================ */
         .item-text {
             font-size: 1rem;
@@ -375,7 +375,7 @@
         }
 
         /* ============================================================
-           ITEM META ROW — chips on the left, action buttons on the right
+           ITEM META ROW
            ============================================================ */
         .item-meta {
             margin-top: 6px;
@@ -401,17 +401,32 @@
             background: #fef3c7;
             color: #92400e;
         }
+
+        /* ---- Reply count chip: now a clickable collapse/expand toggle ---- */
         .item-meta .chip.reply-chip {
             background: #dbeafe;
             color: #1e40af;
             cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            transition: background 0.15s;
         }
         .item-meta .chip.reply-chip:hover {
             background: #bfdbfe;
         }
+        .item-meta .chip.reply-chip .reply-caret {
+            font-size: 0.7rem;
+            line-height: 1;
+            transition: transform 0.15s ease;
+            display: inline-block;
+        }
+        .item-meta .chip.reply-chip.collapsed .reply-caret {
+            transform: rotate(-90deg);
+        }
 
         /* ============================================================
-           ITEM ACTIONS — horizontal, right-aligned, in the meta row
+           ITEM ACTIONS
            ============================================================ */
         .item-actions {
             display: flex;
@@ -474,7 +489,7 @@
         }
 
         /* ============================================================
-           REPLY / SUB-NOTE THREAD
+           REPLY / SUB-NOTE THREAD — now collapsible
            ============================================================ */
         .replies-wrap {
             flex-basis: 100%;
@@ -482,6 +497,10 @@
             padding-left: 36px;
             border-left: 2px solid #e2e8f0;
             margin-left: 12px;
+        }
+        /* When collapsed, hide the whole wrap */
+        .replies-wrap.collapsed {
+            display: none;
         }
         .reply {
             background: #f8fafc;
@@ -491,13 +510,47 @@
             margin-bottom: 6px;
             display: flex;
             align-items: flex-start;
-            gap: 8px;
+            gap: 10px;
             animation: fadeIn 0.15s ease;
             flex-wrap: wrap;
         }
         .reply:last-child {
             margin-bottom: 0;
         }
+
+        /* ============================================================
+           REPLY CHECKBOX
+           ============================================================ */
+        .reply-check {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid #cbd5e1;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background 0.1s, border 0.1s;
+            font-size: 12px;
+            color: white;
+            user-select: none;
+            margin-top: 2px;
+        }
+        .reply-check:hover {
+            border-color: #94a3b8;
+        }
+        .reply-check.done {
+            background: #16a34a;
+            border-color: #16a34a;
+        }
+        .reply-check.done::after {
+            content: "✓";
+            color: white;
+            font-weight: bold;
+        }
+
         .reply-body {
             flex: 1;
             min-width: 0;
@@ -539,7 +592,7 @@
         }
 
         /* ============================================================
-           REPLY ACTIONS — now in the reply meta row, right-aligned
+           REPLY ACTIONS — in the meta row, right-aligned
            ============================================================ */
         .reply-actions {
             display: flex;
@@ -547,7 +600,7 @@
             gap: 2px;
             flex-shrink: 0;
             align-items: center;
-            margin-left: auto;        /* pushes the buttons to the far right */
+            margin-left: auto;
             opacity: 0;
             transition: opacity 0.15s ease;
         }
@@ -581,13 +634,6 @@
         .reply-actions button.edit-reply-btn:hover {
             background: #e2e8f0;
             color: #1e293b;
-        }
-        .reply-actions button.done-btn:hover {
-            background: #dcfce7;
-            color: #16a34a;
-        }
-        .reply-actions button.done-btn.done {
-            color: #16a34a;
         }
 
         /* Inline "add reply" row */
@@ -821,7 +867,7 @@
             </div>
         </div>
         <div class="hint" id="hintLine">
-            <kbd>Enter</kbd> save · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> clear · click text to edit · click ○ to mark done
+            <kbd>Enter</kbd> save · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> clear · click text to edit · click ○ to mark done · click 💬 N to collapse
         </div>
 
         <!-- Items list -->
@@ -890,6 +936,27 @@
         // Reply state
         let replyingToId = null;
         let editingReply = null;
+
+        // ---- Collapse state ----
+        // Set of item ids whose reply thread is currently collapsed.
+        // Persisted in localStorage so the fold state survives reloads
+        // on this device (each device keeps its own view preferences).
+        let collapsedItems = new Set();
+        const COLLAPSE_KEY = 'cloudNotesCollapsed';
+
+        function loadCollapseState() {
+            try {
+                const raw = localStorage.getItem(COLLAPSE_KEY);
+                if (!raw) return;
+                const arr = JSON.parse(raw);
+                if (Array.isArray(arr)) collapsedItems = new Set(arr);
+            } catch (e) { /* ignore */ }
+        }
+        function saveCollapseState() {
+            try {
+                localStorage.setItem(COLLAPSE_KEY, JSON.stringify(Array.from(collapsedItems)));
+            } catch (e) { /* ignore */ }
+        }
 
         let nullUserTimer = null;
         const NULL_USER_GRACE_MS = 1500;
@@ -1167,7 +1234,7 @@
         }
 
         // ===================================================================
-        // 11. Render items (with edit mode + pin + search + replies)
+        // 11. Render items
         // ===================================================================
         function renderItems() {
             const visible = getVisibleItems();
@@ -1197,10 +1264,17 @@
                 const replyCount = replies.length;
                 const showReplyBox = replyingToId === item.id;
 
+                // ---- Collapse state ----
+                // A thread is collapsed if the user explicitly collapsed it.
+                // When a reply box is open, we force it expanded so the user
+                // can see what they're typing into.
+                const isCollapsed = collapsedItems.has(item.id) && !showReplyBox;
+                const wrapCollapsedClass = isCollapsed ? ' collapsed' : '';
+
                 // ---- replies HTML ----
                 let repliesHtml = '';
                 if (replies.length || showReplyBox) {
-                    repliesHtml += `<div class="replies-wrap">`;
+                    repliesHtml += `<div class="replies-wrap${wrapCollapsedClass}">`;
 
                     replies.forEach(r => {
                         const rDone = r.done ? 'done' : '';
@@ -1215,6 +1289,7 @@
                         if (rIsEditing) {
                             repliesHtml += `
                                 <div class="reply" data-reply-id="${r.id}">
+                                    <div class="reply-check ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" data-action="toggle-reply" role="button" aria-label="toggle reply done"></div>
                                     <div class="reply-body">
                                         <textarea class="edit-textarea" data-reply-edit="1" data-id="${item.id}" data-reply-id="${r.id}" rows="2">${escapeHtml(r.text || '')}</textarea>
                                         <div class="edit-buttons">
@@ -1225,17 +1300,15 @@
                                 </div>
                             `;
                         } else {
-                            // Reply meta row now contains BOTH the timestamp chip
-                            // AND the three control buttons (✓ ✎ ✕), right-aligned.
                             repliesHtml += `
                                 <div class="reply" data-reply-id="${r.id}">
+                                    <div class="reply-check ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" data-action="toggle-reply" role="button" aria-label="toggle reply done"></div>
                                     <div class="reply-body">
-                                        <div class="reply-text ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" title="Click to edit · use ✓ button to toggle done">${escapeHtml(r.text || '')}</div>
+                                        <div class="reply-text ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" title="Click to edit">${escapeHtml(r.text || '')}</div>
                                         <div class="reply-meta">
                                             <span class="chip" title="${escapeHtml(formatFullTooltip(r.createdAt))}">🕒 ${escapeHtml(rCreated)} · ${escapeHtml(rTime)}</span>
                                             ${rWasEdited ? `<span class="chip edited" title="Last edited: ${escapeHtml(formatFullTooltip(r.updatedAt))}">✎ edited</span>` : ''}
                                             <div class="reply-actions">
-                                                <button class="done-btn ${rDone}" data-id="${item.id}" data-reply-id="${r.id}" data-action="toggle-reply" title="Mark done / undone" aria-label="toggle reply done">✓</button>
                                                 <button class="edit-reply-btn" data-id="${item.id}" data-reply-id="${r.id}" data-action="edit-reply" title="Edit reply" aria-label="edit reply">✎</button>
                                                 <button class="del-btn" data-id="${item.id}" data-reply-id="${r.id}" data-action="delete-reply" title="Delete reply" aria-label="delete reply">✕</button>
                                             </div>
@@ -1256,6 +1329,14 @@
                     }
 
                     repliesHtml += `</div>`;
+                }
+
+                // ---- Reply chip: now a collapse/expand toggle ----
+                let replyChipHtml = '';
+                if (replyCount) {
+                    replyChipHtml = `<span class="chip reply-chip ${isCollapsed ? 'collapsed' : ''}" data-id="${item.id}" data-action="toggle-collapse" title="${isCollapsed ? 'Click to expand replies' : 'Click to collapse replies'}">
+                        <span class="reply-caret">▼</span> 💬 ${replyCount} repl${replyCount === 1 ? 'y' : 'ies'}
+                    </span>`;
                 }
 
                 if (isEditing) {
@@ -1282,7 +1363,7 @@
                                     <span class="chip" title="${escapeHtml(fullTooltip)}">🕒 ${escapeHtml(createdLabel)} · ${escapeHtml(timeLabel)}</span>
                                     ${item.pinned ? `<span class="chip pin-chip" title="Pinned to top">📌 pinned</span>` : ''}
                                     ${wasEdited ? `<span class="chip edited" title="Last edited: ${escapeHtml(formatFullTooltip(item.updatedAt))}">✎ edited</span>` : ''}
-                                    ${replyCount ? `<span class="chip reply-chip" data-id="${item.id}" data-action="toggle-replies" title="Click to open the reply box">💬 ${replyCount} repl${replyCount === 1 ? 'y' : 'ies'}</span>` : ''}
+                                    ${replyChipHtml}
                                     <div class="item-actions">
                                         <button class="reply-btn ${showReplyBox ? 'active' : ''}" data-id="${item.id}" data-action="open-reply" aria-label="reply" title="Add a reply / sub-note">💬</button>
                                         <button class="pin-btn ${item.pinned ? 'pinned' : ''}" data-id="${item.id}" aria-label="pin" title="${item.pinned ? 'Unpin' : 'Pin to top'}">${item.pinned ? '📌' : '📍'}</button>
@@ -1401,6 +1482,11 @@
             if (target.dataset.action === 'open-reply') {
                 replyingToId = (replyingToId === itemId) ? null : itemId;
                 editingReply = null;
+                // Opening the reply box forces the thread to be expanded
+                if (replyingToId === itemId) {
+                    collapsedItems.delete(itemId);
+                    saveCollapseState();
+                }
                 renderItems();
                 return;
             }
@@ -1408,9 +1494,9 @@
                 await postReply(itemId);
                 return;
             }
-            if (target.dataset.action === 'toggle-replies') {
-                replyingToId = (replyingToId === itemId) ? null : itemId;
-                renderItems();
+            // ---- NEW: collapse/expand toggle from the reply chip ----
+            if (target.dataset.action === 'toggle-collapse') {
+                toggleCollapse(itemId);
                 return;
             }
 
@@ -1439,6 +1525,21 @@
                 return;
             }
         });
+
+        // ---- Collapse/expand helper ----
+        function toggleCollapse(itemId) {
+            if (collapsedItems.has(itemId)) {
+                collapsedItems.delete(itemId);
+            } else {
+                collapsedItems.add(itemId);
+                // If the reply box happens to be open for this item, close it
+                // when collapsing — otherwise it'd be hidden but still present.
+                if (replyingToId === itemId) replyingToId = null;
+                if (editingReply && editingReply.itemId === itemId) editingReply = null;
+            }
+            saveCollapseState();
+            renderItems();
+        }
 
         itemsList.addEventListener('dblclick', (e) => {
             const textEl = e.target.closest('.item-text');
@@ -1532,6 +1633,11 @@
                 if (editingItemId === itemId) editingItemId = null;
                 if (replyingToId === itemId) replyingToId = null;
                 if (editingReply && editingReply.itemId === itemId) editingReply = null;
+                // Clean up collapse state for the deleted item
+                if (collapsedItems.has(itemId)) {
+                    collapsedItems.delete(itemId);
+                    saveCollapseState();
+                }
             } catch (error) {
                 console.error('Error deleting item:', error);
                 alert('Could not delete item.');
@@ -1567,6 +1673,10 @@
 
             item.replies = updatedReplies;
             replyingToId = null;
+            // New reply just landed — make sure the thread is expanded so
+            // the user can see it.
+            collapsedItems.delete(itemId);
+            saveCollapseState();
             renderItems();
 
             try {
@@ -1672,12 +1782,12 @@
 
             const inReplyBox = e.target.closest && e.target.closest('.reply-add-row');
             const onReplyToggle = e.target.closest && e.target.closest('.reply-btn');
-            const onReplyChip = e.target.closest && e.target.closest('.reply-chip');
+            const onCollapseToggle = e.target.closest && e.target.closest('.reply-chip');
             const onItemCard = e.target.closest && e.target.closest('.item');
 
             if (inReplyBox) return;
             if (onReplyToggle) return;
-            if (onReplyChip) return;
+            if (onCollapseToggle) return;
 
             if (onItemCard) {
                 const sameItem = onItemCard.dataset && onItemCard.dataset.id === replyingToId;
@@ -1910,6 +2020,7 @@
         // ===================================================================
         window.addEventListener('load', () => {
             loadPrefs();
+            loadCollapseState();
             setBulletMode(bulletMode, true);
             if (bulletMode && itemInput.value === '') {
                 itemInput.value = '• ';
