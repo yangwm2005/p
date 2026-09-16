@@ -364,7 +364,7 @@
         }
 
         /* ============================================================
-           TAG PANEL — includes Add, Filter by tag, and Date sections
+           TAG PANEL — Add, Tag, Date sections
            ============================================================ */
         .tag-panel {
             display: none;
@@ -512,7 +512,7 @@
         }
 
         /* ============================================================
-           DATE QUICK-FILTER chips (This week / Last week)
+           DATE QUICK-FILTER chips — Today / 3 days / This week / Last week
            ============================================================ */
         .tag-panel .date-filters {
             display: flex;
@@ -543,22 +543,29 @@
             font-size: 0.65rem;
             opacity: 0.75;
         }
-        .tag-panel .date-filters .date-chip.active {
-            background: #0ea5e9;
-            color: white;
-            border-color: #0ea5e9;
-        }
-        .tag-panel .date-filters .date-chip.active .date-range {
-            opacity: 0.9;
-        }
+        /* Each chip gets its own accent color when active */
         .tag-panel .date-filters .date-chip.today.active {
             background: #16a34a;
             border-color: #16a34a;
+            color: white;
         }
-        /* Slight difference in color for last-week to differentiate */
+        .tag-panel .date-filters .date-chip.three-days.active {
+            background: #0ea5e9;
+            border-color: #0ea5e9;
+            color: white;
+        }
+        .tag-panel .date-filters .date-chip.this-week.active {
+            background: #6366f1;
+            border-color: #6366f1;
+            color: white;
+        }
         .tag-panel .date-filters .date-chip.last-week.active {
             background: #a855f7;
             border-color: #a855f7;
+            color: white;
+        }
+        .tag-panel .date-filters .date-chip.active .date-range {
+            opacity: 0.9;
         }
 
         /* ITEMS LIST */
@@ -1210,7 +1217,7 @@
 
         <!-- Tag + Date panel -->
         <div class="tag-panel" id="tagPanel">
-            <!-- Section 1 — add a new tag -->
+            <!-- Add new tag -->
             <div class="panel-section">
                 <span class="section-label">Add</span>
                 <div class="new-tag-input-wrap">
@@ -1219,13 +1226,13 @@
                 </div>
             </div>
 
-            <!-- Section 2 — existing tags (click to filter) -->
+            <!-- Existing tags (click to filter) -->
             <div class="panel-section">
                 <span class="section-label">Tag</span>
                 <div class="existing-tags" id="existingTags"></div>
             </div>
 
-            <!-- Section 3 — date quick filters (This week / Last week) -->
+            <!-- Date quick filters -->
             <div class="panel-section">
                 <span class="section-label">Date</span>
                 <div class="date-filters" id="dateFilters"></div>
@@ -1294,10 +1301,9 @@
         let activeTagFilters = new Set();
         let pendingTags = [];
 
-        // Date filter: null | 'thisWeek' | 'lastWeek'
+        // Date filter: null | 'today' | 'threeDays' | 'thisWeek' | 'lastWeek'
         let activeDateFilter = null;
 
-        // Panel open/closed state
         let tagPanelOpen = false;
 
         let nullUserTimer = null;
@@ -1417,13 +1423,35 @@
         }
 
         // ===================================================================
-        // Date helpers for week ranges
+        // Date range helpers
         // ===================================================================
-        // Returns { start: ms, end: ms } for the current week
-        // (Monday 00:00 to next Monday 00:00, local time).
+        function startOfToday() {
+            const d = new Date();
+            d.setHours(0, 0, 0, 0);
+            return d;
+        }
+
+        // Today: [start of today, start of tomorrow)
+        function getTodayRange() {
+            const s = startOfToday();
+            const e = new Date(s);
+            e.setDate(s.getDate() + 1);
+            return { start: s.getTime(), end: e.getTime() };
+        }
+
+        // Recent 3 days (including today): [start of today-2, start of tomorrow)
+        function getThreeDayRange() {
+            const s = startOfToday();
+            s.setDate(s.getDate() - 2);
+            const e = new Date(startOfToday());
+            e.setDate(e.getDate() + 1);
+            return { start: s.getTime(), end: e.getTime() };
+        }
+
+        // This week: [Monday 00:00, next Monday 00:00)
         function getThisWeekRange() {
             const now = new Date();
-            const day = now.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
+            const day = now.getDay();
             const daysSinceMonday = (day === 0 ? 6 : day - 1);
             const monday = new Date(now);
             monday.setHours(0, 0, 0, 0);
@@ -1433,17 +1461,17 @@
             return { start: monday.getTime(), end: nextMonday.getTime() };
         }
 
-        // Returns the same shape for last week.
+        // Last week: previous Monday → this Monday
         function getLastWeekRange() {
             const thisWeek = getThisWeekRange();
             const lastMonday = new Date(thisWeek.start - 7 * 24 * 60 * 60 * 1000);
             return { start: lastMonday.getTime(), end: thisWeek.start };
         }
 
-        // Short human labels like "Sep 8 – Sep 14".
+        // Format a range as "Sep 8 – Sep 14" (inclusive end)
         function formatDateRangeShort(range) {
             const s = new Date(range.start);
-            const e = new Date(range.end - 1); // inclusive end (last ms before next Monday)
+            const e = new Date(range.end - 1);
             const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             return `${fmt(s)} – ${fmt(e)}`;
         }
@@ -1501,18 +1529,24 @@
             existingTagsEl.innerHTML = html;
         }
 
-        // ---- Date filter chips ----
+        // ---- Date filter chips (Today, 3 days, This week, Last week) ----
         function renderDateFilters() {
+            const today = getTodayRange();
+            const three = getThreeDayRange();
             const thisWeek = getThisWeekRange();
             const lastWeek = getLastWeekRange();
-            const thisLabel = formatDateRangeShort(thisWeek);
-            const lastLabel = formatDateRangeShort(lastWeek);
-            const isThis = activeDateFilter === 'thisWeek';
-            const isLast = activeDateFilter === 'lastWeek';
+
+            const labelToday = formatDateRangeShort(today);
+            const labelThree = formatDateRangeShort(three);
+            const labelThis = formatDateRangeShort(thisWeek);
+            const labelLast = formatDateRangeShort(lastWeek);
 
             let html = '';
-            html += `<span class="date-chip today ${isThis ? 'active' : ''}" data-date-filter="thisWeek" title="Items created this week (${escapeHtml(thisLabel)})">📅 This week <span class="date-range">${escapeHtml(thisLabel)}</span></span>`;
-            html += `<span class="date-chip last-week ${isLast ? 'active' : ''}" data-date-filter="lastWeek" title="Items created last week (${escapeHtml(lastLabel)})">📅 Last week <span class="date-range">${escapeHtml(lastLabel)}</span></span>`;
+            html += `<span class="date-chip today ${activeDateFilter === 'today' ? 'active' : ''}" data-date-filter="today" title="Items created today (${escapeHtml(labelToday)})">☀️ Today <span class="date-range">${escapeHtml(labelToday)}</span></span>`;
+            html += `<span class="date-chip three-days ${activeDateFilter === 'threeDays' ? 'active' : ''}" data-date-filter="threeDays" title="Items created in the last 3 days (${escapeHtml(labelThree)})">🕒 3 days <span class="date-range">${escapeHtml(labelThree)}</span></span>`;
+            html += `<span class="date-chip this-week ${activeDateFilter === 'thisWeek' ? 'active' : ''}" data-date-filter="thisWeek" title="Items created this week (${escapeHtml(labelThis)})">📅 This week <span class="date-range">${escapeHtml(labelThis)}</span></span>`;
+            html += `<span class="date-chip last-week ${activeDateFilter === 'lastWeek' ? 'active' : ''}" data-date-filter="lastWeek" title="Items created last week (${escapeHtml(labelLast)})">📅 Last week <span class="date-range">${escapeHtml(labelLast)}</span></span>`;
+
             if (activeDateFilter) {
                 html += `<button class="clear-all" data-clear-date="1">Clear date</button>`;
             }
@@ -1523,14 +1557,12 @@
             tagPanelOpen = true;
             tagPanel.classList.add('open');
             tagToggleLink.classList.add('open');
-            // Render all sections so nothing is empty on first open
             renderExistingTags();
             renderDateFilters();
             setTimeout(() => tagInput.focus(), 0);
         }
 
         function closeTagPanel() {
-            // Commit any half-typed tag
             if (tagInput.value.trim()) {
                 const newTags = parseTagString(tagInput.value);
                 if (newTags.length) pendingTags = mergeTags(pendingTags, newTags);
@@ -1615,7 +1647,6 @@
             renderExistingTags();
         });
 
-        // ---- Date filter clicks ----
         dateFiltersEl.addEventListener('click', (e) => {
             const clearDate = e.target.closest('[data-clear-date]');
             if (clearDate) {
@@ -1628,7 +1659,6 @@
             const chip = e.target.closest('[data-date-filter]');
             if (!chip) return;
             const which = chip.dataset.dateFilter;
-            // Toggle off if the same chip is clicked again
             activeDateFilter = (activeDateFilter === which) ? null : which;
             renderItems();
             updateTagToggle();
@@ -1816,7 +1846,7 @@
         }
 
         // ===================================================================
-        // Date helpers (for item display)
+        // Date helpers (item display)
         // ===================================================================
         function pad(n) { return String(n).padStart(2, '0'); }
         function formatCreatedLabel(ts) {
@@ -1894,14 +1924,14 @@
             const parsed = parseSearchQuery(searchQuery);
             const allTags = new Set([...parsed.tags, ...activeTagFilters]);
 
-            // Pre-compute date range once
             let dateRange = null;
-            if (activeDateFilter === 'thisWeek') dateRange = getThisWeekRange();
-            else if (activeDateFilter === 'lastWeek') dateRange = getLastWeekRange();
+            if (activeDateFilter === 'today')      dateRange = getTodayRange();
+            else if (activeDateFilter === 'threeDays') dateRange = getThreeDayRange();
+            else if (activeDateFilter === 'thisWeek')  dateRange = getThisWeekRange();
+            else if (activeDateFilter === 'lastWeek')  dateRange = getLastWeekRange();
 
             let list = itemsArray;
 
-            // Date filter first (cheapest)
             if (dateRange) {
                 list = list.filter(it => {
                     const ts = it.createdAt || 0;
@@ -1909,7 +1939,6 @@
                 });
             }
 
-            // Then tag / text
             if (allTags.size || parsed.text) {
                 list = list.filter(it => itemMatchesSearch(it, { text: parsed.text, tags: Array.from(allTags) }));
             }
