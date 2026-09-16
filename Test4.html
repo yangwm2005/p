@@ -363,9 +363,7 @@
             display: inline-block;
         }
 
-        /* ============================================================
-           TAG PANEL — Add, Tag, Date sections
-           ============================================================ */
+        /* TAG PANEL */
         .tag-panel {
             display: none;
             flex-direction: column;
@@ -511,9 +509,7 @@
             color: #dc2626;
         }
 
-        /* ============================================================
-           DATE QUICK-FILTER chips — Today / 3 days / This week / Last week
-           ============================================================ */
+        /* DATE chips */
         .tag-panel .date-filters {
             display: flex;
             flex-wrap: wrap;
@@ -543,7 +539,6 @@
             font-size: 0.65rem;
             opacity: 0.75;
         }
-        /* Each chip gets its own accent color when active */
         .tag-panel .date-filters .date-chip.today.active {
             background: #16a34a;
             border-color: #16a34a;
@@ -1217,7 +1212,6 @@
 
         <!-- Tag + Date panel -->
         <div class="tag-panel" id="tagPanel">
-            <!-- Add new tag -->
             <div class="panel-section">
                 <span class="section-label">Add</span>
                 <div class="new-tag-input-wrap">
@@ -1226,13 +1220,11 @@
                 </div>
             </div>
 
-            <!-- Existing tags (click to filter) -->
             <div class="panel-section">
                 <span class="section-label">Tag</span>
                 <div class="existing-tags" id="existingTags"></div>
             </div>
 
-            <!-- Date quick filters -->
             <div class="panel-section">
                 <span class="section-label">Date</span>
                 <div class="date-filters" id="dateFilters"></div>
@@ -1301,9 +1293,7 @@
         let activeTagFilters = new Set();
         let pendingTags = [];
 
-        // Date filter: null | 'today' | 'threeDays' | 'thisWeek' | 'lastWeek'
         let activeDateFilter = null;
-
         let tagPanelOpen = false;
 
         let nullUserTimer = null;
@@ -1379,7 +1369,11 @@
             t = t.replace(/[^a-z0-9\-_]/g, '');
             return t;
         }
-        function parseTagString(str) {
+
+        // FIX: This function is for the TAG INPUT field only.
+        // In the tag input field, every comma/space separated token is
+        // treated as a tag (because that's what the user intends there).
+        function parseTagInput(str) {
             if (!str) return [];
             const parts = String(str).split(/[\s,]+/);
             const out = [];
@@ -1390,6 +1384,25 @@
             }
             return out;
         }
+
+        // FIX: This function is for extracting tags from NOTE TEXT.
+        // In note text, only explicit "#tag" tokens are treated as tags.
+        // Plain words like "buy" or "milk" are NOT tags.
+        function parseExplicitTags(text) {
+            if (!text) return [];
+            const out = [];
+            const seen = new Set();
+            // Match # followed by at least one allowed character, avoiding
+            // matching a "#" that's mid-word (like in "C#").
+            const re = /(^|[^a-z0-9])#([a-z0-9][a-z0-9\-_]*)/gi;
+            let m;
+            while ((m = re.exec(text)) !== null) {
+                const t = normalizeTag(m[2]);
+                if (t && !seen.has(t)) { seen.add(t); out.push(t); }
+            }
+            return out;
+        }
+
         function mergeTags(existing, incoming) {
             const seen = new Set();
             const out = [];
@@ -1403,6 +1416,21 @@
             });
             return out;
         }
+
+        // Remove explicit "#tag" tokens from note text so the saved text
+        // is clean. Keeps everything else (including mid-sentence words).
+        function stripExplicitTags(text) {
+            if (!text) return '';
+            // Remove the #tag token itself, but keep a leading word boundary
+            // character (like a space before it).
+            let out = text.replace(/(^|[^a-z0-9])#([a-z0-9][a-z0-9\-_]*)/gi, '$1');
+            // Collapse any double spaces left behind
+            out = out.replace(/[ \t]{2,}/g, ' ');
+            // Trim trailing spaces on each line
+            out = out.replace(/[ \t]+$/gm, '');
+            return out.trim();
+        }
+
         function getAllTagsWithCounts() {
             const counts = new Map();
             for (const it of itemsArray) {
@@ -1430,16 +1458,12 @@
             d.setHours(0, 0, 0, 0);
             return d;
         }
-
-        // Today: [start of today, start of tomorrow)
         function getTodayRange() {
             const s = startOfToday();
             const e = new Date(s);
             e.setDate(s.getDate() + 1);
             return { start: s.getTime(), end: e.getTime() };
         }
-
-        // Recent 3 days (including today): [start of today-2, start of tomorrow)
         function getThreeDayRange() {
             const s = startOfToday();
             s.setDate(s.getDate() - 2);
@@ -1447,8 +1471,6 @@
             e.setDate(e.getDate() + 1);
             return { start: s.getTime(), end: e.getTime() };
         }
-
-        // This week: [Monday 00:00, next Monday 00:00)
         function getThisWeekRange() {
             const now = new Date();
             const day = now.getDay();
@@ -1460,15 +1482,11 @@
             nextMonday.setDate(monday.getDate() + 7);
             return { start: monday.getTime(), end: nextMonday.getTime() };
         }
-
-        // Last week: previous Monday → this Monday
         function getLastWeekRange() {
             const thisWeek = getThisWeekRange();
             const lastMonday = new Date(thisWeek.start - 7 * 24 * 60 * 60 * 1000);
             return { start: lastMonday.getTime(), end: thisWeek.start };
         }
-
-        // Format a range as "Sep 8 – Sep 14" (inclusive end)
         function formatDateRangeShort(range) {
             const s = new Date(range.start);
             const e = new Date(range.end - 1);
@@ -1529,7 +1547,6 @@
             existingTagsEl.innerHTML = html;
         }
 
-        // ---- Date filter chips (Today, 3 days, This week, Last week) ----
         function renderDateFilters() {
             const today = getTodayRange();
             const three = getThreeDayRange();
@@ -1564,7 +1581,7 @@
 
         function closeTagPanel() {
             if (tagInput.value.trim()) {
-                const newTags = parseTagString(tagInput.value);
+                const newTags = parseTagInput(tagInput.value);
                 if (newTags.length) pendingTags = mergeTags(pendingTags, newTags);
                 tagInput.value = '';
             }
@@ -1584,7 +1601,7 @@
             if (e.key === 'Enter') {
                 e.preventDefault();
                 if (tagInput.value.trim()) {
-                    const newTags = parseTagString(tagInput.value);
+                    const newTags = parseTagInput(tagInput.value);
                     if (newTags.length) pendingTags = mergeTags(pendingTags, newTags);
                     tagInput.value = '';
                     renderPendingTags();
@@ -1597,7 +1614,7 @@
             }
             if (e.key === ',' || e.key === ' ') {
                 e.preventDefault();
-                const newTags = parseTagString(tagInput.value);
+                const newTags = parseTagInput(tagInput.value);
                 if (newTags.length) {
                     pendingTags = mergeTags(pendingTags, newTags);
                     tagInput.value = '';
@@ -1846,7 +1863,7 @@
         }
 
         // ===================================================================
-        // Date helpers (item display)
+        // Date helpers (display)
         // ===================================================================
         function pad(n) { return String(n).padStart(2, '0'); }
         function formatCreatedLabel(ts) {
@@ -1919,7 +1936,6 @@
             return true;
         }
 
-        // Apply tag filters + date filter + free-text search
         function getVisibleItems() {
             const parsed = parseSearchQuery(searchQuery);
             const allTags = new Set([...parsed.tags, ...activeTagFilters]);
@@ -2254,7 +2270,7 @@
         async function saveItemTags(itemId) {
             const input = itemsList.querySelector(`#tagEditorInput-${itemId}`);
             if (!input) return;
-            const newTags = parseTagString(input.value);
+            const newTags = parseTagInput(input.value);
             const item = itemsArray.find(i => i.id === itemId);
             if (!item) return;
             item.tags = newTags;
@@ -2398,8 +2414,10 @@
             const item = itemsArray.find(i => i.id === itemId);
             if (!item) return;
             const now = Date.now();
-            const inlineTags = parseTagString(text);
-            const cleanText = text.replace(/#[a-z0-9\-_]+/gi, '').replace(/\s+/g, ' ').trim() || text;
+            // FIX: use parseExplicitTags (only extracts #tag tokens)
+            const inlineTags = parseExplicitTags(text);
+            // FIX: use stripExplicitTags (removes #tag tokens but keeps all other words)
+            const cleanText = stripExplicitTags(text) || text;
             const newReply = {
                 id: makeReplyId(),
                 text: cleanText,
@@ -2437,8 +2455,9 @@
             if (!item || !Array.isArray(item.replies)) return;
             const idx = item.replies.findIndex(r => r.id === replyId);
             if (idx === -1) return;
-            const inlineTags = parseTagString(newText);
-            const cleanText = newText.replace(/#[a-z0-9\-_]+/gi, '').replace(/\s+/g, ' ').trim() || newText;
+            // FIX: explicit tags only
+            const inlineTags = parseExplicitTags(newText);
+            const cleanText = stripExplicitTags(newText) || newText;
             const updatedReplies = item.replies.slice();
             updatedReplies[idx] = Object.assign({}, updatedReplies[idx], {
                 text: cleanText,
@@ -2614,13 +2633,15 @@
             if (!rawText) { itemInput.focus(); return; }
 
             if (tagPanelOpen && tagInput.value.trim()) {
-                const liveTags = parseTagString(tagInput.value);
+                const liveTags = parseTagInput(tagInput.value);
                 if (liveTags.length) pendingTags = mergeTags(pendingTags, liveTags);
                 tagInput.value = '';
             }
 
-            const inlineTags = parseTagString(rawText);
-            const cleanText = rawText.replace(/#[a-z0-9\-_]+/gi, '').replace(/\s+/g, ' ').trim() || rawText;
+            // FIX: Extract ONLY explicit #tag tokens from the note text
+            const inlineTags = parseExplicitTags(rawText);
+            // FIX: Strip those #tag tokens from the saved text (keeps all other words)
+            const cleanText = stripExplicitTags(rawText) || rawText;
             const finalTags = mergeTags(pendingTags, inlineTags);
 
             const ref = itemsCollectionRef();
