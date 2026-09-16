@@ -34,9 +34,7 @@
             transition: all 0.2s;
         }
 
-        /* ============================================================
-           HEADER — title on the left, compact user chip on the right
-           ============================================================ */
+        /* HEADER */
         .app-header {
             display: flex;
             align-items: center;
@@ -58,7 +56,6 @@
             font-size: 1.7rem;
         }
 
-        /* Compact user chip (avatar + name + sign-out) */
         .user-chip {
             display: flex;
             align-items: center;
@@ -152,9 +149,7 @@
             box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.1);
         }
 
-        /* ============================================================
-           ACTION BUTTONS — COMPACT SIZE (32px / 1rem / 0.85rem)
-           ============================================================ */
+        /* ACTION BUTTONS — compact */
         .action-buttons {
             display: flex;
             gap: 4px;
@@ -213,7 +208,7 @@
             background: #0f172a;
         }
 
-        /* BOTTOM ROW — hint text + inline tag toggle link */
+        /* BOTTOM ROW */
         .hint-row {
             display: flex;
             align-items: center;
@@ -334,7 +329,6 @@
             min-width: 52px;
         }
 
-        /* Search row inside the panel */
         .tag-panel .search-in-panel {
             position: relative;
             display: flex;
@@ -389,12 +383,20 @@
             display: none;
         }
 
+        /* ============================================================
+           NEW-TAG INPUT WRAP — now position:relative so the suggestion
+           dropdown can anchor below the input.
+           ============================================================ */
+        .tag-panel .new-tag-wrap {
+            position: relative;
+            flex: 1;
+            min-width: 0;
+        }
         .tag-panel .new-tag-input-wrap {
             display: flex;
             align-items: center;
             gap: 6px;
-            flex: 1;
-            min-width: 0;
+            width: 100%;
             background: #ffffff;
             border: 1px solid #e2e8f0;
             border-radius: 20px;
@@ -449,6 +451,65 @@
         .tag-panel .new-tag-input-wrap input::placeholder {
             color: #cbd5e1;
         }
+
+        /* ============================================================
+           TAG SUGGESTION DROPDOWN
+           ============================================================ */
+        .tag-suggestions {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            max-height: 220px;
+            overflow-y: auto;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.10), 0 2px 6px rgba(0, 0, 0, 0.04);
+            z-index: 30;
+            padding: 4px;
+            display: none;
+        }
+        .tag-suggestions.visible {
+            display: block;
+        }
+        .tag-suggestions .suggestion {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 5px 10px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            color: #334155;
+            gap: 8px;
+        }
+        .tag-suggestions .suggestion:hover,
+        .tag-suggestions .suggestion.active {
+            background: #eef2ff;
+            color: #3730a3;
+        }
+        .tag-suggestions .suggestion .sugg-hash {
+            color: #6366f1;
+            font-weight: 600;
+        }
+        .tag-suggestions .suggestion .sugg-count {
+            font-size: 0.68rem;
+            color: #94a3b8;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .tag-suggestions .suggestion.active .sugg-count,
+        .tag-suggestions .suggestion:hover .sugg-count {
+            color: #6366f1;
+        }
+        .tag-suggestions .suggestion .sugg-new {
+            font-size: 0.66rem;
+            color: #94a3b8;
+            font-style: italic;
+            margin-left: auto;
+        }
+
         .tag-panel .existing-tags {
             display: flex;
             flex-wrap: wrap;
@@ -1145,15 +1206,11 @@
 </head>
 <body>
     <div class="app-container" id="appContainer">
-        <!-- Header: title on the left, compact user chip on the right -->
         <div class="app-header">
             <h1><span>📋</span> Cloud Jots</h1>
 
             <div class="user-chip" id="userChip">
-                <!-- Signed out -->
                 <button id="googleSignInBtn" class="chip-btn sign-in hidden">🔑 Sign in</button>
-
-                <!-- Signed in -->
                 <div id="userProfile" class="user-chip hidden" style="display: none;">
                     <img id="userAvatar" class="user-avatar" src="" alt="avatar">
                     <span id="userName" class="user-name"></span>
@@ -1196,7 +1253,6 @@
 
         <!-- Tag + Search + Date panel -->
         <div class="tag-panel" id="tagPanel">
-            <!-- Search row -->
             <div class="panel-section">
                 <span class="section-label">Search</span>
                 <div class="search-in-panel">
@@ -1206,22 +1262,23 @@
                 </div>
             </div>
 
-            <!-- Add new tag -->
+            <!-- Add new tag (with autocomplete suggestions) -->
             <div class="panel-section">
                 <span class="section-label">Add</span>
-                <div class="new-tag-input-wrap">
-                    <div class="te-chips" id="pendingTags"></div>
-                    <input type="text" id="tagInput" placeholder="type a tag, press Enter…" autocomplete="off" aria-label="Add tags">
+                <div class="new-tag-wrap">
+                    <div class="new-tag-input-wrap">
+                        <div class="te-chips" id="pendingTags"></div>
+                        <input type="text" id="tagInput" placeholder="type a tag… (autocomplete)" autocomplete="off" aria-label="Add tags" aria-autocomplete="list" aria-controls="tagSuggestions">
+                    </div>
+                    <div class="tag-suggestions" id="tagSuggestions" role="listbox"></div>
                 </div>
             </div>
 
-            <!-- Existing tags -->
             <div class="panel-section">
                 <span class="section-label">Tag</span>
                 <div class="existing-tags" id="existingTags"></div>
             </div>
 
-            <!-- Date quick filters -->
             <div class="panel-section">
                 <span class="section-label">Date</span>
                 <div class="date-filters" id="dateFilters"></div>
@@ -1293,6 +1350,10 @@
         let activeDateFilter = null;
         let tagPanelOpen = false;
 
+        // Suggestions state
+        let suggestionList = [];
+        let suggestionIndex = -1;
+
         let nullUserTimer = null;
         const NULL_USER_GRACE_MS = 1500;
 
@@ -1346,6 +1407,7 @@
         const pendingTagsEl = document.getElementById('pendingTags');
         const existingTagsEl = document.getElementById('existingTags');
         const dateFiltersEl = document.getElementById('dateFilters');
+        const tagSuggestionsEl = document.getElementById('tagSuggestions');
         const addBtn = document.getElementById('addBtn');
         const newlineBtn = document.getElementById('newlineBtn');
         const bulletBtn = document.getElementById('bulletBtn');
@@ -1367,7 +1429,6 @@
             return t;
         }
 
-        // For the TAG INPUT field: every whitespace/comma-separated token is a tag.
         function parseTagInput(str) {
             if (!str) return [];
             const parts = String(str).split(/[\s,]+/);
@@ -1380,7 +1441,6 @@
             return out;
         }
 
-        // For NOTE TEXT: only explicit "#tag" tokens count as tags.
         function parseExplicitTags(text) {
             if (!text) return [];
             const out = [];
@@ -1568,6 +1628,7 @@
         }
 
         function closeTagPanel() {
+            hideSuggestions();
             if (tagInput.value.trim()) {
                 const newTags = parseTagInput(tagInput.value);
                 if (newTags.length) pendingTags = mergeTags(pendingTags, newTags);
@@ -1585,90 +1646,71 @@
             else openTagPanel();
         });
 
-        tagInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                if (tagInput.value.trim()) {
-                    const newTags = parseTagInput(tagInput.value);
-                    if (newTags.length) pendingTags = mergeTags(pendingTags, newTags);
-                    tagInput.value = '';
-                    renderPendingTags();
-                    updateTagToggle();
-                } else {
-                    closeTagPanel();
-                    itemInput.focus();
-                }
-                return;
-            }
-            if (e.key === ',' || e.key === ' ') {
-                e.preventDefault();
-                const newTags = parseTagInput(tagInput.value);
-                if (newTags.length) {
-                    pendingTags = mergeTags(pendingTags, newTags);
-                    tagInput.value = '';
-                    renderPendingTags();
-                    updateTagToggle();
-                }
-                return;
-            }
-            if (e.key === 'Backspace' && tagInput.value === '' && pendingTags.length) {
-                pendingTags.pop();
-                renderPendingTags();
-                updateTagToggle();
-                return;
-            }
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                closeTagPanel();
-                itemInput.focus();
-            }
+        // ===================================================================
+        // Tag suggestions (autocomplete)
+        // ===================================================================
+        function hideSuggestions() {
+            suggestionList = [];
+            suggestionIndex = -1;
+            tagSuggestionsEl.classList.remove('visible');
+            tagSuggestionsEl.innerHTML = '';
+        }
+
+        function showSuggestions() {
+            const raw = tagInput.value.trim();
+            if (!raw) { hideSuggestions(); return; }
+
+            // Whatever the user is currently typing (up to the last comma/space)
+            const parts = raw.split(/[\s,]+/);
+            const prefix = normalizeTag(parts[parts.length - 1] || '');
+            if (!prefix) { hideSuggestions(); return; }
+
+            const alreadyPending = new Set(pendingTags);
+            const allTags = getAllTagsWithCounts()
+                .filter(({ tag }) => !alreadyPending.has(tag))
+                .filter(({ tag }) => tag.startsWith(prefix) && tag !== prefix);
+
+            // Cap to 8 suggestions for a compact dropdown
+            const top = allTags.slice(0, 8);
+            if (!top.length) { hideSuggestions(); return; }
+
+            suggestionList = top.map(({ tag, count }) => ({ tag, count }));
+            suggestionIndex = 0;
+            renderSuggestions();
+        }
+
+        function renderSuggestions() {
+            if (!suggestionList.length) { hideSuggestions(); return; }
+            tagSuggestionsEl.innerHTML = suggestionList.map((s, i) => `
+                <div class="suggestion ${i === suggestionIndex ? 'active' : ''}" data-sugg-index="${i}" data-sugg-tag="${escapeHtml(s.tag)}" role="option">
+                    <span><span class="sugg-hash">#</span>${escapeHtml(s.tag)}</span>
+                    <span class="sugg-count">used ${s.count}×</span>
+                </div>
+            `).join('');
+            tagSuggestionsEl.classList.add('visible');
+        }
+
+        // Click a suggestion -> commit that tag to pending
+        tagSuggestionsEl.addEventListener('mousedown', (e) => {
+            // mousedown (not click) so it fires before the input blurs
+            const el = e.target.closest('[data-sugg-tag]');
+            if (!el) return;
+            e.preventDefault();
+            commitSuggestion(el.dataset.suggTag);
         });
 
-        pendingTagsEl.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-pending-tag]');
-            if (!btn) return;
-            const t = btn.dataset.pendingTag;
-            pendingTags = pendingTags.filter(x => x !== t);
+        function commitSuggestion(tag) {
+            if (!tag) return;
+            pendingTags = mergeTags(pendingTags, [tag]);
+            // Remove the typed prefix (last token) from the input
+            const val = tagInput.value;
+            const m = val.match(/^(.*?)([^\s,]*)$/);
+            tagInput.value = m ? m[1] : '';
             renderPendingTags();
             updateTagToggle();
-        });
-
-        existingTagsEl.addEventListener('click', (e) => {
-            const clearBtn = e.target.closest('[data-clear-all]');
-            if (clearBtn) {
-                activeTagFilters.clear();
-                renderItems();
-                updateTagToggle();
-                renderExistingTags();
-                return;
-            }
-            const tagEl = e.target.closest('[data-existing-tag]');
-            if (!tagEl) return;
-            const t = tagEl.dataset.existingTag;
-            if (activeTagFilters.has(t)) activeTagFilters.delete(t);
-            else activeTagFilters.add(t);
-            renderItems();
-            updateTagToggle();
-            renderExistingTags();
-        });
-
-        dateFiltersEl.addEventListener('click', (e) => {
-            const clearDate = e.target.closest('[data-clear-date]');
-            if (clearDate) {
-                activeDateFilter = null;
-                renderItems();
-                updateTagToggle();
-                renderDateFilters();
-                return;
-            }
-            const chip = e.target.closest('[data-date-filter]');
-            if (!chip) return;
-            const which = chip.dataset.dateFilter;
-            activeDateFilter = (activeDateFilter === which) ? null : which;
-            renderItems();
-            updateTagToggle();
-            renderDateFilters();
-        });
+            hideSuggestions();
+            tagInput.focus();
+        }
 
         // ===================================================================
         // Auto-resize
@@ -1867,8 +1909,7 @@
 
         // ===================================================================
         // Date helpers (display)
-        // ===================================================================
-        function pad(n) { return String(n).padStart(2, '0'); }
+        // ===================================================================        function pad(n) { return String(n).padStart(2, '0'); }
         function formatCreatedLabel(ts) {
             if (!ts) return '';
             const d = new Date(ts);
@@ -2733,6 +2774,127 @@
             insertNewlineAtCursor();
         });
         itemInput.addEventListener('input', autoResizeInput);
+
+        // ===================================================================
+        // Tag input keyboard — with autocomplete navigation
+        // ===================================================================
+        tagInput.addEventListener('input', () => {
+            showSuggestions();
+        });
+
+        tagInput.addEventListener('keydown', (e) => {
+            const suggestionsVisible = tagSuggestionsEl.classList.contains('visible');
+
+            if (e.key === 'ArrowDown' && suggestionsVisible) {
+                e.preventDefault();
+                suggestionIndex = (suggestionIndex + 1) % suggestionList.length;
+                renderSuggestions();
+                return;
+            }
+            if (e.key === 'ArrowUp' && suggestionsVisible) {
+                e.preventDefault();
+                suggestionIndex = (suggestionIndex - 1 + suggestionList.length) % suggestionList.length;
+                renderSuggestions();
+                return;
+            }
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                // If a suggestion is highlighted, commit that one
+                if (suggestionsVisible && suggestionList[suggestionIndex]) {
+                    commitSuggestion(suggestionList[suggestionIndex].tag);
+                    return;
+                }
+                // Otherwise commit whatever is typed
+                if (tagInput.value.trim()) {
+                    const newTags = parseTagInput(tagInput.value);
+                    if (newTags.length) pendingTags = mergeTags(pendingTags, newTags);
+                    tagInput.value = '';
+                    renderPendingTags();
+                    updateTagToggle();
+                    hideSuggestions();
+                } else {
+                    closeTagPanel();
+                    itemInput.focus();
+                }
+                return;
+            }
+            if (e.key === ',' || e.key === ' ') {
+                e.preventDefault();
+                const newTags = parseTagInput(tagInput.value);
+                if (newTags.length) {
+                    pendingTags = mergeTags(pendingTags, newTags);
+                    tagInput.value = '';
+                    renderPendingTags();
+                    updateTagToggle();
+                }
+                hideSuggestions();
+                return;
+            }
+            if (e.key === 'Backspace' && tagInput.value === '' && pendingTags.length) {
+                pendingTags.pop();
+                renderPendingTags();
+                updateTagToggle();
+                return;
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                if (suggestionsVisible) { hideSuggestions(); return; }
+                closeTagPanel();
+                itemInput.focus();
+            }
+        });
+
+        // Close suggestions when focus leaves the tag input
+        tagInput.addEventListener('blur', () => {
+            // Slight delay so a suggestion mousedown can fire first
+            setTimeout(() => hideSuggestions(), 120);
+        });
+
+        pendingTagsEl.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-pending-tag]');
+            if (!btn) return;
+            const t = btn.dataset.pendingTag;
+            pendingTags = pendingTags.filter(x => x !== t);
+            renderPendingTags();
+            updateTagToggle();
+        });
+
+        existingTagsEl.addEventListener('click', (e) => {
+            const clearBtn = e.target.closest('[data-clear-all]');
+            if (clearBtn) {
+                activeTagFilters.clear();
+                renderItems();
+                updateTagToggle();
+                renderExistingTags();
+                return;
+            }
+            const tagEl = e.target.closest('[data-existing-tag]');
+            if (!tagEl) return;
+            const t = tagEl.dataset.existingTag;
+            if (activeTagFilters.has(t)) activeTagFilters.delete(t);
+            else activeTagFilters.add(t);
+            renderItems();
+            updateTagToggle();
+            renderExistingTags();
+        });
+
+        dateFiltersEl.addEventListener('click', (e) => {
+            const clearDate = e.target.closest('[data-clear-date]');
+            if (clearDate) {
+                activeDateFilter = null;
+                renderItems();
+                updateTagToggle();
+                renderDateFilters();
+                return;
+            }
+            const chip = e.target.closest('[data-date-filter]');
+            if (!chip) return;
+            const which = chip.dataset.dateFilter;
+            activeDateFilter = (activeDateFilter === which) ? null : which;
+            renderItems();
+            updateTagToggle();
+            renderDateFilters();
+        });
 
         // ===================================================================
         // Search (inside the panel)
