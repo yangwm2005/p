@@ -449,11 +449,7 @@
             color: #cbd5e1;
         }
 
-        /* ============================================================
-           SHARED TAG SUGGESTIONS DROPDOWN
-           Used by BOTH the panel's new-tag input and the per-item
-           inline tag editor.
-           ============================================================ */
+        /* SHARED TAG SUGGESTIONS DROPDOWN */
         .tag-suggestions {
             position: absolute;
             top: calc(100% + 4px);
@@ -823,11 +819,7 @@
             color: #4338ca;
         }
 
-        /* ============================================================
-           INLINE TAG EDITOR on an item
-           Now position:relative on the wrap so the suggestions
-           dropdown can anchor directly under the input.
-           ============================================================ */
+        /* INLINE TAG EDITOR on an item */
         .tag-editor-row {
             flex-basis: 100%;
             margin-top: 8px;
@@ -1242,7 +1234,7 @@
             <span class="hint-sep">·</span>
             <span>click text to edit</span>
             <span class="hint-sep">·</span>
-            <span><span class="hint-tag">#tag</span> in search</span>
+            <span><span class="hint-tag">#tag</span> or "Sep 16" in search</span>
             <span class="hint-sep">·</span>
             <button type="button" class="tag-toggle-link" id="tagToggleLink" title="Show / hide tags, search & date filters panel">
                 <span>🏷️ Tags, search &amp; dates</span>
@@ -1258,7 +1250,7 @@
                 <span class="section-label">Search</span>
                 <div class="search-in-panel">
                     <span class="search-icon">🔍</span>
-                    <input type="text" id="searchInput" placeholder="Search… or type #tag" autocomplete="off" aria-label="Search notes">
+                    <input type="text" id="searchInput" placeholder='Search text, #tag, or "Sep 16"…' autocomplete="off" aria-label="Search notes">
                     <button id="searchClearBtn" class="search-clear hidden" aria-label="Clear search" title="Clear search">✕</button>
                 </div>
             </div>
@@ -1350,11 +1342,9 @@
         let activeDateFilter = null;
         let tagPanelOpen = false;
 
-        // Panel suggestions state
         let suggestionList = [];
         let suggestionIndex = -1;
 
-        // Per-item tag editor suggestions state
         let itemSuggList = [];
         let itemSuggIndex = -1;
 
@@ -1544,6 +1534,122 @@
         }
 
         // ===================================================================
+        // Free-text date parsing (for search)
+        //
+        // Returns { start, end } in ms, or null if the token wasn't a date.
+        // Supports:
+        //   "Sep 16", "Sept 16", "September 16"
+        //   "16 Sep", "16 Sep 2026"
+        //   "2026-09-16", "9/16", "9-16", "09/16/2026", "9.16"
+        //   "today", "yesterday", "tomorrow"
+        // Month names are the full month or the first 3 letters (case-insensitive).
+        // ===================================================================
+        const MONTHS = {
+            jan: 0, january: 0,
+            feb: 1, february: 1,
+            mar: 2, march: 2,
+            apr: 3, april: 3,
+            may: 4,
+            jun: 5, june: 5,
+            jul: 6, july: 6,
+            aug: 7, august: 7,
+            sep: 8, sept: 8, september: 8,
+            oct: 9, october: 9,
+            nov: 10, november: 10,
+            dec: 11, december: 11,
+        };
+
+        function dayRangeFromParts(year, monthIndex, day) {
+            const s = new Date(year, monthIndex, day, 0, 0, 0, 0);
+            if (isNaN(s.getTime())) return null;
+            // Validate (e.g. Feb 30 → Date would roll over)
+            if (s.getFullYear() !== year || s.getMonth() !== monthIndex || s.getDate() !== day) return null;
+            const e = new Date(s);
+            e.setDate(s.getDate() + 1);
+            return { start: s.getTime(), end: e.getTime() };
+        }
+
+        function parseDateQuery(q) {
+            if (!q) return null;
+            let str = String(q).trim().toLowerCase();
+            if (!str) return null;
+
+            // Relative keywords
+            const today = startOfToday();
+            if (str === 'today') {
+                return { start: today.getTime(), end: today.getTime() + 86400000 };
+            }
+            if (str === 'yesterday') {
+                const y = new Date(today); y.setDate(today.getDate() - 1);
+                return { start: y.getTime(), end: today.getTime() };
+            }
+            if (str === 'tomorrow') {
+                const t = new Date(today); t.setDate(today.getDate() + 1);
+                return { start: t.getTime(), end: t.getTime() + 86400000 };
+            }
+
+            // Normalize separators / dots into spaces
+            let work = str
+                .replace(/[,]+/g, ' ')
+                .replace(/[\/\-\.]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            const parts = work.split(' ').filter(Boolean);
+            if (!parts.length || parts.length > 3) return null;
+
+            const now = new Date();
+            const thisYear = now.getFullYear();
+
+            // --- Format A: "Sep 16" / "Sep 16 2026" / "September 16" ---
+            if (MONTHS[parts[0]] !== undefined) {
+                const m = MONTHS[parts[0]];
+                const day = parseInt(parts[1], 10);
+                if (!Number.isFinite(day)) return null;
+                const yr = parts[2] !== undefined ? parseInt(parts[2], 10) : thisYear;
+                if (!Number.isFinite(yr)) return null;
+                return dayRangeFromParts(yr, m, day);
+            }
+
+            // --- Format B: "16 Sep" / "16 Sep 2026" ---
+            if (/^\d{1,2}$/.test(parts[0]) && parts[1] && MONTHS[parts[1]] !== undefined) {
+                const day = parseInt(parts[0], 10);
+                const m = MONTHS[parts[1]];
+                const yr = parts[2] !== undefined ? parseInt(parts[2], 10) : thisYear;
+                if (!Number.isFinite(yr)) return null;
+                return dayRangeFromParts(yr, m, day);
+            }
+
+            // --- Format C: ISO "2026 09 16" (from 2026-09-16) ---
+            if (parts.length === 3 && parts.every(p => /^\d+$/.test(p))) {
+                const a = parseInt(parts[0], 10);
+                const b = parseInt(parts[1], 10);
+                const c = parseInt(parts[2], 10);
+                // Year first: 2026 09 16
+                if (a >= 1900 && a <= 2999 && b >= 1 && b <= 12 && c >= 1 && c <= 31) {
+                    return dayRangeFromParts(a, b - 1, c);
+                }
+                // US: 09 16 2026
+                if (c >= 1900 && c <= 2999 && a >= 1 && a <= 12 && b >= 1 && b <= 31) {
+                    return dayRangeFromParts(c, a - 1, b);
+                }
+                return null;
+            }
+
+            // --- Format D: "09 16" (from 9/16) — assume current year ---
+            if (parts.length === 2 && parts.every(p => /^\d+$/.test(p))) {
+                const a = parseInt(parts[0], 10);
+                const b = parseInt(parts[1], 10);
+                if (a >= 1 && a <= 12 && b >= 1 && b <= 31) {
+                    return dayRangeFromParts(thisYear, a - 1, b);
+                }
+                return null;
+            }
+
+            return null;
+        }
+
+        // ===================================================================
         // Tag toggle + panel
         // ===================================================================
         function updateTagToggle() {
@@ -1724,14 +1830,12 @@
             }
         }
 
-        // Build the suggestion list for the current item editor
         function buildItemSuggestions(itemId, currentText) {
             const prefix = normalizeTag((currentText || '').split(/[\s,]+/).pop() || '');
             if (!prefix) return [];
 
             const item = itemsArray.find(i => i.id === itemId);
             const currentTags = new Set(parseTagInput(currentText || ''));
-            // Also exclude tags already present on the item (they're already chips)
             (item && item.tags ? item.tags : []).forEach(t => currentTags.add(normalizeTag(t)));
 
             const allTags = getAllTagsWithCounts()
@@ -1744,7 +1848,7 @@
         function renderItemSuggestions() {
             const input = itemsList.querySelector('[id^="tagEditorInput-"]');
             if (!input) return;
-            const wrap = input.parentElement; // .te-input-wrap
+            const wrap = input.parentElement;
             if (!wrap) return;
             let box = wrap.querySelector('.tag-suggestions.item-sugg');
             if (!box) {
@@ -1775,10 +1879,8 @@
             const left = m ? m[1] : '';
             input.value = (left ? left.replace(/[\s,]+$/, '') + ', ' : '') + tag;
             input.focus();
-            // Put caret at end
             const len = input.value.length;
             try { input.setSelectionRange(len, len); } catch (e) {}
-            // Refresh suggestions
             itemSuggList = buildItemSuggestions(tagEditingItemId, input.value);
             itemSuggIndex = itemSuggList.length ? 0 : -1;
             renderItemSuggestions();
@@ -2020,28 +2122,66 @@
 
         // ===================================================================
         // Search parsing
+        //
+        // A query can contain:
+        //   • free text tokens  → matched against item/reply text and tags
+        //   • "#tag" tokens     → matched against tags
+        //   • a date expression → matched against item createdAt
+        //
+        // The date expression is what's left of the query after removing
+        // #tag tokens. So typing:
+        //   "meeting"          → text search
+        //   "#work"            → tag filter
+        //   "Sep 16"           → date filter
+        //   "#work Sep 16"     → tag AND date
+        //   "meeting Sep 16"   → text AND date
         // ===================================================================
         function parseSearchQuery(q) {
-            const out = { text: '', tags: [] };
+            const out = { text: '', tags: [], dateRange: null };
             if (!q) return out;
-            const tokens = q.split(/\s+/);
-            const freeText = [];
+
+            const tokens = q.trim().split(/\s+/);
+            const nonTagTokens = [];
             const tagSet = new Set();
+
             for (const tok of tokens) {
                 if (tok.startsWith('#') && tok.length > 1) {
                     const t = normalizeTag(tok);
                     if (t) tagSet.add(t);
                 } else if (tok) {
-                    freeText.push(tok.toLowerCase());
+                    nonTagTokens.push(tok);
                 }
             }
-            out.text = freeText.join(' ').trim();
             out.tags = Array.from(tagSet);
+
+            // Try to recognize a date at the end of the remaining tokens.
+            // Try suffixes of length 3, 2, 1 (longest first so "Sep 16 2026"
+            // wins over "16 2026").
+            let consumed = 0;
+            let dateRange = null;
+            for (let len = Math.min(3, nonTagTokens.length); len >= 1; len--) {
+                const candidate = nonTagTokens.slice(nonTagTokens.length - len).join(' ');
+                const r = parseDateQuery(candidate);
+                if (r) {
+                    dateRange = r;
+                    consumed = len;
+                    break;
+                }
+            }
+
+            const textTokens = consumed
+                ? nonTagTokens.slice(0, nonTagTokens.length - consumed)
+                : nonTagTokens;
+
+            out.text = textTokens.join(' ').toLowerCase().trim();
+            out.dateRange = dateRange;
             return out;
         }
 
         function itemMatchesSearch(it, parsed) {
-            if (parsed.tags.length) {
+            // Tag filter (AND): all requested tags must be present on
+            // the item OR on any of its replies.
+            if (parsed.tags && parsed.tags.length) {
                 const itemTags = new Set((it.tags || []).map(normalizeTag));
                 const replyTags = new Set();
                 (it.replies || []).forEach(r => (r.tags || []).forEach(t => replyTags.add(normalizeTag(t))));
@@ -2050,6 +2190,14 @@
                     if (!all.has(t)) return false;
                 }
             }
+
+            // Date filter: item's createdAt must fall in the range
+            if (parsed.dateRange) {
+                const ts = it.createdAt || 0;
+                if (ts < parsed.dateRange.start || ts >= parsed.dateRange.end) return false;
+            }
+
+            // Free-text filter: match item text, reply text, or tags
             if (parsed.text) {
                 const needle = parsed.text;
                 if (it.text.toLowerCase().includes(needle)) return true;
@@ -2058,6 +2206,7 @@
                 if ((it.replies || []).some(r => (r.tags || []).some(t => t.includes(needle)))) return true;
                 return false;
             }
+
             return true;
         }
 
@@ -2065,11 +2214,14 @@
             const parsed = parseSearchQuery(searchQuery);
             const allTags = new Set([...parsed.tags, ...activeTagFilters]);
 
-            let dateRange = null;
-            if (activeDateFilter === 'today')      dateRange = getTodayRange();
-            else if (activeDateFilter === 'threeDays') dateRange = getThreeDayRange();
-            else if (activeDateFilter === 'thisWeek')  dateRange = getThisWeekRange();
-            else if (activeDateFilter === 'lastWeek')  dateRange = getLastWeekRange();
+            // Date filter from the chips (button row) as well
+            let dateRange = parsed.dateRange;
+            if (!dateRange) {
+                if (activeDateFilter === 'today')      dateRange = getTodayRange();
+                else if (activeDateFilter === 'threeDays') dateRange = getThreeDayRange();
+                else if (activeDateFilter === 'thisWeek')  dateRange = getThisWeekRange();
+                else if (activeDateFilter === 'lastWeek')  dateRange = getLastWeekRange();
+            }
 
             let list = itemsArray;
 
@@ -2081,7 +2233,11 @@
             }
 
             if (allTags.size || parsed.text) {
-                list = list.filter(it => itemMatchesSearch(it, { text: parsed.text, tags: Array.from(allTags) }));
+                list = list.filter(it => itemMatchesSearch(it, {
+                    text: parsed.text,
+                    tags: Array.from(allTags),
+                    dateRange: null, // already applied above
+                }));
             }
 
             const pinned = list.filter(it => it.pinned);
@@ -2297,7 +2453,6 @@
                 if (te) {
                     te.focus();
                     te.selectionStart = te.selectionEnd = te.value.length;
-                    // Seed the per-item suggestion list so typing starts fresh
                     itemSuggList = buildItemSuggestions(tagEditingItemId, te.value);
                     itemSuggIndex = itemSuggList.length ? 0 : -1;
                     renderItemSuggestions();
@@ -2419,10 +2574,6 @@
             }
         }
 
-        // ===================================================================
-        // Keydown handler — covers both the panel tag input AND the
-        // per-item inline tag editor input.
-        // ===================================================================
         itemsList.addEventListener('keydown', (e) => {
             const input = e.target;
             if (!input.matches || !input.matches('[id^="tagEditorInput-"]')) return;
@@ -2447,12 +2598,10 @@
             }
             if (e.key === 'Enter') {
                 e.preventDefault();
-                // Commit a highlighted suggestion if present
                 if (suggBoxVisible && itemSuggList[itemSuggIndex]) {
                     commitItemSuggestion(itemSuggList[itemSuggIndex].tag);
                     return;
                 }
-                // Otherwise Save
                 saveItemTags(itemId);
                 return;
             }
@@ -2465,7 +2614,6 @@
             }
         });
 
-        // Live suggestions as the user types in the item tag editor
         itemsList.addEventListener('input', (e) => {
             const input = e.target;
             if (!input.matches || !input.matches('[id^="tagEditorInput-"]')) return;
@@ -2474,7 +2622,6 @@
             renderItemSuggestions();
         });
 
-        // Click / mousedown on per-item suggestion
         itemsList.addEventListener('mousedown', (e) => {
             const el = e.target.closest('[data-item-sugg-tag]');
             if (!el) return;
@@ -2482,7 +2629,6 @@
             commitItemSuggestion(el.dataset.itemSuggTag);
         });
 
-        // Hide suggestions when focus leaves the item tag editor input
         itemsList.addEventListener('focusout', (e) => {
             const input = e.target;
             if (!input.matches || !input.matches('[id^="tagEditorInput-"]')) return;
@@ -2712,7 +2858,8 @@
             }
         }
 
-        // ===================================================================        // Auto-close empty reply box on click outside
+        // ===================================================================
+        // Auto-close empty reply box on click outside
         // ===================================================================
         document.addEventListener('mousedown', (e) => {
             if (!replyingToId) return;
