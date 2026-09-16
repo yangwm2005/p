@@ -277,9 +277,7 @@
             background: #0f172a;
         }
 
-        /* ============================================================
-           BOTTOM ROW — hint text + inline tag toggle link
-           ============================================================ */
+        /* BOTTOM ROW — hint text + inline tag toggle link */
         .hint-row {
             display: flex;
             align-items: center;
@@ -313,7 +311,6 @@
             color: #d5cbc1;
             user-select: none;
         }
-        /* The tag toggle is now a plain text link with no background */
         .tag-toggle-link {
             background: none;
             border: none;
@@ -367,16 +364,16 @@
         }
 
         /* ============================================================
-           TAG PANEL (opens below the hint row)
+           TAG PANEL — includes Add, Filter by tag, and Date sections
            ============================================================ */
         .tag-panel {
             display: none;
             flex-direction: column;
-            gap: 8px;
+            gap: 10px;
             background: #f8fafc;
             border: 1px solid #e2e8f0;
             border-radius: 16px;
-            padding: 10px 12px;
+            padding: 12px;
             margin-bottom: 16px;
             animation: fadeIn 0.15s ease;
         }
@@ -400,6 +397,7 @@
             letter-spacing: 0.3px;
             text-transform: uppercase;
             flex-shrink: 0;
+            min-width: 52px;
         }
         .tag-panel .new-tag-input-wrap {
             display: flex;
@@ -511,6 +509,56 @@
         }
         .tag-panel .existing-tags .clear-all:hover {
             color: #dc2626;
+        }
+
+        /* ============================================================
+           DATE QUICK-FILTER chips (This week / Last week)
+           ============================================================ */
+        .tag-panel .date-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            align-items: center;
+        }
+        .tag-panel .date-filters .date-chip {
+            background: #f1f5f9;
+            color: #475569;
+            padding: 3px 10px;
+            border-radius: 30px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            border: 1px solid transparent;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            user-select: none;
+        }
+        .tag-panel .date-filters .date-chip:hover {
+            background: #e2e8f0;
+        }
+        .tag-panel .date-filters .date-chip .date-range {
+            font-weight: 500;
+            font-size: 0.65rem;
+            opacity: 0.75;
+        }
+        .tag-panel .date-filters .date-chip.active {
+            background: #0ea5e9;
+            color: white;
+            border-color: #0ea5e9;
+        }
+        .tag-panel .date-filters .date-chip.active .date-range {
+            opacity: 0.9;
+        }
+        .tag-panel .date-filters .date-chip.today.active {
+            background: #16a34a;
+            border-color: #16a34a;
+        }
+        /* Slight difference in color for last-week to differentiate */
+        .tag-panel .date-filters .date-chip.last-week.active {
+            background: #a855f7;
+            border-color: #a855f7;
         }
 
         /* ITEMS LIST */
@@ -1142,7 +1190,7 @@
             </div>
         </div>
 
-        <!-- Hint row: keyboard hints + inline tag toggle link (no pill/circle) -->
+        <!-- Hint row with inline tag toggle -->
         <div class="hint-row" id="hintRow">
             <span><kbd>Enter</kbd> save</span>
             <span class="hint-sep">·</span>
@@ -1152,15 +1200,15 @@
             <span class="hint-sep">·</span>
             <span><span class="hint-tag">#tag</span> in search</span>
             <span class="hint-sep">·</span>
-            <button type="button" class="tag-toggle-link" id="tagToggleLink" title="Show / hide tags panel">
-                <span>🏷️ Tags</span>
+            <button type="button" class="tag-toggle-link" id="tagToggleLink" title="Show / hide tags & date filters panel">
+                <span>🏷️ Tags &amp; dates</span>
                 <span class="tag-toggle-count hidden" id="tagToggleCount">0</span>
                 <span class="tag-toggle-dot" id="tagToggleDot" style="display:none;"></span>
                 <span class="tag-toggle-caret">▾</span>
             </button>
         </div>
 
-        <!-- Tag panel (opens below the hint row) -->
+        <!-- Tag + Date panel -->
         <div class="tag-panel" id="tagPanel">
             <!-- Section 1 — add a new tag -->
             <div class="panel-section">
@@ -1173,8 +1221,14 @@
 
             <!-- Section 2 — existing tags (click to filter) -->
             <div class="panel-section">
-                <span class="section-label">Filter</span>
+                <span class="section-label">Tag</span>
                 <div class="existing-tags" id="existingTags"></div>
+            </div>
+
+            <!-- Section 3 — date quick filters (This week / Last week) -->
+            <div class="panel-section">
+                <span class="section-label">Date</span>
+                <div class="date-filters" id="dateFilters"></div>
             </div>
         </div>
 
@@ -1240,6 +1294,9 @@
         let activeTagFilters = new Set();
         let pendingTags = [];
 
+        // Date filter: null | 'thisWeek' | 'lastWeek'
+        let activeDateFilter = null;
+
         // Panel open/closed state
         let tagPanelOpen = false;
 
@@ -1295,6 +1352,7 @@
         const tagToggleDot = document.getElementById('tagToggleDot');
         const pendingTagsEl = document.getElementById('pendingTags');
         const existingTagsEl = document.getElementById('existingTags');
+        const dateFiltersEl = document.getElementById('dateFilters');
         const addBtn = document.getElementById('addBtn');
         const newlineBtn = document.getElementById('newlineBtn');
         const bulletBtn = document.getElementById('bulletBtn');
@@ -1359,6 +1417,38 @@
         }
 
         // ===================================================================
+        // Date helpers for week ranges
+        // ===================================================================
+        // Returns { start: ms, end: ms } for the current week
+        // (Monday 00:00 to next Monday 00:00, local time).
+        function getThisWeekRange() {
+            const now = new Date();
+            const day = now.getDay(); // 0=Sun, 1=Mon, ... 6=Sat
+            const daysSinceMonday = (day === 0 ? 6 : day - 1);
+            const monday = new Date(now);
+            monday.setHours(0, 0, 0, 0);
+            monday.setDate(now.getDate() - daysSinceMonday);
+            const nextMonday = new Date(monday);
+            nextMonday.setDate(monday.getDate() + 7);
+            return { start: monday.getTime(), end: nextMonday.getTime() };
+        }
+
+        // Returns the same shape for last week.
+        function getLastWeekRange() {
+            const thisWeek = getThisWeekRange();
+            const lastMonday = new Date(thisWeek.start - 7 * 24 * 60 * 60 * 1000);
+            return { start: lastMonday.getTime(), end: thisWeek.start };
+        }
+
+        // Short human labels like "Sep 8 – Sep 14".
+        function formatDateRangeShort(range) {
+            const s = new Date(range.start);
+            const e = new Date(range.end - 1); // inclusive end (last ms before next Monday)
+            const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            return `${fmt(s)} – ${fmt(e)}`;
+        }
+
+        // ===================================================================
         // Tag toggle + panel
         // ===================================================================
         function updateTagToggle() {
@@ -1369,14 +1459,15 @@
                 tagToggleCount.textContent = String(n);
                 tagToggleCount.classList.remove('hidden');
             }
-            if (activeTagFilters.size > 0) {
+            const hasFilter = activeTagFilters.size > 0 || activeDateFilter !== null;
+            if (hasFilter) {
                 tagToggleLink.classList.add('has-active-filter');
                 tagToggleDot.style.display = 'inline-block';
-                tagToggleLink.title = 'Filter active — click to manage tags';
+                tagToggleLink.title = 'Filter active — click to manage';
             } else {
                 tagToggleLink.classList.remove('has-active-filter');
                 tagToggleDot.style.display = 'none';
-                tagToggleLink.title = 'Show / hide tags panel';
+                tagToggleLink.title = 'Show / hide tags & date filters panel';
             }
         }
 
@@ -1405,18 +1496,36 @@
                 html += `<span style="font-size:0.68rem;color:#94a3b8;align-self:center;">+${all.length - shown.length} more — type in search</span>`;
             }
             if (activeTagFilters.size > 0) {
-                html += `<button class="clear-all" data-clear-all="1">Clear all</button>`;
+                html += `<button class="clear-all" data-clear-all="1">Clear tags</button>`;
             }
             existingTagsEl.innerHTML = html;
+        }
+
+        // ---- Date filter chips ----
+        function renderDateFilters() {
+            const thisWeek = getThisWeekRange();
+            const lastWeek = getLastWeekRange();
+            const thisLabel = formatDateRangeShort(thisWeek);
+            const lastLabel = formatDateRangeShort(lastWeek);
+            const isThis = activeDateFilter === 'thisWeek';
+            const isLast = activeDateFilter === 'lastWeek';
+
+            let html = '';
+            html += `<span class="date-chip today ${isThis ? 'active' : ''}" data-date-filter="thisWeek" title="Items created this week (${escapeHtml(thisLabel)})">📅 This week <span class="date-range">${escapeHtml(thisLabel)}</span></span>`;
+            html += `<span class="date-chip last-week ${isLast ? 'active' : ''}" data-date-filter="lastWeek" title="Items created last week (${escapeHtml(lastLabel)})">📅 Last week <span class="date-range">${escapeHtml(lastLabel)}</span></span>`;
+            if (activeDateFilter) {
+                html += `<button class="clear-all" data-clear-date="1">Clear date</button>`;
+            }
+            dateFiltersEl.innerHTML = html;
         }
 
         function openTagPanel() {
             tagPanelOpen = true;
             tagPanel.classList.add('open');
             tagToggleLink.classList.add('open');
-            // IMPORTANT: render existing tags right after opening so the Filter
-            // section isn't empty the first time the panel opens.
+            // Render all sections so nothing is empty on first open
             renderExistingTags();
+            renderDateFilters();
             setTimeout(() => tagInput.focus(), 0);
         }
 
@@ -1493,6 +1602,7 @@
                 activeTagFilters.clear();
                 renderItems();
                 updateTagToggle();
+                renderExistingTags();
                 return;
             }
             const tagEl = e.target.closest('[data-existing-tag]');
@@ -1502,6 +1612,27 @@
             else activeTagFilters.add(t);
             renderItems();
             updateTagToggle();
+            renderExistingTags();
+        });
+
+        // ---- Date filter clicks ----
+        dateFiltersEl.addEventListener('click', (e) => {
+            const clearDate = e.target.closest('[data-clear-date]');
+            if (clearDate) {
+                activeDateFilter = null;
+                renderItems();
+                updateTagToggle();
+                renderDateFilters();
+                return;
+            }
+            const chip = e.target.closest('[data-date-filter]');
+            if (!chip) return;
+            const which = chip.dataset.dateFilter;
+            // Toggle off if the same chip is clicked again
+            activeDateFilter = (activeDateFilter === which) ? null : which;
+            renderItems();
+            updateTagToggle();
+            renderDateFilters();
         });
 
         // ===================================================================
@@ -1660,8 +1791,10 @@
                 });
                 itemsArray = newItems;
                 renderItems();
-                // If the tag panel is open, keep the Filter section fresh
-                if (tagPanelOpen) renderExistingTags();
+                if (tagPanelOpen) {
+                    renderExistingTags();
+                    renderDateFilters();
+                }
                 setCloudStatus(snapshot.metadata.hasPendingWrites ? 'pending' : 'synced');
             }, (error) => {
                 console.error('Firestore listener error:', error);
@@ -1683,7 +1816,7 @@
         }
 
         // ===================================================================
-        // Date helpers
+        // Date helpers (for item display)
         // ===================================================================
         function pad(n) { return String(n).padStart(2, '0'); }
         function formatCreatedLabel(ts) {
@@ -1734,6 +1867,7 @@
             out.tags = Array.from(tagSet);
             return out;
         }
+
         function itemMatchesSearch(it, parsed) {
             if (parsed.tags.length) {
                 const itemTags = new Set((it.tags || []).map(normalizeTag));
@@ -1754,13 +1888,32 @@
             }
             return true;
         }
+
+        // Apply tag filters + date filter + free-text search
         function getVisibleItems() {
             const parsed = parseSearchQuery(searchQuery);
             const allTags = new Set([...parsed.tags, ...activeTagFilters]);
+
+            // Pre-compute date range once
+            let dateRange = null;
+            if (activeDateFilter === 'thisWeek') dateRange = getThisWeekRange();
+            else if (activeDateFilter === 'lastWeek') dateRange = getLastWeekRange();
+
             let list = itemsArray;
+
+            // Date filter first (cheapest)
+            if (dateRange) {
+                list = list.filter(it => {
+                    const ts = it.createdAt || 0;
+                    return ts >= dateRange.start && ts < dateRange.end;
+                });
+            }
+
+            // Then tag / text
             if (allTags.size || parsed.text) {
                 list = list.filter(it => itemMatchesSearch(it, { text: parsed.text, tags: Array.from(allTags) }));
             }
+
             const pinned = list.filter(it => it.pinned);
             const unpinned = list.filter(it => !it.pinned);
             return pinned.concat(unpinned);
@@ -1771,11 +1924,16 @@
         // ===================================================================
         function renderItems() {
             updateTagToggle();
-            if (tagPanelOpen) renderExistingTags();
+            if (tagPanelOpen) {
+                renderExistingTags();
+                renderDateFilters();
+            }
 
             const visible = getVisibleItems();
+            const hasFilters = searchQuery.trim() || activeTagFilters.size || activeDateFilter;
+
             if (!visible.length) {
-                if (searchQuery.trim() || activeTagFilters.size) {
+                if (hasFilters) {
                     itemsList.innerHTML = `<div class="empty-state">🔍 No items match your filter.</div>`;
                 } else {
                     itemsList.innerHTML = `<div class="empty-state">✨ No items yet. Add a to‑do or idea above.</div>`;
@@ -2050,6 +2208,7 @@
             else activeTagFilters.add(t);
             renderItems();
             updateTagToggle();
+            if (tagPanelOpen) renderExistingTags();
         }
 
         function toggleCollapse(itemId) {
@@ -2462,7 +2621,6 @@
             pendingTags = [];
             renderPendingTags();
             updateTagToggle();
-            // Auto-close the tag panel after posting
             tagPanelOpen = false;
             tagPanel.classList.remove('open');
             tagToggleLink.classList.remove('open');
