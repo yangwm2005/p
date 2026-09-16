@@ -1234,7 +1234,7 @@
             <span class="hint-sep">·</span>
             <span>click text to edit</span>
             <span class="hint-sep">·</span>
-            <span><span class="hint-tag">#tag</span> or "Sep 16" in search</span>
+            <span><span class="hint-tag">#tag</span> or "Sep 16"/"20260916" in search</span>
             <span class="hint-sep">·</span>
             <button type="button" class="tag-toggle-link" id="tagToggleLink" title="Show / hide tags, search & date filters panel">
                 <span>🏷️ Tags, search &amp; dates</span>
@@ -1250,7 +1250,7 @@
                 <span class="section-label">Search</span>
                 <div class="search-in-panel">
                     <span class="search-icon">🔍</span>
-                    <input type="text" id="searchInput" placeholder='Search text, #tag, or "Sep 16"…' autocomplete="off" aria-label="Search notes">
+                    <input type="text" id="searchInput" placeholder='Search text, #tag, or "Sep 16" / "20260916"…' autocomplete="off" aria-label="Search notes">
                     <button id="searchClearBtn" class="search-clear hidden" aria-label="Clear search" title="Clear search">✕</button>
                 </div>
             </div>
@@ -1541,8 +1541,9 @@
         //   "Sep 16", "Sept 16", "September 16"
         //   "16 Sep", "16 Sep 2026"
         //   "2026-09-16", "9/16", "9-16", "09/16/2026", "9.16"
+        //   "20260916"           (compact YYYYMMDD)
+        //   "0916" / "916"       (compact MMDD, current year)
         //   "today", "yesterday", "tomorrow"
-        // Month names are the full month or the first 3 letters (case-insensitive).
         // ===================================================================
         const MONTHS = {
             jan: 0, january: 0,
@@ -1562,7 +1563,6 @@
         function dayRangeFromParts(year, monthIndex, day) {
             const s = new Date(year, monthIndex, day, 0, 0, 0, 0);
             if (isNaN(s.getTime())) return null;
-            // Validate (e.g. Feb 30 → Date would roll over)
             if (s.getFullYear() !== year || s.getMonth() !== monthIndex || s.getDate() !== day) return null;
             const e = new Date(s);
             e.setDate(s.getDate() + 1);
@@ -1586,6 +1586,36 @@
             if (str === 'tomorrow') {
                 const t = new Date(today); t.setDate(today.getDate() + 1);
                 return { start: t.getTime(), end: t.getTime() + 86400000 };
+            }
+
+            // ---- NEW: compact numeric forms ----
+            // "20260916" (8 digits) → YYYYMMDD
+            if (/^\d{8}$/.test(str)) {
+                const y = parseInt(str.slice(0, 4), 10);
+                const m = parseInt(str.slice(4, 6), 10);
+                const d = parseInt(str.slice(6, 8), 10);
+                if (y >= 1900 && y <= 2999 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+                    return dayRangeFromParts(y, m - 1, d);
+                }
+                return null;
+            }
+            // "0916" (4 digits) → MMDD, current year
+            if (/^\d{4}$/.test(str)) {
+                const m = parseInt(str.slice(0, 2), 10);
+                const d = parseInt(str.slice(2, 4), 10);
+                if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+                    return dayRangeFromParts(new Date().getFullYear(), m - 1, d);
+                }
+                return null;
+            }
+            // "916" (3 digits) → MDD, current year  (Sep 16)
+            if (/^\d{3}$/.test(str)) {
+                const m = parseInt(str.slice(0, 1), 10);
+                const d = parseInt(str.slice(1, 3), 10);
+                if (m >= 1 && m <= 9 && d >= 1 && d <= 31) {
+                    return dayRangeFromParts(new Date().getFullYear(), m - 1, d);
+                }
+                return null;
             }
 
             // Normalize separators / dots into spaces
@@ -1625,11 +1655,9 @@
                 const a = parseInt(parts[0], 10);
                 const b = parseInt(parts[1], 10);
                 const c = parseInt(parts[2], 10);
-                // Year first: 2026 09 16
                 if (a >= 1900 && a <= 2999 && b >= 1 && b <= 12 && c >= 1 && c <= 31) {
                     return dayRangeFromParts(a, b - 1, c);
                 }
-                // US: 09 16 2026
                 if (c >= 1900 && c <= 2999 && a >= 1 && a <= 12 && b >= 1 && b <= 31) {
                     return dayRangeFromParts(c, a - 1, b);
                 }
@@ -2122,19 +2150,6 @@
 
         // ===================================================================
         // Search parsing
-        //
-        // A query can contain:
-        //   • free text tokens  → matched against item/reply text and tags
-        //   • "#tag" tokens     → matched against tags
-        //   • a date expression → matched against item createdAt
-        //
-        // The date expression is what's left of the query after removing
-        // #tag tokens. So typing:
-        //   "meeting"          → text search
-        //   "#work"            → tag filter
-        //   "Sep 16"           → date filter
-        //   "#work Sep 16"     → tag AND date
-        //   "meeting Sep 16"   → text AND date
         // ===================================================================
         function parseSearchQuery(q) {
             const out = { text: '', tags: [], dateRange: null };
@@ -2154,9 +2169,6 @@
             }
             out.tags = Array.from(tagSet);
 
-            // Try to recognize a date at the end of the remaining tokens.
-            // Try suffixes of length 3, 2, 1 (longest first so "Sep 16 2026"
-            // wins over "16 2026").
             let consumed = 0;
             let dateRange = null;
             for (let len = Math.min(3, nonTagTokens.length); len >= 1; len--) {
@@ -2179,8 +2191,6 @@
         }
 
         function itemMatchesSearch(it, parsed) {
-            // Tag filter (AND): all requested tags must be present on
-            // the item OR on any of its replies.
             if (parsed.tags && parsed.tags.length) {
                 const itemTags = new Set((it.tags || []).map(normalizeTag));
                 const replyTags = new Set();
@@ -2191,13 +2201,11 @@
                 }
             }
 
-            // Date filter: item's createdAt must fall in the range
             if (parsed.dateRange) {
                 const ts = it.createdAt || 0;
                 if (ts < parsed.dateRange.start || ts >= parsed.dateRange.end) return false;
             }
 
-            // Free-text filter: match item text, reply text, or tags
             if (parsed.text) {
                 const needle = parsed.text;
                 if (it.text.toLowerCase().includes(needle)) return true;
@@ -2214,7 +2222,6 @@
             const parsed = parseSearchQuery(searchQuery);
             const allTags = new Set([...parsed.tags, ...activeTagFilters]);
 
-            // Date filter from the chips (button row) as well
             let dateRange = parsed.dateRange;
             if (!dateRange) {
                 if (activeDateFilter === 'today')      dateRange = getTodayRange();
@@ -2236,7 +2243,7 @@
                 list = list.filter(it => itemMatchesSearch(it, {
                     text: parsed.text,
                     tags: Array.from(allTags),
-                    dateRange: null, // already applied above
+                    dateRange: null,
                 }));
             }
 
