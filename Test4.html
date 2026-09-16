@@ -383,10 +383,7 @@
             display: none;
         }
 
-        /* ============================================================
-           NEW-TAG INPUT WRAP — now position:relative so the suggestion
-           dropdown can anchor below the input.
-           ============================================================ */
+        /* NEW-TAG INPUT WRAP */
         .tag-panel .new-tag-wrap {
             position: relative;
             flex: 1;
@@ -452,9 +449,7 @@
             color: #cbd5e1;
         }
 
-        /* ============================================================
-           TAG SUGGESTION DROPDOWN
-           ============================================================ */
+        /* TAG SUGGESTIONS */
         .tag-suggestions {
             position: absolute;
             top: calc(100% + 4px);
@@ -502,12 +497,6 @@
         .tag-suggestions .suggestion.active .sugg-count,
         .tag-suggestions .suggestion:hover .sugg-count {
             color: #6366f1;
-        }
-        .tag-suggestions .suggestion .sugg-new {
-            font-size: 0.66rem;
-            color: #94a3b8;
-            font-style: italic;
-            margin-left: auto;
         }
 
         .tag-panel .existing-tags {
@@ -1262,7 +1251,6 @@
                 </div>
             </div>
 
-            <!-- Add new tag (with autocomplete suggestions) -->
             <div class="panel-section">
                 <span class="section-label">Add</span>
                 <div class="new-tag-wrap">
@@ -1350,7 +1338,6 @@
         let activeDateFilter = null;
         let tagPanelOpen = false;
 
-        // Suggestions state
         let suggestionList = [];
         let suggestionIndex = -1;
 
@@ -1660,7 +1647,6 @@
             const raw = tagInput.value.trim();
             if (!raw) { hideSuggestions(); return; }
 
-            // Whatever the user is currently typing (up to the last comma/space)
             const parts = raw.split(/[\s,]+/);
             const prefix = normalizeTag(parts[parts.length - 1] || '');
             if (!prefix) { hideSuggestions(); return; }
@@ -1670,7 +1656,6 @@
                 .filter(({ tag }) => !alreadyPending.has(tag))
                 .filter(({ tag }) => tag.startsWith(prefix) && tag !== prefix);
 
-            // Cap to 8 suggestions for a compact dropdown
             const top = allTags.slice(0, 8);
             if (!top.length) { hideSuggestions(); return; }
 
@@ -1690,9 +1675,7 @@
             tagSuggestionsEl.classList.add('visible');
         }
 
-        // Click a suggestion -> commit that tag to pending
         tagSuggestionsEl.addEventListener('mousedown', (e) => {
-            // mousedown (not click) so it fires before the input blurs
             const el = e.target.closest('[data-sugg-tag]');
             if (!el) return;
             e.preventDefault();
@@ -1702,7 +1685,6 @@
         function commitSuggestion(tag) {
             if (!tag) return;
             pendingTags = mergeTags(pendingTags, [tag]);
-            // Remove the typed prefix (last token) from the input
             const val = tagInput.value;
             const m = val.match(/^(.*?)([^\s,]*)$/);
             tagInput.value = m ? m[1] : '';
@@ -1860,34 +1842,39 @@
             if (!ref) return;
             if (itemsUnsubscribe) itemsUnsubscribe();
             itemsUnsubscribe = ref.orderBy('createdAt', 'desc').onSnapshot((snapshot) => {
-                const newItems = [];
-                snapshot.forEach((doc) => {
-                    const data = doc.data();
-                    newItems.push({
-                        id: doc.id,
-                        text: data.text || '',
-                        done: data.done || false,
-                        pinned: data.pinned || false,
-                        tags: Array.isArray(data.tags) ? data.tags : [],
-                        createdAt: data.createdAt || 0,
-                        updatedAt: data.updatedAt || 0,
-                        replies: Array.isArray(data.replies) ? data.replies.map(r => ({
-                            id: r.id,
-                            text: r.text || '',
-                            done: r.done || false,
-                            tags: Array.isArray(r.tags) ? r.tags : [],
-                            createdAt: r.createdAt || 0,
-                            updatedAt: r.updatedAt || 0,
-                        })) : [],
+                try {
+                    const newItems = [];
+                    snapshot.forEach((doc) => {
+                        const data = doc.data();
+                        newItems.push({
+                            id: doc.id,
+                            text: data.text || '',
+                            done: data.done || false,
+                            pinned: data.pinned || false,
+                            tags: Array.isArray(data.tags) ? data.tags : [],
+                            createdAt: data.createdAt || 0,
+                            updatedAt: data.updatedAt || 0,
+                            replies: Array.isArray(data.replies) ? data.replies.map(r => ({
+                                id: r.id,
+                                text: r.text || '',
+                                done: r.done || false,
+                                tags: Array.isArray(r.tags) ? r.tags : [],
+                                createdAt: r.createdAt || 0,
+                                updatedAt: r.updatedAt || 0,
+                            })) : [],
+                        });
                     });
-                });
-                itemsArray = newItems;
-                renderItems();
-                if (tagPanelOpen) {
-                    renderExistingTags();
-                    renderDateFilters();
+                    itemsArray = newItems;
+                    renderItems();
+                    if (tagPanelOpen) {
+                        renderExistingTags();
+                        renderDateFilters();
+                    }
+                    setCloudStatus(snapshot.metadata.hasPendingWrites ? 'pending' : 'synced');
+                } catch (err) {
+                    console.error('Error processing snapshot:', err);
+                    setCloudStatus('error');
                 }
-                setCloudStatus(snapshot.metadata.hasPendingWrites ? 'pending' : 'synced');
             }, (error) => {
                 console.error('Firestore listener error:', error);
                 setCloudStatus('error');
@@ -1909,7 +1896,11 @@
 
         // ===================================================================
         // Date helpers (display)
-        // ===================================================================        function pad(n) { return String(n).padStart(2, '0'); }
+        // ===================================================================
+        function pad(n) {
+            return String(n).padStart(2, '0');
+        }
+
         function formatCreatedLabel(ts) {
             if (!ts) return '';
             const d = new Date(ts);
@@ -2799,12 +2790,10 @@
             }
             if (e.key === 'Enter') {
                 e.preventDefault();
-                // If a suggestion is highlighted, commit that one
                 if (suggestionsVisible && suggestionList[suggestionIndex]) {
                     commitSuggestion(suggestionList[suggestionIndex].tag);
                     return;
                 }
-                // Otherwise commit whatever is typed
                 if (tagInput.value.trim()) {
                     const newTags = parseTagInput(tagInput.value);
                     if (newTags.length) pendingTags = mergeTags(pendingTags, newTags);
@@ -2844,9 +2833,7 @@
             }
         });
 
-        // Close suggestions when focus leaves the tag input
         tagInput.addEventListener('blur', () => {
-            // Slight delay so a suggestion mousedown can fire first
             setTimeout(() => hideSuggestions(), 120);
         });
 
