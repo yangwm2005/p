@@ -1,0 +1,3174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pomodoro · notes + Google Calendar</title>
+  <!-- Firebase SDK (cloud sync) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    }
+    body {
+      background: linear-gradient(145deg, #f5f0eb 0%, #e8e0d8 100%);
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+    }
+    .app-card {
+      max-width: 1100px;
+      width: 100%;
+      background: rgba(255, 247, 242, 0.8);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border-radius: 48px;
+      padding: 32px 28px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15), 0 8px 16px rgba(0, 0, 0, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: 600;
+      letter-spacing: -0.5px;
+      color: #2c2b28;
+      margin-top: 0;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    h1 small {
+      font-size: 0.9rem;
+      font-weight: 400;
+      background: #d9d0c6;
+      padding: 4px 14px;
+      border-radius: 40px;
+      color: #2c2b28;
+      margin-left: auto;
+    }
+    .cloud-auth-btn {
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: #546e7a;
+      color: white;
+      border: none;
+      padding: 7px 16px;
+      border-radius: 40px;
+      cursor: pointer;
+      transition: 0.15s;
+      white-space: nowrap;
+    }
+    .cloud-auth-btn:hover {
+      filter: brightness(1.08);
+    }
+    .cloud-sync-panel {
+      margin-top: 10px;
+      padding: 10px 14px;
+      border-radius: 16px;
+      background: #f1ebe5;
+      font-size: 0.75rem;
+      color: #6d645b;
+      text-align: center;
+      line-height: 1.5;
+    }
+    .cloud-sync-panel .csp-status {
+      font-weight: 600;
+      color: #2c2b28;
+    }
+    .two-column {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+    @media (max-width: 720px) {
+      .two-column {
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+    }
+    .column {
+      min-width: 0;
+    }
+    .section-title {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #2c2b28;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 6px;
+      border-bottom: 2px solid #d9d0c6;
+      flex-wrap: wrap;
+    }
+    .section-title .title-text {
+      cursor: pointer;
+      padding: 2px 8px;
+      border-radius: 8px;
+      transition: background 0.15s;
+      flex: 1;
+      min-width: 80px;
+    }
+    .section-title .title-text:hover {
+      background: #ede7e1;
+    }
+    .section-title .title-text:focus {
+      outline: none;
+      background: #f5efe9;
+      border: 1px solid #a0846e;
+    }
+    .section-title .title-icon {
+      font-size: 1.2rem;
+    }
+    .section-title small {
+      font-weight: 400;
+      font-size: 0.8rem;
+      color: #6d645b;
+      margin-left: auto;
+      white-space: nowrap;
+    }
+    .timer-section {
+      background: #fcf8f4;
+      border-radius: 40px;
+      padding: 22px 18px;
+      box-shadow: inset 0 2px 6px rgba(0,0,0,0.02), 0 8px 18px rgba(0,0,0,0.05);
+    }
+    .timer-display-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .timer-display {
+      font-size: 4.8rem;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-align: center;
+      color: #2b2a27;
+      font-variant-numeric: tabular-nums;
+      background: #f1ebe5;
+      padding: 14px 0;
+      border-radius: 60px;
+      width: 100%;
+      box-shadow: inset 0 4px 8px rgba(0,0,0,0.02);
+      transition: all 0.3s;
+    }
+    .timer-display.overtime {
+      color: #3f9d63;
+    }
+    .overtime-banner {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 8px;
+      padding: 6px 16px;
+      border-radius: 999px;
+      background: rgba(63,157,99,0.12);
+      color: #3f9d63;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .overtime-banner.visible {
+      display: flex;
+    }
+    .analog-container {
+      display: flex;
+      justify-content: center;
+      margin: 6px 0 10px 0;
+    }
+    #analogCanvas {
+      background: transparent;
+      border-radius: 50%;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04);
+      width: 240px;
+      height: 240px;
+      display: block;
+    }
+    .clock-view-toggle, .clock-mode-toggle {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .sticky-toggle {
+      position: sticky;
+      top: 8px;
+      z-index: 10;
+      background: rgba(255, 247, 242, 0.95);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      padding: 6px 0;
+      border-radius: 16px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+    }
+    .schedule-section {
+      display: flex;
+      flex-direction: column;
+    }
+    .schedule-day-nav {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin-bottom: 10px;
+    }
+    .schedule-nav-btn {
+      background: #ede7e1;
+      border: none;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      font-size: 1rem;
+      cursor: pointer;
+      color: #2b2825;
+    }
+    .schedule-nav-btn:active {
+      transform: scale(0.92);
+    }
+    .schedule-day-label {
+      font-weight: 600;
+      font-size: 0.95rem;
+      min-width: 140px;
+      text-align: center;
+    }
+    .schedule-timeline-wrapper {
+      max-height: 520px;
+      overflow-y: auto;
+      border-radius: 20px;
+      background: #fdfaf7;
+      border: 1px solid #ece4db;
+    }
+    .schedule-timeline {
+      position: relative;
+      margin-left: 52px;
+      border-left: 1px solid #e5ddd3;
+    }
+    .schedule-hour-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      border-top: 1px solid #ece4db;
+    }
+    .schedule-hour-label {
+      position: absolute;
+      left: -52px;
+      width: 44px;
+      text-align: right;
+      font-size: 0.7rem;
+      color: #a99d92;
+      transform: translateY(-50%);
+    }
+    .schedule-now-line {
+      position: absolute;
+      left: -6px;
+      right: 0;
+      border-top: 2px solid #d24545;
+      z-index: 3;
+    }
+    .schedule-now-dot {
+      position: absolute;
+      left: -6px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #d24545;
+      transform: translate(-50%, -50%);
+    }
+    .schedule-block {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      border-radius: 10px;
+      padding: 4px 8px;
+      color: #fff;
+      font-size: 0.72rem;
+      line-height: 1.25;
+      overflow: hidden;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      cursor: default;
+      z-index: 2;
+    }
+    .schedule-block .sb-title {
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .schedule-block .sb-meta {
+      opacity: 0.85;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .schedule-empty {
+      padding: 30px 14px;
+      text-align: center;
+      color: #a99d92;
+      font-size: 0.85rem;
+      font-style: italic;
+    }
+    .schedule-block:hover {
+      filter: brightness(1.06);
+    }
+    .schedule-tooltip {
+      position: fixed;
+      max-width: 240px;
+      background: #2b2825;
+      color: #f5efe9;
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 0.78rem;
+      line-height: 1.35;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+      z-index: 200;
+      pointer-events: none;
+    }
+    .schedule-tooltip .st-title {
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .schedule-tooltip .st-body {
+      color: #d8d0c6;
+      white-space: pre-wrap;
+    }
+    .schedule-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(40,35,30,0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 20px;
+    }
+    .schedule-modal {
+      background: #fcf8f4;
+      border-radius: 24px;
+      padding: 20px;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+    }
+    .schedule-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #6d645b;
+    }
+    .schedule-modal-close {
+      background: none;
+      border: none;
+      font-size: 1rem;
+      cursor: pointer;
+      color: #6d645b;
+      padding: 2px 6px;
+    }
+    .schedule-modal textarea {
+      width: 100%;
+      min-height: 110px;
+      border-radius: 14px;
+      border: 1px solid #e5ddd3;
+      padding: 10px 12px;
+      font-family: inherit;
+      font-size: 0.9rem;
+      resize: vertical;
+      background: #fff;
+      box-sizing: border-box;
+    }
+    .schedule-modal-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .clock-view-toggle button, .clock-mode-toggle button {
+      background: #ede7e1;
+      border: none;
+      padding: 5px 16px;
+      border-radius: 40px;
+      font-weight: 500;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: 0.15s;
+      color: #2b2825;
+      border: 1px solid transparent;
+    }
+    .clock-view-toggle button.active, .clock-mode-toggle button.active {
+      background: #2b2a27;
+      color: #f5efe9;
+      border-color: #2b2a27;
+    }
+    .clock-view-toggle button:active, .clock-mode-toggle button:active {
+      transform: scale(0.96);
+    }
+    .duration-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 8px;
+      justify-content: center;
+      margin-bottom: 14px;
+    }
+    .duration-item {
+      flex: 1 0 80px;
+      background: #ede7e1;
+      border-radius: 50px;
+      padding: 6px 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+      border: 2px solid transparent;
+      position: relative;
+      transition: border-color 0.2s, background 0.2s, opacity 0.2s;
+      cursor: pointer;
+    }
+    .duration-item.locked {
+      cursor: not-allowed;
+      opacity: 0.65;
+    }
+    .duration-item.phase-active {
+      border-color: var(--phase-color);
+      background: var(--phase-bg);
+    }
+    .duration-item.phase-active::after {
+      content: '';
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--phase-color);
+      box-shadow: 0 0 0 2px #fcf8f4;
+    }
+    .duration-item label {
+      font-size: 0.65rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      color: #4f4a44;
+      margin-bottom: 2px;
+    }
+    .duration-item input {
+      width: 60px;
+      border: none;
+      background: transparent;
+      text-align: center;
+      font-size: 1rem;
+      font-weight: 500;
+      color: #1f1e1b;
+      padding: 3px 0;
+      border-bottom: 2px solid #cbc1b6;
+      transition: border 0.15s;
+    }
+    .duration-item input:focus {
+      outline: none;
+      border-bottom-color: #a0846e;
+    }
+    .duration-item input[type="number"]::-webkit-inner-spin-button {
+      opacity: 0.5;
+    }
+    .time-stepper {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 12px;
+    }
+    .stepper-btn {
+      flex: 1;
+      max-width: 140px;
+      padding: 9px 16px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: #ede7e1;
+      border: 1px solid #cbc1b6;
+      border-radius: 30px;
+      cursor: pointer;
+      transition: 0.15s;
+      color: #2b2825;
+    }
+    .stepper-btn:hover {
+      background: #d9d0c6;
+    }
+    .stepper-btn:active {
+      transform: scale(0.95);
+    }
+    .settings-toggle-btn {
+      display: block;
+      width: 100%;
+      background: none;
+      border: none;
+      border-top: 1px solid #e5ddd3;
+      border-bottom: 1px solid #e5ddd3;
+      padding: 8px 4px;
+      margin-bottom: 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #6d645b;
+      cursor: pointer;
+      text-align: center;
+    }
+    .settings-toggle-btn:hover {
+      color: #2b2825;
+    }
+    .settings-panel {
+      background: #f8f4ef;
+      border-radius: 18px;
+      padding: 12px 10px 2px;
+      margin-bottom: 14px;
+    }
+    .settings-panel .clock-view-toggle,
+    .settings-panel .clock-mode-toggle,
+    .settings-panel .analog-options,
+    .settings-panel .time-stepper {
+      margin-bottom: 10px;
+    }
+    .settings-panel .time-stepper {
+      margin-bottom: 4px;
+    }
+    .action-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-top: 8px;
+    }
+    .session-row {
+      margin-top: 6px;
+    }
+    .btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    .btn {
+      background: #e6ddd4;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 60px;
+      font-weight: 500;
+      font-size: 0.95rem;
+      color: #2b2825;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.02);
+      transition: all 0.15s;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid transparent;
+    }
+    .btn-primary {
+      background: #2b2a27;
+      color: #f5efe9;
+      box-shadow: 0 6px 12px rgba(0,0,0,0.08);
+    }
+    .btn-primary:hover {
+      background: #1f1e1b;
+      transform: scale(0.97);
+    }
+    .btn-primary:active {
+      transform: scale(0.95);
+    }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid #cbc1b6;
+    }
+    .btn-outline:hover {
+      background: #f1ebe5;
+    }
+    .btn-success {
+      background: #3b5a4b;
+      color: white;
+    }
+    .btn-success:hover {
+      background: #2d4a3b;
+    }
+    .btn-danger {
+      background: #b15e5e;
+      color: white;
+    }
+    .btn-danger:hover {
+      background: #9a4c4c;
+    }
+    .btn-sm {
+      padding: 5px 12px;
+      font-size: 0.75rem;
+    }
+    .status-row {
+      margin-top: 12px;
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      font-size: 0.85rem;
+      color: #3f3a35;
+      flex-wrap: wrap;
+    }
+    .status-row-top {
+      margin-top: 0;
+      margin-bottom: 14px;
+    }
+    .status-row span {
+      background: #ede7e1;
+      padding: 2px 14px;
+      border-radius: 30px;
+    }
+    .note-section {
+      background: #fcf8f4;
+      border-radius: 40px;
+      padding: 22px 18px;
+      box-shadow: inset 0 2px 6px rgba(0,0,0,0.02), 0 8px 18px rgba(0,0,0,0.05);
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    .note-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .note-header h3 {
+      margin: 0;
+      font-weight: 500;
+      font-size: 1rem;
+      color: #2c2b28;
+    }
+    .note-input-area {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .note-title-input {
+      width: 100%;
+      padding: 10px 16px;
+      border: 1px solid #d5cbc1;
+      border-radius: 24px;
+      background: #f5efe9;
+      font-size: 0.9rem;
+      font-weight: 600;
+      font-family: inherit;
+      box-sizing: border-box;
+      transition: 0.15s;
+    }
+    .note-title-input:focus {
+      outline: none;
+      border-color: #a0846e;
+      background: white;
+    }
+    .note-input-area textarea {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1px solid #d5cbc1;
+      border-radius: 24px;
+      background: #f5efe9;
+      font-size: 0.9rem;
+      resize: vertical;
+      min-height: 175px;
+      transition: 0.15s;
+      font-family: inherit;
+    }
+    .note-input-area textarea:focus {
+      outline: none;
+      border-color: #a0846e;
+      background: white;
+    }
+    .note-input-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .note-input-row button {
+      flex: 0 0 auto;
+    }
+    .note-list {
+      flex: 1;
+      max-height: 340px;
+      overflow-y: auto;
+      padding-right: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .note-item {
+      background: #f1ebe5;
+      padding: 6px 12px;
+      border-radius: 16px;
+      font-size: 0.85rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.02);
+      border-left: 4px solid #b7a99b;
+      position: relative;
+    }
+    .note-item .note-top {
+      display: block;
+    }
+    .note-item .note-text {
+      word-break: break-word;
+      line-height: 1.25;
+      padding-right: 54px;
+    }
+    .note-item .note-item-title {
+      font-weight: 700;
+      color: #2c2b28;
+      line-height: 1.25;
+    }
+    .note-item .note-item-body {
+      margin-top: 1px;
+      font-size: 0.85rem;
+      color: #6d645b;
+      white-space: pre-wrap;
+      line-height: 1.25;
+    }
+    .edit-title-input {
+      width: 100%;
+      padding: 6px 12px;
+      border: 1px solid #b7a99b;
+      border-radius: 16px;
+      font-family: inherit;
+      font-weight: 600;
+      font-size: 0.85rem;
+      background: white;
+      box-sizing: border-box;
+      margin-bottom: 6px;
+    }
+    .note-item .note-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 8px;
+      font-size: 0.65rem;
+      color: #4f4a44;
+      margin-top: 4px;
+    }
+    .note-item .note-meta span {
+      background: #e3dad1;
+      padding: 1px 10px;
+      border-radius: 30px;
+    }
+    .note-item .note-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+      position: absolute;
+      top: 6px;
+      right: 10px;
+    }
+    .note-item .note-actions button {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 0.75rem;
+      padding: 2px 6px;
+      border-radius: 30px;
+      transition: 0.1s;
+      color: #4f4a44;
+    }
+    .note-item .note-actions button:hover {
+      background: #d5cbc1;
+    }
+    .note-item .note-actions .del-btn:hover {
+      background: #d4a0a0;
+      color: #7a2e2e;
+    }
+    .badge {
+      background: #c6b9ad;
+      padding: 2px 12px;
+      border-radius: 40px;
+      font-size: 0.7rem;
+    }
+    .edit-textarea {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #b7a99b;
+      border-radius: 16px;
+      font-family: inherit;
+      font-size: 0.85rem;
+      resize: vertical;
+      min-height: 50px;
+      background: white;
+    }
+    .edit-time-row {
+      display: flex;
+      gap: 10px;
+      margin: 6px 0;
+    }
+    .edit-time-row label {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 0.68rem;
+      color: #6d645b;
+      font-weight: 600;
+    }
+    .edit-time-row input[type="time"] {
+      padding: 5px 8px;
+      border: 1px solid #d5cbc1;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 0.82rem;
+      background: #fff;
+    }
+    .edit-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .edit-actions button {
+      padding: 3px 14px;
+      border-radius: 30px;
+      border: none;
+      font-weight: 500;
+      cursor: pointer;
+      font-size: 0.75rem;
+    }
+    .edit-actions .save-edit {
+      background: #2b2a27;
+      color: white;
+    }
+    .edit-actions .cancel-edit {
+      background: #d5cbc1;
+    }
+    .gc-row {
+      margin-top: 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      border-top: 1px solid #d5cbc1;
+      padding-top: 14px;
+    }
+    .backup-row {
+      margin-top: 8px;
+      border-top: none;
+      padding-top: 0;
+    }
+    .backup-hint {
+      margin-top: 8px;
+      font-size: 0.7rem;
+      color: #a99d92;
+      text-align: center;
+    }
+    .gc-row .btn {
+      flex: 1 1 140px;
+      justify-content: center;
+      font-size: 0.85rem;
+    }
+    .footer-tip {
+      text-align: center;
+      font-size: 0.7rem;
+      color: #6d645b;
+      margin-top: 16px;
+      grid-column: 1 / -1;
+    }
+    .editable-title-input {
+      border: none;
+      background: transparent;
+      font: inherit;
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #2c2b28;
+      padding: 2px 8px;
+      border-radius: 8px;
+      width: auto;
+      min-width: 60px;
+      flex: 1;
+      cursor: text;
+    }
+    .editable-title-input:focus {
+      outline: none;
+      background: #f5efe9;
+      border: 1px solid #a0846e;
+    }
+    .editable-title-input:hover {
+      background: #ede7e1;
+    }
+    .analog-options {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .analog-options button {
+      background: #ede7e1;
+      border: none;
+      padding: 4px 14px;
+      border-radius: 30px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: 0.15s;
+      color: #2b2825;
+      border: 1px solid transparent;
+    }
+    .analog-options button.active {
+      background: #2b2a27;
+      color: #f5efe9;
+    }
+  </style>
+</head>
+<body>
+<div class="app-card">
+  <h1>
+    🍅 Pomodoro Tracker
+    <small>notes + Google Calendar</small>
+    <button id="soundToggleBtn" class="cloud-auth-btn" style="background:#8a7a68;" title="Toggle tick / alert sounds">🔊 Sound</button>
+    <button id="keepAwakeBtn" class="cloud-auth-btn" style="background:#7a8a6e;" title="Keep the screen on while a session runs (uses more battery)">🔆 Keep awake: Off</button>
+    <button id="cloudAuthBtn" class="cloud-auth-btn" title="Sign in with Google to sync across devices">🔑 Sign In</button>
+  </h1>
+
+  <!-- Two-column layout -->
+  <div class="two-column">
+
+    <!-- LEFT COLUMN: Timer -->
+    <div class="column">
+      <div class="section-title">
+        <span class="title-icon">⏱️</span>
+        <input type="text" class="editable-title-input" id="timerTitle" value="Timer" />
+        <small>focus &amp; break sessions</small>
+      </div>
+      <div class="timer-section">
+        <div class="status-row status-row-top">
+          <span id="phaseLabel">⏳ Focus</span>
+          <span id="cycleCount">🍅 0</span>
+          <span id="elapsedDisplay">⏱️ 00:00</span>
+        </div>
+        <div class="timer-display-wrapper">
+          <div class="timer-display" id="timerDisplay">25:00</div>
+          <div class="overtime-banner" id="overtimeBanner">✅ Overtime</div>
+          <div class="analog-container" id="analogContainer" style="display:none;">
+            <canvas id="analogCanvas" width="240" height="240"></canvas>
+          </div>
+        </div>
+
+        <button class="settings-toggle-btn" id="settingsToggleBtn">⚙️ Display &amp; time options <span id="settingsToggleArrow">▾</span></button>
+
+        <div class="settings-panel" id="settingsPanel" style="display:none;">
+          <div class="clock-view-toggle">
+            <button id="digitalViewBtn" class="active">🔢 Digital</button>
+            <button id="analogViewBtn">🕐 Analog</button>
+          </div>
+
+          <div class="analog-options" id="analogOptions" style="display:none;">
+            <button id="analog60min" class="active">60 min circle</button>
+            <button id="analog25min">25 min circle</button>
+          </div>
+
+          <div class="clock-mode-toggle">
+            <button id="countdownMode" class="active">⏳ Countdown</button>
+            <button id="countupMode">⏱️ Count up</button>
+          </div>
+
+          <!-- Time adjustment stepper: click repeatedly to add/remove 5 min -->
+          <div class="time-stepper">
+            <button class="stepper-btn stepper-minus" data-minutes="-5" title="Remove 5 minutes">− 5 min</button>
+            <button class="stepper-btn stepper-plus" data-minutes="5" title="Add 5 minutes">+ 5 min</button>
+          </div>
+        </div>
+
+        <div class="duration-grid">
+          <div class="duration-item" title="Click to switch to Focus (only while idle)">
+            <label>Focus</label>
+            <input type="number" id="focusDuration" value="25" min="1" max="120" step="1">
+          </div>
+          <div class="duration-item" title="Click to switch to Short break (only while idle)">
+            <label>Short break</label>
+            <input type="number" id="shortBreakDuration" value="5" min="1" max="30" step="1">
+          </div>
+          <div class="duration-item" title="Click to switch to Long break (only while idle)">
+            <label>Long break</label>
+            <input type="number" id="longBreakDuration" value="15" min="1" max="60" step="1">
+          </div>
+        </div>
+
+        <div class="action-row">
+          <button class="btn btn-primary" id="startBtn">▶ Start</button>
+          <button class="btn btn-outline" id="pauseBtn">⏸ Pause</button>
+          <button class="btn btn-outline" id="resetBtn">↺ Reset</button>
+        </div>
+
+        <div class="action-row session-row">
+          <button class="btn btn-outline" id="finishBtn" disabled>✅ Finish</button>
+          <button class="btn btn-outline" id="abandonBtn" disabled>🏳️ Abandon</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: Notes -->
+    <div class="column">
+      <div class="section-title">
+        <span class="title-icon">📝</span>
+        <input type="text" class="editable-title-input" id="notesTitle" value="Notes" />
+        <small>timestamped per session</small>
+      </div>
+
+      <div class="clock-view-toggle sticky-toggle">
+        <button id="notesViewBtn" class="active">📝 Notes</button>
+        <button id="scheduleViewBtn">📅 Day schedule</button>
+      </div>
+
+      <div class="note-section" id="notesPanel">
+        <div class="note-header">
+          <h3>All notes</h3>
+          <span class="badge" id="noteCounter">0</span>
+        </div>
+        <div class="note-input-area">
+          <input type="text" id="noteTitleInput" class="note-title-input" placeholder="Session title (e.g. Deep work on report)" />
+          <textarea id="noteInput" placeholder="Optional details (multi-line supported)…"></textarea>
+          <div class="note-input-row">
+            <button class="btn btn-primary btn-sm" id="addNoteBtn">✚ Add note</button>
+            <button class="btn btn-outline btn-sm" id="clearNotesBtn">🗑 Clear all</button>
+          </div>
+        </div>
+        <div class="note-list" id="noteListContainer">
+          <!-- dynamic notes -->
+        </div>
+
+        <!-- Export buttons inside notes column -->
+        <div class="gc-row">
+          <button class="btn btn-success" id="exportGCalBtn">📅 Google Calendar</button>
+          <button class="btn btn-outline" id="exportGCalNotesBtn">📋 Copy notes</button>
+        </div>
+        <div class="gc-row backup-row">
+          <button class="btn btn-outline" id="exportBackupBtn">⬇️ Export backup</button>
+          <button class="btn btn-outline" id="importBackupBtn">⬆️ Import backup</button>
+          <input type="file" id="importBackupFile" accept="application/json" style="display:none;">
+        </div>
+        <div class="backup-hint">Save the backup file to Gmail or Drive, then import it on another device to continue where you left off.</div>
+
+        <div class="cloud-sync-panel" id="cloudSyncPanel">
+          <span class="csp-status" id="cloudSyncStatus">⚫ Not signed in</span><br>
+          Sign in (top right) to sync automatically across devices.
+          <div id="gcalSyncRow" style="margin-top:8px; display:none;">
+            <span class="csp-status" id="gcalSyncStatus">📅 Calendar: not connected</span><br>
+            <button class="btn btn-outline" id="gcalConnectBtn" type="button" style="margin-top:4px; font-size:0.75rem; padding:4px 12px;">Connect Calendar</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="schedule-section" id="schedulePanel" style="display:none;">
+        <div class="schedule-day-nav">
+          <button id="schedulePrevDay" class="schedule-nav-btn">‹</button>
+          <div class="schedule-day-label" id="scheduleDayLabel">Today</div>
+          <button id="scheduleNextDay" class="schedule-nav-btn">›</button>
+        </div>
+        <div class="schedule-timeline-wrapper" id="scheduleTimelineWrapper">
+          <div class="schedule-timeline" id="scheduleTimeline">
+            <!-- dynamic hour rows + session blocks -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer-tip">
+    ⏱ Duration &amp; note timestamped — each note stores the current timer phase &amp; duration.
+  </div>
+</div>
+
+<div class="schedule-tooltip" id="scheduleTooltip" style="display:none;"></div>
+
+<div class="schedule-modal-backdrop" id="scheduleModalBackdrop" style="display:none;">
+  <div class="schedule-modal">
+    <div class="schedule-modal-header">
+      <span id="scheduleModalMeta"></span>
+      <button id="scheduleModalClose" class="schedule-modal-close">✕</button>
+    </div>
+    <input type="text" id="scheduleModalTitleInput" class="note-title-input" placeholder="Session title" />
+    <div class="edit-time-row">
+      <label>Start <input type="time" id="scheduleModalStartInput"></label>
+      <label>End <input type="time" id="scheduleModalEndInput"></label>
+    </div>
+    <textarea id="scheduleModalTextarea" placeholder="Optional details…"></textarea>
+    <div class="schedule-modal-actions">
+      <button id="scheduleModalSave" class="btn btn-primary btn-sm">💾 Save</button>
+      <button id="scheduleModalDelete" class="btn btn-outline btn-sm">🗑 Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    // ----- DOM refs -----
+    const timerDisplay = document.getElementById('timerDisplay');
+    const analogCanvas = document.getElementById('analogCanvas');
+    const analogContainer = document.getElementById('analogContainer');
+    const focusInput = document.getElementById('focusDuration');
+    const shortInput = document.getElementById('shortBreakDuration');
+    const longInput = document.getElementById('longBreakDuration');
+    const focusDurationItem = focusInput.parentElement;
+    const shortDurationItem = shortInput.parentElement;
+    const longDurationItem = longInput.parentElement;
+    const startBtn = document.getElementById('startBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const finishBtn = document.getElementById('finishBtn');
+    const abandonBtn = document.getElementById('abandonBtn');
+    const phaseLabel = document.getElementById('phaseLabel');
+    const overtimeBanner = document.getElementById('overtimeBanner');
+    const cycleCountSpan = document.getElementById('cycleCount');
+    const elapsedDisplay = document.getElementById('elapsedDisplay');
+    const noteInput = document.getElementById('noteInput');
+    const noteTitleInput = document.getElementById('noteTitleInput');
+    const addNoteBtn = document.getElementById('addNoteBtn');
+    const noteListContainer = document.getElementById('noteListContainer');
+    const noteCounter = document.getElementById('noteCounter');
+    const exportGCalBtn = document.getElementById('exportGCalBtn');
+    const exportGCalNotesBtn = document.getElementById('exportGCalNotesBtn');
+    const exportBackupBtn = document.getElementById('exportBackupBtn');
+    const importBackupBtn = document.getElementById('importBackupBtn');
+    const importBackupFile = document.getElementById('importBackupFile');
+    const cloudAuthBtn = document.getElementById('cloudAuthBtn');
+    const soundToggleBtn = document.getElementById('soundToggleBtn');
+    const keepAwakeBtn = document.getElementById('keepAwakeBtn');
+    const cloudSyncStatus = document.getElementById('cloudSyncStatus');
+    const gcalSyncRow = document.getElementById('gcalSyncRow');
+    const gcalSyncStatus = document.getElementById('gcalSyncStatus');
+    const gcalConnectBtn = document.getElementById('gcalConnectBtn');
+    const clearNotesBtn = document.getElementById('clearNotesBtn');
+    const countdownModeBtn = document.getElementById('countdownMode');
+    const countupModeBtn = document.getElementById('countupMode');
+    const digitalViewBtn = document.getElementById('digitalViewBtn');
+    const analogViewBtn = document.getElementById('analogViewBtn');
+    const analogOptions = document.getElementById('analogOptions');
+    const analog60min = document.getElementById('analog60min');
+    const analog25min = document.getElementById('analog25min');
+    const notesViewBtn = document.getElementById('notesViewBtn');
+    const scheduleViewBtn = document.getElementById('scheduleViewBtn');
+    const notesPanel = document.getElementById('notesPanel');
+    const schedulePanel = document.getElementById('schedulePanel');
+    const schedulePrevDay = document.getElementById('schedulePrevDay');
+    const scheduleNextDay = document.getElementById('scheduleNextDay');
+    const scheduleDayLabel = document.getElementById('scheduleDayLabel');
+    const scheduleTimeline = document.getElementById('scheduleTimeline');
+    const scheduleTimelineWrapper = document.getElementById('scheduleTimelineWrapper');
+    const scheduleModalBackdrop = document.getElementById('scheduleModalBackdrop');
+    const scheduleModalMeta = document.getElementById('scheduleModalMeta');
+    const scheduleModalTextarea = document.getElementById('scheduleModalTextarea');
+    const scheduleModalTitleInput = document.getElementById('scheduleModalTitleInput');
+    const scheduleModalStartInput = document.getElementById('scheduleModalStartInput');
+    const scheduleModalEndInput = document.getElementById('scheduleModalEndInput');
+    const scheduleModalSave = document.getElementById('scheduleModalSave');
+    const scheduleModalDelete = document.getElementById('scheduleModalDelete');
+    const scheduleModalClose = document.getElementById('scheduleModalClose');
+    const scheduleTooltip = document.getElementById('scheduleTooltip');
+
+    // Editable titles
+    const timerTitleInput = document.getElementById('timerTitle');
+    const notesTitleInput = document.getElementById('notesTitle');
+
+    // Quick add buttons
+    const quickAddButtons = document.querySelectorAll('.time-stepper .stepper-btn');
+    const settingsToggleBtn = document.getElementById('settingsToggleBtn');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const settingsToggleArrow = document.getElementById('settingsToggleArrow');
+
+    // ----- State -----
+    let timerInterval = null;
+    let isRunning = false;
+    let isPaused = false;
+    let currentPhase = 'focus';
+    let cycleCount = 0;
+    let remainingSeconds = 25 * 60;
+    let totalDurationSeconds = 25 * 60;
+    let elapsedSeconds = 0;
+    let clockMode = 'countdown';
+    let viewMode = 'digital';
+    let analogMode = '60min'; // '60min' or '25min'
+    let targetEndTime = null;    // ms timestamp when a countdown should hit zero
+    let countUpStartTime = null; // ms timestamp when a count-up session started
+    let overtimeActive = false;  // true once a countdown section has reached 0 and is now counting up extra time
+    let overtimeSeconds = 0;     // seconds accumulated since the section finished
+    let overtimeStartTime = null; // ms timestamp when overtime began
+    let sessionStartTimestamp = null; // wall-clock Date when the current session truly began (not resume-from-pause) — used so logged notes show the session's real start time, not "whenever I got around to adding a note"
+    let keepAwakeEnabled = false; // opt-in: request a screen wake lock while running (uses more battery)
+    let wakeLock = null;
+
+    let notes = [];
+    let nextNoteId = 1;
+    let notesViewMode = 'notes'; // 'notes' or 'schedule'
+    let scheduleDate = new Date(); // day currently shown in the schedule view
+    let scheduleModalNoteId = null; // id of the note currently open in the edit modal
+
+    // ----- helpers -----
+    function formatTime(sec) {
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+
+    function getDurationFromPhase(phase) {
+      const focus = parseInt(focusInput.value, 10) || 25;
+      const short = parseInt(shortInput.value, 10) || 5;
+      const long = parseInt(longInput.value, 10) || 15;
+      if (phase === 'focus') return focus * 60;
+      if (phase === 'shortBreak') return short * 60;
+      return long * 60;
+    }
+
+    const PHASE_ACCENT = {
+      focus: { color: '#b15e5e', bg: '#f7e7e5' },
+      shortBreak: { color: '#4f8a6f', bg: '#e6f0ea' },
+      longBreak: { color: '#4a7a9c', bg: '#e5edf3' },
+    };
+
+    // Highlights whichever of the Focus / Short break / Long break boxes
+    // matches the current phase, so it's obvious at a glance which section
+    // is active — visible the same way in both Digital and Analog view
+    // since this row isn't part of either.
+    function updatePhaseIndicator() {
+      const items = { focus: focusDurationItem, shortBreak: shortDurationItem, longBreak: longDurationItem };
+      Object.keys(items).forEach((phase) => {
+        const el = items[phase];
+        if (phase === currentPhase) {
+          el.classList.add('phase-active');
+          el.style.setProperty('--phase-color', PHASE_ACCENT[phase].color);
+          el.style.setProperty('--phase-bg', PHASE_ACCENT[phase].bg);
+        } else {
+          el.classList.remove('phase-active');
+          el.style.removeProperty('--phase-color');
+          el.style.removeProperty('--phase-bg');
+        }
+      });
+    }
+
+    function getDisplaySeconds() {
+      if (clockMode === 'countdown') {
+        return overtimeActive ? (totalDurationSeconds + overtimeSeconds) : remainingSeconds;
+      }
+      return elapsedSeconds;
+    }
+
+    function updateDisplay() {
+      const secs = getDisplaySeconds();
+      timerDisplay.textContent = formatTime(secs);
+      timerDisplay.classList.toggle('overtime', overtimeActive);
+      elapsedDisplay.textContent = `⏱️ ${formatTime(elapsedSeconds)}`;
+
+      const phaseNames = {
+        focus: '⏳ Focus',
+        shortBreak: '☕ Short break',
+        longBreak: '🌿 Long break'
+      };
+      phaseLabel.textContent = overtimeActive ? '✅ Overtime' : (phaseNames[currentPhase] || 'Focus');
+      cycleCountSpan.textContent = `🍅 ${cycleCount}`;
+      updatePhaseIndicator();
+
+      const sessionActive = isRunning || isPaused;
+      finishBtn.disabled = !sessionActive;
+      abandonBtn.disabled = !sessionActive;
+      [focusDurationItem, shortDurationItem, longDurationItem].forEach(el => {
+        el.classList.toggle('locked', sessionActive);
+      });
+
+      // Overtime banner: only shown in Digital view (the analog dial already
+      // conveys this via its own "25+N" label), so it's clear at a glance
+      // that the target was already reached and this is bonus time.
+      if (overtimeActive) {
+        const baseMinutes = Math.max(1, Math.round((totalDurationSeconds > 0 ? totalDurationSeconds : 1) / 60));
+        const overtimeMinutes = Math.floor(overtimeSeconds / 60);
+        overtimeBanner.textContent = overtimeMinutes > 0
+          ? `✅ Overtime — ${baseMinutes}+${overtimeMinutes} min`
+          : '✅ Overtime — target reached';
+      }
+      overtimeBanner.classList.toggle('visible', overtimeActive && viewMode === 'digital');
+
+      if (viewMode === 'analog') {
+        drawAnalog(secs);
+      }
+    }
+
+    // ----- Analog clock -----
+    const ANALOG_SIZE = 240; // logical CSS pixel size — must match #analogCanvas width/height
+
+    function drawAnalog(seconds) {
+      try {
+        drawAnalogInner(seconds);
+      } catch (e) {
+        console.error('drawAnalog failed:', e);
+      }
+    }
+
+    function drawAnalogInner(seconds) {
+      const canvas = analogCanvas;
+      const dpr = window.devicePixelRatio || 1;
+
+      // Render at native device resolution so the dial stays crisp on
+      // retina/high-DPI screens instead of looking soft and pixelated.
+      const targetW = Math.round(ANALOG_SIZE * dpr);
+      const targetH = Math.round(ANALOG_SIZE * dpr);
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const w = ANALOG_SIZE, h = ANALOG_SIZE;
+      const centerX = w / 2, centerY = h / 2;
+      const radius = Math.min(w, h) * 0.44;
+      const scale = ANALOG_SIZE / 190; // keep stroke widths/fonts proportional at any canvas size
+
+      ctx.clearRect(0, 0, w, h);
+
+      // ---- Dial face: soft, minimal, slightly domed look ----
+      const faceGrad = ctx.createRadialGradient(centerX, centerY - radius * 0.15, radius * 0.1, centerX, centerY, radius);
+      faceGrad.addColorStop(0, '#ffffff');
+      faceGrad.addColorStop(1, '#efe8e0');
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      ctx.fillStyle = faceGrad;
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+      ctx.stroke();
+
+      // Determine the total circle size
+      let totalCircleSeconds;
+      if (analogMode === '25min') {
+        totalCircleSeconds = 25 * 60;
+      } else {
+        totalCircleSeconds = 60 * 60;
+      }
+
+      // For 25min mode in countdown during focus: use 25min circle
+      let displayTotal = totalCircleSeconds;
+      let useRed = false;
+
+      if (analogMode === '25min' && clockMode === 'countdown' && currentPhase === 'focus') {
+        displayTotal = 25 * 60;
+        useRed = true;
+      } else if (analogMode === '25min' && clockMode === 'countdown') {
+        displayTotal = getDurationFromPhase(currentPhase);
+        // Cap at 25min for display purposes
+        displayTotal = Math.min(displayTotal, 25 * 60);
+      } else if (analogMode === '25min' && clockMode === 'countup') {
+        displayTotal = Math.min(Math.max(getDurationFromPhase(currentPhase), seconds || 1), 25 * 60);
+      }
+
+      // ---- Minimal tick marks: 12 refined hour ticks + faint minute ticks ----
+      for (let i = 0; i < 60; i++) {
+        const angle = (i / 60) * Math.PI * 2 - Math.PI / 2;
+        const isMajor = i % 5 === 0;
+        const len = isMajor ? radius * 0.09 : radius * 0.035;
+        const outerR = radius - 6 * scale;
+        const innerR = outerR - len;
+        ctx.beginPath();
+        ctx.moveTo(centerX + Math.cos(angle) * innerR, centerY + Math.sin(angle) * innerR);
+        ctx.lineTo(centerX + Math.cos(angle) * outerR, centerY + Math.sin(angle) * outerR);
+        ctx.strokeStyle = isMajor ? 'rgba(60,55,50,0.55)' : 'rgba(60,55,50,0.18)';
+        ctx.lineWidth = (isMajor ? 2 : 1) * scale;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+
+      // Calculate progress
+      let progress = 0;
+      const isOvertime = (clockMode === 'countdown' && overtimeActive);
+      const isOvertimeOn60min = isOvertime && analogMode === '60min';
+      const isOvertimeOn25min = isOvertime && !isOvertimeOn60min;
+      let redProgress = 0, greenProgress = 0; // dual-arc 60min overtime case
+      let innerOvertimeProgress = 0; // inner-ring 25min overtime case
+
+      if (isOvertimeOn60min) {
+        // The 60-min dial is a true hour scale, so keep the original red
+        // target arc exactly where it landed when the countdown finished
+        // (e.g. 25 of the 60 minutes), and simply extend a green arc after
+        // it as overtime accumulates, one whole minute at a time. This
+        // keeps the "started at 25 min" context always visible instead of
+        // replacing it with a fresh green ring.
+        const target = totalDurationSeconds > 0 ? totalDurationSeconds : displayTotal;
+        redProgress = Math.min(target / 3600, 1);
+        const overtimeMinutes = Math.floor(overtimeSeconds / 60);
+        greenProgress = Math.min(overtimeMinutes / 60, 1 - redProgress);
+      } else if (isOvertimeOn25min) {
+        // The 25-min dial's full lap IS the target duration, so there's no
+        // room left on that same ring to extend into. Instead: keep the
+        // outer ring exactly as it finished (still fully red/complete), and
+        // grow a separate inner ring for overtime, one whole minute at a
+        // time, capped full rather than wrapping.
+        const overtimeMinutes = Math.floor(overtimeSeconds / 60);
+        const lapMinutes = 5;
+        innerOvertimeProgress = Math.min(overtimeMinutes / lapMinutes, 1);
+      } else if (clockMode === 'countdown') {
+        // For countdown: progress = remaining / total, rounded up to the
+        // next whole minute so the arc holds steady for a full minute and
+        // then steps down at each minute mark, rather than shrinking
+        // second by second.
+        if (useRed) {
+          // For 25min focus mode: use the actual remaining seconds against 25min
+          const remaining = Math.min(seconds, 25 * 60);
+          const totalMinutes = 25;
+          progress = Math.ceil(remaining / 60) / totalMinutes;
+        } else {
+          const remaining = Math.min(seconds, displayTotal);
+          const totalMinutes = Math.max(1, Math.round(displayTotal / 60));
+          progress = Math.ceil(remaining / 60) / totalMinutes;
+        }
+      } else {
+        // Count up: progress = elapsed / total, stepping up once per
+        // whole minute rather than continuously.
+        const totalMinutes = Math.max(1, Math.round(displayTotal / 60));
+        const elapsedMinutes = Math.floor(seconds / 60);
+        progress = elapsedMinutes / totalMinutes;
+      }
+      progress = Math.max(0, Math.min(1, progress));
+
+      const ringRadius = radius * 0.76;
+      const ringWidth = 8 * scale;
+      const startAngle = -Math.PI / 2;
+      const endAngle = startAngle + progress * Math.PI * 2;
+
+      // Original phase color — what the ring showed while the countdown was
+      // still running. Reused as the "already completed" color during
+      // overtime, so that context never disappears.
+      let originalColor;
+      if (useRed) {
+        originalColor = '#b15e5e';
+      } else {
+        originalColor = currentPhase === 'focus' ? '#b15e5e' : (currentPhase === 'shortBreak' ? '#4f8a6f' : '#4a7a9c');
+      }
+
+      // Progress color per phase — overtime always shows green, regardless
+      // of which phase (focus/break) it belongs to, as a clear "done, and
+      // still going" signal.
+      let progressColor;
+      if (isOvertime) {
+        progressColor = '#3f9d63';
+      } else {
+        progressColor = originalColor;
+      }
+
+      // ---- Background track ring (so the progress ring reads as a ring, not a wedge) ----
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, ringRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(60,55,50,0.08)';
+      ctx.lineWidth = ringWidth;
+      ctx.stroke();
+
+      if (isOvertimeOn60min) {
+        // ---- Fixed arc: the original target duration, in its original color ----
+        if (redProgress > 0) {
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, ringRadius, startAngle, startAngle + redProgress * Math.PI * 2);
+          ctx.strokeStyle = originalColor;
+          ctx.lineWidth = ringWidth;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
+        // ---- Growing green arc: overtime, appended right after it ----
+        if (greenProgress > 0) {
+          const greenStart = startAngle + redProgress * Math.PI * 2;
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, ringRadius, greenStart, greenStart + greenProgress * Math.PI * 2);
+          ctx.strokeStyle = '#3f9d63';
+          ctx.lineWidth = ringWidth;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
+      } else if (isOvertimeOn25min) {
+        // ---- Outer ring: stays exactly as it finished (fully complete) ----
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, ringRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = originalColor;
+        ctx.lineWidth = ringWidth;
+        ctx.stroke();
+
+        // ---- Inner ring: overtime, growing in whole-minute steps ----
+        const innerRadius = ringRadius - ringWidth - 6 * scale;
+        const innerWidth = ringWidth * 0.75;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, innerRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(60,55,50,0.08)';
+        ctx.lineWidth = innerWidth;
+        ctx.stroke();
+        if (innerOvertimeProgress > 0) {
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, innerRadius, startAngle, startAngle + innerOvertimeProgress * Math.PI * 2);
+          ctx.strokeStyle = '#3f9d63';
+          ctx.lineWidth = innerWidth;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
+      } else if (progress > 0) {
+        // ---- Single progress ring (normal countdown / count-up) ----
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, ringRadius, startAngle, endAngle);
+        ctx.strokeStyle = progressColor;
+        ctx.lineWidth = ringWidth;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+
+      // ---- Center readout (no center dot/pin — cleaner face) ----
+      ctx.fillStyle = isOvertime ? progressColor : '#2b2a27';
+      ctx.font = `600 ${Math.round(20 * scale)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(formatTime(seconds), centerX, centerY - 3 * scale);
+
+      // Phase label (letter-spaced small caps for a more refined look)
+      ctx.font = `600 ${Math.round(9 * scale)}px system-ui, sans-serif`;
+      ctx.fillStyle = progressColor;
+      let phaseLabelShort;
+      if (isOvertime) {
+        const baseMinutes = Math.max(1, Math.round((totalDurationSeconds > 0 ? totalDurationSeconds : displayTotal) / 60));
+        const overtimeMinutes = Math.floor(overtimeSeconds / 60);
+        phaseLabelShort = overtimeMinutes > 0 ? `OVERTIME ${baseMinutes}+${overtimeMinutes}` : 'OVERTIME';
+      } else if (useRed) {
+        phaseLabelShort = '25 MIN FOCUS';
+      } else {
+        phaseLabelShort = currentPhase === 'focus' ? 'FOCUS' : (currentPhase === 'shortBreak' ? 'BREAK' : 'LONG BREAK');
+      }
+      ctx.fillText(phaseLabelShort, centerX, centerY + 28 * scale);
+    }
+
+    // ----- Timer controls -----
+    function stopTimer() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+      isRunning = false;
+      isPaused = false;
+      releaseWakeLock();
+    }
+
+    function resetTimerToPhase() {
+      stopTimer();
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      const duration = getDurationFromPhase(currentPhase);
+      remainingSeconds = duration;
+      totalDurationSeconds = duration;
+      elapsedSeconds = 0;
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    function switchPhase(newPhase) {
+      if (currentPhase === 'focus' && (newPhase === 'shortBreak' || newPhase === 'longBreak')) {
+        cycleCount += 1;
+      }
+      currentPhase = newPhase;
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      const duration = getDurationFromPhase(newPhase);
+      remainingSeconds = duration;
+      totalDurationSeconds = duration;
+      elapsedSeconds = 0;
+      if (newPhase === 'shortBreak' || newPhase === 'longBreak') {
+        playBreakStartSound();
+      }
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    // Lets you jump directly to a phase by clicking its duration box (e.g.
+    // back to Focus after a break) — only while idle, and doesn't count as
+    // a completed cycle since nothing was actually finished.
+    function selectPhase(phase) {
+      if (isRunning || isPaused) return;
+      if (phase === currentPhase) return;
+      sessionStartTimestamp = null;
+      currentPhase = phase;
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      const duration = getDurationFromPhase(phase);
+      remainingSeconds = duration;
+      totalDurationSeconds = duration;
+      elapsedSeconds = 0;
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    function onTimerComplete() {
+      stopTimer();
+      sessionStartTimestamp = null;
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      let nextPhase = 'focus';
+      if (currentPhase === 'focus') {
+        const cycle = cycleCount + 1;
+        if (cycle % 4 === 0) {
+          nextPhase = 'longBreak';
+        } else {
+          nextPhase = 'shortBreak';
+        }
+      } else {
+        nextPhase = 'focus';
+      }
+      switchPhase(nextPhase);
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    function tick() {
+      const now = Date.now();
+      if (clockMode === 'countdown') {
+        if (overtimeActive) {
+          // Section already hit its target — now counting up extra time on top of it.
+          overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+          elapsedSeconds = totalDurationSeconds + overtimeSeconds;
+          playTickSound();
+          updateDisplay();
+          if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+          return;
+        }
+        // Recompute from the absolute end timestamp every tick instead of
+        // just subtracting 1. This keeps the countdown accurate to real
+        // wall-clock time even if the browser throttles a background tab
+        // and setInterval fires late or skips beats — otherwise a 25:00
+        // countdown can silently stretch out to 35+ real minutes.
+        const secsLeft = Math.max(0, Math.round((targetEndTime - now) / 1000));
+        const delta = remainingSeconds - secsLeft;
+        if (delta > 0) elapsedSeconds += delta;
+        remainingSeconds = secsLeft;
+        if (remainingSeconds <= 0) {
+          // Target reached: don't stop — flip into overtime so the section
+          // turns green and keeps counting up to track the accumulated total.
+          // Anchor overtime to the exact scheduled end time (not "now") so
+          // that if this tick fired late — e.g. right after the device woke
+          // from sleep — the overtime total still reflects the real time
+          // since the target was reached, not just since we noticed.
+          remainingSeconds = 0;
+          overtimeActive = true;
+          overtimeStartTime = targetEndTime;
+          overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+          playTimeUpSound();
+          updateDisplay();
+          if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+          return;
+        }
+        playTickSound();
+      } else {
+        elapsedSeconds = Math.round((now - countUpStartTime) / 1000);
+        playTickSound();
+      }
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    function startTimer() {
+      if (isRunning && !isPaused) return;
+      const now = Date.now();
+      if (isPaused) {
+        isPaused = false;
+        if (clockMode === 'countdown') {
+          if (overtimeActive) {
+            overtimeStartTime = now - overtimeSeconds * 1000;
+          } else {
+            targetEndTime = now + remainingSeconds * 1000;
+          }
+        } else {
+          countUpStartTime = now - elapsedSeconds * 1000;
+        }
+        timerInterval = setInterval(tick, 1000);
+        isRunning = true;
+        requestWakeLock();
+        return;
+      }
+      if (clockMode === 'countdown') {
+        if (remainingSeconds <= 0 && !overtimeActive) {
+          const duration = getDurationFromPhase(currentPhase);
+          remainingSeconds = duration;
+          totalDurationSeconds = duration;
+          elapsedSeconds = 0;
+        }
+        if (overtimeActive) {
+          overtimeStartTime = now - overtimeSeconds * 1000;
+        } else {
+          targetEndTime = now + remainingSeconds * 1000;
+        }
+      } else {
+        if (elapsedSeconds === 0) {
+          totalDurationSeconds = getDurationFromPhase(currentPhase);
+        }
+        countUpStartTime = now - elapsedSeconds * 1000;
+      }
+      sessionStartTimestamp = new Date();
+      stopTimer();
+      timerInterval = setInterval(tick, 1000);
+      isRunning = true;
+      isPaused = false;
+      requestWakeLock();
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    function pauseTimer() {
+      if (!isRunning || isPaused) return;
+      const now = Date.now();
+      if (clockMode === 'countdown') {
+        if (overtimeActive) {
+          overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+          elapsedSeconds = totalDurationSeconds + overtimeSeconds;
+        } else {
+          remainingSeconds = Math.max(0, Math.round((targetEndTime - now) / 1000));
+        }
+      } else {
+        elapsedSeconds = Math.round((now - countUpStartTime) / 1000);
+      }
+      stopTimer();
+      isPaused = true;
+      isRunning = false;
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    function resetTimer() {
+      stopTimer();
+      isPaused = false;
+      isRunning = false;
+      sessionStartTimestamp = null;
+      // Always just restore the *current* phase's configured duration —
+      // never silently advance to the next phase (that's what Finish is
+      // for). Otherwise, resetting during overtime would jump you onto a
+      // different phase's duration (e.g. Focus's 25min -> Short Break's
+      // 5min) with no obvious way back.
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      const duration = getDurationFromPhase(currentPhase);
+      remainingSeconds = duration;
+      totalDurationSeconds = duration;
+      elapsedSeconds = 0;
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    // Ends the current session early and counts it as complete — advances
+    // to the next phase (and increments the cycle count for a focus
+    // session), same as if the countdown had reached zero naturally.
+    function finishSession() {
+      if (!isRunning && !isPaused) return;
+      // If there's a note typed for this focus session, save it as a
+      // calendar record before advancing — otherwise whatever was typed
+      // would just be lost the moment the phase changes.
+      if (currentPhase === 'focus' && noteTitleInput.value.trim()) {
+        const finishedNote = addNote();
+        if (finishedNote) syncNoteToCalendar(finishedNote);
+      }
+      onTimerComplete();
+    }
+
+    // Ends the current session early WITHOUT counting it as complete —
+    // stays on the same phase and just restores its full duration, ready
+    // to start again. Only meaningful while a session is actually active.
+    function abandonSession() {
+      if (!isRunning && !isPaused) return;
+      resetTimer();
+    }
+
+    // Quick add duration
+    // Adjusts the current session by +/- minutes (the +5/-5 stepper).
+    // Handles all three states cleanly: normal countdown, overtime (adjusts
+    // the accumulated extra time instead), and count-up.
+    function adjustTime(minutes) {
+      const deltaSeconds = minutes * 60;
+      const isOvertime = (clockMode === 'countdown' && overtimeActive);
+      if (isOvertime) {
+        overtimeSeconds = Math.max(0, overtimeSeconds + deltaSeconds);
+        elapsedSeconds = totalDurationSeconds + overtimeSeconds;
+        if (isRunning && !isPaused) {
+          overtimeStartTime = Date.now() - overtimeSeconds * 1000;
+        }
+      } else if (clockMode === 'countdown') {
+        remainingSeconds = Math.min(Math.max(remainingSeconds + deltaSeconds, 60), 120 * 60);
+        totalDurationSeconds = remainingSeconds;
+        if (isRunning && !isPaused) {
+          targetEndTime = Date.now() + remainingSeconds * 1000;
+        }
+      } else {
+        elapsedSeconds = Math.min(Math.max(elapsedSeconds + deltaSeconds, 0), 120 * 60);
+        if (isRunning && !isPaused) {
+          countUpStartTime = Date.now() - elapsedSeconds * 1000;
+        }
+      }
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    // ----- Notes -----
+    function renderNotes() {
+      noteListContainer.innerHTML = '';
+      if (notes.length === 0) {
+        noteListContainer.innerHTML = '<div style="padding: 8px 14px; color: #7b7168; font-style: italic; font-size:0.85rem;">No notes yet. Add a note for this Pomodoro.</div>';
+        noteCounter.textContent = '0';
+        return;
+      }
+      const sorted = [...notes].reverse();
+      for (const note of sorted) {
+        const div = document.createElement('div');
+        div.className = 'note-item';
+        if (note.editMode) {
+          const noteDate = new Date(note.timestamp);
+          const noteEndDate = new Date(noteDate.getTime() + note.duration * 1000);
+          div.innerHTML = `
+            <input type="text" class="edit-title-input" id="edit-title-${note.id}" value="${escapeHtml(getNoteTitle(note))}" placeholder="Session title" />
+            <div class="edit-time-row">
+              <label>Start <input type="time" class="edit-start-input" value="${toTimeInputValue(noteDate)}"></label>
+              <label>End <input type="time" class="edit-end-input" value="${toTimeInputValue(noteEndDate)}"></label>
+            </div>
+            <textarea class="edit-textarea" id="edit-${note.id}" placeholder="Optional details…">${escapeHtml(getNoteBody(note))}</textarea>
+            <div class="edit-actions">
+              <button class="save-edit" data-id="${note.id}">💾 Save</button>
+              <button class="cancel-edit" data-id="${note.id}">Cancel</button>
+            </div>
+          `;
+          noteListContainer.appendChild(div);
+          const saveBtn = div.querySelector('.save-edit');
+          const cancelBtn = div.querySelector('.cancel-edit');
+          const titleInput = div.querySelector('.edit-title-input');
+          const startInput = div.querySelector('.edit-start-input');
+          const endInput = div.querySelector('.edit-end-input');
+          const textarea = div.querySelector('textarea');
+          attachBulletBehavior(textarea);
+          saveBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const newTitle = titleInput.value.trim();
+            if (!newTitle) { alert('Please give this session a title.'); return; }
+            const idx = notes.findIndex(n => n.id === note.id);
+            if (idx !== -1) {
+              notes[idx].title = newTitle;
+              notes[idx].text = normalizeNoteText(textarea.value);
+              const timing = computeEditedTiming(notes[idx].timestamp, startInput.value, endInput.value);
+              if (timing) {
+                notes[idx].timestamp = timing.timestamp;
+                notes[idx].duration = timing.duration;
+              }
+              notes[idx].editMode = false;
+              renderNotes();
+              syncNoteToCalendar(notes[idx]);
+            }
+          });
+          cancelBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = notes.findIndex(n => n.id === note.id);
+            if (idx !== -1) {
+              notes[idx].editMode = false;
+              renderNotes();
+            }
+          });
+          continue;
+        }
+
+        const date = new Date(note.timestamp);
+        const endDate = new Date(date.getTime() + note.duration * 1000);
+        const timeStr = date.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+        const endTimeStr = endDate.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'});
+        const bodyText = getNoteBody(note);
+        div.innerHTML = `
+          <div class="note-top">
+            <div class="note-text">
+              <div class="note-item-title">${escapeHtml(getNoteTitle(note))}</div>
+              ${bodyText ? `<div class="note-item-body">${escapeHtml(bodyText)}</div>` : ''}
+            </div>
+            <div class="note-actions">
+              <button class="edit-btn" data-id="${note.id}">✏️</button>
+              <button class="del-btn" data-id="${note.id}">🗑</button>
+            </div>
+          </div>
+          <div class="note-meta">
+            <span>🕒 ${timeStr} – ${endTimeStr}</span>
+            <span>#${note.id}</span>
+          </div>
+        `;
+        noteListContainer.appendChild(div);
+
+        const editBtn = div.querySelector('.edit-btn');
+        const delBtn = div.querySelector('.del-btn');
+        editBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = notes.findIndex(n => n.id === note.id);
+          if (idx !== -1) {
+            notes[idx].editMode = true;
+            renderNotes();
+          }
+        });
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (confirm('Delete this note?')) {
+            deleteNoteFromCalendar(note);
+            notes = notes.filter(n => n.id !== note.id);
+            renderNotes();
+          }
+        });
+      }
+      noteCounter.textContent = notes.length;
+      if (notesViewMode === 'schedule') {
+        renderSchedule();
+      }
+      scheduleCloudPush();
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Older notes only ever had a single `text` field. For those, treat the
+    // text itself as the title (no separate body) so nothing looks broken;
+    // newer notes carry an explicit `title` plus optional `text` details.
+    function normalizeNoteText(str) {
+      // Collapse any blank lines so notes stay compact — a note shouldn't
+      // grow tall just because someone pressed Enter twice while typing.
+      return (str || '').trim().replace(/\n\s*\n+/g, '\n');
+    }
+
+    // ----- Auto-bulleted "Optional details" textareas -----
+    // Starts a fresh field with a bullet, and continues the bullet on Enter.
+    // Pressing Enter on an empty bullet line (nothing typed after "• ") ends
+    // the list instead of adding yet another empty bullet.
+    function attachBulletBehavior(textarea) {
+      textarea.addEventListener('focus', () => {
+        if (textarea.value === '') {
+          textarea.value = '• ';
+          textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+        }
+      });
+      textarea.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const value = textarea.value;
+        const pos = textarea.selectionStart;
+        const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
+        const currentLine = value.slice(lineStart, pos);
+        if (/^•\s*$/.test(currentLine)) {
+          // Empty bullet — pressing Enter here ends the list instead of
+          // stacking another blank bullet underneath.
+          textarea.value = value.slice(0, lineStart) + value.slice(pos);
+          textarea.selectionStart = textarea.selectionEnd = lineStart;
+        } else {
+          const insertion = '\n• ';
+          textarea.value = value.slice(0, pos) + insertion + value.slice(pos);
+          textarea.selectionStart = textarea.selectionEnd = pos + insertion.length;
+        }
+      });
+    }
+
+    function getNoteTitle(note) {
+      if (note.title && note.title.trim()) return note.title.trim();
+      if (note.text && note.text.trim()) return note.text.trim().split('\n')[0].trim();
+      return 'Untitled session';
+    }
+    function getNoteBody(note) {
+      if (note.title && note.title.trim()) return normalizeNoteText(note.text || '');
+      if (note.text && note.text.trim()) {
+        const lines = note.text.trim().split('\n');
+        return normalizeNoteText(lines.slice(1).join('\n'));
+      }
+      return '';
+    }
+
+    // ----- Editable start/end time helpers (used by both the Notes list
+    // inline editor and the Day Schedule popup) -----
+    function toTimeInputValue(date) {
+      return date.toTimeString().slice(0, 5); // "HH:MM"
+    }
+
+    // Given a note's current timestamp plus edited "HH:MM" start/end strings,
+    // returns a new { timestamp, duration } pair. Keeps the same calendar
+    // day the note was already on; if the end time is earlier than the
+    // start time, assumes the session ran past midnight into the next day.
+    function computeEditedTiming(originalTimestampISO, startStr, endStr) {
+      if (!startStr || !endStr) return null;
+      const sParts = startStr.split(':').map(Number);
+      const eParts = endStr.split(':').map(Number);
+      if (sParts.some(isNaN) || eParts.some(isNaN)) return null;
+      const base = new Date(originalTimestampISO);
+      const start = new Date(base);
+      start.setHours(sParts[0], sParts[1], 0, 0);
+      let end = new Date(base);
+      end.setHours(eParts[0], eParts[1], 0, 0);
+      if (end <= start) {
+        end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+      }
+      const durationSec = Math.max(60, Math.round((end - start) / 1000));
+      return { timestamp: start.toISOString(), duration: durationSec };
+    }
+
+    // ----- Notes / Day schedule view toggle -----
+    function setNotesViewMode(mode) {
+      notesViewMode = mode;
+      notesViewBtn.classList.toggle('active', mode === 'notes');
+      scheduleViewBtn.classList.toggle('active', mode === 'schedule');
+      notesPanel.style.display = mode === 'notes' ? 'flex' : 'none';
+      schedulePanel.style.display = mode === 'schedule' ? 'flex' : 'none';
+      if (mode === 'schedule') {
+        renderSchedule();
+        scrollScheduleToNow();
+      }
+    }
+
+    function isSameDay(a, b) {
+      return a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate();
+    }
+
+    function scheduleDayLabelText(date) {
+      const today = new Date();
+      const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+      const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+      if (isSameDay(date, today)) return 'Today';
+      if (isSameDay(date, yesterday)) return 'Yesterday';
+      if (isSameDay(date, tomorrow)) return 'Tomorrow';
+      return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+
+    const SCHEDULE_HOUR_HEIGHT = 56; // px per hour on the day timeline
+    const SCHEDULE_PHASE_COLOR = {
+      focus: '#b15e5e',
+      shortBreak: '#4f8a6f',
+      longBreak: '#4a7a9c',
+    };
+    const SCHEDULE_PHASE_EMOJI = {
+      focus: '🍅',
+      shortBreak: '☕',
+      longBreak: '🌿',
+    };
+
+    function renderSchedule() {
+      scheduleDayLabel.textContent = scheduleDayLabelText(scheduleDate);
+      scheduleTimeline.innerHTML = '';
+      scheduleTimeline.style.height = (SCHEDULE_HOUR_HEIGHT * 24) + 'px';
+
+      // Hour gridlines + labels
+      for (let h = 0; h < 24; h++) {
+        const line = document.createElement('div');
+        line.className = 'schedule-hour-line';
+        line.style.top = (h * SCHEDULE_HOUR_HEIGHT) + 'px';
+        scheduleTimeline.appendChild(line);
+
+        const label = document.createElement('div');
+        label.className = 'schedule-hour-label';
+        label.style.top = (h * SCHEDULE_HOUR_HEIGHT) + 'px';
+        const hourLabel = h === 0 ? '12 AM' : (h < 12 ? `${h} AM` : (h === 12 ? '12 PM' : `${h - 12} PM`));
+        label.textContent = hourLabel;
+        scheduleTimeline.appendChild(label);
+      }
+
+      // Session blocks for the selected day, drawn from each note's
+      // timestamp + duration (the same data already shown in the Notes list).
+      const dayNotes = notes.filter(n => isSameDay(new Date(n.timestamp), scheduleDate));
+      dayNotes.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      if (dayNotes.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'schedule-empty';
+        empty.textContent = 'No sessions logged for this day.';
+        empty.style.position = 'absolute';
+        empty.style.top = '20px';
+        empty.style.left = '10px';
+        empty.style.right = '10px';
+        scheduleTimeline.appendChild(empty);
+      }
+
+      for (const note of dayNotes) {
+        const start = new Date(note.timestamp);
+        const minutesSinceMidnight = start.getHours() * 60 + start.getMinutes();
+        const durationMinutes = Math.max(1, Math.round(note.duration / 60));
+        const top = (minutesSinceMidnight / 60) * SCHEDULE_HOUR_HEIGHT;
+        const height = Math.max(20, (durationMinutes / 60) * SCHEDULE_HOUR_HEIGHT);
+
+        const block = document.createElement('div');
+        block.className = 'schedule-block';
+        block.style.top = top + 'px';
+        block.style.height = height + 'px';
+        block.style.background = SCHEDULE_PHASE_COLOR[note.phase] || SCHEDULE_PHASE_COLOR.focus;
+        const timeStr = start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        const emoji = SCHEDULE_PHASE_EMOJI[note.phase] || '🍅';
+        block.innerHTML = `
+          <div class="sb-title">${emoji} ${escapeHtml(getNoteTitle(note))}</div>
+          <div class="sb-meta">${timeStr}</div>
+        `;
+        block.addEventListener('click', () => openScheduleModal(note.id));
+        block.addEventListener('mouseenter', () => showScheduleTooltip(block, note));
+        block.addEventListener('mouseleave', hideScheduleTooltip);
+        scheduleTimeline.appendChild(block);
+      }
+
+      // "Now" line, only drawn when viewing today
+      const now = new Date();
+      if (isSameDay(scheduleDate, now)) {
+        const nowMinutes = now.getHours() * 60 + now.getMinutes();
+        const nowTop = (nowMinutes / 60) * SCHEDULE_HOUR_HEIGHT;
+        const nowLine = document.createElement('div');
+        nowLine.className = 'schedule-now-line';
+        nowLine.style.top = nowTop + 'px';
+        scheduleTimeline.appendChild(nowLine);
+        const nowDot = document.createElement('div');
+        nowDot.className = 'schedule-now-dot';
+        nowDot.style.top = nowTop + 'px';
+        scheduleTimeline.appendChild(nowDot);
+      }
+    }
+
+    // Scrolls the timeline so the current time is in view (roughly a third
+    // of the way down, giving context before and after) — only when the
+    // day being displayed is actually today.
+    function scrollScheduleToNow() {
+      if (!isSameDay(scheduleDate, new Date())) return;
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const nowTop = (nowMinutes / 60) * SCHEDULE_HOUR_HEIGHT;
+      const wrapperHeight = scheduleTimelineWrapper.clientHeight;
+      scheduleTimelineWrapper.scrollTop = Math.max(0, nowTop - wrapperHeight / 3);
+    }
+
+    // ----- Schedule block hover tooltip -----
+    // A single shared tooltip appended to <body> (not inside the scrollable
+    // timeline) so it's never clipped by the wrapper's overflow, and
+    // positioned via getBoundingClientRect() against whichever block is
+    // currently hovered.
+    function showScheduleTooltip(block, note) {
+      const title = getNoteTitle(note);
+      const body = getNoteBody(note);
+      scheduleTooltip.innerHTML = `
+        <div class="st-title">${escapeHtml(title)}</div>
+        ${body ? `<div class="st-body">${escapeHtml(body)}</div>` : ''}
+      `;
+      scheduleTooltip.style.display = 'block';
+
+      const rect = block.getBoundingClientRect();
+      const tipRect = scheduleTooltip.getBoundingClientRect();
+      let left = rect.left;
+      let top = rect.top - tipRect.height - 8;
+      if (top < 8) top = rect.bottom + 8; // not enough room above -> show below instead
+      const maxLeft = window.innerWidth - tipRect.width - 8;
+      left = Math.max(8, Math.min(left, maxLeft));
+      scheduleTooltip.style.left = left + 'px';
+      scheduleTooltip.style.top = top + 'px';
+    }
+
+    function hideScheduleTooltip() {
+      scheduleTooltip.style.display = 'none';
+    }
+
+    // ----- Schedule block edit modal -----
+    function openScheduleModal(noteId) {
+      const note = notes.find(n => n.id === noteId);
+      if (!note) return;
+      scheduleModalNoteId = noteId;
+      const start = new Date(note.timestamp);
+      const end = new Date(start.getTime() + note.duration * 1000);
+      const timeStr = start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const emoji = SCHEDULE_PHASE_EMOJI[note.phase] || '🍅';
+      scheduleModalMeta.textContent = `${emoji} ${timeStr}`;
+      scheduleModalTitleInput.value = getNoteTitle(note);
+      scheduleModalStartInput.value = toTimeInputValue(start);
+      scheduleModalEndInput.value = toTimeInputValue(end);
+      scheduleModalTextarea.value = getNoteBody(note);
+      scheduleModalBackdrop.style.display = 'flex';
+      scheduleModalTitleInput.focus();
+    }
+
+    function closeScheduleModal() {
+      scheduleModalBackdrop.style.display = 'none';
+      scheduleModalNoteId = null;
+    }
+
+    function saveScheduleModal() {
+      if (scheduleModalNoteId === null) return;
+      const newTitle = scheduleModalTitleInput.value.trim();
+      if (!newTitle) {
+        alert('Please give this session a title.');
+        return;
+      }
+      const idx = notes.findIndex(n => n.id === scheduleModalNoteId);
+      if (idx !== -1) {
+        notes[idx].title = newTitle;
+        notes[idx].text = normalizeNoteText(scheduleModalTextarea.value);
+        const timing = computeEditedTiming(notes[idx].timestamp, scheduleModalStartInput.value, scheduleModalEndInput.value);
+        if (timing) {
+          notes[idx].timestamp = timing.timestamp;
+          notes[idx].duration = timing.duration;
+        }
+        renderNotes();
+        syncNoteToCalendar(notes[idx]);
+      }
+      closeScheduleModal();
+    }
+
+    function deleteScheduleModalNote() {
+      if (scheduleModalNoteId === null) return;
+      if (confirm('Delete this note?')) {
+        const note = notes.find(n => n.id === scheduleModalNoteId);
+        if (note) deleteNoteFromCalendar(note);
+        notes = notes.filter(n => n.id !== scheduleModalNoteId);
+        renderNotes();
+        closeScheduleModal();
+      }
+    }
+
+    function addNote() {
+      const title = noteTitleInput.value.trim();
+      const text = normalizeNoteText(noteInput.value);
+      if (!title) {
+        alert('Please give this session a title.');
+        return;
+      }
+      // Timestamp the note with when this session actually STARTED (not
+      // "whenever I got around to clicking Add"), so the Day Schedule block
+      // lands on the real start time instead of appearing to begin now and
+      // run forward. Falls back to "now" if no session was ever started
+      // (e.g. a standalone note jotted down while idle).
+      const now = sessionStartTimestamp || new Date();
+      // Use whichever is larger: the planned target duration, or the actual
+      // elapsed time. This way a session logged mid-overtime records its
+      // real total time (target + overtime) instead of just the target —
+      // so the Day Schedule block height reflects what actually happened.
+      const actualDuration = Math.max(totalDurationSeconds, elapsedSeconds);
+      const note = {
+        id: nextNoteId++,
+        title: title,
+        text: text,
+        timestamp: now.toISOString(),
+        phase: currentPhase,
+        duration: actualDuration,
+        editMode: false,
+      };
+      notes.push(note);
+      noteTitleInput.value = '';
+      noteInput.value = '';
+      renderNotes();
+      return note;
+    }
+
+    // ----- Export functions -----
+    function getSectionTitle() {
+      return notesTitleInput.value.trim() || 'Notes';
+    }
+
+    // Shared multi-line-aware formatter for exports — keeps the title on
+    // its own line with the time/duration, and indents any details
+    // underneath so multi-line notes don't run together into one messy line.
+    function formatNoteForExport(note, idx) {
+      const date = new Date(note.timestamp);
+      const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const title = getNoteTitle(note);
+      const body = getNoteBody(note);
+      let out = `${idx + 1}. ${title} (🕒 ${timeStr})`;
+      if (body) {
+        out += '\n' + body.split('\n').map(line => `    ${line}`).join('\n');
+      }
+      return out;
+    }
+
+    function exportToGoogleCalendar() {
+      if (notes.length === 0) {
+        alert('No notes to export. Add a note first!');
+        return;
+      }
+      const now = new Date();
+      const startTime = new Date(now);
+      startTime.setMinutes(now.getMinutes() + 2);
+      const endTime = new Date(startTime);
+      endTime.setMinutes(startTime.getMinutes() + 30);
+
+      const title = getSectionTitle();
+      let description = `${title}\n${'='.repeat(title.length)}\n\n`;
+      
+      notes.forEach((n, idx) => {
+        description += formatNoteForExport(n, idx) + '\n\n';
+      });
+
+      const startStr = startTime.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      const endStr = endTime.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      const encodedDesc = encodeURIComponent(description);
+      const eventTitle = encodeURIComponent(`${title} (${notes.length} entries)`);
+      const url = `https://www.google.com/calendar/render?action=TEMPLATE&text=${eventTitle}&dates=${startStr}/${endStr}&details=${encodedDesc}`;
+      window.open(url, '_blank');
+    }
+
+    function copyNotesToClipboard() {
+      if (notes.length === 0) {
+        alert('No notes to copy.');
+        return;
+      }
+      const title = getSectionTitle();
+      let text = `${title}\n${'='.repeat(title.length)}\n\n`;
+      
+      notes.forEach((n, idx) => {
+        text += formatNoteForExport(n, idx) + '\n\n';
+      });
+      
+      navigator.clipboard.writeText(text).then(() => {
+        alert('Notes copied to clipboard!');
+      }).catch(() => {
+        alert('Could not copy. Please copy manually.');
+      });
+    }
+
+    // ----- Full backup export / import (for moving data between devices) -----
+    function buildSyncPayload() {
+      return {
+        app: 'pomodoro-tracker-backup',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        notes: notes,
+        nextNoteId: nextNoteId,
+        cycleCount: cycleCount,
+        settings: {
+          focusDuration: focusInput.value,
+          shortBreakDuration: shortInput.value,
+          longBreakDuration: longInput.value,
+          timerTitle: timerTitleInput.value,
+          notesTitle: notesTitleInput.value,
+          pomodoroCalendarId: gcalCalendarId || null,
+        },
+      };
+    }
+
+    function applySyncPayload(data, replace) {
+      if (replace) {
+        notes = data.notes.slice();
+      } else {
+        let maxId = notes.reduce((m, n) => Math.max(m, n.id || 0), 0);
+        const imported = data.notes.map(n => Object.assign({}, n, { id: ++maxId }));
+        notes = notes.concat(imported);
+      }
+      nextNoteId = notes.reduce((m, n) => Math.max(m, n.id || 0), 0) + 1;
+
+      if (data.settings) {
+        if (data.settings.focusDuration) focusInput.value = data.settings.focusDuration;
+        if (data.settings.shortBreakDuration) shortInput.value = data.settings.shortBreakDuration;
+        if (data.settings.longBreakDuration) longInput.value = data.settings.longBreakDuration;
+        if (data.settings.timerTitle) timerTitleInput.value = data.settings.timerTitle;
+        if (data.settings.notesTitle) notesTitleInput.value = data.settings.notesTitle;
+        if (data.settings.pomodoroCalendarId) gcalCalendarId = data.settings.pomodoroCalendarId;
+      }
+      if (replace && typeof data.cycleCount === 'number') {
+        cycleCount = data.cycleCount;
+      }
+      renderNotes();
+      updateDisplay();
+    }
+
+    function exportBackup() {
+      const backup = buildSyncPayload();
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const dateStr = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `pomodoro-backup-${dateStr}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function importBackupFromFile(file) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        let data;
+        try {
+          data = JSON.parse(e.target.result);
+        } catch (err) {
+          alert("Could not read this file — make sure it's a backup exported from this app.");
+          return;
+        }
+        if (!data || !Array.isArray(data.notes)) {
+          alert("This file doesn't look like a valid backup.");
+          return;
+        }
+        const replace = confirm(
+          `This backup has ${data.notes.length} note(s).\n\nOK = replace all current notes with the backup.\nCancel = merge the backup into your current notes.`
+        );
+        applySyncPayload(data, replace);
+        alert('Backup imported!');
+        scheduleCloudPush();
+      };
+      reader.readAsText(file);
+    }
+
+    function clearNotes() {
+      if (notes.length === 0) return;
+      if (confirm('Delete all notes?')) {
+        notes = [];
+        renderNotes();
+      }
+    }
+
+    // ----- Display & time options: localStorage persistence -----
+    const PT_DISPLAY_PREFS_KEY = 'pomodoroDisplayPrefs';
+
+    function saveDisplayPrefs() {
+      try {
+        localStorage.setItem(PT_DISPLAY_PREFS_KEY, JSON.stringify({
+          viewMode: viewMode,
+          analogMode: analogMode,
+          clockMode: clockMode,
+          soundEnabled: soundEnabled,
+          keepAwakeEnabled: keepAwakeEnabled,
+        }));
+      } catch (e) { /* localStorage unavailable — ignore, nothing to persist */ }
+    }
+
+    function loadDisplayPrefs() {
+      try {
+        const raw = localStorage.getItem(PT_DISPLAY_PREFS_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // ----- Sound effects (synthesized with Web Audio API — no external
+    // files needed). Three distinct cues:
+    //   - a soft tick every second while the timer is running
+    //   - a brighter alert the moment a session's target duration is up
+    //   - a slower, warmer chime when a break phase begins
+    // All three respect the soundEnabled toggle and fail silently if the
+    // browser blocks audio before the user has interacted with the page.
+    let soundEnabled = true;
+    let audioCtx = null;
+
+    function getAudioCtx() {
+      if (!audioCtx) {
+        try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        catch (e) { return null; }
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+      return audioCtx;
+    }
+
+    function playTone(freq, duration, type, startOffset, peakGain) {
+      const ctx = getAudioCtx();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      const t0 = ctx.currentTime + (startOffset || 0);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.linearRampToValueAtTime(peakGain, t0 + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + duration + 0.05);
+    }
+
+    function playTickSound() {
+      if (!soundEnabled) return;
+      playTone(1500, 0.045, 'square', 0, 0.035);
+    }
+
+    function playTimeUpSound() {
+      if (!soundEnabled) return;
+      // Short, bright three-note rise — hard to miss but not jarring.
+      playTone(880, 0.16, 'sine', 0, 0.2);
+      playTone(1108, 0.18, 'sine', 0.14, 0.18);
+      playTone(1320, 0.28, 'sine', 0.3, 0.16);
+    }
+
+    function playBreakStartSound() {
+      if (!soundEnabled) return;
+      // Slow, soft major chord (C-E-G) with a gentle attack — meant to
+      // feel like an exhale rather than an alarm.
+      playTone(523.25, 1.0, 'sine', 0, 0.09);
+      playTone(659.25, 1.0, 'sine', 0.1, 0.08);
+      playTone(783.99, 1.3, 'sine', 0.22, 0.07);
+    }
+
+    function setSoundEnabled(enabled, skipSave) {
+      soundEnabled = enabled;
+      if (soundToggleBtn) {
+        soundToggleBtn.textContent = enabled ? '🔊 Sound' : '🔇 Muted';
+        soundToggleBtn.style.background = enabled ? '#8a7a68' : '#a09284';
+      }
+      if (!skipSave) saveDisplayPrefs();
+    }
+
+    // ----- Staying accurate through sleep/lock, without spending extra
+    // battery by default -----
+    //
+    // A phone or laptop that's actually asleep (screen locked, lid closed)
+    // fully suspends every web page's JavaScript — no timer, no website,
+    // can tick during real OS-level sleep, and nothing here tries to fight
+    // that. Two things soften the effect instead:
+    //
+    //  1. Free, always on: every tick already computes remaining/elapsed
+    //     time from absolute timestamps rather than counting down by 1, so
+    //     the instant the page wakes up (tab refocused, screen unlocked)
+    //     it snaps to the correct real-world time — including noticing a
+    //     session finished while you were away and firing the "time's up"
+    //     chime then, not silently.
+    //  2. Opt-in, costs battery: the "Keep awake" toggle asks the browser
+    //     to hold the screen on (Wake Lock API) while a session is running,
+    //     so the display never sleeps in the first place. Off by default;
+    //     it releases itself the moment you pause, finish, or reset.
+    function catchUpFromWallClock() {
+      if (!isRunning || isPaused) return;
+      const now = Date.now();
+      if (clockMode === 'countdown') {
+        if (overtimeActive) {
+          overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+          elapsedSeconds = totalDurationSeconds + overtimeSeconds;
+        } else {
+          const secsLeft = Math.max(0, Math.round((targetEndTime - now) / 1000));
+          const delta = remainingSeconds - secsLeft;
+          if (delta > 0) elapsedSeconds += delta;
+          remainingSeconds = secsLeft;
+          if (remainingSeconds <= 0) {
+            remainingSeconds = 0;
+            overtimeActive = true;
+            overtimeStartTime = targetEndTime;
+            overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+            playTimeUpSound();
+          }
+        }
+      } else {
+        elapsedSeconds = Math.round((now - countUpStartTime) / 1000);
+      }
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    async function requestWakeLock() {
+      if (!keepAwakeEnabled || !isRunning) return;
+      if (!('wakeLock' in navigator)) return;
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } catch (e) {
+        // Common causes: low battery mode, permission denied, or the tab
+        // isn't visible yet — none of these are worth surfacing to the user.
+        wakeLock = null;
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+        wakeLock = null;
+      }
+    }
+
+    function setKeepAwakeEnabled(enabled, skipSave) {
+      keepAwakeEnabled = enabled;
+      const supported = 'wakeLock' in navigator;
+      if (keepAwakeBtn) {
+        keepAwakeBtn.textContent = enabled ? '🔆 Keep awake: On' : '🔆 Keep awake: Off';
+        keepAwakeBtn.style.background = enabled ? '#5c7a4e' : '#7a8a6e';
+        keepAwakeBtn.title = supported
+          ? 'Keep the screen on while a session runs (uses more battery)'
+          : 'Keep the screen on while a session runs (not supported in this browser — the timer will still self-correct when you return)';
+      }
+      if (enabled) {
+        requestWakeLock();
+      } else {
+        releaseWakeLock();
+      }
+      if (!skipSave) saveDisplayPrefs();
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        catchUpFromWallClock();
+        requestWakeLock(); // the browser auto-releases the old lock once the tab is hidden
+      }
+    });
+    window.addEventListener('focus', catchUpFromWallClock);
+
+    // ----- View mode -----
+    function setViewMode(mode, skipSave) {
+      viewMode = mode;
+      digitalViewBtn.classList.toggle('active', mode === 'digital');
+      analogViewBtn.classList.toggle('active', mode === 'analog');
+      if (mode === 'digital') {
+        timerDisplay.style.display = 'block';
+        analogContainer.style.display = 'none';
+        analogOptions.style.display = 'none';
+      } else {
+        timerDisplay.style.display = 'none';
+        analogContainer.style.display = 'flex';
+        analogOptions.style.display = 'flex';
+      }
+      updateDisplay();
+      if (!skipSave) saveDisplayPrefs();
+    }
+
+    // ----- Analog mode -----
+    function setAnalogMode(mode, skipSave) {
+      analogMode = mode;
+      analog60min.classList.toggle('active', mode === '60min');
+      analog25min.classList.toggle('active', mode === '25min');
+      if (viewMode === 'analog') {
+        drawAnalog(getDisplaySeconds());
+      }
+      if (!skipSave) saveDisplayPrefs();
+    }
+
+    // ----- Clock mode -----
+    function setClockMode(mode, skipSave) {
+      clockMode = mode;
+      countdownModeBtn.classList.toggle('active', mode === 'countdown');
+      countupModeBtn.classList.toggle('active', mode === 'countup');
+      stopTimer();
+      isPaused = false;
+      isRunning = false;
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      const duration = getDurationFromPhase(currentPhase);
+      remainingSeconds = duration;
+      totalDurationSeconds = duration;
+      elapsedSeconds = 0;
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+      if (!skipSave) saveDisplayPrefs();
+    }
+
+    // ----- Init -----
+    function init() {
+      const initialFocus = parseInt(focusInput.value, 10) || 25;
+      remainingSeconds = initialFocus * 60;
+      totalDurationSeconds = remainingSeconds;
+      elapsedSeconds = 0;
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      currentPhase = 'focus';
+      cycleCount = 0;
+      updateDisplay();
+
+      const savedPrefs = loadDisplayPrefs();
+      setViewMode(savedPrefs && savedPrefs.viewMode ? savedPrefs.viewMode : 'digital', true);
+      setAnalogMode(savedPrefs && savedPrefs.analogMode ? savedPrefs.analogMode : '60min', true);
+      setClockMode(savedPrefs && savedPrefs.clockMode ? savedPrefs.clockMode : 'countdown', true);
+      setSoundEnabled(savedPrefs && typeof savedPrefs.soundEnabled === 'boolean' ? savedPrefs.soundEnabled : true, true);
+      setKeepAwakeEnabled(savedPrefs && typeof savedPrefs.keepAwakeEnabled === 'boolean' ? savedPrefs.keepAwakeEnabled : false, true);
+
+      soundToggleBtn.addEventListener('click', () => setSoundEnabled(!soundEnabled));
+      keepAwakeBtn.addEventListener('click', () => setKeepAwakeEnabled(!keepAwakeEnabled));
+
+      startBtn.addEventListener('click', startTimer);
+      pauseBtn.addEventListener('click', pauseTimer);
+      resetBtn.addEventListener('click', resetTimer);
+
+      settingsToggleBtn.addEventListener('click', () => {
+        const isOpen = settingsPanel.style.display !== 'none';
+        settingsPanel.style.display = isOpen ? 'none' : 'block';
+        settingsToggleArrow.textContent = isOpen ? '▾' : '▴';
+      });
+
+      [
+        [focusDurationItem, 'focus'],
+        [shortDurationItem, 'shortBreak'],
+        [longDurationItem, 'longBreak'],
+      ].forEach(([el, phase]) => {
+        el.addEventListener('click', (e) => {
+          if (e.target.tagName === 'INPUT') return; // let editing the number work normally
+          selectPhase(phase);
+        });
+      });
+      finishBtn.addEventListener('click', finishSession);
+      abandonBtn.addEventListener('click', abandonSession);
+
+      [focusInput, shortInput, longInput].forEach(input => {
+        input.addEventListener('change', function() {
+          if (!isRunning && !isPaused) {
+            overtimeActive = false;
+            overtimeSeconds = 0;
+            const duration = getDurationFromPhase(currentPhase);
+            remainingSeconds = duration;
+            totalDurationSeconds = duration;
+            elapsedSeconds = 0;
+            updateDisplay();
+            if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+          }
+          scheduleCloudPush();
+        });
+      });
+
+      [timerTitleInput, notesTitleInput].forEach(input => {
+        input.addEventListener('blur', () => scheduleCloudPush());
+      });
+      cloudAuthBtn.addEventListener('click', () => window.toggleCloudAuth());
+      if (gcalConnectBtn) gcalConnectBtn.addEventListener('click', () => connectGoogleCalendar());
+
+      // Quick add buttons
+      quickAddButtons.forEach(btn => {
+        btn.addEventListener('click', function() {
+          const minutes = parseInt(this.dataset.minutes, 10);
+          if (!isNaN(minutes)) {
+            adjustTime(minutes);
+          }
+        });
+      });
+
+      addNoteBtn.addEventListener('click', addNote);
+      noteTitleInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          addNote();
+        }
+      });
+      // Enter in the details field continues the auto-bullet list instead
+      // of submitting — only the "Add note" button (or Enter in the title
+      // field) submits the note.
+      attachBulletBehavior(noteInput);
+      attachBulletBehavior(scheduleModalTextarea);
+
+      exportGCalBtn.addEventListener('click', exportToGoogleCalendar);
+      exportGCalNotesBtn.addEventListener('click', copyNotesToClipboard);
+      clearNotesBtn.addEventListener('click', clearNotes);
+      exportBackupBtn.addEventListener('click', exportBackup);
+      importBackupBtn.addEventListener('click', () => importBackupFile.click());
+      importBackupFile.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) importBackupFromFile(file);
+        e.target.value = '';
+      });
+
+      countdownModeBtn.addEventListener('click', () => setClockMode('countdown'));
+      countupModeBtn.addEventListener('click', () => setClockMode('countup'));
+
+      digitalViewBtn.addEventListener('click', () => setViewMode('digital'));
+      analogViewBtn.addEventListener('click', () => setViewMode('analog'));
+
+      analog60min.addEventListener('click', () => setAnalogMode('60min'));
+      analog25min.addEventListener('click', () => setAnalogMode('25min'));
+
+      notesViewBtn.addEventListener('click', () => setNotesViewMode('notes'));
+      scheduleViewBtn.addEventListener('click', () => setNotesViewMode('schedule'));
+      schedulePrevDay.addEventListener('click', () => {
+        scheduleDate = new Date(scheduleDate);
+        scheduleDate.setDate(scheduleDate.getDate() - 1);
+        renderSchedule();
+        scrollScheduleToNow();
+      });
+      scheduleNextDay.addEventListener('click', () => {
+        scheduleDate = new Date(scheduleDate);
+        scheduleDate.setDate(scheduleDate.getDate() + 1);
+        renderSchedule();
+        scrollScheduleToNow();
+      });
+      scheduleModalSave.addEventListener('click', saveScheduleModal);
+      scheduleModalDelete.addEventListener('click', deleteScheduleModalNote);
+      scheduleModalClose.addEventListener('click', closeScheduleModal);
+      scheduleModalBackdrop.addEventListener('click', (e) => {
+        if (e.target === scheduleModalBackdrop) closeScheduleModal();
+      });
+
+      notes.push({
+        id: nextNoteId++,
+        title: 'Welcome',
+        text: 'The 25min analog circle now shows a full red circle that counts down.',
+        timestamp: new Date().toISOString(),
+        phase: 'focus',
+        duration: 25 * 60,
+        editMode: false,
+      });
+      renderNotes();
+    }
+
+    // ===================================================================
+    // Cloud sync — Google Sign-In via Firebase, same project/pattern as
+    // your other apps. Once signed in, notes + settings sync automatically
+    // across every device you sign into.
+    // Firestore path: users/{uid}/pomodoro_tracker/data  (one doc per user)
+    // ===================================================================
+    const PT_FB_CONFIG = {
+      apiKey: "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
+      authDomain: "qtodo-syn.firebaseapp.com",
+      projectId: "qtodo-syn",
+      storageBucket: "qtodo-syn.firebasestorage.app",
+      messagingSenderId: "663058774385",
+      appId: "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
+    };
+
+    let cloudApp, cloudAuth, cloudDb;
+    let cloudUser = null;
+    let cloudUnsub = null;
+    let cloudPushTimer = null;
+    let cloudPushing = false;
+    let cloudLastPushTs = 0;
+    let cloudReady = false;
+
+    try {
+      if (typeof firebase !== 'undefined') {
+        try { cloudApp = firebase.app('pomodoro-tracker'); }
+        catch (e) { cloudApp = firebase.initializeApp(PT_FB_CONFIG, 'pomodoro-tracker'); }
+        cloudAuth = firebase.auth(cloudApp);
+        cloudDb = firebase.firestore(cloudApp);
+        cloudReady = true;
+      }
+    } catch (e) {
+      console.warn('Cloud sync unavailable:', e);
+    }
+
+    function cloudDocRef() {
+      if (!cloudUser || !cloudDb) return null;
+      return cloudDb.collection('users').doc(cloudUser.uid)
+                    .collection('pomodoro_tracker').doc('data');
+    }
+
+    function updateCloudUI() {
+      if (!cloudAuthBtn) return;
+      if (cloudUser) {
+        const first = cloudUser.displayName ? cloudUser.displayName.split(' ')[0] : 'Account';
+        cloudAuthBtn.textContent = '☁️ ' + first;
+        cloudAuthBtn.style.background = '#2e7d32';
+        cloudAuthBtn.title = 'Signed in as ' + cloudUser.email + ' — click to sign out';
+        if (cloudSyncStatus) cloudSyncStatus.textContent = '🟢 Synced as ' + cloudUser.email;
+        if (gcalSyncRow) gcalSyncRow.style.display = 'block';
+        setCalendarConnected(gcalTokenIsFresh());
+      } else {
+        cloudAuthBtn.textContent = '🔑 Sign In';
+        cloudAuthBtn.style.background = '#546e7a';
+        cloudAuthBtn.title = 'Sign in with Google to sync across devices';
+        if (cloudSyncStatus) cloudSyncStatus.textContent = '⚫ Not signed in';
+        if (gcalSyncRow) gcalSyncRow.style.display = 'none';
+      }
+    }
+
+    function setCloudStatus(state) {
+      if (!cloudSyncStatus || !cloudUser) return;
+      if (state === 'pending') cloudSyncStatus.textContent = '🟡 Saving to cloud…';
+      else if (state === 'synced') cloudSyncStatus.textContent = '🟢 Synced as ' + cloudUser.email;
+      else if (state === 'error') cloudSyncStatus.textContent = '🔴 Cloud save failed — will retry';
+    }
+
+    function scheduleCloudPush() {
+      if (!cloudUser) return;
+      clearTimeout(cloudPushTimer);
+      cloudPushTimer = setTimeout(cloudPushNow, 1000);
+    }
+
+    function cloudPushNow() {
+      const ref = cloudDocRef();
+      if (!ref) return;
+      const payload = buildSyncPayload();
+      payload.updatedAt = Date.now();
+      cloudLastPushTs = payload.updatedAt;
+      cloudPushing = true;
+      setCloudStatus('pending');
+      ref.set(payload).then(() => {
+        setTimeout(() => { cloudPushing = false; setCloudStatus('synced'); }, 1200);
+      }).catch((e) => {
+        cloudPushing = false;
+        setCloudStatus('error');
+        console.warn('Cloud push error:', e);
+      });
+    }
+
+    function startCloudListener() {
+      const ref = cloudDocRef();
+      if (!ref || cloudUnsub) return;
+      cloudUnsub = ref.onSnapshot((snap) => {
+        if (!snap.exists || cloudPushing) return;
+        const data = snap.data();
+        const remoteTs = data.updatedAt || 0;
+        if (remoteTs <= cloudLastPushTs) return; // this is our own write echoing back
+        applySyncPayload(data, true);
+        setCloudStatus('synced');
+      }, (e) => {
+        console.warn('Cloud listener error:', e);
+      });
+    }
+
+    function stopCloudListener() {
+      if (cloudUnsub) { cloudUnsub(); cloudUnsub = null; }
+    }
+
+    function cloudLoadOnSignIn() {
+      const ref = cloudDocRef();
+      if (!ref) return;
+      ref.get().then((doc) => {
+        if (doc.exists) {
+          const data = doc.data();
+          const cloudCount = Array.isArray(data.notes) ? data.notes.length : 0;
+          const replace = confirm(
+            `Found ${cloudCount} note(s) already saved in your account.\n\n` +
+            `OK = load the cloud version (replacing what's on this device).\n` +
+            `Cancel = keep what's on this device and overwrite the cloud copy.`
+          );
+          if (replace) {
+            applySyncPayload(data, true);
+            cloudLastPushTs = data.updatedAt || Date.now();
+          } else {
+            cloudPushNow();
+          }
+        } else {
+          // First time signing in from any device — push current local data up.
+          cloudPushNow();
+        }
+        startCloudListener();
+        updateCloudUI();
+      }).catch((e) => {
+        console.warn('Cloud load error:', e);
+        updateCloudUI();
+      });
+    }
+
+    // ===================================================================
+    // Google Calendar sync — auto-creates a dedicated "Pomodoro Tracker"
+    // calendar and logs each finished FOCUS session there as an event
+    // the moment you click Finish. Reuses the same Google sign-in as
+    // cloud sync above, with the Calendar scope added, so one Sign In
+    // click covers both. Google's OAuth access token is only valid for
+    // about an hour and isn't reissued when a session is merely restored
+    // on reload — a client-only app with no server can't silently renew
+    // it — so calendar sync quietly pauses until you reconnect, without
+    // ever touching notes/settings sync, which keeps working either way.
+    // ===================================================================
+    const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar';
+    const GCAL_CALENDAR_NAME = 'Pomodoro Tracker';
+    let gcalAccessToken = null;
+    let gcalTokenObtainedAt = 0;
+    let gcalCalendarId = null;       // cached once found/created; also saved to cloud settings
+    let gcalCreatingCalendar = null; // in-flight promise guard so we never create two calendars
+
+    function gcalTokenIsFresh() {
+      // Tokens last ~1hr; treat anything past 50 min as stale so we fail
+      // gracefully with margin instead of mid-request.
+      return !!gcalAccessToken && (Date.now() - gcalTokenObtainedAt) < 50 * 60 * 1000;
+    }
+
+    function setCalendarConnected(connected) {
+      if (gcalSyncStatus) {
+        gcalSyncStatus.textContent = connected ? '📅 Calendar: connected' : '📅 Calendar: not connected';
+      }
+      if (gcalConnectBtn) {
+        gcalConnectBtn.textContent = connected ? 'Reconnect' : 'Connect Calendar';
+      }
+    }
+
+    // Google Identity Services (GIS) — a separate, purpose-built library
+    // just for obtaining an access token to call Google APIs, independent
+    // of Firebase Auth's sign-in popup/redirect machinery. Firebase's own
+    // scope-elevation (addScope + credentialFromResult) turned out not to
+    // reliably surface the OAuth token in this browser via either popup or
+    // redirect, so Calendar access is requested through GIS instead, while
+    // Firebase continues to handle sign-in/identity as before.
+    const GCAL_CLIENT_ID = '663058774385-0209ekni5vchpbf9mr3rkofd369hrhr3.apps.googleusercontent.com';
+    let gisTokenClient = null;
+
+    function initGisTokenClient() {
+      if (gisTokenClient) return gisTokenClient;
+      if (!window.google || !google.accounts || !google.accounts.oauth2) return null;
+      gisTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GCAL_CLIENT_ID,
+        scope: GCAL_SCOPE,
+        callback: (tokenResponse) => {
+          if (tokenResponse && tokenResponse.access_token) {
+            gcalAccessToken = tokenResponse.access_token;
+            gcalTokenObtainedAt = Date.now();
+            setCalendarConnected(true);
+            ensurePomodoroCalendarId();
+          } else {
+            setCalendarConnected(false);
+            alert('Calendar connection failed — Google did not return an access token.');
+          }
+        },
+        error_callback: (err) => {
+          if (err && (err.type === 'popup_closed' || err.type === 'popup_failed_to_open')) return;
+          console.warn('GIS token error:', err);
+          alert('Calendar connection failed: ' + (err && err.message ? err.message : 'please try again.'));
+        },
+      });
+      return gisTokenClient;
+    }
+
+    function connectGoogleCalendar() {
+      if (!cloudReady) { alert("Cloud sync is unavailable right now (couldn't load Firebase)."); return; }
+      if (!cloudUser) { alert('Please sign in first (top right), then click Connect Calendar.'); return; }
+      const client = initGisTokenClient();
+      if (!client) {
+        alert("Google's sign-in library hasn't finished loading yet — please wait a moment and try again.");
+        return;
+      }
+      client.requestAccessToken({ prompt: 'consent' });
+    }
+
+    async function gcalFetch(path, options) {
+      if (!gcalTokenIsFresh()) {
+        setCalendarConnected(false);
+        return null;
+      }
+      let res;
+      try {
+        res = await fetch('https://www.googleapis.com/calendar/v3/' + path, Object.assign({
+          headers: Object.assign({
+            'Authorization': 'Bearer ' + gcalAccessToken,
+            'Content-Type': 'application/json',
+          }, (options && options.headers) || {}),
+        }, options || {}));
+      } catch (e) {
+        console.warn('Calendar request failed:', e);
+        return null;
+      }
+      if (res.status === 401) {
+        // Token expired or was revoked mid-session — stop trying until reconnected.
+        gcalAccessToken = null;
+        setCalendarConnected(false);
+        return null;
+      }
+      return res;
+    }
+
+    // Finds (via cloud-synced settings) or creates the dedicated calendar,
+    // caching its id so every device you sign into reuses the same one.
+    async function ensurePomodoroCalendarId() {
+      if (gcalCalendarId) return gcalCalendarId;
+      if (gcalCreatingCalendar) return gcalCreatingCalendar;
+      gcalCreatingCalendar = (async () => {
+        try {
+          if (cloudUser) {
+            const ref = cloudDocRef();
+            if (ref) {
+              const doc = await ref.get();
+              const savedId = doc.exists && doc.data().settings && doc.data().settings.pomodoroCalendarId;
+              if (savedId) {
+                gcalCalendarId = savedId;
+                return gcalCalendarId;
+              }
+            }
+          }
+          const res = await gcalFetch('calendars', {
+            method: 'POST',
+            body: JSON.stringify({
+              summary: GCAL_CALENDAR_NAME,
+              description: 'Auto-created by the Pomodoro Tracker app to log completed focus sessions.',
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            }),
+          });
+          if (!res || !res.ok) return null;
+          const created = await res.json();
+          gcalCalendarId = created.id;
+          scheduleCloudPush(); // persists pomodoroCalendarId via buildSyncPayload()
+          return gcalCalendarId;
+        } finally {
+          gcalCreatingCalendar = null;
+        }
+      })();
+      return gcalCreatingCalendar;
+    }
+
+    function gcalEventBody(note) {
+      const start = new Date(note.timestamp);
+      const end = new Date(start.getTime() + note.duration * 1000);
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const body = getNoteBody(note);
+      return {
+        summary: '🍅 ' + getNoteTitle(note),
+        description: body || '',
+        start: { dateTime: start.toISOString(), timeZone: tz },
+        end: { dateTime: end.toISOString(), timeZone: tz },
+      };
+    }
+
+    // Creates or updates the Calendar event for a finished FOCUS session.
+    // Does nothing for break sessions, when not connected, or if the
+    // request fails — calendar sync issues never block using the app.
+    async function syncNoteToCalendar(note) {
+      if (!note || note.phase !== 'focus') return;
+      if (!gcalTokenIsFresh()) return;
+      try {
+        const calendarId = await ensurePomodoroCalendarId();
+        if (!calendarId) return;
+        if (note.gcalEventId) {
+          const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(note.gcalEventId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(gcalEventBody(note)),
+          });
+          if (res && res.status === 404) {
+            // The event was removed on the Google Calendar side — recreate it.
+            note.gcalEventId = null;
+            await syncNoteToCalendar(note);
+          }
+        } else {
+          const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events`, {
+            method: 'POST',
+            body: JSON.stringify(gcalEventBody(note)),
+          });
+          if (res && res.ok) {
+            const created = await res.json();
+            note.gcalEventId = created.id;
+            scheduleCloudPush();
+          }
+        }
+      } catch (e) {
+        console.warn('Calendar sync error:', e);
+      }
+    }
+
+    async function deleteNoteFromCalendar(note) {
+      if (!note || note.phase !== 'focus' || !note.gcalEventId) return;
+      try {
+        const calendarId = await ensurePomodoroCalendarId();
+        if (!calendarId) return;
+        await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(note.gcalEventId)}`, {
+          method: 'DELETE',
+        });
+      } catch (e) {
+        console.warn('Calendar delete error:', e);
+      }
+    }
+
+    window.toggleCloudAuth = async function() {
+      if (!cloudReady) {
+        alert("Cloud sync is unavailable right now (couldn't load Firebase). Check your connection and try again.");
+        return;
+      }
+      if (cloudUser) {
+        stopCloudListener();
+        gcalAccessToken = null;
+        setCalendarConnected(false);
+        await cloudAuth.signOut();
+      } else {
+        try {
+          const provider = new firebase.auth.GoogleAuthProvider();
+          await cloudAuth.signInWithPopup(provider);
+        } catch (e) {
+          if (e.code !== 'auth/popup-closed-by-user') {
+            alert('Sign-in failed: ' + e.message);
+          }
+        }
+      }
+    };
+
+    if (cloudReady) {
+      cloudAuth.onAuthStateChanged((user) => {
+        cloudUser = user;
+        if (user) {
+          cloudLoadOnSignIn();
+        } else {
+          stopCloudListener();
+          updateCloudUI();
+        }
+      });
+    }
+
+    init();
+  })();
+</script>
+</body>
+</html>
