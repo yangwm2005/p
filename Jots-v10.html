@@ -449,11 +449,7 @@
             color: #cbd5e1;
         }
 
-        /* ============================================================
-           SHARED TAG SUGGESTIONS DROPDOWN
-           Used by BOTH the panel's new-tag input and the per-item
-           inline tag editor.
-           ============================================================ */
+        /* SHARED TAG SUGGESTIONS DROPDOWN */
         .tag-suggestions {
             position: absolute;
             top: calc(100% + 4px);
@@ -823,11 +819,7 @@
             color: #4338ca;
         }
 
-        /* ============================================================
-           INLINE TAG EDITOR on an item
-           Now position:relative on the wrap so the suggestions
-           dropdown can anchor directly under the input.
-           ============================================================ */
+        /* INLINE TAG EDITOR on an item */
         .tag-editor-row {
             flex-basis: 100%;
             margin-top: 8px;
@@ -1242,7 +1234,7 @@
             <span class="hint-sep">·</span>
             <span>click text to edit</span>
             <span class="hint-sep">·</span>
-            <span><span class="hint-tag">#tag</span> in search</span>
+            <span><span class="hint-tag">#tag</span> or "Sep 16"/"20260916" in search</span>
             <span class="hint-sep">·</span>
             <button type="button" class="tag-toggle-link" id="tagToggleLink" title="Show / hide tags, search & date filters panel">
                 <span>🏷️ Tags, search &amp; dates</span>
@@ -1258,7 +1250,7 @@
                 <span class="section-label">Search</span>
                 <div class="search-in-panel">
                     <span class="search-icon">🔍</span>
-                    <input type="text" id="searchInput" placeholder="Search… or type #tag" autocomplete="off" aria-label="Search notes">
+                    <input type="text" id="searchInput" placeholder='Search text, #tag, or "Sep 16" / "20260916"…' autocomplete="off" aria-label="Search notes">
                     <button id="searchClearBtn" class="search-clear hidden" aria-label="Clear search" title="Clear search">✕</button>
                 </div>
             </div>
@@ -1350,11 +1342,9 @@
         let activeDateFilter = null;
         let tagPanelOpen = false;
 
-        // Panel suggestions state
         let suggestionList = [];
         let suggestionIndex = -1;
 
-        // Per-item tag editor suggestions state
         let itemSuggList = [];
         let itemSuggIndex = -1;
 
@@ -1544,6 +1534,132 @@
         }
 
         // ===================================================================
+        // Free-text date parsing (for search)
+        // ===================================================================
+        const MONTHS = {
+            jan: 0, january: 0,
+            feb: 1, february: 1,
+            mar: 2, march: 2,
+            apr: 3, april: 3,
+            may: 4,
+            jun: 5, june: 5,
+            jul: 6, july: 6,
+            aug: 7, august: 7,
+            sep: 8, sept: 8, september: 8,
+            oct: 9, october: 9,
+            nov: 10, november: 10,
+            dec: 11, december: 11,
+        };
+
+        function dayRangeFromParts(year, monthIndex, day) {
+            const s = new Date(year, monthIndex, day, 0, 0, 0, 0);
+            if (isNaN(s.getTime())) return null;
+            if (s.getFullYear() !== year || s.getMonth() !== monthIndex || s.getDate() !== day) return null;
+            const e = new Date(s);
+            e.setDate(s.getDate() + 1);
+            return { start: s.getTime(), end: e.getTime() };
+        }
+
+        function parseDateQuery(q) {
+            if (!q) return null;
+            let str = String(q).trim().toLowerCase();
+            if (!str) return null;
+
+            const today = startOfToday();
+            if (str === 'today') {
+                return { start: today.getTime(), end: today.getTime() + 86400000 };
+            }
+            if (str === 'yesterday') {
+                const y = new Date(today); y.setDate(today.getDate() - 1);
+                return { start: y.getTime(), end: today.getTime() };
+            }
+            if (str === 'tomorrow') {
+                const t = new Date(today); t.setDate(today.getDate() + 1);
+                return { start: t.getTime(), end: t.getTime() + 86400000 };
+            }
+
+            // Compact numeric forms
+            if (/^\d{8}$/.test(str)) {
+                const y = parseInt(str.slice(0, 4), 10);
+                const m = parseInt(str.slice(4, 6), 10);
+                const d = parseInt(str.slice(6, 8), 10);
+                if (y >= 1900 && y <= 2999 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+                    return dayRangeFromParts(y, m - 1, d);
+                }
+                return null;
+            }
+            if (/^\d{4}$/.test(str)) {
+                const m = parseInt(str.slice(0, 2), 10);
+                const d = parseInt(str.slice(2, 4), 10);
+                if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+                    return dayRangeFromParts(new Date().getFullYear(), m - 1, d);
+                }
+                return null;
+            }
+            if (/^\d{3}$/.test(str)) {
+                const m = parseInt(str.slice(0, 1), 10);
+                const d = parseInt(str.slice(1, 3), 10);
+                if (m >= 1 && m <= 9 && d >= 1 && d <= 31) {
+                    return dayRangeFromParts(new Date().getFullYear(), m - 1, d);
+                }
+                return null;
+            }
+
+            let work = str
+                .replace(/[,]+/g, ' ')
+                .replace(/[\/\-\.]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            const parts = work.split(' ').filter(Boolean);
+            if (!parts.length || parts.length > 3) return null;
+
+            const now = new Date();
+            const thisYear = now.getFullYear();
+
+            if (MONTHS[parts[0]] !== undefined) {
+                const m = MONTHS[parts[0]];
+                const day = parseInt(parts[1], 10);
+                if (!Number.isFinite(day)) return null;
+                const yr = parts[2] !== undefined ? parseInt(parts[2], 10) : thisYear;
+                if (!Number.isFinite(yr)) return null;
+                return dayRangeFromParts(yr, m, day);
+            }
+
+            if (/^\d{1,2}$/.test(parts[0]) && parts[1] && MONTHS[parts[1]] !== undefined) {
+                const day = parseInt(parts[0], 10);
+                const m = MONTHS[parts[1]];
+                const yr = parts[2] !== undefined ? parseInt(parts[2], 10) : thisYear;
+                if (!Number.isFinite(yr)) return null;
+                return dayRangeFromParts(yr, m, day);
+            }
+
+            if (parts.length === 3 && parts.every(p => /^\d+$/.test(p))) {
+                const a = parseInt(parts[0], 10);
+                const b = parseInt(parts[1], 10);
+                const c = parseInt(parts[2], 10);
+                if (a >= 1900 && a <= 2999 && b >= 1 && b <= 12 && c >= 1 && c <= 31) {
+                    return dayRangeFromParts(a, b - 1, c);
+                }
+                if (c >= 1900 && c <= 2999 && a >= 1 && a <= 12 && b >= 1 && b <= 31) {
+                    return dayRangeFromParts(c, a - 1, b);
+                }
+                return null;
+            }
+
+            if (parts.length === 2 && parts.every(p => /^\d+$/.test(p))) {
+                const a = parseInt(parts[0], 10);
+                const b = parseInt(parts[1], 10);
+                if (a >= 1 && a <= 12 && b >= 1 && b <= 31) {
+                    return dayRangeFromParts(thisYear, a - 1, b);
+                }
+                return null;
+            }
+
+            return null;
+        }
+
+        // ===================================================================
         // Tag toggle + panel
         // ===================================================================
         function updateTagToggle() {
@@ -1625,10 +1741,10 @@
             tagToggleLink.classList.add('open');
             renderExistingTags();
             renderDateFilters();
-            setTimeout(() => {
-                if (searchQuery.trim()) searchInput.focus();
-                else tagInput.focus();
-            }, 0);
+            // NEW: default focus goes to the Search field (was tagInput).
+            // If the user already has a search query typed, focus stays there
+            // anyway — same field, same caret.
+            setTimeout(() => searchInput.focus(), 0);
         }
 
         function closeTagPanel() {
@@ -1724,14 +1840,12 @@
             }
         }
 
-        // Build the suggestion list for the current item editor
         function buildItemSuggestions(itemId, currentText) {
             const prefix = normalizeTag((currentText || '').split(/[\s,]+/).pop() || '');
             if (!prefix) return [];
 
             const item = itemsArray.find(i => i.id === itemId);
             const currentTags = new Set(parseTagInput(currentText || ''));
-            // Also exclude tags already present on the item (they're already chips)
             (item && item.tags ? item.tags : []).forEach(t => currentTags.add(normalizeTag(t)));
 
             const allTags = getAllTagsWithCounts()
@@ -1744,7 +1858,7 @@
         function renderItemSuggestions() {
             const input = itemsList.querySelector('[id^="tagEditorInput-"]');
             if (!input) return;
-            const wrap = input.parentElement; // .te-input-wrap
+            const wrap = input.parentElement;
             if (!wrap) return;
             let box = wrap.querySelector('.tag-suggestions.item-sugg');
             if (!box) {
@@ -1775,10 +1889,8 @@
             const left = m ? m[1] : '';
             input.value = (left ? left.replace(/[\s,]+$/, '') + ', ' : '') + tag;
             input.focus();
-            // Put caret at end
             const len = input.value.length;
             try { input.setSelectionRange(len, len); } catch (e) {}
-            // Refresh suggestions
             itemSuggList = buildItemSuggestions(tagEditingItemId, input.value);
             itemSuggIndex = itemSuggList.length ? 0 : -1;
             renderItemSuggestions();
@@ -2022,26 +2134,46 @@
         // Search parsing
         // ===================================================================
         function parseSearchQuery(q) {
-            const out = { text: '', tags: [] };
+            const out = { text: '', tags: [], dateRange: null };
             if (!q) return out;
-            const tokens = q.split(/\s+/);
-            const freeText = [];
+
+            const tokens = q.trim().split(/\s+/);
+            const nonTagTokens = [];
             const tagSet = new Set();
+
             for (const tok of tokens) {
                 if (tok.startsWith('#') && tok.length > 1) {
                     const t = normalizeTag(tok);
                     if (t) tagSet.add(t);
                 } else if (tok) {
-                    freeText.push(tok.toLowerCase());
+                    nonTagTokens.push(tok);
                 }
             }
-            out.text = freeText.join(' ').trim();
             out.tags = Array.from(tagSet);
+
+            let consumed = 0;
+            let dateRange = null;
+            for (let len = Math.min(3, nonTagTokens.length); len >= 1; len--) {
+                const candidate = nonTagTokens.slice(nonTagTokens.length - len).join(' ');
+                const r = parseDateQuery(candidate);
+                if (r) {
+                    dateRange = r;
+                    consumed = len;
+                    break;
+                }
+            }
+
+            const textTokens = consumed
+                ? nonTagTokens.slice(0, nonTagTokens.length - consumed)
+                : nonTagTokens;
+
+            out.text = textTokens.join(' ').toLowerCase().trim();
+            out.dateRange = dateRange;
             return out;
         }
 
         function itemMatchesSearch(it, parsed) {
-            if (parsed.tags.length) {
+            if (parsed.tags && parsed.tags.length) {
                 const itemTags = new Set((it.tags || []).map(normalizeTag));
                 const replyTags = new Set();
                 (it.replies || []).forEach(r => (r.tags || []).forEach(t => replyTags.add(normalizeTag(t))));
@@ -2050,6 +2182,12 @@
                     if (!all.has(t)) return false;
                 }
             }
+
+            if (parsed.dateRange) {
+                const ts = it.createdAt || 0;
+                if (ts < parsed.dateRange.start || ts >= parsed.dateRange.end) return false;
+            }
+
             if (parsed.text) {
                 const needle = parsed.text;
                 if (it.text.toLowerCase().includes(needle)) return true;
@@ -2058,6 +2196,7 @@
                 if ((it.replies || []).some(r => (r.tags || []).some(t => t.includes(needle)))) return true;
                 return false;
             }
+
             return true;
         }
 
@@ -2065,11 +2204,13 @@
             const parsed = parseSearchQuery(searchQuery);
             const allTags = new Set([...parsed.tags, ...activeTagFilters]);
 
-            let dateRange = null;
-            if (activeDateFilter === 'today')      dateRange = getTodayRange();
-            else if (activeDateFilter === 'threeDays') dateRange = getThreeDayRange();
-            else if (activeDateFilter === 'thisWeek')  dateRange = getThisWeekRange();
-            else if (activeDateFilter === 'lastWeek')  dateRange = getLastWeekRange();
+            let dateRange = parsed.dateRange;
+            if (!dateRange) {
+                if (activeDateFilter === 'today')      dateRange = getTodayRange();
+                else if (activeDateFilter === 'threeDays') dateRange = getThreeDayRange();
+                else if (activeDateFilter === 'thisWeek')  dateRange = getThisWeekRange();
+                else if (activeDateFilter === 'lastWeek')  dateRange = getLastWeekRange();
+            }
 
             let list = itemsArray;
 
@@ -2081,7 +2222,11 @@
             }
 
             if (allTags.size || parsed.text) {
-                list = list.filter(it => itemMatchesSearch(it, { text: parsed.text, tags: Array.from(allTags) }));
+                list = list.filter(it => itemMatchesSearch(it, {
+                    text: parsed.text,
+                    tags: Array.from(allTags),
+                    dateRange: null,
+                }));
             }
 
             const pinned = list.filter(it => it.pinned);
@@ -2297,7 +2442,6 @@
                 if (te) {
                     te.focus();
                     te.selectionStart = te.selectionEnd = te.value.length;
-                    // Seed the per-item suggestion list so typing starts fresh
                     itemSuggList = buildItemSuggestions(tagEditingItemId, te.value);
                     itemSuggIndex = itemSuggList.length ? 0 : -1;
                     renderItemSuggestions();
@@ -2419,10 +2563,6 @@
             }
         }
 
-        // ===================================================================
-        // Keydown handler — covers both the panel tag input AND the
-        // per-item inline tag editor input.
-        // ===================================================================
         itemsList.addEventListener('keydown', (e) => {
             const input = e.target;
             if (!input.matches || !input.matches('[id^="tagEditorInput-"]')) return;
@@ -2447,12 +2587,10 @@
             }
             if (e.key === 'Enter') {
                 e.preventDefault();
-                // Commit a highlighted suggestion if present
                 if (suggBoxVisible && itemSuggList[itemSuggIndex]) {
                     commitItemSuggestion(itemSuggList[itemSuggIndex].tag);
                     return;
                 }
-                // Otherwise Save
                 saveItemTags(itemId);
                 return;
             }
@@ -2465,7 +2603,6 @@
             }
         });
 
-        // Live suggestions as the user types in the item tag editor
         itemsList.addEventListener('input', (e) => {
             const input = e.target;
             if (!input.matches || !input.matches('[id^="tagEditorInput-"]')) return;
@@ -2474,7 +2611,6 @@
             renderItemSuggestions();
         });
 
-        // Click / mousedown on per-item suggestion
         itemsList.addEventListener('mousedown', (e) => {
             const el = e.target.closest('[data-item-sugg-tag]');
             if (!el) return;
@@ -2482,7 +2618,6 @@
             commitItemSuggestion(el.dataset.itemSuggTag);
         });
 
-        // Hide suggestions when focus leaves the item tag editor input
         itemsList.addEventListener('focusout', (e) => {
             const input = e.target;
             if (!input.matches || !input.matches('[id^="tagEditorInput-"]')) return;
@@ -2712,7 +2847,8 @@
             }
         }
 
-        // ===================================================================        // Auto-close empty reply box on click outside
+        // ===================================================================
+        // Auto-close empty reply box on click outside
         // ===================================================================
         document.addEventListener('mousedown', (e) => {
             if (!replyingToId) return;
