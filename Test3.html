@@ -8,6 +8,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     * {
       box-sizing: border-box;
@@ -2818,20 +2819,6 @@
         cloudAuth = firebase.auth(cloudApp);
         cloudDb = firebase.firestore(cloudApp);
         cloudReady = true;
-        // Pick up the Calendar access token after a redirect-based Connect
-        // Calendar round trip (see connectGoogleCalendar below) — popups
-        // lose this data in browsers that block popup↔opener messaging
-        // (Cross-Origin-Opener-Policy), so redirect is used specifically
-        // for that flow instead.
-        cloudAuth.getRedirectResult().then((result) => {
-          if (result && result.user) {
-            if (!captureAccessTokenFromResult(result)) {
-              console.warn('[Calendar connect] redirect result had no usable credential:', result);
-            }
-          }
-        }).catch((e) => {
-          if (e.code !== 'auth/no-auth-event') console.warn('Redirect result error:', e);
-        });
       }
     } catch (e) {
       console.warn('Cloud sync unavailable:', e);
@@ -2974,41 +2961,51 @@
       }
     }
 
-    function captureAccessTokenFromResult(result) {
-      const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
-      console.log('[Calendar connect] credential:', credential); // remove once this is working reliably
-      if (credential && credential.accessToken) {
-        gcalAccessToken = credential.accessToken;
-        gcalTokenObtainedAt = Date.now();
-        setCalendarConnected(true);
-        ensurePomodoroCalendarId();
-        return true;
-      }
-      return false;
+    // Google Identity Services (GIS) — a separate, purpose-built library
+    // just for obtaining an access token to call Google APIs, independent
+    // of Firebase Auth's sign-in popup/redirect machinery. Firebase's own
+    // scope-elevation (addScope + credentialFromResult) turned out not to
+    // reliably surface the OAuth token in this browser via either popup or
+    // redirect, so Calendar access is requested through GIS instead, while
+    // Firebase continues to handle sign-in/identity as before.
+    const GCAL_CLIENT_ID = '663058774385-0209ekni5vchpbf9mr3rkofd369hrhr3.apps.googleusercontent.com';
+    let gisTokenClient = null;
+
+    function initGisTokenClient() {
+      if (gisTokenClient) return gisTokenClient;
+      if (!window.google || !google.accounts || !google.accounts.oauth2) return null;
+      gisTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GCAL_CLIENT_ID,
+        scope: GCAL_SCOPE,
+        callback: (tokenResponse) => {
+          if (tokenResponse && tokenResponse.access_token) {
+            gcalAccessToken = tokenResponse.access_token;
+            gcalTokenObtainedAt = Date.now();
+            setCalendarConnected(true);
+            ensurePomodoroCalendarId();
+          } else {
+            setCalendarConnected(false);
+            alert('Calendar connection failed — Google did not return an access token.');
+          }
+        },
+        error_callback: (err) => {
+          if (err && (err.type === 'popup_closed' || err.type === 'popup_failed_to_open')) return;
+          console.warn('GIS token error:', err);
+          alert('Calendar connection failed: ' + (err && err.message ? err.message : 'please try again.'));
+        },
+      });
+      return gisTokenClient;
     }
 
-    async function connectGoogleCalendar() {
+    function connectGoogleCalendar() {
       if (!cloudReady) { alert("Cloud sync is unavailable right now (couldn't load Firebase)."); return; }
-      if (isRunning) {
-        const proceed = confirm(
-          'Connecting Calendar needs to briefly reload the page, which will interrupt the timer that\'s currently running.\n\n' +
-          'Continue anyway? (Your notes and settings are safe either way — only the current running session would be interrupted.)'
-        );
-        if (!proceed) return;
+      if (!cloudUser) { alert('Please sign in first (top right), then click Connect Calendar.'); return; }
+      const client = initGisTokenClient();
+      if (!client) {
+        alert("Google's sign-in library hasn't finished loading yet — please wait a moment and try again.");
+        return;
       }
-      const provider = new firebase.auth.GoogleAuthProvider();
-      provider.addScope(GCAL_SCOPE);
-      // Force Google to show the consent screen again even for an account
-      // that already has a Firebase session. Without this, Google can
-      // silently reuse the old, narrower grant and skip straight past the
-      // new Calendar permission request instead of asking for it.
-      provider.setCustomParameters({ prompt: 'consent' });
-      // Redirect rather than popup: popups lose the OAuth credential in
-      // browsers that block popup↔opener messaging (Cross-Origin-Opener-
-      // Policy), which is exactly the "didn't include Calendar access"
-      // symptom. Redirect avoids that entirely — the result is picked up
-      // by getRedirectResult() once the page reloads (see Firebase init above).
-      cloudAuth.signInWithRedirect(provider);
+      client.requestAccessToken({ prompt: 'consent' });
     }
 
     async function gcalFetch(path, options) {
@@ -3149,10 +3146,7 @@
       } else {
         try {
           const provider = new firebase.auth.GoogleAuthProvider();
-          provider.addScope(GCAL_SCOPE);
-          provider.setCustomParameters({ prompt: 'consent' });
-          const result = await cloudAuth.signInWithPopup(provider);
-          captureAccessTokenFromResult(result);
+          await cloudAuth.signInWithPopup(provider);
         } catch (e) {
           if (e.code !== 'auth/popup-closed-by-user') {
             alert('Sign-in failed: ' + e.message);
