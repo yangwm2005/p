@@ -1333,6 +1333,13 @@
 
     let notes = [];
     let nextNoteId = 1;
+    // Local mirror of what's been synced, so a page reload never starts
+    // from a blank slate and never mistakes "nothing loaded yet" for
+    // "nothing to sync" (see PT_LOCAL_KEY persistence below).
+    const PT_LOCAL_KEY = 'pomodoroTrackerData';
+    let localUpdatedAt = 0;  // last time notes/settings changed on this device
+    let lastSyncedAt = 0;    // last time this device's data matched the cloud
+    let localDataLoadedFromStorage = false;
     let notesViewMode = 'notes'; // 'notes' or 'schedule'
     let scheduleDate = new Date(); // day currently shown in the schedule view
     let scheduleModalNoteId = null; // id of the note currently open in the edit modal
@@ -1937,6 +1944,7 @@
 
     // ----- Notes -----
     function renderNotes() {
+      saveLocalData();
       noteListContainer.innerHTML = '';
       if (notes.length === 0) {
         noteListContainer.innerHTML = '<div style="padding: 8px 14px; color: #7b7168; font-style: italic; font-size:0.85rem;">No notes yet. Add a note for this Pomodoro.</div>';
@@ -1984,6 +1992,7 @@
                 notes[idx].duration = timing.duration;
               }
               notes[idx].editMode = false;
+              localUpdatedAt = Date.now();
               renderNotes();
               syncNoteToCalendar(notes[idx]);
             }
@@ -2037,6 +2046,7 @@
           if (confirm('Delete this note?')) {
             deleteNoteFromCalendar(note);
             notes = notes.filter(n => n.id !== note.id);
+            localUpdatedAt = Date.now();
             renderNotes();
           }
         });
@@ -2332,6 +2342,7 @@
           notes[idx].timestamp = timing.timestamp;
           notes[idx].duration = timing.duration;
         }
+        localUpdatedAt = Date.now();
         renderNotes();
         syncNoteToCalendar(notes[idx]);
       }
@@ -2344,6 +2355,7 @@
         const note = notes.find(n => n.id === scheduleModalNoteId);
         if (note) deleteNoteFromCalendar(note);
         notes = notes.filter(n => n.id !== scheduleModalNoteId);
+        localUpdatedAt = Date.now();
         renderNotes();
         closeScheduleModal();
       }
@@ -2379,6 +2391,7 @@
       notes.push(note);
       noteTitleInput.value = '';
       noteInput.value = '';
+      localUpdatedAt = Date.now();
       renderNotes();
       return note;
     }
@@ -2468,6 +2481,46 @@
       };
     }
 
+    // Local-device mirror of the same payload, saved on every change so a
+    // reload (or a moment offline) never starts from a blank slate. This is
+    // separate from cloud sync — it's what makes cloud sync safe, since the
+    // app now always has a real local copy to compare against instead of
+    // an empty array that could accidentally look "authoritative".
+    function saveLocalData() {
+      try {
+        const payload = buildSyncPayload();
+        payload.localUpdatedAt = localUpdatedAt;
+        payload.lastSyncedAt = lastSyncedAt;
+        localStorage.setItem(PT_LOCAL_KEY, JSON.stringify(payload));
+      } catch (e) { /* localStorage unavailable — ignore, nothing to persist */ }
+    }
+
+    function loadLocalData() {
+      try {
+        const raw = localStorage.getItem(PT_LOCAL_KEY);
+        if (!raw) return false;
+        const data = JSON.parse(raw);
+        if (!data || !Array.isArray(data.notes)) return false;
+        notes = data.notes.slice();
+        if (typeof data.nextNoteId === 'number') nextNoteId = data.nextNoteId;
+        if (typeof data.cycleCount === 'number') cycleCount = data.cycleCount;
+        if (data.settings) {
+          if (data.settings.focusDuration) focusInput.value = data.settings.focusDuration;
+          if (data.settings.shortBreakDuration) shortInput.value = data.settings.shortBreakDuration;
+          if (data.settings.longBreakDuration) longInput.value = data.settings.longBreakDuration;
+          if (data.settings.timerTitle) timerTitleInput.value = data.settings.timerTitle;
+          if (data.settings.notesTitle) notesTitleInput.value = data.settings.notesTitle;
+          if (data.settings.pomodoroCalendarId) gcalCalendarId = data.settings.pomodoroCalendarId;
+        }
+        localUpdatedAt = data.localUpdatedAt || 0;
+        lastSyncedAt = data.lastSyncedAt || 0;
+        return true;
+      } catch (e) {
+        console.warn('Local data load error:', e);
+        return false;
+      }
+    }
+
     function applySyncPayload(data, replace) {
       if (replace) {
         notes = data.notes.slice();
@@ -2489,9 +2542,15 @@
       if (replace && typeof data.cycleCount === 'number') {
         cycleCount = data.cycleCount;
       }
+      // This data just came FROM the cloud, so as of right now the local
+      // copy matches it — record that before renderNotes() (below) marks
+      // the local copy as "changed", so we don't mistake this pull for an
+      // unsynced local edit the next time we reconcile.
+      lastSyncedAt = data.updatedAt || Date.now();
       renderNotes();
       updateDisplay();
     }
+
 
     function exportBackup() {
       const backup = buildSyncPayload();
@@ -2535,6 +2594,7 @@
       if (notes.length === 0) return;
       if (confirm('Delete all notes?')) {
         notes = [];
+        localUpdatedAt = Date.now();
         renderNotes();
       }
     }
@@ -2782,6 +2842,7 @@
       overtimeSeconds = 0;
       currentPhase = 'focus';
       cycleCount = 0;
+      localDataLoadedFromStorage = loadLocalData(); // restores notes/cycleCount/settings saved on this device, if any
       updateDisplay();
 
       const savedPrefs = loadDisplayPrefs();
@@ -2934,15 +2995,25 @@
         if (e.target === scheduleModalBackdrop) closeScheduleModal();
       });
 
-      notes.push({
-        id: nextNoteId++,
-        title: 'Welcome',
-        text: 'The 25min analog circle now shows a full red circle that counts down.',
-        timestamp: new Date().toISOString(),
-        phase: 'focus',
-        duration: 25 * 60,
-        editMode: false,
-      });
+      // Only seed the "Welcome" note the very first time this app is ever
+      // opened on this device — previously this ran on every page load,
+      // which (combined with notes not being saved locally) meant a
+      // reload silently replaced whatever was there with just this one
+      // note, and that thin local state could then get pushed to the
+      // cloud, overwriting real data. Now it only fires when there is
+      // truly no saved local data yet.
+      if (!localDataLoadedFromStorage && notes.length === 0) {
+        notes.push({
+          id: nextNoteId++,
+          title: 'Welcome',
+          text: 'The 25min analog circle now shows a full red circle that counts down.',
+          timestamp: new Date().toISOString(),
+          phase: 'focus',
+          duration: 25 * 60,
+          editMode: false,
+        });
+        localUpdatedAt = Date.now();
+      }
       renderNotes();
     }
 
@@ -3028,6 +3099,8 @@
       cloudPushing = true;
       setCloudStatus('pending');
       ref.set(payload).then(() => {
+        lastSyncedAt = payload.updatedAt;
+        saveLocalData();
         setTimeout(() => { cloudPushing = false; setCloudStatus('synced'); }, 1200);
       }).catch((e) => {
         cloudPushing = false;
@@ -3055,32 +3128,42 @@
       if (cloudUnsub) { cloudUnsub(); cloudUnsub = null; }
     }
 
-    function cloudLoadOnSignIn() {
+    // Reconcile local vs. cloud whenever we get (or regain) a signed-in
+    // session — including a silent session restore on page load, which is
+    // the common case and must NEVER be destructive on its own. No confirm()
+    // dialog runs automatically here: a dialog that can appear unprompted
+    // during page load, with a "Cancel" option that quietly overwrites the
+    // cloud, is exactly what let a fresh/empty local state wipe out real
+    // cloud data on reload. Instead this compares timestamps and, on rare
+    // genuine conflicts, merges rather than picking a side.
+    function cloudReconcile() {
       const ref = cloudDocRef();
       if (!ref) return;
       ref.get().then((doc) => {
-        if (doc.exists) {
+        if (!doc.exists) {
+          // Nothing in the cloud yet for this account — safe to push local up.
+          cloudPushNow();
+        } else {
           const data = doc.data();
-          const cloudCount = Array.isArray(data.notes) ? data.notes.length : 0;
-          const replace = confirm(
-            `Found ${cloudCount} note(s) already saved in your account.\n\n` +
-            `OK = load the cloud version (replacing what's on this device).\n` +
-            `Cancel = keep what's on this device and overwrite the cloud copy.`
-          );
-          if (replace) {
+          const remoteTs = data.updatedAt || 0;
+          const cloudIsNewer = remoteTs > lastSyncedAt;
+          const localIsNewer = localUpdatedAt > lastSyncedAt;
+          if (cloudIsNewer && localIsNewer) {
+            // Both sides changed since they last agreed — merge instead of
+            // silently discarding either one.
+            applySyncPayload(data, false);
+            cloudPushNow();
+          } else if (cloudIsNewer) {
             applySyncPayload(data, true);
-            cloudLastPushTs = data.updatedAt || Date.now();
-          } else {
+          } else if (localIsNewer) {
             cloudPushNow();
           }
-        } else {
-          // First time signing in from any device — push current local data up.
-          cloudPushNow();
+          // else: already in sync, nothing to do.
         }
         startCloudListener();
         updateCloudUI();
       }).catch((e) => {
-        console.warn('Cloud load error:', e);
+        console.warn('Cloud reconcile error:', e);
         updateCloudUI();
       });
     }
@@ -3316,7 +3399,7 @@
       cloudAuth.onAuthStateChanged((user) => {
         cloudUser = user;
         if (user) {
-          cloudLoadOnSignIn();
+          cloudReconcile();
         } else {
           stopCloudListener();
           updateCloudUI();
