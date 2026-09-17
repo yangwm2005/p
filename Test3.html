@@ -2818,6 +2818,20 @@
         cloudAuth = firebase.auth(cloudApp);
         cloudDb = firebase.firestore(cloudApp);
         cloudReady = true;
+        // Pick up the Calendar access token after a redirect-based Connect
+        // Calendar round trip (see connectGoogleCalendar below) — popups
+        // lose this data in browsers that block popup↔opener messaging
+        // (Cross-Origin-Opener-Policy), so redirect is used specifically
+        // for that flow instead.
+        cloudAuth.getRedirectResult().then((result) => {
+          if (result && result.user) {
+            if (!captureAccessTokenFromResult(result)) {
+              console.warn('[Calendar connect] redirect result had no usable credential:', result);
+            }
+          }
+        }).catch((e) => {
+          if (e.code !== 'auth/no-auth-event') console.warn('Redirect result error:', e);
+        });
       }
     } catch (e) {
       console.warn('Cloud sync unavailable:', e);
@@ -2975,6 +2989,13 @@
 
     async function connectGoogleCalendar() {
       if (!cloudReady) { alert("Cloud sync is unavailable right now (couldn't load Firebase)."); return; }
+      if (isRunning) {
+        const proceed = confirm(
+          'Connecting Calendar needs to briefly reload the page, which will interrupt the timer that\'s currently running.\n\n' +
+          'Continue anyway? (Your notes and settings are safe either way — only the current running session would be interrupted.)'
+        );
+        if (!proceed) return;
+      }
       const provider = new firebase.auth.GoogleAuthProvider();
       provider.addScope(GCAL_SCOPE);
       // Force Google to show the consent screen again even for an account
@@ -2982,27 +3003,12 @@
       // silently reuse the old, narrower grant and skip straight past the
       // new Calendar permission request instead of asking for it.
       provider.setCustomParameters({ prompt: 'consent' });
-      try {
-        // Always go through signInWithPopup (rather than reauthenticateWithPopup)
-        // — it's the flow Firebase documents for requesting extra Google API
-        // scopes, and it works whether or not a session already exists.
-        const result = await cloudAuth.signInWithPopup(provider);
-        if (!captureAccessTokenFromResult(result)) {
-          alert(
-            "Signed in, but Google still didn't include Calendar access in the token.\n\n" +
-            "This almost always means the Calendar scope isn't enabled for this app yet in Google Cloud Console:\n\n" +
-            "1. Go to console.cloud.google.com and select the 'qtodo-syn' project\n" +
-            "2. APIs & Services → Library → enable \"Google Calendar API\"\n" +
-            "3. APIs & Services → OAuth consent screen → Edit app → Scopes → Add scope → search \"Calendar\" → add the full \".../auth/calendar\" scope → Save\n" +
-            "4. If Publishing status shows \"Testing\", scroll to Test users → add your Google account → Save\n" +
-            "5. Click Connect Calendar again — you should now see a screen listing Calendar permissions to approve."
-          );
-        }
-      } catch (e) {
-        if (e.code !== 'auth/popup-closed-by-user') {
-          alert('Calendar connection failed: ' + e.message);
-        }
-      }
+      // Redirect rather than popup: popups lose the OAuth credential in
+      // browsers that block popup↔opener messaging (Cross-Origin-Opener-
+      // Policy), which is exactly the "didn't include Calendar access"
+      // symptom. Redirect avoids that entirely — the result is picked up
+      // by getRedirectResult() once the page reloads (see Firebase init above).
+      cloudAuth.signInWithRedirect(provider);
     }
 
     async function gcalFetch(path, options) {
