@@ -1330,6 +1330,16 @@
     let overtimeSeconds = 0;     // seconds accumulated since the section finished
     let overtimeStartTime = null; // ms timestamp when overtime began
     let sessionStartTimestamp = null; // wall-clock Date when the current session truly began (not resume-from-pause) — used so logged notes show the session's real start time, not "whenever I got around to adding a note"
+    // Snapshot of the session that Finish just wrapped up, kept around while
+    // idle so a note typed AFTER clicking Finish (the normal "finish, then
+    // write it up" workflow) still gets attributed to the session it's
+    // actually describing — otherwise, by the time Add note ran, the phase
+    // had already flipped to the next one (e.g. a break), the note got
+    // tagged with that instead, and calendar sync (which only logs focus
+    // sessions) silently skipped it.
+    let lastFinishedPhase = null;
+    let lastFinishedDuration = 0;
+    let lastFinishedStartTimestamp = null;
     let keepAwakeEnabled = false; // opt-in: request a screen wake lock while running (uses more battery)
     let wakeLock = null;
 
@@ -1727,6 +1737,7 @@
       if (isRunning || isPaused) return;
       if (phase === currentPhase) return;
       sessionStartTimestamp = null;
+      lastFinishedPhase = null; // manually jumping phase abandons any pending "just finished" note context
       currentPhase = phase;
       overtimeActive = false;
       overtimeSeconds = 0;
@@ -1843,6 +1854,7 @@
         countUpStartTime = now - elapsedSeconds * 1000;
       }
       sessionStartTimestamp = new Date();
+      lastFinishedPhase = null; // a new session has begun — stop attributing further notes to the one that just finished
       stopTimer();
       timerInterval = setInterval(tick, 1000);
       isRunning = true;
@@ -1897,6 +1909,13 @@
     // session), same as if the countdown had reached zero naturally.
     function finishSession() {
       if (!isRunning && !isPaused) return;
+      // Remember what's being finished BEFORE onTimerComplete() advances the
+      // phase and clears sessionStartTimestamp — so a note added afterward
+      // can still be attributed to this session instead of whatever phase
+      // is active by the time Add note is clicked.
+      lastFinishedPhase = currentPhase;
+      lastFinishedDuration = Math.max(totalDurationSeconds, elapsedSeconds);
+      lastFinishedStartTimestamp = sessionStartTimestamp || new Date();
       // If there's a note typed for this focus session, save it as a
       // calendar record before advancing — otherwise whatever was typed
       // would just be lost the moment the phase changes.
@@ -2374,18 +2393,27 @@
       // lands on the real start time instead of appearing to begin now and
       // run forward. Falls back to "now" if no session was ever started
       // (e.g. a standalone note jotted down while idle).
-      const now = sessionStartTimestamp || new Date();
+      //
+      // If the timer is idle and we just finished a session (lastFinishedPhase
+      // set, and no new session started since), attribute the note to THAT
+      // session rather than whatever phase happens to be showing now —
+      // otherwise a note written just after clicking Finish would get
+      // stamped with the next phase (e.g. a break) and calendar sync, which
+      // only logs focus sessions, would silently skip it.
+      const usingLastFinished = !isRunning && !isPaused && lastFinishedPhase !== null;
+      const phase = usingLastFinished ? lastFinishedPhase : currentPhase;
+      const now = usingLastFinished ? lastFinishedStartTimestamp : (sessionStartTimestamp || new Date());
       // Use whichever is larger: the planned target duration, or the actual
       // elapsed time. This way a session logged mid-overtime records its
       // real total time (target + overtime) instead of just the target —
       // so the Day Schedule block height reflects what actually happened.
-      const actualDuration = Math.max(totalDurationSeconds, elapsedSeconds);
+      const actualDuration = usingLastFinished ? lastFinishedDuration : Math.max(totalDurationSeconds, elapsedSeconds);
       const note = {
         id: nextNoteId++,
         title: title,
         text: text,
         timestamp: now.toISOString(),
-        phase: currentPhase,
+        phase: phase,
         duration: actualDuration,
         editMode: false,
       };
