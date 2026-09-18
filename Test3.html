@@ -831,6 +831,12 @@
       color: #2c2b28;
       line-height: 1.25;
     }
+    .note-source-icon {
+      display: inline-block;
+      margin-right: 2px;
+      font-size: 0.85em;
+      filter: grayscale(15%);
+    }
     .note-item .note-item-body {
       margin-top: 1px;
       font-size: 0.85rem;
@@ -1920,7 +1926,7 @@
       // calendar record before advancing — otherwise whatever was typed
       // would just be lost the moment the phase changes.
       if (currentPhase === 'focus' && noteTitleInput.value.trim()) {
-        addNote();
+        addNote('finish');
       }
       onTimerComplete();
     }
@@ -2036,7 +2042,7 @@
         div.innerHTML = `
           <div class="note-top">
             <div class="note-text">
-              <div class="note-item-title">${escapeHtml(getNoteTitle(note))}</div>
+              <div class="note-item-title"><span class="note-source-icon" title="${getNoteSourceLabel(note)}">${getNoteSourceIcon(note)}</span> ${escapeHtml(getNoteTitle(note))}</div>
               ${bodyText ? `<div class="note-item-body">${escapeHtml(bodyText)}</div>` : ''}
             </div>
             <div class="note-actions">
@@ -2136,6 +2142,15 @@
         return normalizeNoteText(lines.slice(1).join('\n'));
       }
       return '';
+    }
+    // Small icon shown next to each note so it's obvious at a glance
+    // whether it came from clicking Finish (which wraps up a whole session,
+    // merging in anything jotted mid-session) or from Add note on its own.
+    function getNoteSourceIcon(note) {
+      return note.source === 'finish' ? '🏁' : '🗒️';
+    }
+    function getNoteSourceLabel(note) {
+      return note.source === 'finish' ? 'Logged via Finish' : 'Added note';
     }
 
     // ----- Editable start/end time helpers (used by both the Notes list
@@ -2381,7 +2396,8 @@
       }
     }
 
-    function addNote() {
+    function addNote(source) {
+      source = source === 'finish' ? 'finish' : 'manual';
       const title = noteTitleInput.value.trim();
       const text = normalizeNoteText(noteInput.value);
       if (!title) {
@@ -2408,14 +2424,43 @@
       // real total time (target + overtime) instead of just the target —
       // so the Day Schedule block height reflects what actually happened.
       const actualDuration = usingLastFinished ? lastFinishedDuration : Math.max(totalDurationSeconds, elapsedSeconds);
+      // Every note carries the identity (start time, in ms) of the session
+      // it belongs to. Add-note entries jotted mid-session and the eventual
+      // Finish entry for that same session end up sharing this id, which is
+      // what lets Finish gather them back up below.
+      const sessionId = now.getTime();
+      let finalText = text;
+
+      // Roll any "Add note" entries jotted earlier in THIS session into the
+      // Finish note, instead of leaving them as separate scraps alongside
+      // it — the Finish note becomes the one complete record, and its
+      // calendar event is the only one that needs to exist for the session.
+      let mergedNotes = [];
+      if (source === 'finish') {
+        mergedNotes = notes.filter(n => n.source !== 'finish' && n.sessionId === sessionId);
+        if (mergedNotes.length) {
+          mergedNotes.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+          const priorPieces = mergedNotes.map(n => {
+            const t = getNoteTitle(n);
+            const b = getNoteBody(n);
+            return b ? `${t}: ${b}` : t;
+          });
+          finalText = [...priorPieces, text].filter(Boolean).join('\n');
+          for (const n of mergedNotes) deleteNoteFromCalendar(n);
+          notes = notes.filter(n => !mergedNotes.includes(n));
+        }
+      }
+
       const note = {
         id: nextNoteId++,
         title: title,
-        text: text,
+        text: finalText,
         timestamp: now.toISOString(),
         phase: phase,
         duration: actualDuration,
         editMode: false,
+        source: source,
+        sessionId: sessionId,
       };
       notes.push(note);
       noteTitleInput.value = '';
@@ -2941,11 +2986,11 @@
         });
       });
 
-      addNoteBtn.addEventListener('click', addNote);
+      addNoteBtn.addEventListener('click', () => addNote('manual'));
       noteTitleInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          addNote();
+          addNote('manual');
         }
       });
       // Enter in the details field continues the auto-bullet list instead
