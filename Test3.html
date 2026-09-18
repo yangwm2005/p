@@ -2440,12 +2440,22 @@
         mergedNotes = notes.filter(n => n.source !== 'finish' && n.sessionId === sessionId);
         if (mergedNotes.length) {
           mergedNotes.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-          const priorPieces = mergedNotes.map(n => {
+          // Each merged Add-note becomes its own top-level bullet (its
+          // title), with its own details nested one level under it — the
+          // same "• " outline convention the details textarea already uses,
+          // just applied across entries instead of within one.
+          const toBulletLines = (str, indent) => (str || '')
+            .split('\n')
+            .map(l => l.trim().replace(/^•\s*/, ''))
+            .filter(Boolean)
+            .map(l => `${indent}• ${l}`);
+          const priorBlocks = mergedNotes.map(n => {
             const t = getNoteTitle(n);
             const b = getNoteBody(n);
-            return b ? `${t}: ${b}` : t;
+            return [`• ${t}`, ...toBulletLines(b, '  ')].join('\n');
           });
-          finalText = [...priorPieces, text].filter(Boolean).join('\n');
+          const ownLines = toBulletLines(text, '');
+          finalText = [...priorBlocks, ...ownLines].join('\n');
           for (const n of mergedNotes) deleteNoteFromCalendar(n);
           notes = notes.filter(n => !mergedNotes.includes(n));
         }
@@ -3501,7 +3511,7 @@
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const body = getNoteBody(note);
       return {
-        summary: '🍅 ' + getNoteTitle(note),
+        summary: `🍅 ${getNoteSourceIcon(note)} ${getNoteTitle(note)}`,
         description: body || '',
         start: { dateTime: start.toISOString(), timeZone: tz },
         end: { dateTime: end.toISOString(), timeZone: tz },
