@@ -3301,8 +3301,32 @@
       return matches[0].id;
     }
 
+    // A saved/cached calendar id can go stale the moment someone deletes
+    // that calendar directly in Google Calendar — the app has no way to
+    // know unless it actually checks. Skipping that check (as the code used
+    // to) meant every sync silently 404'd against a calendar that no longer
+    // existed, and since a truthy cached id short-circuits calendar
+    // creation, no replacement calendar ever got made either. Re-verified
+    // at most once every 5 minutes per session, so this doesn't add an
+    // extra request to every single note sync.
+    let gcalCalendarIdVerifiedAt = 0;
+    async function calendarStillExists(id) {
+      if (!id) return false;
+      const res = await gcalFetch(`calendars/${encodeURIComponent(id)}`);
+      return !!(res && res.ok);
+    }
+
     async function ensurePomodoroCalendarId() {
-      if (gcalCalendarId) return gcalCalendarId;
+      if (gcalCalendarId) {
+        if (Date.now() - gcalCalendarIdVerifiedAt < 5 * 60 * 1000) return gcalCalendarId;
+        if (await calendarStillExists(gcalCalendarId)) {
+          gcalCalendarIdVerifiedAt = Date.now();
+          return gcalCalendarId;
+        }
+        // Stale — the calendar was deleted elsewhere. Forget it and fall
+        // through to re-resolving (search, then create) below.
+        gcalCalendarId = null;
+      }
       if (gcalCreatingCalendar) return gcalCreatingCalendar;
       gcalCreatingCalendar = (async () => {
         try {
@@ -3311,8 +3335,9 @@
             if (ref) {
               const doc = await ref.get();
               const savedId = doc.exists && doc.data().settings && doc.data().settings.pomodoroCalendarId;
-              if (savedId) {
+              if (savedId && await calendarStillExists(savedId)) {
                 gcalCalendarId = savedId;
+                gcalCalendarIdVerifiedAt = Date.now();
                 return gcalCalendarId;
               }
             }
@@ -3320,6 +3345,7 @@
           const foundId = await findExistingPomodoroCalendarId();
           if (foundId) {
             gcalCalendarId = foundId;
+            gcalCalendarIdVerifiedAt = Date.now();
             scheduleCloudPush(); // persists it so this lookup isn't needed again
             return gcalCalendarId;
           }
@@ -3334,6 +3360,7 @@
           if (!res || !res.ok) return null;
           const created = await res.json();
           gcalCalendarId = created.id;
+          gcalCalendarIdVerifiedAt = Date.now();
           scheduleCloudPush(); // persists pomodoroCalendarId via buildSyncPayload()
           return gcalCalendarId;
         } finally {
