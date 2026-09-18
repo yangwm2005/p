@@ -1165,6 +1165,7 @@
           <div id="gcalSyncRow" style="margin-top:8px; display:none;">
             <span class="csp-status" id="gcalSyncStatus">📅 Calendar: not connected</span><br>
             <button class="btn btn-outline" id="gcalConnectBtn" type="button" style="margin-top:4px; font-size:0.75rem; padding:4px 12px;">Connect Calendar</button>
+            <button class="btn btn-outline" id="gcalMergeBtn" type="button" title="Combine duplicate 'Pomodoro Tracker' calendars into one" style="margin-top:4px; font-size:0.75rem; padding:4px 12px;">🧹 Merge duplicates</button>
           </div>
         </div>
       </div>
@@ -1272,6 +1273,7 @@
     const gcalSyncRow = document.getElementById('gcalSyncRow');
     const gcalSyncStatus = document.getElementById('gcalSyncStatus');
     const gcalConnectBtn = document.getElementById('gcalConnectBtn');
+    const gcalMergeBtn = document.getElementById('gcalMergeBtn');
     const clearNotesBtn = document.getElementById('clearNotesBtn');
     const countdownModeBtn = document.getElementById('countdownMode');
     const countupModeBtn = document.getElementById('countupMode');
@@ -2899,6 +2901,7 @@
       });
       cloudAuthBtn.addEventListener('click', () => window.toggleCloudAuth());
       if (gcalConnectBtn) gcalConnectBtn.addEventListener('click', () => connectGoogleCalendar());
+      if (gcalMergeBtn) gcalMergeBtn.addEventListener('click', () => consolidatePomodoroCalendars());
 
       // Quick add buttons
       quickAddButtons.forEach(btn => {
@@ -3222,7 +3225,7 @@
             gcalAccessToken = tokenResponse.access_token;
             gcalTokenObtainedAt = Date.now();
             setCalendarConnected(true);
-            ensurePomodoroCalendarId();
+            ensurePomodoroCalendarId().then(() => backfillMissingCalendarEvents());
           } else {
             setCalendarConnected(false);
             alert('Calendar connection failed — Google did not return an access token.');
@@ -3274,8 +3277,30 @@
       return res;
     }
 
-    // Finds (via cloud-synced settings) or creates the dedicated calendar,
-    // caching its id so every device you sign into reuses the same one.
+    // Finds an existing "Pomodoro Tracker" calendar, or creates one only if
+    // none exists — checking (a) the id cached in cloud-synced settings and
+    // (b) the account's actual calendar list, in that order, before ever
+    // creating a new calendar. Previously this only checked (a); if that
+    // lookup ever missed (e.g. cloud settings hadn't loaded yet, or this was
+    // a new device), it created a brand-new calendar every time instead of
+    // reusing the one already there — which is how multiple duplicate
+    // "Pomodoro Tracker" calendars ended up in the account.
+    async function findExistingPomodoroCalendarId() {
+      const res = await gcalFetch('users/me/calendarList?maxResults=250');
+      if (!res || !res.ok) return null;
+      const list = await res.json();
+      const items = (list && list.items) || [];
+      const matches = items.filter(c =>
+        (c.summaryOverride || c.summary) === GCAL_CALENDAR_NAME && c.accessRole === 'owner'
+      );
+      if (matches.length === 0) return null;
+      // If several duplicates exist, prefer the one already saved in cloud
+      // settings (if it's among them); otherwise fall back to the lowest
+      // calendar id, purely so every device converges on the same choice.
+      matches.sort((a, b) => a.id.localeCompare(b.id));
+      return matches[0].id;
+    }
+
     async function ensurePomodoroCalendarId() {
       if (gcalCalendarId) return gcalCalendarId;
       if (gcalCreatingCalendar) return gcalCreatingCalendar;
@@ -3291,6 +3316,12 @@
                 return gcalCalendarId;
               }
             }
+          }
+          const foundId = await findExistingPomodoroCalendarId();
+          if (foundId) {
+            gcalCalendarId = foundId;
+            scheduleCloudPush(); // persists it so this lookup isn't needed again
+            return gcalCalendarId;
           }
           const res = await gcalFetch('calendars', {
             method: 'POST',
@@ -3310,6 +3341,58 @@
         }
       })();
       return gcalCreatingCalendar;
+    }
+
+    // One-off cleanup: find every calendar named "Pomodoro Tracker" in the
+    // account, move all events from the extras into the one the app will
+    // keep using going forward, then delete the now-empty duplicates.
+    async function consolidatePomodoroCalendars() {
+      if (!cloudUser) { alert('Please sign in first (top right).'); return; }
+      if (!gcalTokenIsFresh()) { alert('Please click Connect Calendar (or Reconnect) first, then try merging again.'); return; }
+      const listRes = await gcalFetch('users/me/calendarList?maxResults=250');
+      if (!listRes || !listRes.ok) { alert('Could not read your calendar list — please try again.'); return; }
+      const list = await listRes.json();
+      const items = (list && list.items) || [];
+      const dupes = items.filter(c =>
+        (c.summaryOverride || c.summary) === GCAL_CALENDAR_NAME && c.accessRole === 'owner'
+      );
+      if (dupes.length <= 1) {
+        alert('No duplicate "Pomodoro Tracker" calendars found — nothing to merge.');
+        return;
+      }
+      dupes.sort((a, b) => a.id.localeCompare(b.id));
+      const keepId = await ensurePomodoroCalendarId() || dupes[0].id;
+      const extras = dupes.filter(c => c.id !== keepId);
+      const confirmed = confirm(
+        `Found ${dupes.length} "Pomodoro Tracker" calendars.\n\n` +
+        `This will move every event from the other ${extras.length} into the one the app keeps using, ` +
+        `then delete those now-empty duplicates.\n\nContinue?`
+      );
+      if (!confirmed) return;
+
+      let movedCount = 0;
+      for (const cal of extras) {
+        let pageToken = undefined;
+        do {
+          const q = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
+          const evRes = await gcalFetch(`calendars/${encodeURIComponent(cal.id)}/events?maxResults=250${q}`);
+          if (!evRes || !evRes.ok) break;
+          const evData = await evRes.json();
+          const events = (evData && evData.items) || [];
+          for (const ev of events) {
+            const moveRes = await gcalFetch(
+              `calendars/${encodeURIComponent(cal.id)}/events/${encodeURIComponent(ev.id)}/move?destination=${encodeURIComponent(keepId)}`,
+              { method: 'POST' }
+            );
+            if (moveRes && moveRes.ok) movedCount++;
+          }
+          pageToken = evData && evData.nextPageToken;
+        } while (pageToken);
+        // Only delete the duplicate once it's actually empty.
+        await gcalFetch(`calendars/${encodeURIComponent(cal.id)}`, { method: 'DELETE' });
+      }
+      alert(`Done — moved ${movedCount} event(s) into one calendar and removed ${extras.length} duplicate(s).`);
+      backfillMissingCalendarEvents();
     }
 
     function gcalEventBody(note) {
@@ -3370,6 +3453,18 @@
         });
       } catch (e) {
         console.warn('Calendar delete error:', e);
+      }
+    }
+
+    // The Calendar OAuth token doesn't survive a page reload (see note
+    // above), so any focus session logged while disconnected never made it
+    // to Calendar and nothing retried it later. Whenever the connection is
+    // (re)established, catch those up automatically instead of leaving them
+    // missing until someone notices.
+    async function backfillMissingCalendarEvents() {
+      const pending = notes.filter(n => n.phase === 'focus' && !n.gcalEventId);
+      for (const note of pending) {
+        await syncNoteToCalendar(note);
       }
     }
 
