@@ -837,6 +837,18 @@
       font-size: 0.85em;
       filter: grayscale(15%);
     }
+    .note-day-header {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #9b938a;
+      padding: 10px 14px 4px;
+      margin-top: 2px;
+    }
+    .note-day-header:first-child {
+      padding-top: 4px;
+    }
     .cal-toast {
       position: fixed;
       left: 50%;
@@ -1183,6 +1195,7 @@
         <div class="gc-row">
           <button class="btn btn-success" id="exportGCalBtn">📅 Google Calendar</button>
           <button class="btn btn-outline" id="exportGCalNotesBtn">📋 Copy notes</button>
+          <button class="btn btn-outline" id="copyTodayNotesBtn">📋 Copy today only</button>
         </div>
         <div class="gc-row backup-row">
           <button class="btn btn-outline" id="exportBackupBtn">⬇️ Export backup</button>
@@ -1296,6 +1309,7 @@
     const noteCounter = document.getElementById('noteCounter');
     const exportGCalBtn = document.getElementById('exportGCalBtn');
     const exportGCalNotesBtn = document.getElementById('exportGCalNotesBtn');
+    const copyTodayNotesBtn = document.getElementById('copyTodayNotesBtn');
     const exportBackupBtn = document.getElementById('exportBackupBtn');
     const importBackupBtn = document.getElementById('importBackupBtn');
     const importBackupFile = document.getElementById('importBackupFile');
@@ -2085,7 +2099,17 @@
         return;
       }
       const sorted = [...active].reverse();
+      let lastDayKey = null;
       for (const note of sorted) {
+        const noteDay = new Date(note.timestamp);
+        const dayKey = noteDay.toDateString();
+        if (dayKey !== lastDayKey) {
+          lastDayKey = dayKey;
+          const header = document.createElement('div');
+          header.className = 'note-day-header';
+          header.textContent = scheduleDayLabelText(noteDay);
+          noteListContainer.appendChild(header);
+        }
         const div = document.createElement('div');
         div.className = 'note-item';
         if (note.editMode) {
@@ -2641,13 +2665,14 @@
       window.open(url, '_blank');
     }
 
-    function copyNotesToClipboard() {
-      const active = visibleNotes();
+    function copyNotesToClipboard(scope) {
+      const today = new Date();
+      const active = visibleNotes().filter(n => scope !== 'today' || isSameDay(new Date(n.timestamp), today));
       if (active.length === 0) {
-        alert('No notes to copy.');
+        alert(scope === 'today' ? 'No notes from today to copy.' : 'No notes to copy.');
         return;
       }
-      const title = getSectionTitle();
+      const title = scope === 'today' ? `${getSectionTitle()} — ${scheduleDayLabelText(today)}` : getSectionTitle();
       let text = `${title}\n${'='.repeat(title.length)}\n\n`;
       
       active.forEach((n, idx) => {
@@ -2655,7 +2680,7 @@
       });
       
       navigator.clipboard.writeText(text).then(() => {
-        alert('Notes copied to clipboard!');
+        alert(scope === 'today' ? "Today's notes copied to clipboard!" : 'Notes copied to clipboard!');
       }).catch(() => {
         alert('Could not copy. Please copy manually.');
       });
@@ -3233,7 +3258,8 @@
       });
 
       exportGCalBtn.addEventListener('click', exportToGoogleCalendar);
-      exportGCalNotesBtn.addEventListener('click', copyNotesToClipboard);
+      exportGCalNotesBtn.addEventListener('click', () => copyNotesToClipboard());
+      if (copyTodayNotesBtn) copyTodayNotesBtn.addEventListener('click', () => copyNotesToClipboard('today'));
       clearNotesBtn.addEventListener('click', clearNotes);
       if (restoreBackupBtn) restoreBackupBtn.addEventListener('click', restoreFromLocalBackup);
       exportBackupBtn.addEventListener('click', exportBackup);
