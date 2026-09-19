@@ -837,6 +837,31 @@
       font-size: 0.85em;
       filter: grayscale(15%);
     }
+    .cal-toast {
+      position: fixed;
+      left: 50%;
+      bottom: 28px;
+      transform: translateX(-50%) translateY(8px);
+      background: #2c2b28;
+      color: #fcf8f4;
+      padding: 9px 18px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      z-index: 300;
+      opacity: 0;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      pointer-events: none;
+      max-width: 90vw;
+      text-align: center;
+    }
+    .cal-toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    .cal-toast.error {
+      background: #7a3b32;
+    }
     .note-item .note-item-body {
       margin-top: 1px;
       font-size: 0.85rem;
@@ -1202,6 +1227,7 @@
 </div>
 
 <div class="schedule-tooltip" id="scheduleTooltip" style="display:none;"></div>
+<div class="cal-toast" id="calToast" style="display:none;"></div>
 
 <div class="focus-modal-backdrop" id="focusModalBackdrop" style="display:none;">
   <div class="focus-modal">
@@ -1309,6 +1335,26 @@
     const scheduleModalDelete = document.getElementById('scheduleModalDelete');
     const scheduleModalClose = document.getElementById('scheduleModalClose');
     const scheduleTooltip = document.getElementById('scheduleTooltip');
+    const calToast = document.getElementById('calToast');
+    let calToastTimer = null;
+    // Brief, non-blocking feedback for what's happening with a note's
+    // calendar sync — shown at the moment Add note/Finish is clicked, since
+    // that sync used to happen silently and the only way to notice it had
+    // failed was checking Calendar itself later.
+    function showCalToast(message, isError) {
+      if (!calToast) return;
+      calToast.textContent = message;
+      calToast.classList.toggle('error', !!isError);
+      calToast.style.display = 'block';
+      // Reflow so the transition reliably plays even if a toast is already visible.
+      void calToast.offsetWidth;
+      calToast.classList.add('show');
+      clearTimeout(calToastTimer);
+      calToastTimer = setTimeout(() => {
+        calToast.classList.remove('show');
+        setTimeout(() => { if (!calToast.classList.contains('show')) calToast.style.display = 'none'; }, 250);
+      }, 2600);
+    }
 
     // Editable titles
     const timerTitleInput = document.getElementById('timerTitle');
@@ -3480,6 +3526,7 @@
     // Firebase continues to handle sign-in/identity as before.
     const GCAL_CLIENT_ID = '663058774385-0209ekni5vchpbf9mr3rkofd369hrhr3.apps.googleusercontent.com';
     let gisTokenClient = null;
+    let silentReconnectResolvers = []; // pending ensureCalendarConnected() calls waiting on the shared token client
 
     function initGisTokenClient() {
       if (gisTokenClient) return gisTokenClient;
@@ -3488,23 +3535,63 @@
         client_id: GCAL_CLIENT_ID,
         scope: GCAL_SCOPE,
         callback: (tokenResponse) => {
+          const resolvers = silentReconnectResolvers.splice(0);
           if (tokenResponse && tokenResponse.access_token) {
             gcalAccessToken = tokenResponse.access_token;
             gcalTokenObtainedAt = Date.now();
             setCalendarConnected(true);
             ensurePomodoroCalendarId().then(() => backfillMissingCalendarEvents());
+            resolvers.forEach(fn => fn(true));
           } else {
             setCalendarConnected(false);
-            alert('Calendar connection failed — Google did not return an access token.');
+            resolvers.forEach(fn => fn(false));
+            if (resolvers.length === 0) alert('Calendar connection failed — Google did not return an access token.');
           }
         },
         error_callback: (err) => {
+          const resolvers = silentReconnectResolvers.splice(0);
+          resolvers.forEach(fn => fn(false));
           if (err && (err.type === 'popup_closed' || err.type === 'popup_failed_to_open')) return;
           console.warn('GIS token error:', err);
-          alert('Calendar connection failed: ' + (err && err.message ? err.message : 'please try again.'));
+          if (resolvers.length === 0) {
+            alert('Calendar connection failed: ' + (err && err.message ? err.message : 'please try again.'));
+          }
         },
       });
       return gisTokenClient;
+    }
+
+    let calendarReconnectPromise = null;
+    // Tries to silently refresh the Calendar connection using the sign-in
+    // you already granted, with no popup or button click — this is what
+    // lets Add note/Finish just work through an expired connection instead
+    // of requiring you to notice and click Reconnect yourself. Falls back
+    // to doing nothing (caller treats it as "still not connected") if a
+    // silent refresh genuinely isn't possible, e.g. Calendar was never
+    // connected on this device before.
+    function ensureCalendarConnected() {
+      if (gcalTokenIsFresh()) return Promise.resolve(true);
+      if (!cloudUser) return Promise.resolve(false);
+      if (calendarReconnectPromise) return calendarReconnectPromise;
+      const client = initGisTokenClient();
+      if (!client) return Promise.resolve(false);
+      calendarReconnectPromise = new Promise((resolve) => {
+        let settled = false;
+        const finish = (ok) => {
+          if (settled) return;
+          settled = true;
+          calendarReconnectPromise = null;
+          resolve(ok);
+        };
+        silentReconnectResolvers.push(finish);
+        setTimeout(() => finish(gcalTokenIsFresh()), 8000); // in case GIS never calls back
+        try {
+          client.requestAccessToken({ prompt: '' }); // '' = silent if a session/consent already exists, no forced UI
+        } catch (e) {
+          finish(false);
+        }
+      });
+      return calendarReconnectPromise;
     }
 
     function connectGoogleCalendar() {
@@ -3705,12 +3792,24 @@
     // Creates or updates the Calendar event for a finished FOCUS session.
     // Does nothing for break sessions, when not connected, or if the
     // request fails — calendar sync issues never block using the app.
-    async function syncNoteToCalendar(note) {
+    async function syncNoteToCalendar(note, opts) {
+      const silent = !!(opts && opts.silent);
       if (!note || note.phase !== 'focus') return;
-      if (!gcalTokenIsFresh()) return;
+      if (!gcalTokenIsFresh()) {
+        if (!silent) showCalToast('🔄 Reconnecting to Calendar…');
+        const reconnected = await ensureCalendarConnected();
+        if (!reconnected) {
+          if (!silent) showCalToast("⚠️ Calendar not connected — note saved, but not sent", true);
+          return;
+        }
+      }
+      if (!silent) showCalToast('📤 Sending note to Calendar…');
       try {
         const calendarId = await ensurePomodoroCalendarId();
-        if (!calendarId) return;
+        if (!calendarId) {
+          if (!silent) showCalToast('⚠️ Calendar sync failed', true);
+          return;
+        }
         if (note.gcalEventId) {
           const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(note.gcalEventId)}`, {
             method: 'PATCH',
@@ -3719,7 +3818,13 @@
           if (res && res.status === 404) {
             // The event was removed on the Google Calendar side — recreate it.
             note.gcalEventId = null;
-            await syncNoteToCalendar(note);
+            await syncNoteToCalendar(note, opts);
+            return;
+          }
+          if (res && res.ok) {
+            if (!silent) showCalToast('✅ Updated in Calendar');
+          } else if (!silent) {
+            showCalToast('⚠️ Calendar sync failed', true);
           }
         } else {
           const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events`, {
@@ -3730,10 +3835,14 @@
             const created = await res.json();
             note.gcalEventId = created.id;
             scheduleCloudPush();
+            if (!silent) showCalToast('✅ Added to Calendar');
+          } else if (!silent) {
+            showCalToast('⚠️ Calendar sync failed', true);
           }
         }
       } catch (e) {
         console.warn('Calendar sync error:', e);
+        if (!silent) showCalToast('⚠️ Calendar sync failed', true);
       }
     }
 
@@ -3758,8 +3867,9 @@
     async function backfillMissingCalendarEvents() {
       const pending = notes.filter(n => !n.deleted && n.phase === 'focus' && !n.gcalEventId);
       for (const note of pending) {
-        await syncNoteToCalendar(note);
+        await syncNoteToCalendar(note, { silent: true });
       }
+      if (pending.length > 0) showCalToast(`✅ Caught up ${pending.length} note(s) to Calendar`);
     }
 
     window.toggleCloudAuth = async function() {
