@@ -1147,6 +1147,7 @@
           <div class="note-input-row">
             <button class="btn btn-primary btn-sm" id="addNoteBtn">✚ Add note</button>
             <button class="btn btn-outline btn-sm" id="clearNotesBtn">🗑 Clear all</button>
+            <button class="btn btn-outline btn-sm" id="restoreBackupBtn" title="Restore from this device's local backup, in case notes ever go missing">🛟 Restore backup</button>
           </div>
         </div>
         <div class="note-list" id="noteListContainer">
@@ -1281,6 +1282,7 @@
     const gcalConnectBtn = document.getElementById('gcalConnectBtn');
     const gcalMergeBtn = document.getElementById('gcalMergeBtn');
     const clearNotesBtn = document.getElementById('clearNotesBtn');
+    const restoreBackupBtn = document.getElementById('restoreBackupBtn');
     const countdownModeBtn = document.getElementById('countdownMode');
     const countupModeBtn = document.getElementById('countupMode');
     const digitalViewBtn = document.getElementById('digitalViewBtn');
@@ -1351,6 +1353,21 @@
 
     let notes = [];
     let nextNoteId = 1;
+    // A stable per-device id, so notes created on this device can be told
+    // apart from notes created on another device signed into the same
+    // account — this is what makes cross-device merging safe (see
+    // mergeNoteArrays below) instead of either duplicating notes or letting
+    // one device's pull silently discard another device's notes.
+    let deviceId = null;
+    try {
+      deviceId = localStorage.getItem('pomodoroTrackerDeviceId');
+      if (!deviceId) {
+        deviceId = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        localStorage.setItem('pomodoroTrackerDeviceId', deviceId);
+      }
+    } catch (e) {
+      deviceId = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); // in-memory only if storage is unavailable
+    }
     // Local mirror of what's been synced, so a page reload never starts
     // from a blank slate and never mistakes "nothing loaded yet" for
     // "nothing to sync" (see PT_LOCAL_KEY persistence below).
@@ -1361,6 +1378,49 @@
     let notesViewMode = 'notes'; // 'notes' or 'schedule'
     let scheduleDate = new Date(); // day currently shown in the schedule view
     let scheduleModalNoteId = null; // id of the note currently open in the edit modal
+
+    // A note's lasting identity across devices — its own id is only unique
+    // on the device that created it, so two devices can (and eventually
+    // will) both create a "note #7". uid disambiguates that. Notes made
+    // before this existed don't have one; those are matched by id+timestamp
+    // instead, which is a fine stand-in since that pair was already unique
+    // within whatever was synced at the time.
+    function noteIdentity(n) {
+      return n.uid || `legacy-${n.id}-${n.timestamp}`;
+    }
+    // Merges two note arrays by identity instead of either replacing one
+    // with the other (which can silently discard notes the other side
+    // never saw yet) or blindly concatenating (which duplicates notes both
+    // sides already share). Where both sides have the same note, whichever
+    // copy was actually edited more recently wins — including a deletion,
+    // which is itself just a more-recent edit that happens to be a
+    // tombstone, so a delete on one device correctly "outvotes" an older,
+    // undeleted copy still sitting on another device that hasn't caught up.
+    function mergeNoteArrays(localArr, remoteArr) {
+      const map = new Map();
+      for (const n of localArr) map.set(noteIdentity(n), n);
+      for (const n of remoteArr) {
+        const key = noteIdentity(n);
+        const existing = map.get(key);
+        if (!existing || (n.noteUpdatedAt || 0) > (existing.noteUpdatedAt || 0)) {
+          map.set(key, n);
+        }
+      }
+      return Array.from(map.values());
+    }
+    // Deletions are tombstones, not removals — a note vanishing from the
+    // array entirely gives a cross-device merge nothing to compare against,
+    // so an older copy still on another device would just get treated as
+    // "new" and silently come back. Tombstoned notes are filtered out of
+    // every view/use below but stay in the synced payload so the deletion
+    // itself propagates.
+    function tombstoneNote(n) {
+      n.deleted = true;
+      n.noteUpdatedAt = Date.now();
+    }
+    function visibleNotes() {
+      return notes.filter(n => !n.deleted);
+    }
 
     // ----- helpers -----
     function formatTime(sec) {
@@ -1972,12 +2032,13 @@
     function renderNotes() {
       saveLocalData();
       noteListContainer.innerHTML = '';
-      if (notes.length === 0) {
+      const active = visibleNotes();
+      if (active.length === 0) {
         noteListContainer.innerHTML = '<div style="padding: 8px 14px; color: #7b7168; font-style: italic; font-size:0.85rem;">No notes yet. Add a note for this Pomodoro.</div>';
         noteCounter.textContent = '0';
         return;
       }
-      const sorted = [...notes].reverse();
+      const sorted = [...active].reverse();
       for (const note of sorted) {
         const div = document.createElement('div');
         div.className = 'note-item';
@@ -2018,6 +2079,7 @@
                 notes[idx].duration = timing.duration;
               }
               notes[idx].editMode = false;
+              notes[idx].noteUpdatedAt = Date.now();
               localUpdatedAt = Date.now();
               renderNotes();
               syncNoteToCalendar(notes[idx]);
@@ -2071,13 +2133,13 @@
           e.stopPropagation();
           if (confirm('Delete this note?')) {
             deleteNoteFromCalendar(note);
-            notes = notes.filter(n => n.id !== note.id);
+            tombstoneNote(note);
             localUpdatedAt = Date.now();
             renderNotes();
           }
         });
       }
-      noteCounter.textContent = notes.length;
+      noteCounter.textContent = active.length;
       if (notesViewMode === 'schedule') {
         renderSchedule();
       }
@@ -2243,7 +2305,7 @@
 
       // Session blocks for the selected day, drawn from each note's
       // timestamp + duration (the same data already shown in the Notes list).
-      const dayNotes = notes.filter(n => isSameDay(new Date(n.timestamp), scheduleDate));
+      const dayNotes = visibleNotes().filter(n => isSameDay(new Date(n.timestamp), scheduleDate));
       dayNotes.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
       if (dayNotes.length === 0) {
@@ -2378,6 +2440,7 @@
           notes[idx].duration = timing.duration;
         }
         localUpdatedAt = Date.now();
+        notes[idx].noteUpdatedAt = Date.now();
         renderNotes();
         syncNoteToCalendar(notes[idx]);
       }
@@ -2388,8 +2451,10 @@
       if (scheduleModalNoteId === null) return;
       if (confirm('Delete this note?')) {
         const note = notes.find(n => n.id === scheduleModalNoteId);
-        if (note) deleteNoteFromCalendar(note);
-        notes = notes.filter(n => n.id !== scheduleModalNoteId);
+        if (note) {
+          deleteNoteFromCalendar(note);
+          tombstoneNote(note);
+        }
         localUpdatedAt = Date.now();
         renderNotes();
         closeScheduleModal();
@@ -2437,7 +2502,7 @@
       // calendar event is the only one that needs to exist for the session.
       let mergedNotes = [];
       if (source === 'finish') {
-        mergedNotes = notes.filter(n => n.source !== 'finish' && n.sessionId === sessionId);
+        mergedNotes = notes.filter(n => !n.deleted && n.source !== 'finish' && n.sessionId === sessionId);
         if (mergedNotes.length) {
           mergedNotes.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
           // Each merged Add-note becomes its own top-level bullet (its
@@ -2456,13 +2521,14 @@
           });
           const ownLines = toBulletLines(text, '');
           finalText = [...priorBlocks, ...ownLines].join('\n');
-          for (const n of mergedNotes) deleteNoteFromCalendar(n);
-          notes = notes.filter(n => !mergedNotes.includes(n));
+          for (const n of mergedNotes) { deleteNoteFromCalendar(n); tombstoneNote(n); }
         }
       }
 
+      const noteLocalId = nextNoteId++;
       const note = {
-        id: nextNoteId++,
+        id: noteLocalId,
+        uid: `${deviceId}-${noteLocalId}`,
         title: title,
         text: finalText,
         timestamp: now.toISOString(),
@@ -2471,6 +2537,7 @@
         editMode: false,
         source: source,
         sessionId: sessionId,
+        noteUpdatedAt: Date.now(),
       };
       notes.push(note);
       noteTitleInput.value = '';
@@ -2502,7 +2569,8 @@
     }
 
     function exportToGoogleCalendar() {
-      if (notes.length === 0) {
+      const active = visibleNotes();
+      if (active.length === 0) {
         alert('No notes to export. Add a note first!');
         return;
       }
@@ -2515,27 +2583,28 @@
       const title = getSectionTitle();
       let description = `${title}\n${'='.repeat(title.length)}\n\n`;
       
-      notes.forEach((n, idx) => {
+      active.forEach((n, idx) => {
         description += formatNoteForExport(n, idx) + '\n\n';
       });
 
       const startStr = startTime.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
       const endStr = endTime.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
       const encodedDesc = encodeURIComponent(description);
-      const eventTitle = encodeURIComponent(`${title} (${notes.length} entries)`);
+      const eventTitle = encodeURIComponent(`${title} (${active.length} entries)`);
       const url = `https://www.google.com/calendar/render?action=TEMPLATE&text=${eventTitle}&dates=${startStr}/${endStr}&details=${encodedDesc}`;
       window.open(url, '_blank');
     }
 
     function copyNotesToClipboard() {
-      if (notes.length === 0) {
+      const active = visibleNotes();
+      if (active.length === 0) {
         alert('No notes to copy.');
         return;
       }
       const title = getSectionTitle();
       let text = `${title}\n${'='.repeat(title.length)}\n\n`;
       
-      notes.forEach((n, idx) => {
+      active.forEach((n, idx) => {
         text += formatNoteForExport(n, idx) + '\n\n';
       });
       
@@ -2577,7 +2646,58 @@
         payload.localUpdatedAt = localUpdatedAt;
         payload.lastSyncedAt = lastSyncedAt;
         localStorage.setItem(PT_LOCAL_KEY, JSON.stringify(payload));
+        updateLocalBackup();
       } catch (e) { /* localStorage unavailable — ignore, nothing to persist */ }
+    }
+
+    // A second, independent safety net: keep a rolling backup that only
+    // ever grows, never shrinks — so even if the main record somehow ends
+    // up wrong or empty (a bug, a bad sync, browser data getting cleared),
+    // there's still a real copy of the most notes this device has ever
+    // held, restorable with the button in the cloud sync panel.
+    const PT_BACKUP_KEY = 'pomodoroTrackerBackup';
+    function updateLocalBackup() {
+      try {
+        const active = visibleNotes();
+        if (!active.length) return;
+        const raw = localStorage.getItem(PT_BACKUP_KEY);
+        const prev = raw ? JSON.parse(raw) : null;
+        const prevActiveCount = (prev && Array.isArray(prev.notes)) ? prev.notes.filter(n => !n.deleted).length : -1;
+        if (active.length >= prevActiveCount) {
+          localStorage.setItem(PT_BACKUP_KEY, JSON.stringify({ notes: notes, savedAt: Date.now() }));
+        }
+      } catch (e) { /* ignore — backup is a best-effort extra, not required */ }
+    }
+
+    function restoreFromLocalBackup() {
+      let backup;
+      try {
+        const raw = localStorage.getItem(PT_BACKUP_KEY);
+        backup = raw ? JSON.parse(raw) : null;
+      } catch (e) { backup = null; }
+      if (!backup || !Array.isArray(backup.notes) || backup.notes.length === 0) {
+        alert('No local backup found on this device.');
+        return;
+      }
+      const savedWhen = backup.savedAt ? new Date(backup.savedAt).toLocaleString() : 'an earlier point';
+      const confirmed = confirm(
+        `Found a local backup with ${backup.notes.filter(n => !n.deleted).length} note(s), last updated ${savedWhen}.\n\n` +
+        `This will merge in anything from that backup you don't already have, then sync the result to the cloud. Continue?`
+      );
+      if (!confirmed) return;
+      const beforeIds = new Set(notes.map(noteIdentity));
+      const merged = mergeNoteArrays(notes, backup.notes);
+      const addedCount = merged.filter(n => !beforeIds.has(noteIdentity(n))).length;
+      if (addedCount === 0) {
+        alert('Everything in the backup is already in your current list — nothing to restore.');
+        return;
+      }
+      notes = merged;
+      nextNoteId = notes.reduce((m, n) => Math.max(m, n.id || 0), 0) + 1;
+      localUpdatedAt = Date.now();
+      renderNotes();
+      scheduleCloudPush();
+      alert(`Restored ${addedCount} note(s).`);
     }
 
     function loadLocalData() {
@@ -2636,6 +2756,30 @@
       updateDisplay();
     }
 
+    // Used for every AUTOMATIC/silent cloud sync path (the realtime
+    // listener, and reconcile-on-sign-in) — as opposed to applySyncPayload
+    // above, which a person explicitly invokes (restoring a chosen backup
+    // file) and can knowingly ask to hard-replace. An automatic path must
+    // never destructively replace: it always merges by note identity, so a
+    // pull from the cloud can't silently discard a note this device (or
+    // another one) hasn't synced yet — this is what makes using the app
+    // from more than one device safe.
+    function applyCloudSnapshot(data) {
+      notes = mergeNoteArrays(notes, Array.isArray(data.notes) ? data.notes : []);
+      nextNoteId = notes.reduce((m, n) => Math.max(m, n.id || 0), 0) + 1;
+      if (data.settings) {
+        if (data.settings.focusDuration) focusInput.value = data.settings.focusDuration;
+        if (data.settings.shortBreakDuration) shortInput.value = data.settings.shortBreakDuration;
+        if (data.settings.longBreakDuration) longInput.value = data.settings.longBreakDuration;
+        if (data.settings.timerTitle) timerTitleInput.value = data.settings.timerTitle;
+        if (data.settings.notesTitle) notesTitleInput.value = data.settings.notesTitle;
+        if (data.settings.pomodoroCalendarId) gcalCalendarId = data.settings.pomodoroCalendarId;
+      }
+      lastSyncedAt = data.updatedAt || Date.now();
+      renderNotes();
+      updateDisplay();
+    }
+
 
     function exportBackup() {
       const backup = buildSyncPayload();
@@ -2676,11 +2820,13 @@
     }
 
     function clearNotes() {
-      if (notes.length === 0) return;
+      const active = visibleNotes();
+      if (active.length === 0) return;
       if (confirm('Delete all notes?')) {
-        notes = [];
+        for (const n of active) tombstoneNote(n);
         localUpdatedAt = Date.now();
         renderNotes();
+        scheduleCloudPush();
       }
     }
 
@@ -3043,6 +3189,7 @@
       exportGCalBtn.addEventListener('click', exportToGoogleCalendar);
       exportGCalNotesBtn.addEventListener('click', copyNotesToClipboard);
       clearNotesBtn.addEventListener('click', clearNotes);
+      if (restoreBackupBtn) restoreBackupBtn.addEventListener('click', restoreFromLocalBackup);
       exportBackupBtn.addEventListener('click', exportBackup);
       importBackupBtn.addEventListener('click', () => importBackupFile.click());
       importBackupFile.addEventListener('change', (e) => {
@@ -3089,14 +3236,18 @@
       // cloud, overwriting real data. Now it only fires when there is
       // truly no saved local data yet.
       if (!localDataLoadedFromStorage && notes.length === 0) {
+        const welcomeId = nextNoteId++;
         notes.push({
-          id: nextNoteId++,
+          id: welcomeId,
+          uid: `${deviceId}-${welcomeId}`,
           title: 'Welcome',
           text: 'The 25min analog circle now shows a full red circle that counts down.',
           timestamp: new Date().toISOString(),
           phase: 'focus',
           duration: 25 * 60,
           editMode: false,
+          source: 'manual',
+          noteUpdatedAt: Date.now(),
         });
         localUpdatedAt = Date.now();
       }
@@ -3176,11 +3327,41 @@
       cloudPushTimer = setTimeout(cloudPushNow, 1000);
     }
 
+    let allowEmptyCloudPush = false; // reserved escape hatch for the empty-push safety check below; nothing needs to set this now that deletes are tombstones rather than true removals, but it's kept in case a genuinely empty push is ever needed
+
     function cloudPushNow() {
       const ref = cloudDocRef();
       if (!ref) return;
       const payload = buildSyncPayload();
       payload.updatedAt = Date.now();
+
+      // Hard safety net: never let a push silently erase real cloud data.
+      // Whatever upstream logic decided to push, if what we're about to
+      // write is empty, stop and check what's actually out there first —
+      // this is the one place that can overwrite the entire cloud record,
+      // so it's the right place to guarantee "all records gone" can't
+      // happen again even from a bug we haven't found yet.
+      if (payload.notes.length === 0 && !allowEmptyCloudPush) {
+        ref.get().then((existing) => {
+          const cloudNotes = existing.exists && Array.isArray(existing.data().notes) ? existing.data().notes : [];
+          if (cloudNotes.length > 0) {
+            console.warn('Refused to push an empty notes list over existing cloud data.');
+            setCloudStatus('error');
+            return;
+          }
+          doCloudPush(payload);
+        }).catch((e) => {
+          console.warn('Cloud pre-push check failed — skipping push to be safe:', e);
+          setCloudStatus('error');
+        });
+        return;
+      }
+      doCloudPush(payload);
+    }
+
+    function doCloudPush(payload) {
+      const ref = cloudDocRef();
+      if (!ref) return;
       cloudLastPushTs = payload.updatedAt;
       cloudPushing = true;
       setCloudStatus('pending');
@@ -3203,7 +3384,7 @@
         const data = snap.data();
         const remoteTs = data.updatedAt || 0;
         if (remoteTs <= cloudLastPushTs) return; // this is our own write echoing back
-        applySyncPayload(data, true);
+        applyCloudSnapshot(data);
         setCloudStatus('synced');
       }, (e) => {
         console.warn('Cloud listener error:', e);
@@ -3220,8 +3401,11 @@
     // dialog runs automatically here: a dialog that can appear unprompted
     // during page load, with a "Cancel" option that quietly overwrites the
     // cloud, is exactly what let a fresh/empty local state wipe out real
-    // cloud data on reload. Instead this compares timestamps and, on rare
-    // genuine conflicts, merges rather than picking a side.
+    // cloud data on reload. Every pull below goes through applyCloudSnapshot,
+    // which merges by note identity rather than replacing — this is what
+    // keeps using the app from two devices (e.g. office + home computer)
+    // safe: whichever device's reconcile runs, it can only ever add to what
+    // this device has, never discard a note the other device already made.
     function cloudReconcile() {
       const ref = cloudDocRef();
       if (!ref) return;
@@ -3237,10 +3421,10 @@
           if (cloudIsNewer && localIsNewer) {
             // Both sides changed since they last agreed — merge instead of
             // silently discarding either one.
-            applySyncPayload(data, false);
+            applyCloudSnapshot(data);
             cloudPushNow();
           } else if (cloudIsNewer) {
-            applySyncPayload(data, true);
+            applyCloudSnapshot(data);
           } else if (localIsNewer) {
             cloudPushNow();
           }
@@ -3572,7 +3756,7 @@
     // (re)established, catch those up automatically instead of leaving them
     // missing until someone notices.
     async function backfillMissingCalendarEvents() {
-      const pending = notes.filter(n => n.phase === 'focus' && !n.gcalEventId);
+      const pending = notes.filter(n => !n.deleted && n.phase === 'focus' && !n.gcalEventId);
       for (const note of pending) {
         await syncNoteToCalendar(note);
       }
