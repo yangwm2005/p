@@ -496,6 +496,48 @@
       background: #ede7e1;
       color: #6d645b;
     }
+    .notes-popout-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(30,26,22,0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      padding: 24px;
+    }
+    .notes-popout {
+      background: #fcf8f4;
+      border-radius: 20px;
+      padding: 20px 20px 8px;
+      width: 100%;
+      max-width: 920px;
+      height: 100%;
+      max-height: 88vh;
+      box-shadow: 0 30px 70px rgba(0,0,0,0.35);
+      display: flex;
+      flex-direction: column;
+    }
+    .notes-popout-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #2c2b28;
+    }
+    .notes-popout-body {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
+    }
+    /* The relocated note-list fills the popout body rather than its usual
+       narrow sidebar height, so it needs its own scroll/height reset here. */
+    .notes-popout-body .note-list {
+      max-height: none;
+      height: 100%;
+    }
     .clock-view-toggle button, .clock-mode-toggle button {
       background: #ede7e1;
       border: none;
@@ -1173,7 +1215,10 @@
       <div class="note-section" id="notesPanel">
         <div class="note-header">
           <h3>All notes</h3>
-          <span class="badge" id="noteCounter">0</span>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span class="badge" id="noteCounter">0</span>
+            <button type="button" class="note-expand-btn" id="notesPopoutBtn" title="Pop out the full notes list into a larger window">⤢</button>
+          </div>
         </div>
         <div class="note-input-area">
           <div style="display:flex; align-items:center; gap:6px;">
@@ -1256,6 +1301,16 @@
   </div>
 </div>
 
+<div class="notes-popout-backdrop" id="notesPopoutBackdrop" style="display:none;">
+  <div class="notes-popout">
+    <div class="notes-popout-header">
+      <span>All notes</span>
+      <button type="button" class="focus-modal-close" id="notesPopoutCloseBtn">✕ Close</button>
+    </div>
+    <div class="notes-popout-body" id="notesPopoutBody"></div>
+  </div>
+</div>
+
 <div class="schedule-modal-backdrop" id="scheduleModalBackdrop" style="display:none;">
   <div class="schedule-modal">
     <div class="schedule-modal-header">
@@ -1306,6 +1361,10 @@
     const focusModalCloseBtn = document.getElementById('focusModalCloseBtn');
     const focusDoneBtn = document.getElementById('focusDoneBtn');
     const noteListContainer = document.getElementById('noteListContainer');
+    const notesPopoutBtn = document.getElementById('notesPopoutBtn');
+    const notesPopoutBackdrop = document.getElementById('notesPopoutBackdrop');
+    const notesPopoutBody = document.getElementById('notesPopoutBody');
+    const notesPopoutCloseBtn = document.getElementById('notesPopoutCloseBtn');
     const noteCounter = document.getElementById('noteCounter');
     const exportGCalBtn = document.getElementById('exportGCalBtn');
     const exportGCalNotesBtn = document.getElementById('exportGCalNotesBtn');
@@ -3276,6 +3335,40 @@
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && focusModalBackdrop.style.display !== 'none') {
           closeFocusMode();
+        }
+      });
+
+      // --- Notes pop-out: a much larger window over the full notes list,
+      // for reviewing or editing many records at once instead of scrolling
+      // the narrow sidebar column. This relocates the REAL noteListContainer
+      // element (not a copy) into the pop-out and back, so every note's
+      // existing edit/delete controls keep working exactly as they do
+      // inline — nothing needs to be re-rendered or kept in sync separately.
+      const noteListHome = noteListContainer.parentNode;
+      const noteListNextSibling = noteListContainer.nextSibling;
+      function openNotesPopout() {
+        if (notesPopoutBackdrop.style.display !== 'none') return;
+        notesPopoutBody.appendChild(noteListContainer);
+        notesPopoutBackdrop.style.display = 'flex';
+      }
+      function closeNotesPopout() {
+        if (noteListNextSibling) {
+          noteListHome.insertBefore(noteListContainer, noteListNextSibling);
+        } else {
+          noteListHome.appendChild(noteListContainer);
+        }
+        notesPopoutBackdrop.style.display = 'none';
+      }
+      if (notesPopoutBtn) notesPopoutBtn.addEventListener('click', openNotesPopout);
+      if (notesPopoutCloseBtn) notesPopoutCloseBtn.addEventListener('click', closeNotesPopout);
+      if (notesPopoutBackdrop) {
+        notesPopoutBackdrop.addEventListener('click', (e) => {
+          if (e.target === notesPopoutBackdrop) closeNotesPopout();
+        });
+      }
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && notesPopoutBackdrop && notesPopoutBackdrop.style.display !== 'none') {
+          closeNotesPopout();
         }
       });
 
