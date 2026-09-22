@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Thoughts</title>
+    <title>Week Goals</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/7.4.0/docx.min.js"></script>
     <style>
         body {
@@ -20,7 +20,6 @@
 
         table {
             border-collapse: collapse;
-            table-layout: fixed;
             width: 95vw;
             max-width: 950px;
             margin-top: 20px;
@@ -32,15 +31,26 @@
            top-left corner, in the gap between blocks, rather than
            overlapping the first cell's own title — only the grip itself
            is draggable, not the table, so normal clicking/selecting
-           text/dragging inside the table is completely unaffected.
-           Shared sizing/color/hover styling lives on .table-corner-btn
-           (see below, next to the other per-table icon buttons) so all
-           four read as one coherent control set; this just positions it
-           and sets the grab cursor. */
+           text/dragging inside the table is completely unaffected. */
         .table-drag-handle {
+            position: absolute;
+            top: -9px;
             left: 0;
+            width: 22px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             cursor: grab;
+            color: #aaa;
+            font-size: 13px;
+            border-radius: 4px;
             user-select: none;
+            z-index: 5;
+        }
+        .table-drag-handle:hover {
+            color: #555;
+            background: rgba(0, 0, 0, 0.06);
         }
         .table-dragging {
             opacity: 0.4;
@@ -67,7 +77,10 @@
             text-align: left;
             vertical-align: top;
             padding: 20px;
-            width: 100%;
+            resize: both;
+            overflow: auto;
+            width: 200px;
+            height: 230px;
             cursor: text;
             font-size: 1.0em;
             line-height: 1.2;
@@ -76,28 +89,6 @@
                inside the cell. */
             overflow-wrap: anywhere;
             word-break: break-word;
-        }
-
-        /* The actual fixed-height, scrollable/resizable box for a
-           cell's content, wrapping .outline-root — deliberately NOT on
-           the <td> itself. A table cell's `height` is only a minimum
-           in HTML table layout: browsers let the cell grow past it to
-           fit content no matter what `overflow` says, so a fixed
-           height + overflow:auto on a <td> directly never reliably
-           produces a scrollbar — the row just keeps growing instead.
-           A plain block-level div doesn't have that table-layout
-           quirk, so the scrolling/resizing lives here, while the
-           header (h3 + its toggles) stays outside it and always
-           visible. Padding/height/resize values match the plain td
-           this app was forked from (Weekgoal) — the visual proportions
-           are the same, only the growing-instead-of-scrolling bug is
-           fixed. */
-        .cell-scroll {
-            width: 100%;
-            box-sizing: border-box;
-            height: 190px;
-            overflow: auto;
-            resize: vertical;
         }
 
         table h3 {
@@ -120,8 +111,9 @@
             align-items: center;
             gap: 6px;
             /* Sticks to the top of the viewport as the page scrolls, so
-               the control buttons stay reachable without scrolling back
-               up to find them. */
+               the control buttons (Files, New WeekGoal, Start, Quick,
+               File, project menu, Notes) stay reachable without
+               scrolling back up to find them. */
             position: sticky;
             top: 0;
             z-index: 600;
@@ -155,16 +147,21 @@
             border-radius: 3px;
         }
 
+        .toolbar-pin {
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
         /* ===== Top toolbar restyle =====
-           The rest of the app keeps its existing button color
-           semantics (green/violet/teal/amber on cell and floating-
-           toolbar buttons) — this section only touches buttons and
-           dropdown panels that live inside #toolbar, so nothing
-           outside the top bar changes. Goal: one calm, consistent
-           look (white, bordered, quiet hover, lifted off the page
-           with a light shadow) instead of a different saturated
-           color per button, with a single accent reserved for the
-           one action worth drawing the eye to (Sign in). */
+           The rest of the app keeps its existing button colors
+           (blue/green/purple/gray/brown/orange semantics on cell and
+           floating-toolbar buttons) — this section only touches
+           buttons and dropdown panels that live inside #toolbar, so
+           nothing outside the top bar changes. Goal: one calm,
+           consistent look (white, bordered, quiet hover) instead of a
+           different saturated color per button, with a single accent
+           reserved for the one action worth drawing the eye to
+           (Sign in). */
         #toolbar button,
         #toolbar .dropdown-toggle {
             background: #ffffff;
@@ -182,27 +179,26 @@
             border-color: #a9b4c2;
             box-shadow: 0 2px 5px rgba(15, 23, 42, 0.14);
         }
-        /* Collapse the old per-button color classes (.gray/.btn-structural/
-           .btn-link/.btn-view/.btn-save) down to the same neutral look
-           above, but only inside #toolbar — these classes are also used
-           elsewhere in the app (cell buttons, floating toolbar) and
-           stay as they were there. */
+        /* Collapse the old per-button color classes (.gray/.btn-link/
+           .btn-blue/.btn-view) down to the same neutral look above,
+           but only inside #toolbar — these classes are also used
+           elsewhere in the app (cell buttons, file sidebar) and stay
+           as they were there. */
         #toolbar button.gray,
-        #toolbar button.btn-structural,
         #toolbar button.btn-link,
+        #toolbar .btn-blue,
         #toolbar button.btn-view,
-        #toolbar button.btn-save {
+        #toolbar #exportButton {
             background: #ffffff;
             color: #333b44;
         }
         #toolbar button.gray:hover,
-        #toolbar button.btn-structural:hover,
         #toolbar button.btn-link:hover,
+        #toolbar .btn-blue:hover,
         #toolbar button.btn-view:hover,
-        #toolbar button.btn-save:hover {
+        #toolbar #exportButton:hover {
             background: #eef2f7;
             border-color: #a9b4c2;
-            color: #333b44;
         }
         /* The one accent in the bar: Sign in is the single action worth
            making prominent, since everything else only appears once
@@ -224,12 +220,12 @@
             box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
             padding: 6px;
         }
-        /* Buttons inside dropdown panels (File ▾ / Cloud ▾ / Links ▾
-           menu items, and the +This Week-style shortcut group) read as
-           flat menu rows/chips instead of solid colored blocks. Panel
-           background is already white, so these use a slightly
-           lighter tint than the main toolbar buttons to stay visible
-           against that white panel. */
+        /* Buttons inside dropdown panels (File ▾ / Cloud ▾ / Start ▾ /
+           Links ▾ menu items, and the +This Week-style shortcut group)
+           read as flat menu rows/chips instead of solid brown or grey
+           blocks. Panel background is already white, so these use a
+           slightly lighter tint than the main toolbar buttons to stay
+           visible against that white panel. */
         #toolbar .dropdown-content button,
         #toolbar .dropdown-content input[type="button"] {
             background: #f4f6f8;
@@ -261,27 +257,20 @@
             color: #d3d7dc;
         }
 
-        .toolbar-pin {
-            flex: 0 0 auto;
-            white-space: nowrap;
-        }
-
         button {
             margin-right: 5px;
-            padding: 6px 10px;
+            padding: 5px 5px;
             border: none;
-            background-color: #3E63DD;
+            background-color: #007BFF;
             color: white;
-            font-family: inherit;
             font-size: 12px;
-            font-weight: 500;
             cursor: pointer;
-            border-radius: 6px;
-            transition: background-color 0.15s ease;
+            border-radius: 2px;
+            transition: background-color 0.2s;
         }
 
         button:hover {
-            background-color: #3151b8;
+            background-color: #0056b3;
         }
 
         .custom-bullet-list {
@@ -340,19 +329,18 @@
         .options-menu button {
             display: block;
             background: white;
-            color: #2b2f36;
+            color: black;
             border: none;
             padding: 8px 12px;
             cursor: pointer;
             text-align: left;
             width: 100%;
             font-size: 14px;
-            border-radius: 5px;
         }
 
         .options-menu button:hover {
-            background-color: #eef1fb;
-            color: #3E63DD;
+            background-color: #007BFF;
+            color: white;
         }
 
         .dropdown {
@@ -363,15 +351,13 @@
         .dropdown-content {
             display: none;
             position: absolute;
-            background-color: #ffffff;
-            border: 1px solid #e4e6ea;
+            background-color: #f1f1f1;
             width: auto;
             min-width: 130px;
-            box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12);
+            box-shadow: 1px 1px 2px 0px rgba(0,0,0,0.1);
             z-index: 1000;
-            margin-top: 6px;
-            padding: 6px;
-            border-radius: 8px;
+            margin-top: 2px;
+            padding: 5px;
             text-align: center;
             opacity: 0;
             transform: scale(0.95);
@@ -390,23 +376,20 @@
             border: none;
         }
 
-        /* Structural styling only — deliberately no background-color or
-           color here. Previously this rule set a brown fill on every
-           button inside any dropdown regardless of class, because a
-           class+element selector like this one always beats a plain
-           class selector like .gray on specificity — so Export/Save/
-           Load and friends (meant to be gray, via class="gray") were
-           actually rendering brown. Leaving color out here lets each
-           button's own class (.gray, .btn-structural, .btn-link,
-           .btn-view, or none) decide its own color as intended. */
         .dropdown-content button {
             display: block;
             width: 100%;
-            padding: 7px 10px;
-            margin: 1px 0;
+            background-color: #8B4513;
+            color: white;
+            padding: 5px;
+            margin: 2px 0;
             text-align: left;
-            border-radius: 6px;
-            font-size: 12.5px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+
+        .dropdown-content button:hover {
+            background-color: #6B3A0F;
         }
 
         /* The generic rule above (class+element selector) outranks the
@@ -564,13 +547,67 @@
             border: 1px solid #ddd;
             border-radius: 4px;
         }
+        .search-result-row {
+            padding: 6px 6px;
+            margin: 2px 0;
+            border-radius: 4px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .search-result-row:hover { background: rgba(0,0,0,0.05); }
+        .search-result-table {
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            color: #8B4513;
+            margin-bottom: 2px;
+        }
+        .search-result-text {
+            font-size: 13px;
+            color: #333;
+            line-height: 1.4;
+            white-space: normal;
+            word-break: break-word;
+        }
+        .search-result-text mark {
+            background: #fff3a3;
+            color: inherit;
+            border-radius: 2px;
+        }
+        .search-no-results {
+            padding: 10px 8px;
+            color: #888;
+            font-size: 13px;
+        }
+        /* Brief highlight when a search result is clicked and scrolled
+           into view, so it's obvious which line matched. */
+        .search-hit-flash {
+            animation: searchHitFlash 1.8s ease-out;
+        }
+        @keyframes searchHitFlash {
+            0% { background-color: #fff3a3; }
+            100% { background-color: transparent; }
+        }
 
         /* Sort control for the project list — a view preference (see
-           th_project_sort_mode in localStorage), applies to every list
+           wg_project_sort_mode in localStorage), applies to every list
            container (sidebar + the 📁 dropdown) uniformly. */
         #fileSidebarSortBar {
             padding: 0 10px 8px;
             flex-shrink: 0;
+        }
+
+        /* The 📁 dropdown's project list (unlike the Files sidebar's,
+           which already scrolls inside its own flex layout) sits above
+           fixed "New project" / shortcut controls with nothing capping
+           its height — with enough projects it would push those
+           controls below the viewport instead of scrolling internally.
+           Capping it and scrolling here keeps those controls reachable
+           no matter how long the list gets. */
+        #projectsMenu #projectsList {
+            max-height: min(45vh, 320px);
+            overflow-y: auto;
         }
         #projectSortSelect {
             width: 100%;
@@ -581,6 +618,13 @@
             border-radius: 4px;
             color: #555;
             background: #fff;
+        }
+
+        #fileSidebar .file-sidebar-row {
+            display: flex;
+            align-items: center;
+            padding: 5px 3px;
+            border-radius: 4px;
         }
 
         /* Professional project-row list style: pin indicator + name +
@@ -595,7 +639,6 @@
             border-radius: 5px;
             cursor: pointer;
             font-size: 13px;
-            color: #222;
         }
         .project-row:hover {
             background: rgba(0, 0, 0, 0.045);
@@ -606,25 +649,6 @@
         }
         .project-row.current:hover {
             background: rgba(43, 108, 255, 0.15);
-        }
-        /* The 📁 dropdown's own copy of the project list has no
-           surrounding flex/fixed-height layout to constrain it (unlike
-           #projectsListSide, which lives inside #fileSidebar's flex
-           column and already scrolls) — without this, a long project
-           list would just keep growing the popup past the bottom of
-           the screen, pushing the "+ Add" input and shortcut buttons
-           below it out of reach. Capping the height and scrolling here
-           keeps the whole dropdown reachable regardless of list length. */
-        #projectsList {
-            max-height: min(45vh, 360px);
-            overflow-y: auto;
-            scrollbar-width: thin;
-        }
-        .project-row-empty {
-            padding: 10px 8px;
-            font-size: 12.5px;
-            color: #999;
-            text-align: center;
         }
         .project-pin-icon {
             flex-shrink: 0;
@@ -705,61 +729,16 @@
             color: #c33;
         }
 
-        .search-result-row {
-            padding: 6px 6px;
-            margin: 2px 0;
-            border-radius: 4px;
-            cursor: pointer;
-            border-bottom: 1px solid #f0f0f0;
-        }
-        .search-result-row:hover { background: rgba(0,0,0,0.05); }
-        .search-result-table {
-            font-size: 11px;
-            font-weight: bold;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-            color: #8B4513;
-            margin-bottom: 2px;
-        }
-        .search-result-text {
-            font-size: 13px;
-            color: #333;
-            line-height: 1.4;
-            white-space: normal;
-            word-break: break-word;
-        }
-        .search-result-text mark {
-            background: #fff3a3;
-            color: inherit;
-            border-radius: 2px;
-        }
-        .search-no-results {
-            padding: 10px 8px;
-            color: #888;
-            font-size: 13px;
-        }
-        /* Brief highlight when a search result is clicked and scrolled
-           into view, so it's obvious which line matched. */
-        .search-hit-flash {
-            animation: searchHitFlash 1.8s ease-out;
-        }
-        @keyframes searchHitFlash {
-            0% { background-color: #fff3a3; }
-            100% { background-color: transparent; }
-        }
-
-        #fileSidebar .file-sidebar-row {
-            display: flex;
-            align-items: center;
-            padding: 5px 3px;
-            border-radius: 4px;
+        #fileSidebarNewProject {
+            padding: 0 10px 10px;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 6px;
+            flex-shrink: 0;
         }
 
         #fileSidebar .file-sidebar-add {
             display: flex;
             gap: 6px;
-            padding: 8px 12px;
-            border-bottom: 1px solid #eee;
         }
 
         #fileSidebar .file-sidebar-add input {
@@ -1004,44 +983,38 @@
         }
 
         button.gray {
-            background-color: #5B6472;
+            background-color: #6c757d;
         }
 
         button.gray:hover {
-            background-color: #464E5B;
+            background-color: #5a6268;
         }
 
         /* --- Consistent button color semantics ---
            blue (default)  = text formatting
            green            = structural inserts (bullet/checkbox/table/review/summary)
-           violet           = primary save action
-           slate            = file/output ops (open/print)
-           teal             = link launchers & dropdown menus
-           amber            = view toggles (sidebar) */
+           purple           = primary save action
+           gray             = file/output ops (open/print)
+           brown            = link launchers & dropdown menus
+           orange           = view toggles (sidebar) */
         button.btn-structural {
-            background-color: #2F9E68;
+            background-color: #28a745;
         }
         button.btn-structural:hover {
-            background-color: #257C53;
+            background-color: #1e7e34;
         }
         button.btn-link {
-            background-color: #0E7C86;
+            background-color: #8B4513;
         }
         button.btn-link:hover {
-            background-color: #0B646C;
+            background-color: #6B3A0F;
         }
         button.btn-view {
-            background-color: #D98324;
-            color: #2b2f36;
+            background-color: #ff9900;
+            color: #1a1a1a;
         }
         button.btn-view:hover {
-            background-color: #BE7010;
-        }
-        button.btn-save {
-            background-color: #6D4AFF;
-        }
-        button.btn-save:hover {
-            background-color: #5636D9;
+            background-color: #e08700;
         }
 
 .cell-action-button {
@@ -1103,12 +1076,9 @@
     margin-top: 0;
 }
 .cell-toggle {
-    position: relative;
-    z-index: 2;
     float: right;
     cursor: pointer;
     user-select: none;
-    pointer-events: auto;
     font-size: 18px;
     line-height: 1;
     color: #999;
@@ -1120,12 +1090,9 @@
     color: #444;
 }
 .cell-height-toggle {
-    position: relative;
-    z-index: 2;
     float: right;
     cursor: pointer;
     user-select: none;
-    pointer-events: auto;
     font-size: 15px;
     line-height: 1;
     color: #999;
@@ -1136,20 +1103,25 @@
     background-color: rgba(0, 0, 0, 0.08);
     color: #444;
 }
-td.cell-collapsed .cell-scroll,
+td.cell-collapsed {
+    /* td normally has a fixed height (see the base `td` rule above)
+       plus whatever a manual drag-resize set inline — both need to be
+       overridden, not just hidden content, or the box stays full size
+       with a blank gap where the content used to be. */
+    height: auto !important;
+    resize: none;
+}
+td.cell-collapsed .outline-root,
 td.cell-collapsed .cell-action-button {
-    /* Collapsing hides the whole scroll box (not just .outline-root
-       inside it), or an empty fixed-height box would sit there. */
     display: none;
 }
-td.cell-full-height .cell-scroll {
-    /* A manual drag-resize (the .cell-scroll corner handle) leaves an
-       inline height on .cell-scroll — override that too, not just the
-       CSS default, or the box keeps its old height with a scrollbar
-       hidden behind an unrelated overflow setting. */
+td.cell-full-height {
+    /* Same reasoning as .cell-collapsed above: both the base fixed
+       height and any manual drag-resize height need overriding, not
+       just the scrollbar, or the cell keeps its old height with a
+       scrollbar hidden behind an unrelated overflow setting. */
     height: auto !important;
-    max-height: none !important;
-    overflow: visible !important;
+    overflow: visible;
     resize: none;
 }
 
@@ -1396,60 +1368,89 @@ body.select-mode-active .outline-select-checkbox {
        flex-wrap above). */
 }
 
-/* Shared look for the small icon buttons that float around each
-   table/wrapper — drag handle, pop-out, size toggle, delete. Same
-   size, corner radius, muted color, and hover treatment across all
-   four so they read as one coherent control cluster instead of four
-   separately-styled buttons. Each one only adds position (left/right)
-   on top of this. */
-.table-corner-btn {
+/* Delete button: now part of the same floating cluster as the drag
+   handle / pop-out / size-toggle buttons (same top offset, muted
+   gray by default) instead of sitting lower down as its own red
+   circle — reads as one coherent control panel. Stays calm until
+   hovered, when it turns red so the destructive action is still
+   clear without shouting for attention the rest of the time. */
+.table-delete-btn {
     position: absolute;
-    top: -10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 20px;
+    top: -9px;
+    right: 0;
+    width: 22px;
+    height: 18px;
     padding: 0;
     margin: 0;
     line-height: 1;
     background: none;
     border: none;
-    border-radius: 5px;
-    color: #9a9a9a;
+    color: #aaa;
+    border-radius: 4px;
+    font-size: 14px;
     cursor: pointer;
-    z-index: 5;
-    transition: background-color .15s ease, color .15s ease;
-}
-.table-corner-btn:hover {
-    color: #444;
-    background: rgba(0, 0, 0, 0.06);
-}
-.table-corner-btn svg {
-    width: 14px;
-    height: 14px;
-    pointer-events: none;
+    z-index: 10;
 }
 
-/* Delete stays visually calm (matches the rest of the cluster) until
-   hovered, when it turns red — clear about what it does without
-   shouting for attention the rest of the time. */
-.table-delete-btn { right: 0; }
 .table-delete-btn:hover {
     color: #c53030;
-    background: rgba(197, 48, 48, 0.1);
+    background: rgba(197, 48, 48, 0.12);
 }
 
-/* Pop-out button: moves the actual table element (not a copy) into a
-   full-screen overlay so edits happen on the same DOM node and are
-   already "saved" back in place the moment the overlay closes. */
-.table-popout-btn { right: 27px; }
+/* Pop-out button: sits next to the drag handle, top-right of the
+   table/wrapper. Click moves the actual table element (not a copy)
+   into the full-screen overlay so edits happen on the same DOM node
+   and are already "saved" back in place the moment the overlay closes. */
+.table-popout-btn {
+    position: absolute;
+    top: -9px;
+    right: 24px;
+    width: 22px;
+    height: 18px;
+    padding: 0;
+    margin: 0;
+    line-height: 1;
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 14px;
+    cursor: pointer;
+    border-radius: 4px;
+    z-index: 5;
+}
 
-/* Size-toggle button: flips the table between full-width ("Single")
-   and half-width ("Small", table.cell-table-small) — the same
-   distinction as the "+ Single Table" / "Add Small" creation buttons,
-   just applied after the fact to a table that already exists. */
-.table-size-toggle-btn { right: 54px; }
+.table-popout-btn:hover {
+    color: #555;
+    background: rgba(0, 0, 0, 0.06);
+}
+
+/* Size-toggle button: sits left of the pop-out button. Flips the
+   table between full-width ("Single") and half-width ("Small",
+   table.cell-table-small) — the same distinction as the
+   "+ Single Table" / "Add Small" creation buttons, just applied
+   after the fact to a table that already exists. */
+.table-size-toggle-btn {
+    position: absolute;
+    top: -9px;
+    right: 48px;
+    width: 22px;
+    height: 18px;
+    padding: 0;
+    margin: 0;
+    line-height: 1;
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 4px;
+    z-index: 5;
+}
+
+.table-size-toggle-btn:hover {
+    color: #555;
+    background: rgba(0, 0, 0, 0.06);
+}
 
 .table-popped-out {
     width: 100% !important;
@@ -1659,8 +1660,6 @@ body.select-mode-active .outline-select-checkbox {
    visual-indent contenteditable lines. Scoped to .outline-root so it
    never affects the other tables. ===== */
 .outline-root {
-    width: 100%;
-    box-sizing: border-box;
     padding: 4px 2px 6px 0;
     font-family: inherit;
 }
@@ -1672,11 +1671,7 @@ body.select-mode-active .outline-select-checkbox {
        Our bullet is a plain inline character rather than a CSS marker,
        so match that visually: keep the row itself close to flush and
        let .outline-bullet's own width push the text out to ~20px.
-       Nested levels still need a real step-in to show hierarchy.
-       Deliberately no explicit width here — width:auto already shrinks
-       correctly to account for margin-left below, reaching the same
-       right edge as everything else in the chain; forcing width:100%
-       here would overflow past it by the margin amount instead. */
+       Nested levels still need a real step-in to show hierarchy. */
     margin-left: 20px;
 }
 .outline-children.outline-top {
@@ -1684,8 +1679,6 @@ body.select-mode-active .outline-select-checkbox {
 }
 .outline-node-row {
     display: flex;
-    width: 100%;
-    box-sizing: border-box;
     align-items: flex-start;
     padding: 0px 2px 0px 0;
     border-radius: 3px;
@@ -1978,9 +1971,11 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
             <option value="name">Name (A–Z)</option>
         </select>
     </div>
-    <div class="file-sidebar-add">
-        <input id="newProjectNameInputSide" type="text" placeholder="New project name…">
-        <button class="gray" onclick="createProjectFromInput('newProjectNameInputSide')">+ Add</button>
+    <div id="fileSidebarNewProject">
+        <div class="file-sidebar-add">
+            <input id="newProjectNameInputSide" type="text" placeholder="New project name…">
+            <button class="gray" onclick="createProjectFromInput('newProjectNameInputSide')">+ Add</button>
+        </div>
     </div>
     <div class="file-sidebar-list" id="projectsListSide"></div>
     <div class="file-sidebar-list" id="contentSearchResults" style="display:none;"></div>
@@ -1988,21 +1983,48 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
 
 <div id="mainCol">
 
-<h2 id="pageTitle" contenteditable="true">Thoughts</h2>
+<h2 id="pageTitle" contenteditable="true">Week</h2>
 
 <div id="toolbar">
     <!-- Left-pinned: Files sidebar toggle. Always in the same spot,
          regardless of how the middle strip scrolls or grows. -->
     <button id="fileSidebarToggle" class="gray toolbar-pin" onclick="toggleFileSidebar()" title="Open a side panel with your project list">☰ Files</button>
+    <button id="collapseAllToggle" class="gray toolbar-pin" onclick="toggleAllCells()" title="Collapse or expand every table cell at once">▾ Collapse All</button>
 
     <div id="toolbarScroll">
+    <!-- Office Starting Dropdown -->
+    <div class="dropdown">
+        <button class="btn btn-blue dropdown-toggle btn-link" style="width:52px;white-space:nowrap;" title="Office Starting checklist">Start ▾</button>
+        <div class="dropdown-content">
+                        <ul class="dropdown-menu" style="text-align: left !important;">
+                            <li style="text-align: left;"><input type="button" value="1. Self-chat" onclick="openWindow('https://yangwm2005.github.io/p/self-chat v209T8b.html', 1050, 600)" 
+                            	class="btn btn-brown" style="width: 80px;text-align: left;" title="Keep the progress"></li>
+                            <li><input type="button" value="2. Timer on/folder" onclick="openWindow('https://yangwm2005.github.io/p/preview v183.html', 1050, 600)" class="btn btn-brown" 
+                            	style="width: 80px; text-align: left;" title="Organize your file in a folder with quick view"></li>
+                            <li><input type="button" value="3. Review" onclick="openPopups4('https://classic.bulletjournal.app/list/aMaVbbXzSx3Jm3z6WErK',
+                             'https://app.ellieplanner.com/', 'https://app.mighty.day/', 'https://classic.bulletjournal.app/list/wswui3PB3loPYwkfPmDK')" class="btn btn-brown" style="width: 80px;text-align: left;" title="Today, Ellie, and mightyday"></li>
+                            <li><input type="button" value="4. Preview" onclick="openPopups4('https://classic.bulletjournal.app/dashboard',
+                             'https://tasksboard.com/app', 'https://calendar.google.com/calendar/u/0/r', 'https://dynalist.io/d/QBPYSvxs9JO2gYfbf0sPhsoF')" class="btn btn-brown" style="width: 80px;text-align: left;" title="What can we make the best?"></li>
+
+                            <li><input type="button" value="5. Daily-Goals" onclick="openWindow('https://yangwm2005.github.io/p/DayGoals v182WM.html', 1050, 600)" class="btn btn-brown" style="width: 80px;" title="Daily Plan to work done"></li>
+                            <li><input type="button" value="6. Tea making" onclick="openWindow('https://yangwm2005.github.io/p/2frame-selfchat.html', 1050, 600)" class="btn btn-brown" style="width: 80px;" title="Tree organization system to make life structure in thinking"></li>
+                            <li><input type="button" value="7. BulletJoural" onclick="openWindow('https://yangwm2005.github.io/p/Bullet-2f v1.html', 1050, 600)" class="btn btn-brown" style="width: 80px;" title="Quick add and access the information to Inbox New"></li>
+                            <li><input type="button" value="8. TaskBoards" onclick="openWindow('https://tasksboard.com/app', 1050, 600)" class="btn btn-brown" style="width: 80px;" title="Quick add and access the information to Inbox New"></li>
+
+                            <li><input type="button" value="9. Mind:Any.Do" onclick="openWindow('https://app.any.do/tasks/next-seven-days', 1050, 600)" class="btn btn-brown" 
+                            	style="width: 80px;text-align: left;" title="Daily Mind setting determining"></li>
+                            <li><input type="button" value="10. Unclutter" onclick="openWindow('https://yangwm2005.github.io/p/dynalist-m232.html', 1050, 600)" class="btn btn-brown" style="width: 80px;" title="Quick add and access the information to Inbox New"></li>
+
+                        </ul>
+        </div>
+    </div>
     <!-- Quick Access Dropdowns — Q-Desk / Class / Inbox are all the
          same kind of thing (a single embedded quick-access panel), so
          they now share one "Quick ▾" menu with a small tab row that
          swaps the one iframe's src (see showQuickPanel) instead of
          three separate toolbar buttons each opening their own panel. -->
     <div class="dropdown">
-        <button class="btn btn-blue dropdown-toggle btn-link" style="width:55px;white-space:nowrap;" title="Quick access: Q-Desk / Class / Inbox">Quick ▼</button>
+        <button class="btn btn-blue dropdown-toggle btn-link" style="width:55px;white-space:nowrap;" title="Quick access: Q-Desk / Class / Inbox">Quick ▾</button>
         <div class="dropdown-content" style="min-width:320px;">
             <div style="display:flex; gap:4px; margin-bottom:4px;">
                 <button type="button" class="gray" style="flex:1; font-size:12px; margin-right:0;" onclick="showQuickPanel('https://yangwm2005.github.io/p/q-desk.html')" title="Q-Desk quick shortcuts">Q-Desk</button>
@@ -2024,7 +2046,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
          import, print, quick view all live here now instead of as
          four separate toolbar buttons). -->
     <div class="dropdown" style="display:inline-block;">
-        <button id="exportButton" class="btn-save" onclick="toggleExportMenu()" title="File: export, import, print, view">File ▾</button>
+        <button id="exportButton" onclick="toggleExportMenu()" title="File: export, import, print, view">File ▾</button>
         <div id="exportMenu" class="dropdown-content" style="min-width:210px; padding:6px; text-align:left;">
             <button class="gray" style="width:100%; text-align:left; font-size:12px;" onclick="exportCurrentProjectAsJson()">Export current project…</button>
             <button class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="exportAllProjectsAsJson()">Export all projects…</button>
@@ -2053,6 +2075,8 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
                     <!-- New-project shortcuts, folded in here instead of
                          living as their own standalone toolbar buttons. -->
                     <div style="margin-top:6px; padding-top:6px; border-top:1px solid #eee; display:flex; flex-wrap:wrap; gap:4px;">
+                        <button id="newWeekGoalBtn" class="gray" style="font-size:12px;" onclick="createNewWeekGoalProject()" title="New project with the default template, titled with this week's ISO week number and date range">New WeekGoal</button>
+                        <button id="newNextWeekGoalBtn" class="gray" style="font-size:12px;" onclick="createNewNextWeekGoalProject()" title="Same as New WeekGoal, but titled with next week's ISO week number and date range">New Next WeekGoal</button>
                         <button id="thisWeekBtn" class="gray" style="font-size:12px;" onclick="createThisWeekProject()" title="New blank project titled with today's date">+ This Week</button>
                         <button id="nextWeekBtn" class="gray" style="font-size:12px;" onclick="createNextWeekProject()" title="New blank project titled with next week's date">+ Next Week</button>
                         <button id="singleTableBtn" class="gray" style="font-size:12px;" onclick="createSingleTableProject()" title="New project with just one full-width table (no 6-cell weekly layout)">+ Single Table</button>
@@ -2079,29 +2103,29 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
 
     <!-- Links Dropdown (merged Tools + MyTime) -->
     <div class="dropdown">
-        <button class="btn btn-blue dropdown-toggle btn-link" title="Tools and Resources">Links ▼</button>
+        <button class="btn btn-blue dropdown-toggle btn-link" title="Tools and Resources">Links ▾</button>
         <div class="dropdown-content">
-            <button class="btn-link" onclick="openWindow('https://yangwm2005.github.io/p/Selfchat-v24.html', 900, 700)" title="Self-Chat to organize the thoughts and ideas!">Selfchat</button>
-            <button class="btn-link" onclick="openWindow('https://yangwm2005.github.io/p/Gantt-v13.html', 1000, 750)" title="Plan organziation and tracking!">Gantt</button>
-            <button class="btn-link" onclick="openWindow('https://yangwm2005.github.io/p/Outliner-v13.html', 1000, 750)" title="Outliner system!">Outliner</button>
+            <button onclick="openWindow('https://yangwm2005.github.io/p/Selfchat-v24.html', 900, 700)" title="Self-Chat to organize the thoughts and ideas!">Selfchat</button>
+            <button onclick="openWindow('https://yangwm2005.github.io/p/Gantt-v13.html', 1000, 750)" title="Plan organziation and tracking!">Gantt</button>
+            <button onclick="openWindow('https://yangwm2005.github.io/p/Outliner-v13.html', 1000, 750)" title="Outliner system!">Outliner</button>
 
-            <button class="btn-link" onclick="openWin3('https://yangwm2005.github.io/p/Dynalist-wkgoals.html')" title="SOP system to follow">DN-WeekGoals</button>
-            <button class="btn-link" onclick="openWin3('https://yangwm2005.github.io/p/weekcalendar2-q.html')" title="SOP system to follow">WeekCalendar2</button>
-            <button class="btn-link" onclick="openWin3('https://timestripe.com/horizons/')" title="Make up the plan">Timestripe</button>
+            <button onclick="openWin3('https://yangwm2005.github.io/p/Dynalist-wkgoals.html')" title="SOP system to follow">DN-WeekGoals</button>
+            <button onclick="openWin3('https://yangwm2005.github.io/p/weekcalendar2-q.html')" title="SOP system to follow">WeekCalendar2</button>
+            <button onclick="openWin3('https://timestripe.com/horizons/')" title="Make up the plan">Timestripe</button>
             -- Inboxes --
-            <button class="btn-link" onclick="openWin3('https://yangwm2005.github.io/p/Bullet-2f v1.html')" title="More todo reminder">Bullet-classic</button>
-            <button class="btn-link" onclick="openWin3('https://tasksboard.com/app')" title="More todo reminder">gTasks</button>
-            <button class="btn-link" onclick="openWin3('https://www.twobird.com/inbox')" title="More todo reminder">TwoBird</button>
+            <button onclick="openWin3('https://yangwm2005.github.io/p/Bullet-2f v1.html')" title="More todo reminder">Bullet-classic</button>
+            <button onclick="openWin3('https://tasksboard.com/app')" title="More todo reminder">gTasks</button>
+            <button onclick="openWin3('https://www.twobird.com/inbox')" title="More todo reminder">TwoBird</button>
             -- Notes --
-            <button class="btn-link" onclick="openWin3('https://app.upbase.io/')" title="More todo reminder">Upbase</button>
-            <button class="btn-link" onclick="openWin3('https://dayone.me/')" title="Progress and idea checking">DayOne</button>
-            <button class="btn-link" onclick="openWin3('https://www.remnote.com/')" title="Keep good in this Daily system">RemNote</button>
-            <button class="btn-link" onclick="openWin3('https://app.capacities.io/e5ae7243-9fcc-4448-85d1-dd6b2f8ff516')" title="Keep good in this Daily system">Capacities</button>
-            <button class="btn-link" onclick="openWin3('https://quiro.io')" title="Tracking and record here.">Quiro</button>
+            <button onclick="openWin3('https://app.upbase.io/')" title="More todo reminder">Upbase</button>
+            <button onclick="openWin3('https://dayone.me/')" title="Progress and idea checking">DayOne</button>
+            <button onclick="openWin3('https://www.remnote.com/')" title="Keep good in this Daily system">RemNote</button>
+            <button onclick="openWin3('https://app.capacities.io/e5ae7243-9fcc-4448-85d1-dd6b2f8ff516')" title="Keep good in this Daily system">Capacities</button>
+            <button onclick="openWin3('https://quiro.io')" title="Tracking and record here.">Quiro</button>
             -- Messenger --
-            <button class="btn-link" onclick="openWin3('https://www.messenger.com/c/562747265686808/t/9442275295796092')" title="Keep records in the flash collections">DayNotes-Mesg</button>
-            <button class="btn-link" onclick="openWin3('https://www.messenger.com/c/562747265686808/t/26832981966316736')" title="Keep records in the flash collections">Freelances-Mesg</button>
-            <button class="btn-link" onclick="openWin3('https://www.messenger.com/c/562747265686808/t/5729255993817306')" title="Keep records in the flash collections">WeekNotes-Mesg</button>
+            <button onclick="openWin3('https://www.messenger.com/c/562747265686808/t/9442275295796092')" title="Keep records in the flash collections">DayNotes-Mesg</button>
+            <button onclick="openWin3('https://www.messenger.com/c/562747265686808/t/26832981966316736')" title="Keep records in the flash collections">Freelances-Mesg</button>
+            <button onclick="openWin3('https://www.messenger.com/c/562747265686808/t/5729255993817306')" title="Keep records in the flash collections">WeekNotes-Mesg</button>
         </div>
     </div>
 
@@ -2111,14 +2135,6 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
          items — see #bulkActionBar and the select-mode script near the
          end of the file. -->
     <button id="selectModeToggle" onclick="toggleSelectMode()" class="btn-view toolbar-pin" title="Select multiple items to copy, move, or delete">☑ Select</button>
-
-    <!-- Collapses/expands every cell in every table with one click.
-         Label + action flip based on the current majority state (see
-         window.toggleAllTableCells): collapses everything unless
-         everything is already collapsed, in which case it expands
-         everything — so it does something sensible even if cells are
-         in a mixed state from being toggled individually. -->
-    <button id="collapseAllToggle" onclick="window.toggleAllTableCells()" class="btn-view toolbar-pin" title="Collapse or expand every cell in every table">⊟ Collapse All</button>
 
     <!-- Right-pinned: Notes/Think Log sidebar toggle. Mirrors the Files
          button on the left so the two sidebar controls bookend the bar
@@ -2160,13 +2176,49 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     <table id="mainTable">
         <tr>
             <td>
-                <h3><span class="cell-title" contenteditable="true">Notes</span>
+                <h3><span class="cell-title" contenteditable="true">Week Due</span>
                  <button onclick="insertCheckboxInCell(this)" class="cell-action-button" style="background-color:#4CAF50;">+✓</button>             
                 </h3>
-                <div class="cell-scroll"><div class="outline-root" id="outline-notes"></div></div>
+                <div class="outline-root" id="outline-weekdue"></div>
+            </td>
+            <td>
+                <h3><span class="cell-title" contenteditable="true">Projects</span>
+                 <button onclick="insertCheckboxInCell(this)" class="cell-action-button" style="background-color:#4CAF50;">+✓</button>             
+                </h3>
+                <div class="outline-root" id="outline-projects"></div>
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <h3><span class="cell-title" contenteditable="true">Social&Class</span>
+                <button onclick="insertCheckboxInCell(this)" class="cell-action-button" style="background-color:#4CAF50;">+✓</button>             
+                </h3>
+                <div class="outline-root" id="outline-social"></div>
+            </td>
+            <td>
+                <h3><span class="cell-title" contenteditable="true">Chance&Remind&Inbox</span>
+                <button onclick="insertCheckboxInCell(this)" class="cell-action-button" style="background-color:#4CAF50;">+✓</button>             
+                </h3>
+                <div class="outline-root" id="outline-chance"></div>
             </td>
         </tr>
     </table>
+
+    <div class="table-wrapper">
+    <table>
+        <tr>
+            <td>
+                <h3><span class="cell-title" contenteditable="true">2nd life</span></h3>
+                <div class="outline-root" id="outline-2ndlife"></div>
+            </td>
+            <td>
+                <h3><span class="cell-title" contenteditable="true">Month Goals</span></h3>
+                <div class="outline-root" id="outline-monthgoals"></div>
+            </td>
+        </tr>
+    </table>
+    <button class="table-delete-btn" title="Delete this table" onclick="if (confirm('Delete this table? This cannot be undone.')) { this.parentElement.remove(); if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave(); }">×</button>
+    </div>
 </div>
 
 </div><!-- /#mainCol -->
@@ -2489,6 +2541,42 @@ function quickView() {
     document.addEventListener('keydown', onEscKey);
 }
 
+    // Collapse-all / Expand-all: one button flips every table cell's
+    // collapse state at once, instead of clicking each cell's own
+    // ▾/▸ toggle (see ensureCellToggle above) one at a time. Works
+    // across every table currently on the page — the main 6-cell
+    // layout, any added tables, and the weekly day-cell layout —
+    // since they all share the same .cell-toggle/.cell-collapsed
+    // mechanism. The target direction is decided by the current
+    // state: if anything is still expanded, the click collapses
+    // everything; only once everything is already collapsed does it
+    // switch to expanding everything, so repeated clicks alternate
+    // cleanly between the two extremes.
+    window.toggleAllCells = function () {
+        const toggles = document.querySelectorAll('#tablesContainer .cell-toggle');
+        if (!toggles.length) return;
+        let anyExpanded = false;
+        toggles.forEach(function (t) {
+            const td = t.closest('td');
+            if (td && !td.classList.contains('cell-collapsed')) anyExpanded = true;
+        });
+        const collapseTarget = anyExpanded;
+        toggles.forEach(function (t) {
+            const td = t.closest('td');
+            if (!td) return;
+            if (collapseTarget) {
+                td.classList.add('cell-collapsed');
+                t.textContent = '▸';
+            } else {
+                td.classList.remove('cell-collapsed');
+                t.textContent = '▾';
+            }
+        });
+        const btn = document.getElementById('collapseAllToggle');
+        if (btn) btn.innerHTML = collapseTarget ? '▸ Expand All' : '▾ Collapse All';
+        if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+    };
+
     // Creates a table wrapped with a small delete (×) button so it can be
     // removed later. Used by all "Add ..." table functions below — the
     // original mainTable is never wrapped, so it can't be deleted.
@@ -2503,48 +2591,12 @@ function quickView() {
         toggle.className = 'cell-toggle';
         toggle.title = 'Collapse/expand this cell';
         toggle.textContent = '▾';
-        toggle.addEventListener('click', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
+        toggle.addEventListener('click', function () {
             const collapsed = td.classList.toggle('cell-collapsed');
             toggle.textContent = collapsed ? '▸' : '▾';
-            if (window.refreshCollapseAllLabel) window.refreshCollapseAllLabel();
             if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
         });
         h3.insertBefore(toggle, h3.firstChild);
-    };
-
-    // Keeps the toolbar's "Collapse All" / "Expand All" button honest
-    // about what it will do next. Looked at fresh each time rather than
-    // tracked as its own separate on/off flag, so it stays correct even
-    // after cells are collapsed/expanded individually (via their own ▾
-    // toggle) rather than only through this button.
-    window.refreshCollapseAllLabel = function () {
-        const btn = document.getElementById('collapseAllToggle');
-        if (!btn) return;
-        const cells = document.querySelectorAll('#tablesContainer td');
-        const collapsedCount = document.querySelectorAll('#tablesContainer td.cell-collapsed').length;
-        const allCollapsed = cells.length > 0 && collapsedCount === cells.length;
-        btn.textContent = allCollapsed ? '⊞ Expand All' : '⊟ Collapse All';
-        btn.title = allCollapsed ? 'Expand every cell in every table' : 'Collapse every cell in every table';
-    };
-
-    // Collapses every cell unless every cell is already collapsed, in
-    // which case it expands every cell instead — one button, and it
-    // always does the sensible thing regardless of any mixed state
-    // left over from toggling cells individually.
-    window.toggleAllTableCells = function () {
-        const cells = document.querySelectorAll('#tablesContainer td');
-        if (!cells.length) return;
-        const collapsedCount = document.querySelectorAll('#tablesContainer td.cell-collapsed').length;
-        const shouldCollapse = collapsedCount < cells.length;
-        cells.forEach(function (td) {
-            td.classList.toggle('cell-collapsed', shouldCollapse);
-            const toggle = td.querySelector('.cell-toggle');
-            if (toggle) toggle.textContent = shouldCollapse ? '▸' : '▾';
-        });
-        window.refreshCollapseAllLabel();
-        if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
     };
 
     // Adds a second toggle (⤢/⤡) next to the collapse toggle, switching
@@ -2559,28 +2611,10 @@ function quickView() {
         toggle.className = 'cell-height-toggle';
         toggle.title = 'Show full content (no scrolling)';
         toggle.textContent = '⤢';
-        toggle.addEventListener('click', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
+        toggle.addEventListener('click', function () {
             const full = td.classList.toggle('cell-full-height');
             toggle.textContent = full ? '⤡' : '⤢';
             toggle.title = full ? 'Use a fixed height with scrolling' : 'Show full content (no scrolling)';
-            // Also touch .cell-scroll's inline style directly rather
-            // than relying on the class + CSS !important alone — a box
-            // the user manually drag-resized (native `resize: vertical`
-            // on .cell-scroll) carries an inline height, and this
-            // guarantees the toggle always wins over it rather than
-            // depending on cascade specificity.
-            const scrollBox = td.querySelector('.cell-scroll');
-            if (scrollBox) {
-                if (full) {
-                    scrollBox.style.height = 'auto';
-                    scrollBox.style.maxHeight = 'none';
-                } else {
-                    scrollBox.style.height = '';
-                    scrollBox.style.maxHeight = '';
-                }
-            }
             if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
         });
         h3.insertBefore(toggle, h3.firstChild);
@@ -2649,22 +2683,11 @@ function quickView() {
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTableDragHandle);
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTablePopoutButton);
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTableSizeToggleBtn);
-        if (window.refreshCollapseAllLabel) window.refreshCollapseAllLabel();
     }
     document.addEventListener('DOMContentLoaded', function () {
         ensureAllCellToggles();
         initTableReorder();
     });
-
-    // Shared trash icon for every table-delete button (createDeletableTable
-    // and the cloud-data rebuild path both use this one constant so they
-    // can't drift out of sync visually). Hung off window rather than a
-    // local const because the app is split across a few separate
-    // <script> tags (around the Firebase includes) that don't share a
-    // top-level lexical scope with each other.
-    window.TABLE_TRASH_ICON_SVG = '<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'
-        + '<path d="M3 4.5h10M6.5 4.5V3a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1v1.5M4.5 4.5l.6 8.4a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8.4"/>'
-        + '<path d="M6.5 7.3v4M9.5 7.3v4"/></svg>';
 
     // Adds a small ⠿ grip to a top-level table/wrapper (a direct child
     // of #tablesContainer) for drag-and-drop reordering. Safe to call
@@ -2674,13 +2697,9 @@ function quickView() {
     window.ensureTableDragHandle = function (el) {
         if (!el || el.querySelector(':scope > .table-drag-handle')) return;
         const handle = document.createElement('div');
-        handle.className = 'table-drag-handle table-corner-btn';
+        handle.className = 'table-drag-handle';
         handle.title = 'Drag to reorder';
-        handle.innerHTML = '<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'
-            + '<circle cx="5" cy="4" r="1.3" fill="currentColor"/><circle cx="11" cy="4" r="1.3" fill="currentColor"/>'
-            + '<circle cx="5" cy="8" r="1.3" fill="currentColor"/><circle cx="11" cy="8" r="1.3" fill="currentColor"/>'
-            + '<circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="11" cy="12" r="1.3" fill="currentColor"/>'
-            + '</svg>';
+        handle.textContent = '⠿';
         handle.draggable = true;
         handle.addEventListener('dragstart', function (e) {
             draggedTableBlock = el;
@@ -2707,11 +2726,9 @@ function quickView() {
     window.ensureTablePopoutButton = function (el) {
         if (!el || el.querySelector(':scope > .table-popout-btn')) return;
         const btn = document.createElement('button');
-        btn.className = 'table-popout-btn table-corner-btn';
+        btn.className = 'table-popout-btn';
         btn.title = 'Pop out to edit in a large view';
-        btn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
-            + '<path d="M6 2H2v4M10 14h4v-4M2 10v4h4M14 6V2h-4"/>'
-            + '</svg>';
+        btn.textContent = '⤢';
         btn.type = 'button';
         btn.addEventListener('click', function (e) {
             e.preventDefault();
@@ -2723,29 +2740,21 @@ function quickView() {
     // Adds a small button to a top-level table/wrapper that flips the
     // table between full-width ("Single") and half-width ("Small",
     // table.cell-table-small). Works on either a bare <table> (the
-    // two built-in ones) or a .table-wrapper div, same as the drag
+    // six built-in ones) or a .table-wrapper div, same as the drag
     // handle/pop-out button above. small: table.classList.contains(
     // 'cell-table-small') is already read straight off the class at
-    // save time (see serializeTablesContainer), so toggling the class
-    // is all that's needed — no separate data field to update.
+    // save time, so toggling the class is all that's needed — no
+    // separate data field to update.
     window.ensureTableSizeToggleBtn = function (el) {
         if (!el || el.querySelector(':scope > .table-size-toggle-btn')) return;
         const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
         if (!table) return;
         const btn = document.createElement('button');
-        btn.className = 'table-size-toggle-btn table-corner-btn';
+        btn.className = 'table-size-toggle-btn';
         btn.type = 'button';
-        // Icon shows the shape clicking it produces (one wide bar =
-        // "become full width", two narrow bars = "become half width"),
-        // same target-state convention the old ⇱/⇲ glyphs used.
-        const iconWide = '<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'
-            + '<rect x="1.5" y="6" width="13" height="4" rx="1" stroke="currentColor" stroke-width="1.4"/></svg>';
-        const iconSplit = '<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">'
-            + '<rect x="1.5" y="6" width="5.3" height="4" rx="1" stroke="currentColor" stroke-width="1.4"/>'
-            + '<rect x="9.2" y="6" width="5.3" height="4" rx="1" stroke="currentColor" stroke-width="1.4"/></svg>';
         function refreshTitle() {
             const isSmall = table.classList.contains('cell-table-small');
-            btn.innerHTML = isSmall ? iconWide : iconSplit;
+            btn.textContent = isSmall ? '▭' : '◫';
             btn.title = isSmall ? 'Switch to full width (Single)' : 'Switch to half width (Small)';
         }
         refreshTitle();
@@ -2877,9 +2886,9 @@ function quickView() {
         newTable.innerHTML = rowsHtml;
 
         const delBtn = document.createElement('button');
-        delBtn.className = 'table-delete-btn table-corner-btn';
+        delBtn.className = 'table-delete-btn';
         delBtn.title = 'Delete this table';
-        delBtn.innerHTML = window.TABLE_TRASH_ICON_SVG;
+        delBtn.textContent = '×';
         delBtn.onclick = function () {
             if (confirm('Delete this table? This cannot be undone.')) {
                 wrapper.remove();
@@ -2935,11 +2944,11 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">NewGoal</span></h3>
-                    <div class="cell-scroll"><div class="outline-root"></div></div>
+                    <div class="outline-root"></div>
                 </td>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">AnotherGoal</span></h3>
-                    <div class="cell-scroll"><div class="outline-root"></div></div>
+                    <div class="outline-root"></div>
                 </td>
             </tr>`);
     }
@@ -2949,7 +2958,7 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">New Item</span></h3>
-                    <div class="cell-scroll"><div class="outline-root"></div></div>
+                    <div class="outline-root"></div>
                 </td>
             </tr>`);
     }
@@ -2961,7 +2970,7 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">New Item</span></h3>
-                    <div class="cell-scroll"><div class="outline-root"></div></div>
+                    <div class="outline-root"></div>
                 </td>
             </tr>`, false, true);
     }
@@ -2975,7 +2984,7 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">New Item</span></h3>
-                    <div class="cell-scroll"><div class="outline-root"></div></div>
+                    <div class="outline-root"></div>
                 </td>
             </tr>`, true);
     }
@@ -2985,7 +2994,7 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">New Item</span></h3>
-                    <div class="cell-scroll"><div class="outline-root"></div></div>
+                    <div class="outline-root"></div>
                 </td>
             </tr>`);
     }
@@ -2995,11 +3004,11 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">Input</span></h3>
-                    <div class="cell-scroll"><div class="outline-root"></div></div>
+                    <div class="outline-root"></div>
                 </td>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">Output</span></h3>
-                    <div class="cell-scroll"><div class="outline-root"></div></div>
+                    <div class="outline-root"></div>
                 </td>
             </tr>`);
     }
@@ -3009,11 +3018,11 @@ function quickView() {
             <tr>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">Summary</span></h3>
-                    <div class="cell-scroll"><div class="outline-root"></div></div>
+                    <div class="outline-root"></div>
                 </td>
                 <td>
                     <h3><span class="cell-title" contenteditable="true">Improvement</span></h3>
-                    <div class="cell-scroll"><div class="outline-root"></div></div>
+                    <div class="outline-root"></div>
                 </td>
             </tr>`);
     }
@@ -3305,7 +3314,7 @@ async function openYesterdayFile() {
         const isNowCollapsed = !sb.classList.contains('collapsed');
         sb.classList.toggle('collapsed', isNowCollapsed);
         if (overlay) overlay.classList.toggle('active', !isNowCollapsed);
-        localStorage.setItem('th_fileSidebar_open', isNowCollapsed ? '0' : '1');
+        localStorage.setItem('wg_fileSidebar_open', isNowCollapsed ? '0' : '1');
     };
     // Restore open/closed state on load — always start collapsed on
     // mobile, otherwise honor the last saved state.
@@ -3315,7 +3324,7 @@ async function openYesterdayFile() {
         const isMobile = window.innerWidth <= 700;
         if (isMobile) {
             sb.classList.add('collapsed');
-        } else if (localStorage.getItem('th_fileSidebar_open') === '0') {
+        } else if (localStorage.getItem('wg_fileSidebar_open') === '0') {
             sb.classList.add('collapsed');
         }
     });
@@ -4580,7 +4589,7 @@ function insertNewCheckboxLine(currentLine) {
                 draggingBlock = [draggingLine].concat(getDescendantLines(draggingLine, allLines));
                 draggingBlock.forEach(function (el) { el.classList.add('line-dragging'); });
                 e.dataTransfer.effectAllowed = 'move';
-                try { e.dataTransfer.setData('text/plain', 'thoughts-line-drag'); } catch (err) {}
+                try { e.dataTransfer.setData('text/plain', 'weekgoal-line-drag'); } catch (err) {}
             });
 
             dragHandle.addEventListener('dragend', function () {
@@ -4799,7 +4808,7 @@ function insertNewCheckboxLine(currentLine) {
 </script>
 
 <footer>
-    Copyright © 2026 Dr. Wen-Ming Yang Thoughts v1.0 20260908
+    Copyright © 2026 Dr. Wen-Ming Yang 20260909 v2.5 Week Goals 
     
 <!--     (Add New Table/Single/Plain/Review/Summary now scroll to and focus the newly created table) WM
 -->
@@ -6194,14 +6203,7 @@ function insertNewCheckboxLine(currentLine) {
     })();
     </script>
     <!-- Firebase (compat build — plain <script> tags, no bundler needed).
-         Deliberately reuses the same qtodo-syn Firebase project as the
-         rest of the app suite (incl. Weekgoal) to skip setting up a
-         second project — this is safe because Thoughts' data lives in
-         its own Firestore collection (thoughtsProjects, see below),
-         completely separate from Weekgoal's (weekgoalProjects), and its
-         local-storage cache uses its own th_ key prefix. If Firestore
-         security rules ever restrict writes to specific named
-         collections, you may need to add thoughtsProjects there too. -->
+         Same qtodo-syn project used by the rest of the app ecosystem. -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -6223,47 +6225,19 @@ function insertNewCheckboxLine(currentLine) {
         let projectsCache = []; // [{id, name, updatedAt}], list only — not full json
 
         function init() {
-            // The config above still has its placeholder REPLACE_ME_
-            // values (see the setup comment right before firebaseConfig)
-            // — Firebase's SDK doesn't reject an invalid apiKey at
-            // initializeApp() time, only later when it actually tries to
-            // talk to Google, which is why sign-in used to fail with no
-            // visible explanation (just a console error, and the Google
-            // popup never even opening). Catching it here up front means
-            // the person using this page finds out immediately, in
-            // plain language, instead of silently clicking a dead
-            // button.
-            if (String(firebaseConfig.apiKey).indexOf('REPLACE_ME') === 0) {
-                console.error('Firebase config still has placeholder REPLACE_ME_ values — see the setup comment above firebaseConfig.');
-                setStatus('⚠️ Firebase not set up yet');
-                const signInBtn = document.getElementById('cloudSignInBtn');
-                if (signInBtn) {
-                    signInBtn.textContent = '⚠️ Cloud not configured';
-                    signInBtn.title = 'This copy of Thoughts isn\'t connected to a Firebase project yet — see the setup steps in a comment near the end of the file.';
-                    signInBtn.onclick = function () {
-                        alert('This copy of Thoughts isn\'t connected to a Firebase project yet.\n\n' +
-                            'Find the comment starting "⚠️ THIS IS A NEW, SEPARATE FIREBASE PROJECT" ' +
-                            'near the end of the file, follow its steps to create a Firebase project ' +
-                            '(enable Google sign-in + Firestore), then paste that project\'s config ' +
-                            'into the firebaseConfig object right below it and reload this page.');
-                    };
-                }
-                return;
-            }
             try {
                 // Named app instance (not the default "[DEFAULT]" one) — Firebase
                 // Auth persists its signed-in session keyed partly by app name,
                 // so as long as this is the only app in the suite using this
                 // exact name, signing in or out here can no longer affect (or be
-                // affected by) any other app's session, even though Thoughts now
-                // shares the same qtodo-syn Firebase project (and so the same
-                // origin) as the rest of the app suite. This only isolates
-                // THIS app's side of things — any other app in the suite that
-                // still initializes as the default app will keep sharing a
-                // session with whichever other apps also use the default; each
-                // would need this same unique-name treatment to be fully
-                // isolated from each other too.
-                app = firebase.initializeApp(firebaseConfig, 'thoughts');
+                // affected by) any other app's session, even though they all
+                // share the same origin and the same underlying Firebase
+                // project. This only isolates THIS app's side of things — any
+                // other app in the suite that still initializes as the default
+                // app will keep sharing a session with whichever other apps also
+                // use the default; each would need this same unique-name
+                // treatment to be fully isolated from each other too.
+                app = firebase.initializeApp(firebaseConfig, 'weekgoals');
                 auth = app.auth();
                 db = app.firestore();
             } catch (err) {
@@ -6309,18 +6283,7 @@ function insertNewCheckboxLine(currentLine) {
             const provider = new firebase.auth.GoogleAuthProvider();
             auth.signInWithPopup(provider).catch(function (err) {
                 console.error('Popup sign-in failed, trying redirect:', err);
-                // Popup can fail for reasons a redirect can still
-                // recover from (blocked popup, Safari's tracking
-                // prevention) — but an actual bad/misconfigured project
-                // (wrong apiKey, authDomain not authorized, Google
-                // sign-in not enabled) will fail the redirect the same
-                // way, so surface that instead of leaving the person
-                // staring at a button that visibly did nothing.
-                setStatus('Sign-in failed, retrying…');
-                auth.signInWithRedirect(provider).catch(function (err2) {
-                    console.error('Redirect sign-in also failed:', err2);
-                    setStatus('Sign-in failed: ' + (err2 && err2.code ? err2.code : 'unknown error'));
-                });
+                auth.signInWithRedirect(provider);
             });
         };
 
@@ -6401,13 +6364,10 @@ function insertNewCheckboxLine(currentLine) {
                 h3.appendChild(btn);
             }
             td.appendChild(h3);
-            const scrollBox = document.createElement('div');
-            scrollBox.className = 'cell-scroll';
             const root = document.createElement('div');
             root.className = 'outline-root';
             root.dataset.tree = JSON.stringify(cellData.tree || []);
-            scrollBox.appendChild(root);
-            td.appendChild(scrollBox);
+            td.appendChild(root);
             if (window.ensureCellToggle) window.ensureCellToggle(td);
             if (window.ensureCellHeightToggle) window.ensureCellHeightToggle(td);
             if (cellData.collapsed) {
@@ -6417,8 +6377,6 @@ function insertNewCheckboxLine(currentLine) {
             }
             if (cellData.fullHeight) {
                 td.classList.add('cell-full-height');
-                scrollBox.style.height = 'auto';
-                scrollBox.style.maxHeight = 'none';
                 const heightToggle = h3.querySelector('.cell-height-toggle');
                 if (heightToggle) {
                     heightToggle.textContent = '⤡';
@@ -6457,9 +6415,9 @@ function insertNewCheckboxLine(currentLine) {
                     const wrapper = document.createElement('div');
                     wrapper.className = 'table-wrapper';
                     const delBtn = document.createElement('button');
-                    delBtn.className = 'table-delete-btn table-corner-btn';
+                    delBtn.className = 'table-delete-btn';
                     delBtn.title = 'Delete this table';
-                    delBtn.innerHTML = window.TABLE_TRASH_ICON_SVG;
+                    delBtn.textContent = '×';
                     delBtn.onclick = function () {
                         if (confirm('Delete this table? This cannot be undone.')) {
                             wrapper.remove();
@@ -6487,14 +6445,36 @@ function insertNewCheckboxLine(currentLine) {
             });
         }
 
-        // Thoughts' default starting layout: one deletable table, one
-        // cell — same shape as "+ Single Table" (see
-        // singleTableProjectData below, which this now just delegates
-        // to) rather than Weekgoal's original 6-cell weekly grid. Every
-        // brand-new project (including the very first one auto-created
-        // for a new sign-in) starts here.
+        // Same 6-cell layout the app ships with, but with empty trees —
+        // used as the starting point for any brand-new project.
         function defaultProjectTablesData() {
-            return singleTableProjectData();
+            return {
+                version: 1,
+                sidebarNotes: '',
+                thinkLog: [],
+                tables: [
+                    {
+                        wrapped: false, mainTableId: true,
+                        rows: [
+                            [{ title: 'Week Due', checkboxBtn: true, tree: [] }, { title: 'Projects', checkboxBtn: true, tree: [] }],
+                            [{ title: 'Social&Class', checkboxBtn: true, tree: [] }, { title: 'Chance&Remind&Inbox', checkboxBtn: true, tree: [] }]
+                        ]
+                    },
+                    {
+                        // Mirrors the static not-signed-in template
+                        // exactly: two separate cells side by side
+                        // ("2nd life" / "Month Goals"), not merged into
+                        // one — so a brand-new cloud project starts
+                        // looking identical to what you see before
+                        // signing in. wrapped:true (unlike the main
+                        // table above) makes this optional bottom table
+                        // deletable via its own × button, same as any
+                        // table added through Add New Table/Single/etc.
+                        wrapped: true, mainTableId: false,
+                        rows: [[{ title: '2nd life', checkboxBtn: false, tree: [] }, { title: 'Month Goals', checkboxBtn: false, tree: [] }]]
+                    }
+                ]
+            };
         }
 
         // Exposed for debugging/testing (e.g. inspecting exactly what a
@@ -6503,22 +6483,15 @@ function insertNewCheckboxLine(currentLine) {
         window.serializeTablesContainer = serializeTablesContainer;
         window.rebuildTablesContainer = rebuildTablesContainer;
 
-        // --- Multi-project system (users/{uid}/thoughtsProjects/{id}) ---
+        // --- Multi-project system (users/{uid}/weekgoalProjects/{id}) ---
         // Each project is a fully independent set of tables — its own
         // named "page" you can switch between, rename, or delete. Mirrors
         // the Projects concept from the other apps in this ecosystem,
         // adapted to WeekGoal's compact JSON save format.
         function projectsCollection() {
-            return db.collection('users').doc(currentUser.uid).collection('thoughtsProjects');
+            return db.collection('users').doc(currentUser.uid).collection('weekgoalProjects');
         }
 
-        // Normalizes a timestamp to a plain millisecond number regardless
-        // of its source: a fresh Firestore Timestamp (has .toMillis()), a
-        // plain {seconds,...} object (what a Firestore Timestamp becomes
-        // after a JSON.stringify/parse round-trip through the local
-        // backup cache), an already-plain number, or missing entirely.
-        // Sorting needs a single comparable type no matter where the
-        // value came from.
         function tsToMillis(ts) {
             if (!ts) return 0;
             if (typeof ts === 'number') return ts;
@@ -6548,9 +6521,9 @@ function insertNewCheckboxLine(currentLine) {
         // keep working — reading the last-known state, queuing writes —
         // if the network is slow or briefly down. Keyed by uid so
         // multiple accounts signed in on the same browser don't collide.
-        function localCacheKey(uid, projectId) { return 'th_cache_' + uid + '_' + projectId; }
-        function localCacheIndexKey(uid) { return 'th_cache_index_' + uid; }
-        function localListKey(uid) { return 'th_projects_list_' + uid; }
+        function localCacheKey(uid, projectId) { return 'wg_cache_' + uid + '_' + projectId; }
+        function localCacheIndexKey(uid) { return 'wg_cache_index_' + uid; }
+        function localListKey(uid) { return 'wg_projects_list_' + uid; }
 
         function readLocalProject(uid, projectId) {
             try {
@@ -6627,7 +6600,7 @@ function insertNewCheckboxLine(currentLine) {
                 writeLocalProjectsList(currentUser.uid, projectsCache);
                 if (projectsCache.length > 0) {
                     return db.collection('users').doc(currentUser.uid).get().then(function (userDoc) {
-                        const savedCurrentId = userDoc.data() && userDoc.data().thoughtsCurrentProjectId;
+                        const savedCurrentId = userDoc.data() && userDoc.data().weekgoalCurrentProjectId;
                         const targetId = (savedCurrentId && projectsCache.some(function (p) { return p.id === savedCurrentId; }))
                             ? savedCurrentId : projectsCache[0].id;
                         return switchProject(targetId, { skipSaveCurrent: true, preferCloud: true });
@@ -6640,9 +6613,9 @@ function insertNewCheckboxLine(currentLine) {
                 return db.collection('users').doc(currentUser.uid).get().then(function (userDoc) {
                     const legacy = userDoc.data() && userDoc.data().weekgoal;
                     if (legacy && legacy.json) {
-                        return createProject('My Notes', JSON.parse(legacy.json));
+                        return createProject('My Week', JSON.parse(legacy.json));
                     }
-                    return createProject('My Notes', defaultProjectTablesData());
+                    return createProject('My Week', defaultProjectTablesData());
                 });
             }).then(function () {
                 renderProjectsList();
@@ -6727,6 +6700,59 @@ function insertNewCheckboxLine(currentLine) {
             d.setDate(d.getDate() + diff);
             return d;
         }
+
+        // ISO-8601 week number for a date (weeks start Monday, week 1
+        // is the week containing the year's first Thursday).
+        function getISOWeekNumber(date) {
+            const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+            const dayNum = d.getUTCDay() || 7; // Sunday -> 7
+            d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+        }
+
+        // "MMDD" — zero-padded month and day, no separators.
+        function formatMMDD(date) {
+            const mm = String(date.getMonth() + 1).padStart(2, '0');
+            const dd = String(date.getDate()).padStart(2, '0');
+            return mm + dd;
+        }
+
+        // "Week37 (0907-0913)" — ISO week number of the Monday, plus
+        // that Monday-Sunday range in MMDD-MMDD form.
+        function formatWeekRangeTitle(monday) {
+            const sunday = new Date(monday);
+            sunday.setDate(monday.getDate() + 6);
+            return 'Week' + getISOWeekNumber(monday) + ' (' + formatMMDD(monday) + '-' + formatMMDD(sunday) + ')';
+        }
+
+        // "New WeekGoal" button: same default template as any other new
+        // blank project (defaultProjectTablesData — the 6-cell weekly
+        // layout), just auto-titled with this week's "Week37
+        // (0907-0913)" label instead of asking for a name. Distinct
+        // from "+ This Week", which uses the special 7-day-cell
+        // template (weeklyDayTablesData) instead.
+        // offsetDays shifts "today" before finding that week's Monday
+        // (0 = this week, 7 = next week), same trick createWeeklyProject
+        // uses, so "New Next WeekGoal" lands on next week's Mon–Sun no
+        // matter which day it is clicked.
+        function createWeekGoalProjectWithOffset(offsetDays) {
+            if (!currentUser) { alert('Sign in first (☁ Sign in) to create a new project.'); return; }
+            const base = new Date();
+            base.setDate(base.getDate() + offsetDays);
+            const monday = getMonday(base);
+            const title = formatWeekRangeTitle(monday);
+            setStatus('Creating…');
+            createProject(title, defaultProjectTablesData()).then(function () {
+                renderProjectsList();
+                setStatus('Created "' + title + '"');
+            }).catch(function (err) {
+                console.error('Create project failed:', err);
+                setStatus('Create failed');
+            });
+        }
+        window.createNewWeekGoalProject = function () { createWeekGoalProjectWithOffset(0); };
+        window.createNewNextWeekGoalProject = function () { createWeekGoalProjectWithOffset(7); };
 
         // Seven small single-cell tables, Monday through Sunday, each
         // titled with that day's date (see formatWeekTitle) — laid out
@@ -6865,7 +6891,7 @@ function insertNewCheckboxLine(currentLine) {
             const current = projectsCache.find(function (p) { return p.id === currentProjectId; });
             const name = (current && current.name) || (document.getElementById('pageTitle').textContent || 'Project').trim();
             const payload = {
-                type: 'thoughts-project-export',
+                type: 'weekgoal-project-export',
                 version: 1,
                 name: name,
                 exportedAt: new Date().toISOString(),
@@ -6897,7 +6923,7 @@ function insertNewCheckboxLine(currentLine) {
             });
             Promise.all(jobs).then(function (projects) {
                 const payload = {
-                    type: 'thoughts-projects-export',
+                    type: 'weekgoal-projects-export',
                     version: 1,
                     exportedAt: new Date().toISOString(),
                     projects: projects
@@ -6947,7 +6973,7 @@ function insertNewCheckboxLine(currentLine) {
         }
 
         function importParsedProjectJson(parsed, fallbackFileName) {
-            const isMulti = parsed && parsed.type === 'thoughts-projects-export' && Array.isArray(parsed.projects);
+            const isMulti = parsed && parsed.type === 'weekgoal-projects-export' && Array.isArray(parsed.projects);
 
             if (!currentUser) {
                 // No account to add project(s) to — load one project's
@@ -7039,7 +7065,7 @@ function insertNewCheckboxLine(currentLine) {
                 // in the background instead of adding another round trip
                 // to the critical path.
                 db.collection('users').doc(currentUser.uid)
-                    .set({ thoughtsCurrentProjectId: projectId }, { merge: true })
+                    .set({ weekgoalCurrentProjectId: projectId }, { merge: true })
                     .catch(function (err) { console.error('Could not save current-project pointer:', err); });
             }
 
@@ -7204,29 +7230,9 @@ function insertNewCheckboxLine(currentLine) {
                     if (cached) { cached.name = newName; writeLocalProject(currentUser.uid, projectId, cached); }
                 }
                 if (projectId === currentProjectId) applyProjectNameToUI(newName);
-                // Re-render in case name-based sorting needs to move
-                // this row.
-                renderProjectsList();
             }).catch(function (err) {
                 console.error('Rename project failed:', err);
                 setStatus('Rename failed');
-            });
-        };
-
-        // Pinned projects always sort to the top of the list regardless
-        // of the chosen sort mode (see getSortedProjectsCache) — same
-        // pattern as pinned chats/messages in most apps.
-        window.toggleProjectPin = function (projectId) {
-            const p = projectsCache.find(function (x) { return x.id === projectId; });
-            if (!p) return;
-            const newPinned = !p.pinned;
-            projectsCollection().doc(projectId).set({ pinned: newPinned }, { merge: true }).then(function () {
-                p.pinned = newPinned;
-                if (currentUser) writeLocalProjectsList(currentUser.uid, projectsCache);
-                renderProjectsList();
-            }).catch(function (err) {
-                console.error('Pin toggle failed:', err);
-                setStatus('Pin failed');
             });
         };
 
@@ -7243,7 +7249,7 @@ function insertNewCheckboxLine(currentLine) {
                     if (projectsCache.length > 0) {
                         return switchProject(projectsCache[0].id, { skipSaveCurrent: true });
                     }
-                    return createProject('My Notes', defaultProjectTablesData());
+                    return createProject('My Week', defaultProjectTablesData());
                 }
             }).then(function () {
                 renderProjectsList();
@@ -7251,6 +7257,24 @@ function insertNewCheckboxLine(currentLine) {
             }).catch(function (err) {
                 console.error('Delete project failed:', err);
                 setStatus('Delete failed');
+            });
+        };
+
+        // Toggling a project's pinned state — pinned projects always
+        // form their own group at the top of the list regardless of
+        // sort mode (see getSortedProjectsCache), same as pinned
+        // items/chats in most apps.
+        window.toggleProjectPin = function (projectId) {
+            const p = projectsCache.find(function (x) { return x.id === projectId; });
+            if (!p) return;
+            const newPinned = !p.pinned;
+            projectsCollection().doc(projectId).set({ pinned: newPinned }, { merge: true }).then(function () {
+                p.pinned = newPinned;
+                if (currentUser) writeLocalProjectsList(currentUser.uid, projectsCache);
+                renderProjectsList();
+            }).catch(function (err) {
+                console.error('Toggle pin failed:', err);
+                setStatus('Pin failed');
             });
         };
 
@@ -7302,7 +7326,7 @@ function insertNewCheckboxLine(currentLine) {
         // at the top regardless of mode, same as pinned items in most
         // chat/note apps.
         function getProjectSortMode() {
-            return localStorage.getItem('th_project_sort_mode') || 'modified';
+            return localStorage.getItem('wg_project_sort_mode') || 'modified';
         }
         function getSortedProjectsCache() {
             const mode = getProjectSortMode();
@@ -7319,7 +7343,7 @@ function insertNewCheckboxLine(currentLine) {
             return list;
         }
         window.setProjectSortMode = function (mode) {
-            localStorage.setItem('th_project_sort_mode', mode);
+            localStorage.setItem('wg_project_sort_mode', mode);
             renderProjectsList();
         };
 
@@ -7335,13 +7359,6 @@ function insertNewCheckboxLine(currentLine) {
                 const listEl = document.getElementById(containerId);
                 if (!listEl) return;
                 listEl.innerHTML = '';
-                if (!sorted.length) {
-                    const empty = document.createElement('div');
-                    empty.className = 'project-row-empty';
-                    empty.textContent = 'No projects yet';
-                    listEl.appendChild(empty);
-                    return;
-                }
                 sorted.forEach(function (p) {
                     listEl.appendChild(buildProjectRow(p));
                 });
