@@ -71,6 +71,11 @@
             cursor: text;
             font-size: 1.0em;
             line-height: 1.2;
+            /* Long unbroken strings (e.g. pasted URLs) wrap at the cell
+               edge instead of spilling past it. Inherited by every line
+               inside the cell. */
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         /* The actual fixed-height, scrollable/resizable box for a
@@ -1684,6 +1689,7 @@ body.select-mode-active .outline-select-checkbox {
     align-items: flex-start;
     padding: 0px 2px 0px 0;
     border-radius: 3px;
+    min-width: 0;
 }
 /* body.pre-hover (removed on the page's first genuine mousemove — see
    the script near the bottom of the file) guards against a browser
@@ -1718,6 +1724,12 @@ body:not(.pre-hover) .outline-node-row:hover,
 }
 .outline-text {
     flex: 1;
+    /* min-width: 0 lets this flex item shrink below its content's
+       natural width; without it a long URL with no spaces forces the
+       row (and the whole cell) wider than the table. */
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
     min-height: 1.25em;
     line-height: 1.3;
     padding: 1px 4px;
@@ -1730,6 +1742,11 @@ body:not(.pre-hover) .outline-node-row:hover,
 }
 .outline-text.bold {
     font-weight: bold;
+}
+.outline-text a {
+    color: #2d6cdf;
+    text-decoration: underline;
+    cursor: pointer;
 }
 .outline-drop-before { box-shadow: inset 0 2px 0 0 #2d8cff; }
 .outline-drop-after { box-shadow: inset 0 -2px 0 0 #2d8cff; }
@@ -2271,6 +2288,7 @@ function printContent() {
                     display: flex;
                     align-items: flex-start;
                     padding: 1px 0;
+                    min-width: 0;
                 }
                 .outline-bullet {
                     flex: 0 0 18px;
@@ -2285,6 +2303,9 @@ function printContent() {
                 }
                 .outline-text {
                     flex: 1;
+                    min-width: 0;
+                    overflow-wrap: anywhere;
+                    word-break: break-word;
                     line-height: 1.3;
                     padding: 1px 4px;
                 }
@@ -2405,10 +2426,10 @@ function quickView() {
                 font-size: 14px; font-weight: 600; color: #333;
                 border-bottom: 1px solid #eee;
             }
-            #quickViewPanel .outline-node-row { display: flex; align-items: flex-start; padding: 2px 0; }
+            #quickViewPanel .outline-node-row { display: flex; align-items: flex-start; padding: 2px 0; min-width: 0; }
             #quickViewPanel .outline-bullet { flex: 0 0 18px; width: 18px; text-align: center; color: #aaa; }
             #quickViewPanel .outline-checkbox { margin: 3px 4px 0 0; pointer-events: none; }
-            #quickViewPanel .outline-text { flex: 1; line-height: 1.4; font-size: 13.5px; }
+            #quickViewPanel .outline-text { flex: 1; min-width: 0; overflow-wrap: anywhere; word-break: break-word; line-height: 1.4; font-size: 13.5px; }
             #quickViewPanel .outline-text.done { text-decoration: line-through; opacity: 0.5; }
             #quickViewPanel .outline-text.bold { font-weight: bold; }
             #quickViewPanel .outline-children { margin-left: 20px; }
@@ -4844,7 +4865,7 @@ function insertNewCheckboxLine(currentLine) {
         // empty field's first keystroke in a nested <div>, and each
         // <br> this function inserted while unwrapping that div stacked
         // up across keystrokes into several stray blank lines.
-        const INLINE_ALLOWED_TAGS = { B: 1, STRONG: 1, I: 1, EM: 1, U: 1, S: 1, STRIKE: 1, SPAN: 1 };
+        const INLINE_ALLOWED_TAGS = { B: 1, STRONG: 1, I: 1, EM: 1, U: 1, S: 1, STRIKE: 1, SPAN: 1, A: 1 };
         function sanitizeInlineHtml(html) {
             const container = document.createElement('div');
             container.innerHTML = html;
@@ -4866,8 +4887,23 @@ function insertNewCheckboxLine(currentLine) {
                     }
                     clean(node);
                     Array.prototype.slice.call(node.attributes).forEach(function (a) {
-                        if (!(tag === 'SPAN' && a.name === 'style')) node.removeAttribute(a.name);
+                        const keep = (tag === 'SPAN' && a.name === 'style') ||
+                            (tag === 'A' && (a.name === 'href' || a.name === 'target' || a.name === 'rel'));
+                        if (!keep) node.removeAttribute(a.name);
                     });
+                    if (tag === 'A') {
+                        // Only http(s) links survive (blocks javascript: and
+                        // other schemes); anything else is unwrapped back to
+                        // plain text, same as a SPAN with no real style.
+                        const href = node.getAttribute('href') || '';
+                        if (!/^https?:\/\//i.test(href)) {
+                            const first = node.firstChild;
+                            while (node.firstChild) root.insertBefore(node.firstChild, node);
+                            const rm = node; node = first || node.nextSibling; root.removeChild(rm); continue;
+                        }
+                        node.setAttribute('target', '_blank');
+                        node.setAttribute('rel', 'noopener noreferrer');
+                    }
                     if (tag === 'SPAN') {
                         const color = node.style.color, bg = node.style.backgroundColor;
                         node.removeAttribute('style');
@@ -4883,6 +4919,60 @@ function insertNewCheckboxLine(currentLine) {
                 }
             })(container);
             return container.innerHTML;
+        }
+
+        // --- Auto-link plain URLs typed or pasted into an outline-text
+        // field. Runs on a live DOM container (never on a raw HTML
+        // string, to avoid re-parsing text that happens to contain "<"
+        // or "&"), and skips text already inside an <a> so re-running it
+        // is idempotent. */
+        const URL_REGEX = /\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+/gi;
+        function linkifyContainer(root) {
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                acceptNode: function (node) {
+                    let p = node.parentNode;
+                    while (p && p !== root) {
+                        if (p.nodeName === 'A') return NodeFilter.FILTER_REJECT;
+                        p = p.parentNode;
+                    }
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            });
+            const textNodes = [];
+            let tn;
+            while ((tn = walker.nextNode())) textNodes.push(tn);
+            textNodes.forEach(function (node) {
+                const text = node.nodeValue;
+                URL_REGEX.lastIndex = 0;
+                if (!URL_REGEX.test(text)) return;
+                URL_REGEX.lastIndex = 0;
+                const frag = document.createDocumentFragment();
+                let lastIndex = 0, m;
+                while ((m = URL_REGEX.exec(text))) {
+                    let url = m[0];
+                    // Trailing punctuation (end of sentence, closing
+                    // bracket, etc.) is usually not part of the URL.
+                    let trail = '';
+                    while (url.length && /[).,;:!?\]]$/.test(url)) {
+                        trail = url.slice(-1) + trail;
+                        url = url.slice(0, -1);
+                    }
+                    if (!url) continue;
+                    const before = text.slice(lastIndex, m.index);
+                    if (before) frag.appendChild(document.createTextNode(before));
+                    const a = document.createElement('a');
+                    a.href = /^https?:\/\//i.test(url) ? url : 'https://' + url;
+                    a.textContent = url;
+                    a.target = '_blank';
+                    a.rel = 'noopener noreferrer';
+                    frag.appendChild(a);
+                    if (trail) frag.appendChild(document.createTextNode(trail));
+                    lastIndex = m.index + m[0].length;
+                }
+                const after = text.slice(lastIndex);
+                if (after) frag.appendChild(document.createTextNode(after));
+                node.parentNode.replaceChild(frag, node);
+            });
         }
 
         // Places the caret at a plain-text character offset inside a field
@@ -4910,6 +5000,20 @@ function insertNewCheckboxLine(currentLine) {
             sel.removeAllRanges();
             sel.addRange(range);
         }
+
+        document.addEventListener('click', function (e) {
+            const a = e.target.closest && e.target.closest('.outline-text a');
+            if (!a) return;
+            const editableField = a.closest('[contenteditable="true"]');
+            if (editableField) {
+                if (e.metaKey || e.ctrlKey) {
+                    e.preventDefault();
+                    window.open(a.href, '_blank', 'noopener,noreferrer');
+                }
+                // Plain click with no modifier: leave it alone so the
+                // field still focuses and places the caret normally.
+            }
+        });
 
         function findNodeAndParent(tree, id, parent) {
             parent = parent || null;
@@ -5526,7 +5630,16 @@ function insertNewCheckboxLine(currentLine) {
             text = document.createElement('div');
             text.className = 'outline-text' + (n.done ? ' done' : '') + (n.bold ? ' bold' : '');
             text.contentEditable = 'true';
-            if (n.html) text.innerHTML = n.html; else text.textContent = n.text;
+            if (n.html) {
+                text.innerHTML = n.html;
+            } else {
+                text.textContent = n.text;
+                if (URL_REGEX.test(n.text || '')) {
+                    URL_REGEX.lastIndex = 0;
+                    linkifyContainer(text);
+                    n.html = text.innerHTML;
+                }
+            }
             text.dataset.nodeId = n.id;
             if (n.textColor) text.style.color = n.textColor;
             if (n.bgColor) {
@@ -5553,7 +5666,7 @@ function insertNewCheckboxLine(currentLine) {
                     const cleaned = sanitizeInlineHtml(text.innerHTML);
                     if (cleaned !== text.innerHTML) text.innerHTML = cleaned;
                     placeCaretAtOffset(text, caret);
-                    n.html = text.querySelector('b, strong, i, em, u, s, strike, span') ? cleaned : null;
+                    n.html = text.querySelector('b, strong, i, em, u, s, strike, span, a') ? cleaned : null;
                 } else {
                     n.html = null;
                 }
@@ -5564,6 +5677,27 @@ function insertNewCheckboxLine(currentLine) {
                 // debounced so fast typing doesn't re-stringify the
                 // whole tree on every keystroke.
                 scheduleSyncTreeData(rootId);
+            });
+            text.addEventListener('blur', function () {
+                // Re-linkify from the current text on every blur (not
+                // just on first render/paste): un-link first so edits
+                // near an existing URL — appending more of the path,
+                // fixing a typo — are re-detected correctly rather than
+                // leaving a stale, half-wrong link.
+                const before = text.innerHTML;
+                text.querySelectorAll('a').forEach(function (a) {
+                    while (a.firstChild) a.parentNode.insertBefore(a.firstChild, a);
+                    a.remove();
+                });
+                text.normalize();
+                linkifyContainer(text);
+                const cleaned = sanitizeInlineHtml(text.innerHTML);
+                if (cleaned !== text.innerHTML) text.innerHTML = cleaned;
+                if (text.innerHTML !== before) {
+                    n.html = text.querySelector('b, strong, i, em, u, s, strike, span, a') ? text.innerHTML : null;
+                    n.text = text.textContent;
+                    scheduleSyncTreeData(rootId);
+                }
             });
             text.addEventListener('keydown', function (e) { handleNodeKeydown(e, rootId, n, text); });
             // contenteditable text is natively draggable once selected —
