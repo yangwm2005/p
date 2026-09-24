@@ -1127,9 +1127,42 @@
       background: #2b2a27;
       color: #f5efe9;
     }
+    .companion-fab {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: #546e7a;
+      color: #fff;
+      border: none;
+      font-size: 1.4rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+      z-index: 200;
+      transition: 0.15s;
+    }
+    .companion-fab:hover {
+      filter: brightness(1.1);
+      transform: translateY(-2px);
+    }
+    @media (max-width: 720px) {
+      .companion-fab {
+        right: 14px;
+        bottom: 14px;
+        width: 46px;
+        height: 46px;
+        font-size: 1.2rem;
+      }
+    }
   </style>
 </head>
 <body>
+  <button class="companion-fab" id="selfchatFab" title="Open Selfchat in a new tab" aria-label="Open Selfchat">💬</button>
 <div class="app-card">
   <h1>
     🍅 Pomodoro Tracker
@@ -3316,6 +3349,29 @@
       });
       cloudAuthBtn.addEventListener('click', () => window.toggleCloudAuth());
       if (gcalConnectBtn) gcalConnectBtn.addEventListener('click', () => connectGoogleCalendar());
+      const selfchatFab = document.getElementById('selfchatFab');
+      if (selfchatFab) {
+        selfchatFab.addEventListener('click', () => {
+          // A named window (instead of '_blank') plus explicit size/chrome
+          // features tells the browser to render this as a separate popup
+          // window rather than a new tab. Reusing the same name means a
+          // second click re-focuses/reloads that same window instead of
+          // spawning another one.
+          const width = 480;
+          const height = 760;
+          const left = Math.max(0, Math.round((screen.width - width) / 2));
+          const top = Math.max(0, Math.round((screen.height - height) / 2));
+          const features = [
+            'noopener', 'noreferrer',
+            `width=${width}`, `height=${height}`,
+            `left=${left}`, `top=${top}`,
+            'menubar=no', 'toolbar=no', 'location=no', 'status=no',
+            'resizable=yes', 'scrollbars=yes',
+          ].join(',');
+          const win = window.open('https://yangwm2005.github.io/p/Selfchat-v24.html', 'selfchatPopup', features);
+          if (win) win.focus();
+        });
+      }
       if (gcalMergeBtn) gcalMergeBtn.addEventListener('click', () => consolidatePomodoroCalendars());
 
       // Quick add buttons
@@ -3967,9 +4023,39 @@
     // Creates or updates the Calendar event for a finished FOCUS session.
     // Does nothing for break sessions, when not connected, or if the
     // request fails — calendar sync issues never block using the app.
-    async function syncNoteToCalendar(note, opts) {
+    //
+    // Wrapped in a per-note queue: Finish's sync and the auto-backfill that
+    // fires right after a reconnect can both target the very same note at
+    // the same moment (Finish waiting on ensureCalendarConnected() while
+    // the reconnect's own callback kicks off a backfill), and without
+    // serializing them both would see no gcalEventId yet and each POST a
+    // new event — the exact "duplicate event" bug. Queuing per note.uid
+    // guarantees only one of them ever creates the event; the other sees
+    // gcalEventId already set once its turn comes and updates (or, for a
+    // backfill, simply skips) instead of creating a second one.
+    let calendarSyncQueue = new Map(); // note.uid -> tail Promise of that note's queued syncs
+
+    function syncNoteToCalendar(note, opts) {
+      if (!note || note.phase !== 'focus') return Promise.resolve();
+      const key = note.uid || note.id;
+      const prior = calendarSyncQueue.get(key) || Promise.resolve();
+      const next = prior.then(() => syncNoteToCalendarInner(note, opts)).catch((e) => {
+        console.warn('Calendar sync error:', e);
+      });
+      calendarSyncQueue.set(key, next);
+      return next;
+    }
+
+    async function syncNoteToCalendarInner(note, opts) {
       const silent = !!(opts && opts.silent);
+      // Backfill-only mode: create the event if it's missing, but never
+      // touch a note that already has one — that's Finish/Add-note's job,
+      // and re-checking gcalEventId right before acting (not just once at
+      // the top) is what lets a note that got synced by the *other* queued
+      // caller while this one was waiting skip cleanly instead of double-posting.
+      const onlyIfMissing = !!(opts && opts.onlyIfMissing);
       if (!note || note.phase !== 'focus') return;
+      if (onlyIfMissing && note.gcalEventId) return;
       if (!gcalTokenIsFresh()) {
         if (!silent) showCalToast('🔄 Reconnecting to Calendar…');
         const reconnected = await ensureCalendarConnected();
@@ -3978,6 +4064,7 @@
           return;
         }
       }
+      if (onlyIfMissing && note.gcalEventId) return;
       if (!silent) showCalToast('📤 Sending note to Calendar…');
       try {
         const calendarId = await ensurePomodoroCalendarId();
@@ -3986,6 +4073,7 @@
           return;
         }
         if (note.gcalEventId) {
+          if (onlyIfMissing) return; // backfill only ever fills in missing events
           const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(note.gcalEventId)}`, {
             method: 'PATCH',
             body: JSON.stringify(gcalEventBody(note)),
@@ -3993,7 +4081,7 @@
           if (res && res.status === 404) {
             // The event was removed on the Google Calendar side — recreate it.
             note.gcalEventId = null;
-            await syncNoteToCalendar(note, opts);
+            await syncNoteToCalendarInner(note, opts);
             return;
           }
           if (res && res.ok) {
@@ -4042,7 +4130,7 @@
     async function backfillMissingCalendarEvents() {
       const pending = notes.filter(n => !n.deleted && n.phase === 'focus' && !n.gcalEventId);
       for (const note of pending) {
-        await syncNoteToCalendar(note, { silent: true });
+        await syncNoteToCalendar(note, { silent: true, onlyIfMissing: true });
       }
       if (pending.length > 0) showCalToast(`✅ Caught up ${pending.length} note(s) to Calendar`);
     }
