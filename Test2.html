@@ -2339,10 +2339,11 @@
 
     // Logs whatever's currently in the journal composer (Focus/Goal/
     // Reflection) as a real entry tagged to this just-finished FOCUS
-    // session — this is what feeds cloud sync and Google Calendar. Breaks
-    // never create an entry. Nothing typed = nothing logged (the composer
-    // fields stay untouched so the person can still fill them in and use
-    // "Log entry" manually).
+    // session. Breaks never create an entry. Nothing typed = nothing
+    // logged (the composer fields stay untouched so the person can still
+    // fill them in and use "Log entry" manually). Calendar sending is NOT
+    // done here — finalizeSessionCalendarEvent() below merges this entry
+    // with any others from the same session into one event.
     function logFocusEntry(startedAt, durationSec) {
       const focus = entryFocus.value.trim();
       const goal = entryGoal.value.trim();
@@ -2365,25 +2366,45 @@
       saveEntries();
       renderStream();
       scheduleCloudPush();
-      syncEntryToCalendar(entry);
       return entry;
     }
 
-    // Sends any "Log entry" entries that were logged WHILE this focus
-    // session was actively counting (and so were deliberately held back
-    // from Calendar until now) — one calendar event each, using the
-    // session's real total duration for their event length. Entries logged
-    // while idle already went to Calendar immediately at the time they
-    // were logged, so they're skipped here (they already have a gcalEventId).
-    function flushPendingCalendarEntries(sessionStartMs, finishedDuration) {
-      const pending = entries.filter(e =>
-        !e.deleted && e.phase === 'focus' && !e.gcalEventId &&
-        e.sessionStartedAt === sessionStartMs
-      );
-      pending.forEach(e => {
-        e.durationSec = finishedDuration;
-        syncEntryToCalendar(e);
+    // Called on Finish. Every entry logged during this session — any
+    // "Log entry" clicks made while it was counting, plus the composer's
+    // own content just logged by logFocusEntry() — gets combined into a
+    // SINGLE calendar event rather than one event per entry: the event
+    // starts at the session's (oldest) start time, its title/goal come
+    // from the oldest entry, and every entry's reflection is appended in
+    // outliner style (bullets + indentation kept, oldest first).
+    function finalizeSessionCalendarEvent(sessionStartMs, finishedDuration) {
+      const sessionEntries = entries
+        .filter(e => !e.deleted && e.phase === 'focus' && !e.gcalEventId && e.sessionStartedAt === sessionStartMs)
+        .sort((a, b) => a.timestamp - b.timestamp);
+      if (sessionEntries.length === 0) return;
+
+      sessionEntries.forEach(e => { e.durationSec = finishedDuration; });
+      saveEntries();
+
+      const primary = sessionEntries[0]; // oldest — supplies the event's title + goal
+      const mergedLines = [];
+      sessionEntries.forEach((e) => {
+        const lines = outlineToPlainText(e.text);
+        if (lines.length) {
+          if (mergedLines.length) mergedLines.push('');
+          mergedLines.push(...lines);
+        }
       });
+
+      const mergedEntry = {
+        focus: primary.focus,
+        goal: primary.goal,
+        textLines: mergedLines,
+        sessionStartedAt: sessionStartMs,
+        durationSec: finishedDuration,
+        source: 'finish',
+      };
+
+      syncSessionCalendarEvent(mergedEntry, sessionEntries);
     }
 
     // Ends the current session early and counts it as complete — logs a
@@ -2396,7 +2417,7 @@
       const finishedStart = sessionStartTimestamp || new Date();
       if (finishedPhase === 'focus') {
         logFocusEntry(finishedStart, finishedDuration);
-        flushPendingCalendarEntries(finishedStart.getTime(), finishedDuration);
+        finalizeSessionCalendarEvent(finishedStart.getTime(), finishedDuration);
         entryFocus.value = '';
         entryGoal.value = '';
         updateComposerState();
@@ -2791,7 +2812,7 @@
             if (entry) {
               entry.deleted = true;
               entry.entryUpdatedAt = Date.now();
-              if (entry.phase === 'focus') deleteEntryFromCalendar(entry);
+              if (entry.phase === 'focus' && !calendarEventSharedByOthers(entry)) deleteEntryFromCalendar(entry);
             }
             editingId = null;
             saveEntries();
@@ -2835,11 +2856,11 @@
       if (!focus && !goal && !text) {
         entry.deleted = true;
         entry.entryUpdatedAt = Date.now();
-        if (entry.phase === 'focus') deleteEntryFromCalendar(entry);
+        if (entry.phase === 'focus' && !calendarEventSharedByOthers(entry)) deleteEntryFromCalendar(entry);
       } else {
         entry.focus = focus; entry.goal = goal; entry.text = text;
         entry.entryUpdatedAt = Date.now();
-        if (entry.phase === 'focus' && entry.durationSec != null) syncEntryToCalendar(entry);
+        if (entry.phase === 'focus' && entry.durationSec != null && !calendarEventSharedByOthers(entry)) syncEntryToCalendar(entry);
       }
       editingId = null;
       saveEntries();
@@ -3919,13 +3940,28 @@
       const sourceIcon = entry.source === 'finish' ? '🏁' : '🗒️';
       const bodyLines = [];
       if (entry.goal) bodyLines.push(`Goal: ${entry.goal}`);
-      if (entry.text) bodyLines.push('', outlineToPlainText(entry.text));
+      // entry.textLines (pre-built, used when merging several entries into
+      // one event) takes priority; otherwise convert this entry's own
+      // outline text — either way, each outline line is its own array
+      // element so the bullets/indentation survive as real line breaks
+      // instead of collapsing into a comma-joined string.
+      const textLines = entry.textLines || (entry.text ? outlineToPlainText(entry.text) : []);
+      if (textLines.length) { bodyLines.push(''); bodyLines.push(...textLines); }
       return {
         summary: `🍅 ${sourceIcon} ${title}`,
         description: bodyLines.join('\n'),
         start: { dateTime: start.toISOString(), timeZone: tz },
         end: { dateTime: end.toISOString(), timeZone: tz },
       };
+    }
+
+    // True if some OTHER (non-deleted) entry still shares this entry's
+    // calendar event — i.e. it was part of a merged Finish event. Used to
+    // avoid a single entry's later edit/delete corrupting or removing an
+    // event that other entries still represent.
+    function calendarEventSharedByOthers(entry) {
+      if (!entry.gcalEventId) return false;
+      return entries.some(e => e !== entry && !e.deleted && e.gcalEventId === entry.gcalEventId);
     }
 
     let calendarSyncQueue = new Map();
@@ -3978,6 +4014,38 @@
       } catch (e) {
         console.warn('Calendar sync error:', e);
         if (!silent) showCalToast('⚠️ Calendar sync failed', true);
+      }
+    }
+
+    // Sends ONE merged event covering every entry logged during a just-
+    // finished focus session (see finalizeSessionCalendarEvent above), then
+    // stamps the resulting event id onto all of them so a later edit/delete
+    // of any one of them (guarded by calendarEventSharedByOthers) knows the
+    // event is shared rather than exclusively its own.
+    async function syncSessionCalendarEvent(mergedEntry, sessionEntries) {
+      showCalToast('📤 Sending to Calendar…');
+      if (!gcalTokenIsFresh()) {
+        const reconnected = await ensureCalendarConnected();
+        if (!reconnected) { showCalToast('⚠️ Calendar not connected — entries saved, but not sent', true); return; }
+      }
+      try {
+        const calendarId = await ensureJournalCalendarId();
+        if (!calendarId) { showCalToast('⚠️ Calendar sync failed', true); return; }
+        const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events`, {
+          method: 'POST', body: JSON.stringify(gcalEventBody(mergedEntry)),
+        });
+        if (res && res.ok) {
+          const created = await res.json();
+          sessionEntries.forEach(e => { e.gcalEventId = created.id; });
+          saveEntries();
+          scheduleCloudPush();
+          showCalToast(sessionEntries.length > 1 ? `✅ Added to Calendar (${sessionEntries.length} notes merged)` : '✅ Added to Calendar');
+        } else {
+          showCalToast('⚠️ Calendar sync failed', true);
+        }
+      } catch (e) {
+        console.warn('Calendar sync error:', e);
+        showCalToast('⚠️ Calendar sync failed', true);
       }
     }
 
