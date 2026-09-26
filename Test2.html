@@ -678,9 +678,10 @@
     .field-group textarea {
       min-height: 180px;
       line-height: 1.6;
-      white-space: pre;
-      overflow-wrap: normal;
-      overflow-x: auto;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      overflow-x: hidden;
       overflow-y: auto;
       tab-size: 2;
       -moz-tab-size: 2;
@@ -2356,6 +2357,7 @@
         deleted: false,
         entryUpdatedAt: Date.now(),
         phase: 'focus',
+        source: 'finish',
         durationSec: durationSec,
         sessionStartedAt: startedAt.getTime(),
       };
@@ -2365,6 +2367,23 @@
       scheduleCloudPush();
       syncEntryToCalendar(entry);
       return entry;
+    }
+
+    // Sends any "Log entry" entries that were logged WHILE this focus
+    // session was actively counting (and so were deliberately held back
+    // from Calendar until now) — one calendar event each, using the
+    // session's real total duration for their event length. Entries logged
+    // while idle already went to Calendar immediately at the time they
+    // were logged, so they're skipped here (they already have a gcalEventId).
+    function flushPendingCalendarEntries(sessionStartMs, finishedDuration) {
+      const pending = entries.filter(e =>
+        !e.deleted && e.phase === 'focus' && !e.gcalEventId &&
+        e.sessionStartedAt === sessionStartMs
+      );
+      pending.forEach(e => {
+        e.durationSec = finishedDuration;
+        syncEntryToCalendar(e);
+      });
     }
 
     // Ends the current session early and counts it as complete — logs a
@@ -2377,6 +2396,7 @@
       const finishedStart = sessionStartTimestamp || new Date();
       if (finishedPhase === 'focus') {
         logFocusEntry(finishedStart, finishedDuration);
+        flushPendingCalendarEntries(finishedStart.getTime(), finishedDuration);
         entryFocus.value = '';
         entryGoal.value = '';
         updateComposerState();
@@ -2819,7 +2839,7 @@
       } else {
         entry.focus = focus; entry.goal = goal; entry.text = text;
         entry.entryUpdatedAt = Date.now();
-        if (entry.phase === 'focus') syncEntryToCalendar(entry);
+        if (entry.phase === 'focus' && entry.durationSec != null) syncEntryToCalendar(entry);
       }
       editingId = null;
       saveEntries();
@@ -2833,19 +2853,37 @@
       const text = entryText.value.trim();
       if (!focus && !goal && !text) { entryFocus.focus(); return; }
 
+      const focusSessionActive = currentPhase === 'focus' && (isRunning || isPaused);
       const localId = Date.now() + Math.random().toString(36).substring(2, 8);
-      entries.push({
+      const entry = {
         id: localId,
         uid: `${deviceId}-${localId}`,
         focus, goal, text,
         timestamp: Date.now(),
         deleted: false,
         entryUpdatedAt: Date.now(),
-      });
+        phase: 'focus',
+        source: 'manual',
+      };
+      if (focusSessionActive) {
+        // A focus session is actively counting — hold this entry back from
+        // Calendar. It shares this session's start time so Finish can find
+        // it later and send it then, all at once, instead of one Calendar
+        // event per "Log entry" click mid-session.
+        entry.sessionStartedAt = (sessionStartTimestamp || new Date()).getTime();
+        entry.durationSec = null; // filled in when Finish flushes it
+      } else {
+        // Not currently counting (idle, or on a break) — nothing further
+        // will trigger a send, so log it to Calendar right away as its own
+        // event, using the configured focus length as its block size.
+        entry.sessionStartedAt = Date.now();
+        entry.durationSec = getDurationFromPhase('focus');
+      }
+      entries.push(entry);
       saveEntries();
       scheduleCloudPush();
+      if (!focusSessionActive) syncEntryToCalendar(entry);
 
-      const focusSessionActive = currentPhase === 'focus' && (isRunning || isPaused);
       if (focusSessionActive) {
         entryText.value = '';
         autoGrowTextarea(entryText);
@@ -3875,11 +3913,15 @@
       const end = new Date(start.getTime() + (entry.durationSec || 1500) * 1000);
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const title = entry.focus || entry.goal || 'Focus session';
+      // 🏁 = logged by Finish (a completed/ended timer session);
+      // 🗒️ = logged manually via "Log entry" (idle, or held from a
+      // counting session and flushed once Finish was hit).
+      const sourceIcon = entry.source === 'finish' ? '🏁' : '🗒️';
       const bodyLines = [];
       if (entry.goal) bodyLines.push(`Goal: ${entry.goal}`);
       if (entry.text) bodyLines.push('', outlineToPlainText(entry.text));
       return {
-        summary: `🍅 ${title}`,
+        summary: `🍅 ${sourceIcon} ${title}`,
         description: bodyLines.join('\n'),
         start: { dateTime: start.toISOString(), timeZone: tz },
         end: { dateTime: end.toISOString(), timeZone: tz },
@@ -3949,7 +3991,10 @@
     }
 
     async function backfillMissingCalendarEvents() {
-      const pending = entries.filter(e => !e.deleted && e.phase === 'focus' && !e.gcalEventId);
+      // Skip entries still deliberately held back (durationSec null) —
+      // those belong to a focus session that hasn't been Finished yet, and
+      // should only ever be sent by flushPendingCalendarEntries().
+      const pending = entries.filter(e => !e.deleted && e.phase === 'focus' && !e.gcalEventId && e.durationSec != null);
       for (const entry of pending) await syncEntryToCalendar(entry, { silent: true, onlyIfMissing: true });
       if (pending.length > 0) showCalToast(`✅ Caught up ${pending.length} entrie(s) to Calendar`);
     }
