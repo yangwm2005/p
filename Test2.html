@@ -2371,12 +2371,16 @@
 
     // Called on Finish. Every entry logged during this session — any
     // "Log entry" clicks made while it was counting, plus the composer's
-    // own content just logged by logFocusEntry() — gets combined into a
-    // SINGLE calendar event rather than one event per entry: the event
-    // starts at the session's (oldest) start time, its title/goal come
-    // from the oldest entry, and every entry's reflection is appended in
-    // outliner style (bullets + indentation kept, oldest first).
-    function finalizeSessionCalendarEvent(sessionStartMs, finishedDuration) {
+    // own current content just logged by logFocusEntry() — gets combined
+    // into a SINGLE calendar event rather than one event per entry: the
+    // event starts at the session's oldest entry's time, its title/goal
+    // come from the entry Finish itself just logged (falling back to the
+    // oldest one if the fields were empty at Finish), and every entry's
+    // reflection is appended in outliner style (bullets + indentation
+    // kept, oldest first) — so the content sitting in the input fields
+    // right when Finish is pressed always ends up in both the log record
+    // and the calendar event.
+    function finalizeSessionCalendarEvent(sessionStartMs, finishedDuration, finishEntry) {
       const sessionEntries = entries
         .filter(e => !e.deleted && e.phase === 'focus' && !e.gcalEventId && e.sessionStartedAt === sessionStartMs)
         .sort((a, b) => a.timestamp - b.timestamp);
@@ -2385,7 +2389,7 @@
       sessionEntries.forEach(e => { e.durationSec = finishedDuration; });
       saveEntries();
 
-      const primary = sessionEntries[0]; // oldest — supplies the event's title + goal
+      const titleSource = (finishEntry && sessionEntries.includes(finishEntry)) ? finishEntry : sessionEntries[0];
       const mergedLines = [];
       sessionEntries.forEach((e) => {
         const lines = outlineToPlainText(e.text);
@@ -2396,8 +2400,8 @@
       });
 
       const mergedEntry = {
-        focus: primary.focus,
-        goal: primary.goal,
+        focus: titleSource.focus,
+        goal: titleSource.goal,
         textLines: mergedLines,
         sessionStartedAt: sessionStartMs,
         durationSec: finishedDuration,
@@ -2416,8 +2420,8 @@
       const finishedDuration = Math.max(totalDurationSeconds, elapsedSeconds);
       const finishedStart = sessionStartTimestamp || new Date();
       if (finishedPhase === 'focus') {
-        logFocusEntry(finishedStart, finishedDuration);
-        finalizeSessionCalendarEvent(finishedStart.getTime(), finishedDuration);
+        const finishEntry = logFocusEntry(finishedStart, finishedDuration);
+        finalizeSessionCalendarEvent(finishedStart.getTime(), finishedDuration, finishEntry);
         entryFocus.value = '';
         entryGoal.value = '';
         updateComposerState();
