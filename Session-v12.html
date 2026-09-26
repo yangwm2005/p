@@ -323,6 +323,72 @@
     .schedule-block:hover {
       filter: brightness(1.06);
     }
+    .week-grid-wrapper {
+      display: flex;
+      max-height: 520px;
+      overflow: auto;
+      border-radius: 20px;
+      background: #fdfaf7;
+      border: 1px solid #ece4db;
+    }
+    .week-hour-axis {
+      position: relative;
+      width: 44px;
+      flex: 0 0 44px;
+      border-right: 1px solid #e5ddd3;
+    }
+    .week-hour-axis .schedule-hour-label {
+      left: 2px;
+      width: 40px;
+    }
+    .week-days {
+      display: flex;
+      flex: 1;
+      min-width: 700px; /* keeps columns usable rather than squeezed on a wide screen */
+    }
+    .week-day-col {
+      flex: 1 0 0;
+      min-width: 100px;
+      border-left: 1px solid #ece4db;
+    }
+    .week-day-header {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: #fdfaf7;
+      text-align: center;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 6px 2px;
+      border-bottom: 1px solid #ece4db;
+      color: #6d645b;
+    }
+    .week-day-header.is-today {
+      color: #d24545;
+    }
+    .week-hour-axis-labels {
+      position: relative;
+    }
+    .week-day-timeline {
+      position: relative;
+    }
+    .week-block {
+      position: absolute;
+      left: 3px;
+      right: 3px;
+      border-radius: 8px;
+      padding: 2px 5px;
+      color: #fff;
+      font-size: 0.62rem;
+      line-height: 1.2;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+      cursor: pointer;
+      z-index: 2;
+    }
+    .week-block:hover {
+      filter: brightness(1.06);
+    }
     .schedule-tooltip {
       position: fixed;
       max-width: 240px;
@@ -333,7 +399,7 @@
       font-size: 0.78rem;
       line-height: 1.35;
       box-shadow: 0 8px 20px rgba(0,0,0,0.25);
-      z-index: 200;
+      z-index: 250;
       pointer-events: none;
     }
     .schedule-tooltip .st-title {
@@ -351,7 +417,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 100;
+      z-index: 260;
       padding: 20px;
     }
     .schedule-modal {
@@ -537,6 +603,21 @@
     .notes-popout-body .note-list {
       max-height: none;
       height: 100%;
+    }
+    .week-popout {
+      max-width: 1400px;
+    }
+    .week-popout-body {
+      display: flex;
+    }
+    .week-popout-body #weekPanelInner {
+      width: 100%;
+      height: 100%;
+    }
+    .week-popout-body .week-grid-wrapper {
+      max-height: none;
+      flex: 1;
+      min-height: 0;
     }
     .clock-view-toggle button, .clock-mode-toggle button {
       background: #ede7e1;
@@ -1262,6 +1343,7 @@
       <div class="clock-view-toggle sticky-toggle">
         <button id="notesViewBtn" class="active">📝 Notes</button>
         <button id="scheduleViewBtn">📅 Day schedule</button>
+        <button id="weekViewBtn">🗓 Week view</button>
       </div>
 
       <div class="note-section" id="notesPanel">
@@ -1324,6 +1406,21 @@
           </div>
         </div>
       </div>
+
+      <div class="week-section" id="weekPanel" style="display:none;">
+        <div id="weekPanelInner" style="display:flex; flex-direction:column; width:100%; height:100%;">
+          <div class="schedule-day-nav">
+            <button id="weekPrevBtn" class="schedule-nav-btn">‹</button>
+            <div class="schedule-day-label" id="weekRangeLabel">This week</div>
+            <button id="weekNextBtn" class="schedule-nav-btn">›</button>
+            <button type="button" class="note-expand-btn" id="weekPopoutBtn" title="Pop out to a wider full-week view">⤢</button>
+          </div>
+          <div class="week-grid-wrapper" id="weekGridWrapper">
+            <div class="week-hour-axis" id="weekHourAxis"><!-- hour labels --></div>
+            <div class="week-days" id="weekDays"><!-- 7 day columns --></div>
+          </div>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -1360,6 +1457,16 @@
       <button type="button" class="focus-modal-close" id="notesPopoutCloseBtn">✕ Close</button>
     </div>
     <div class="notes-popout-body" id="notesPopoutBody"></div>
+  </div>
+</div>
+
+<div class="notes-popout-backdrop" id="weekPopoutBackdrop" style="display:none;">
+  <div class="notes-popout week-popout">
+    <div class="notes-popout-header">
+      <span>🗓 Week view</span>
+      <button type="button" class="focus-modal-close" id="weekPopoutCloseBtn">✕ Close</button>
+    </div>
+    <div class="notes-popout-body week-popout-body" id="weekPopoutBody"></div>
   </div>
 </div>
 
@@ -1451,6 +1558,19 @@
     const scheduleDayLabel = document.getElementById('scheduleDayLabel');
     const scheduleTimeline = document.getElementById('scheduleTimeline');
     const scheduleTimelineWrapper = document.getElementById('scheduleTimelineWrapper');
+    const weekViewBtn = document.getElementById('weekViewBtn');
+    const weekPanel = document.getElementById('weekPanel');
+    const weekPanelInner = document.getElementById('weekPanelInner');
+    const weekPrevBtn = document.getElementById('weekPrevBtn');
+    const weekNextBtn = document.getElementById('weekNextBtn');
+    const weekRangeLabel = document.getElementById('weekRangeLabel');
+    const weekHourAxis = document.getElementById('weekHourAxis');
+    const weekDays = document.getElementById('weekDays');
+    const weekGridWrapper = document.getElementById('weekGridWrapper');
+    const weekPopoutBtn = document.getElementById('weekPopoutBtn');
+    const weekPopoutBackdrop = document.getElementById('weekPopoutBackdrop');
+    const weekPopoutBody = document.getElementById('weekPopoutBody');
+    const weekPopoutCloseBtn = document.getElementById('weekPopoutCloseBtn');
     const scheduleModalBackdrop = document.getElementById('scheduleModalBackdrop');
     const scheduleModalMeta = document.getElementById('scheduleModalMeta');
     const scheduleModalTextarea = document.getElementById('scheduleModalTextarea');
@@ -2325,6 +2445,8 @@
       noteCounter.textContent = active.length;
       if (notesViewMode === 'schedule') {
         renderSchedule();
+      } else if (notesViewMode === 'week') {
+        renderWeek();
       }
       scheduleCloudPush();
     }
@@ -2447,16 +2569,21 @@
       return { timestamp: start.toISOString(), duration: durationSec };
     }
 
-    // ----- Notes / Day schedule view toggle -----
+    // ----- Notes / Day schedule / Week view toggle -----
     function setNotesViewMode(mode) {
       notesViewMode = mode;
       notesViewBtn.classList.toggle('active', mode === 'notes');
       scheduleViewBtn.classList.toggle('active', mode === 'schedule');
+      weekViewBtn.classList.toggle('active', mode === 'week');
       notesPanel.style.display = mode === 'notes' ? 'flex' : 'none';
       schedulePanel.style.display = mode === 'schedule' ? 'flex' : 'none';
+      weekPanel.style.display = mode === 'week' ? 'flex' : 'none';
       if (mode === 'schedule') {
         renderSchedule();
         scrollScheduleToNow();
+      } else if (mode === 'week') {
+        renderWeek();
+        scrollWeekToNow();
       }
     }
 
@@ -2574,6 +2701,126 @@
       const nowTop = (nowMinutes / 60) * SCHEDULE_HOUR_HEIGHT;
       const wrapperHeight = scheduleTimelineWrapper.clientHeight;
       scheduleTimelineWrapper.scrollTop = Math.max(0, nowTop - wrapperHeight / 3);
+    }
+
+    // ----- Week view: same per-note timestamp+duration data as Day
+    // schedule, laid out as 7 day-columns sharing one hour axis. Editing
+    // reuses the exact same openScheduleModal() as the day view, so a
+    // week-view edit goes through the identical save/delete/Calendar-sync
+    // path — nothing week-specific to keep in sync there.
+    function getWeekStart(d) {
+      const date = new Date(d);
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - date.getDay()); // 0 = Sunday
+      return date;
+    }
+    let weekStartDate = getWeekStart(new Date());
+
+    function weekRangeLabelText(start) {
+      const end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      const sameMonth = start.getMonth() === end.getMonth();
+      const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const endStr = end.toLocaleDateString('en-US', sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' });
+      return `${startStr} – ${endStr}`;
+    }
+
+    function renderWeek() {
+      weekRangeLabel.textContent = weekRangeLabelText(weekStartDate);
+
+      weekHourAxis.innerHTML = '';
+      // Sticky spacer matching .week-day-header exactly (same class, so
+      // identical height/padding/border) so the hour labels below it line
+      // up with each day's timeline, which is likewise pushed down by its
+      // own sticky header row.
+      const axisSpacer = document.createElement('div');
+      axisSpacer.className = 'week-day-header';
+      weekHourAxis.appendChild(axisSpacer);
+
+      const axisLabels = document.createElement('div');
+      axisLabels.className = 'week-hour-axis-labels';
+      axisLabels.style.height = (SCHEDULE_HOUR_HEIGHT * 24) + 'px';
+      for (let h = 0; h < 24; h++) {
+        const label = document.createElement('div');
+        label.className = 'schedule-hour-label';
+        label.style.top = (h * SCHEDULE_HOUR_HEIGHT) + 'px';
+        label.textContent = h === 0 ? '12 AM' : (h < 12 ? `${h} AM` : (h === 12 ? '12 PM' : `${h - 12} PM`));
+        axisLabels.appendChild(label);
+      }
+      weekHourAxis.appendChild(axisLabels);
+
+      weekDays.innerHTML = '';
+      const today = new Date();
+      const allNotes = visibleNotes();
+
+      for (let i = 0; i < 7; i++) {
+        const dayDate = new Date(weekStartDate);
+        dayDate.setDate(dayDate.getDate() + i);
+        const isToday = isSameDay(dayDate, today);
+
+        const col = document.createElement('div');
+        col.className = 'week-day-col';
+
+        const header = document.createElement('div');
+        header.className = 'week-day-header' + (isToday ? ' is-today' : '');
+        header.textContent = dayDate.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
+        col.appendChild(header);
+
+        const timeline = document.createElement('div');
+        timeline.className = 'week-day-timeline';
+        timeline.style.height = (SCHEDULE_HOUR_HEIGHT * 24) + 'px';
+
+        for (let h = 0; h < 24; h++) {
+          const line = document.createElement('div');
+          line.className = 'schedule-hour-line';
+          line.style.top = (h * SCHEDULE_HOUR_HEIGHT) + 'px';
+          timeline.appendChild(line);
+        }
+
+        const dayNotes = allNotes.filter(n => isSameDay(new Date(n.timestamp), dayDate));
+        dayNotes.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+        for (const note of dayNotes) {
+          const start = new Date(note.timestamp);
+          const minutesSinceMidnight = start.getHours() * 60 + start.getMinutes();
+          const durationMinutes = Math.max(1, Math.round(note.duration / 60));
+          const top = (minutesSinceMidnight / 60) * SCHEDULE_HOUR_HEIGHT;
+          const height = Math.max(16, (durationMinutes / 60) * SCHEDULE_HOUR_HEIGHT);
+
+          const block = document.createElement('div');
+          block.className = 'week-block';
+          block.style.top = top + 'px';
+          block.style.height = height + 'px';
+          block.style.background = SCHEDULE_PHASE_COLOR[note.phase] || SCHEDULE_PHASE_COLOR.focus;
+          const emoji = SCHEDULE_PHASE_EMOJI[note.phase] || '🍅';
+          block.innerHTML = `<div class="sb-title">${emoji} ${escapeHtml(getNoteTitle(note))}</div>`;
+          block.addEventListener('click', () => openScheduleModal(note.id));
+          block.addEventListener('mouseenter', () => showScheduleTooltip(block, note));
+          block.addEventListener('mouseleave', hideScheduleTooltip);
+          timeline.appendChild(block);
+        }
+
+        if (isToday) {
+          const nowMinutes = today.getHours() * 60 + today.getMinutes();
+          const nowTop = (nowMinutes / 60) * SCHEDULE_HOUR_HEIGHT;
+          const nowLine = document.createElement('div');
+          nowLine.className = 'schedule-now-line';
+          nowLine.style.top = nowTop + 'px';
+          timeline.appendChild(nowLine);
+        }
+
+        col.appendChild(timeline);
+        weekDays.appendChild(col);
+      }
+    }
+
+    function scrollWeekToNow() {
+      const today = new Date();
+      if (today < weekStartDate || today >= new Date(weekStartDate.getTime() + 7 * 86400000)) return;
+      const nowMinutes = today.getHours() * 60 + today.getMinutes();
+      const nowTop = (nowMinutes / 60) * SCHEDULE_HOUR_HEIGHT;
+      const wrapperHeight = weekGridWrapper.clientHeight;
+      weekGridWrapper.scrollTop = Math.max(0, nowTop - wrapperHeight / 3);
     }
 
     // ----- Schedule block hover tooltip -----
@@ -3357,8 +3604,8 @@
           // window rather than a new tab. Reusing the same name means a
           // second click re-focuses/reloads that same window instead of
           // spawning another one.
-          const width = 680;
-          const height = 680;
+          const width = 480;
+          const height = 760;
           const left = Math.max(0, Math.round((screen.width - width) / 2));
           const top = Math.max(0, Math.round((screen.height - height) / 2));
           const features = [
@@ -3462,6 +3709,41 @@
         }
       });
 
+      // Week view pop-out: same relocate-the-real-node pattern as the notes
+      // pop-out above — moves weekPanelInner (nav + grid together) into a
+      // much wider overlay so all 7 day columns actually fit without
+      // horizontal scrolling, then moves it straight back on close.
+      const weekPanelHome = weekPanelInner.parentNode;
+      const weekPanelNextSibling = weekPanelInner.nextSibling;
+      function openWeekPopout() {
+        if (weekPopoutBackdrop.style.display !== 'none') return;
+        weekPopoutBody.appendChild(weekPanelInner);
+        weekPopoutBackdrop.style.display = 'flex';
+        renderWeek();
+        scrollWeekToNow();
+      }
+      function closeWeekPopout() {
+        if (weekPanelNextSibling) {
+          weekPanelHome.insertBefore(weekPanelInner, weekPanelNextSibling);
+        } else {
+          weekPanelHome.appendChild(weekPanelInner);
+        }
+        weekPopoutBackdrop.style.display = 'none';
+        renderWeek();
+      }
+      if (weekPopoutBtn) weekPopoutBtn.addEventListener('click', openWeekPopout);
+      if (weekPopoutCloseBtn) weekPopoutCloseBtn.addEventListener('click', closeWeekPopout);
+      if (weekPopoutBackdrop) {
+        weekPopoutBackdrop.addEventListener('click', (e) => {
+          if (e.target === weekPopoutBackdrop) closeWeekPopout();
+        });
+      }
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && weekPopoutBackdrop && weekPopoutBackdrop.style.display !== 'none') {
+          closeWeekPopout();
+        }
+      });
+
       exportGCalBtn.addEventListener('click', exportToGoogleCalendar);
       exportGCalNotesBtn.addEventListener('click', () => copyNotesToClipboard());
       if (copyTodayNotesBtn) copyTodayNotesBtn.addEventListener('click', () => copyNotesToClipboard('today'));
@@ -3486,6 +3768,17 @@
 
       notesViewBtn.addEventListener('click', () => setNotesViewMode('notes'));
       scheduleViewBtn.addEventListener('click', () => setNotesViewMode('schedule'));
+      weekViewBtn.addEventListener('click', () => setNotesViewMode('week'));
+      weekPrevBtn.addEventListener('click', () => {
+        weekStartDate = new Date(weekStartDate);
+        weekStartDate.setDate(weekStartDate.getDate() - 7);
+        renderWeek();
+      });
+      weekNextBtn.addEventListener('click', () => {
+        weekStartDate = new Date(weekStartDate);
+        weekStartDate.setDate(weekStartDate.getDate() + 7);
+        renderWeek();
+      });
       schedulePrevDay.addEventListener('click', () => {
         scheduleDate = new Date(scheduleDate);
         scheduleDate.setDate(scheduleDate.getDate() - 1);

@@ -1,0 +1,4125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interstitial Journal · Pomodoro · Independent Date Toggles</title>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      background: #f7f3f0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+
+    .app-card {
+      max-width: 1100px;
+      width: 100%;
+      background: #fffcf9;
+      border-radius: 2.5rem;
+      box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.2), 0 8px 24px -6px rgba(0, 0, 0, 0.1);
+      padding: 2rem;
+      border: 1px solid #f0e6df;
+    }
+
+    h1 {
+      font-size: 1.9rem;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      color: #3e2e28;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.75rem;
+    }
+
+    h1 span { font-size: 2rem; }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 0.85fr 1.35fr;
+      gap: 2rem;
+    }
+
+    .pomodoro-panel {
+      background: #fef9f5;
+      border-radius: 2rem;
+      padding: 1.8rem 1.5rem;
+      box-shadow: inset 0 1px 4px rgba(255, 255, 255, 0.8), 0 6px 12px -8px rgba(0, 0, 0, 0.1);
+      border: 1px solid #f2e5dc;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: fit-content;
+      position: sticky;
+      top: 1.5rem;
+    }
+
+    .timer-display {
+      font-size: 4.2rem;
+      font-weight: 300;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 4px;
+      color: #2d211c;
+      background: #fff9f3;
+      padding: 0.25rem 0.5rem;
+      border-radius: 3rem;
+      margin: 0.5rem 0;
+      line-height: 1.2;
+      text-shadow: 0 2px 4px rgba(255, 255, 255, 0.8);
+      transition: color 0.2s;
+    }
+
+    .timer-display.background-running { color: #8a6a55; }
+
+    .timer-label {
+      font-size: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      font-weight: 500;
+      color: #a28b7e;
+      margin-bottom: 1rem;
+      transition: color 0.2s;
+    }
+
+    .timer-label.active-session { color: #8a6a55; }
+
+    .timer-controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.65rem;
+      margin: 1.2rem 0 1rem;
+    }
+
+    button {
+      font-family: inherit;
+      background: #ece2db;
+      border: none;
+      border-radius: 3rem;
+      padding: 0.7rem 1.5rem;
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: #3e2e28;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.02), 0 1px 2px rgba(0, 0, 0, 0.05);
+      border: 1px solid #e1d3ca;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+    }
+
+    button:hover {
+      background: #e1d3ca;
+      transform: translateY(-1px);
+      box-shadow: 0 8px 14px -8px rgba(0, 0, 0, 0.2);
+    }
+
+    button.primary {
+      background: #c9b1a2;
+      border-color: #b69b8b;
+      color: #211a16;
+      font-weight: 600;
+      padding: 0.7rem 2rem;
+    }
+
+    button.primary:hover { background: #b89f8f; }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .preset-group {
+      display: flex;
+      gap: 0.6rem;
+      margin-top: 0.25rem;
+    }
+
+    .preset-group button {
+      padding: 0.5rem 1.2rem;
+      font-size: 0.85rem;
+    }
+
+    /* ---------- Pomodoro phase engine (focus / short break / long break) ---------- */
+    .status-row {
+      display: flex;
+      justify-content: center;
+      gap: 0.5rem;
+      font-size: 0.78rem;
+      color: #6d645b;
+      flex-wrap: wrap;
+      margin-bottom: 0.5rem;
+    }
+    .status-row span {
+      background: #f5ebe3;
+      padding: 0.15rem 0.75rem;
+      border-radius: 2rem;
+    }
+    .timer-display-wrapper { width: 100%; }
+    .overtime-banner {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 0.4rem;
+      padding: 0.3rem 0.9rem;
+      border-radius: 999px;
+      background: rgba(63,157,99,0.12);
+      color: #3f9d63;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .overtime-banner.visible { display: flex; }
+    .timer-display.overtime { color: #3f9d63; }
+    .analog-container { display: flex; justify-content: center; margin: 0.4rem 0 0.6rem; width: 100%; }
+    #analogCanvas {
+      background: transparent;
+      border-radius: 50%;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04);
+      width: 200px;
+      height: 200px;
+      display: block;
+    }
+    .duration-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      justify-content: center;
+      width: 100%;
+      margin: 0.6rem 0;
+    }
+    .duration-item {
+      flex: 1 0 68px;
+      background: #f5ebe3;
+      border-radius: 1.4rem;
+      padding: 0.4rem 0.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      border: 2px solid transparent;
+      position: relative;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s, opacity 0.2s;
+    }
+    .duration-item.locked { cursor: not-allowed; opacity: 0.6; }
+    .duration-item.phase-active {
+      border-color: var(--phase-color);
+      background: var(--phase-bg);
+    }
+    .duration-item.phase-active::after {
+      content: '';
+      position: absolute;
+      top: -4px; right: -4px;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--phase-color);
+      box-shadow: 0 0 0 2px #fef9f5;
+    }
+    .duration-item label {
+      font-size: 0.62rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      color: #a28b7e;
+      margin-bottom: 0.1rem;
+    }
+    .duration-item input {
+      width: 52px;
+      border: none;
+      background: transparent;
+      text-align: center;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #2d211c;
+      padding: 2px 0;
+      border-bottom: 2px solid #e1d3ca;
+    }
+    .duration-item input:focus { outline: none; border-bottom-color: #c9b1a2; }
+    .time-stepper { display: flex; gap: 0.6rem; justify-content: center; margin-bottom: 0.6rem; }
+    .stepper-btn { flex: 1; max-width: 130px; font-size: 0.78rem; padding: 0.5rem 0.9rem; }
+    .mini-stepper-btn {
+      flex: 0 0 auto;
+      padding: 0.35rem 0.6rem;
+      font-size: 0.7rem;
+      font-weight: 700;
+    }
+    .settings-toggle-btn {
+      display: block;
+      width: 100%;
+      background: none;
+      border: none;
+      border-top: 1px dashed #e8d5c8;
+      border-bottom: 1px dashed #e8d5c8;
+      padding: 0.5rem 0.25rem;
+      margin: 0.4rem 0;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: #a28b7e;
+      cursor: pointer;
+      text-align: center;
+      box-shadow: none;
+      border-radius: 0;
+    }
+    .settings-toggle-btn:hover { background: none; color: #8a6a55; transform: none; box-shadow: none; }
+    .settings-panel {
+      width: 100%;
+      background: #fff9f3;
+      border-radius: 1.1rem;
+      padding: 0.7rem 0.5rem 0.1rem;
+      margin-bottom: 0.5rem;
+    }
+    .clock-view-toggle, .clock-mode-toggle, .analog-options {
+      display: flex;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-bottom: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .clock-view-toggle button, .clock-mode-toggle button, .analog-options button {
+      font-size: 0.72rem;
+      padding: 0.35rem 0.8rem;
+    }
+    .clock-view-toggle button.active, .clock-mode-toggle button.active, .analog-options button.active {
+      background: #c9b1a2;
+      border-color: #b69b8b;
+      font-weight: 600;
+    }
+    .action-row { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; margin-top: 0.4rem; width: 100%; }
+    .session-row { margin-top: 0.4rem; width: 100%; display: flex; gap: 0.5rem; justify-content: center; }
+
+    /* ---------- Cloud sync + Calendar ---------- */
+    .cloud-auth-btn {
+      font-size: 0.68rem;
+      font-weight: 600;
+      background: #a28b7e;
+      color: #fff9f3;
+      border: none;
+      padding: 0.35rem 0.8rem;
+      border-radius: 2rem;
+      cursor: pointer;
+      white-space: nowrap;
+      box-shadow: none;
+    }
+    .cloud-auth-btn:hover { filter: brightness(1.08); transform: none; box-shadow: none; }
+    .cloud-sync-panel {
+      margin-top: 0.6rem;
+      padding: 0.5rem 0.7rem;
+      border-radius: 1rem;
+      background: #fff9f3;
+      font-size: 0.68rem;
+      color: #a28b7e;
+      text-align: center;
+      line-height: 1.5;
+      width: 100%;
+    }
+    .cloud-sync-panel .csp-status { font-weight: 600; color: #3e2e28; }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      margin-left: auto;
+    }
+    .cal-toast {
+      position: fixed;
+      left: 50%;
+      bottom: 28px;
+      transform: translateX(-50%) translateY(8px);
+      background: #3e2e28;
+      color: #fef9f5;
+      padding: 0.55rem 1.1rem;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      z-index: 300;
+      opacity: 0;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      pointer-events: none;
+      max-width: 90vw;
+      text-align: center;
+    }
+    .cal-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .cal-toast.error { background: #8a4a3a; }
+
+    .journal-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .journal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 0.9rem;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .journal-header h2 {
+      font-size: 1.4rem;
+      font-weight: 500;
+      color: #3e2e28;
+    }
+
+    .journal-header .hint {
+      font-size: 0.85rem;
+      color: #a28b7e;
+      font-style: italic;
+    }
+
+    .journal-header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+
+    .summary-btn {
+      font-size: 0.78rem;
+      padding: 0.45rem 1rem;
+      background: #f5ebe3;
+      border-color: #e8d5c8;
+      color: #8a6a55;
+    }
+
+    .summary-btn:hover { background: #ede0d5; }
+
+    /* dates quick toggle in header (controls LOG dates only) */
+    .dates-quick {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.72rem;
+      color: #a28b7e;
+    }
+
+    .dates-quick .pill-group {
+      background: #f5ebe3;
+      padding: 0.15rem;
+    }
+
+    .dates-quick .pill-group button {
+      padding: 0.2rem 0.6rem;
+      font-size: 0.68rem;
+    }
+
+    .filter-bar {
+      display: flex;
+      gap: 0.4rem;
+      margin-bottom: 0.9rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-bar button {
+      padding: 0.35rem 0.9rem;
+      font-size: 0.75rem;
+      border-radius: 2rem;
+    }
+
+    .filter-bar button.active-filter {
+      background: #c9b1a2;
+      border-color: #b69b8b;
+      font-weight: 600;
+    }
+
+    .stream-card {
+      background: #fff9f3;
+      border-radius: 1.5rem;
+      border: 1px solid #f0e2d8;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      max-height: 720px;
+    }
+
+    .stream-scroll {
+      overflow-y: auto;
+      flex: 1;
+      padding: 0.6rem;
+    }
+
+    .entry, .composer {
+      border-radius: 1.1rem;
+      padding: 0.9rem 1.1rem;
+      margin-bottom: 0.6rem;
+      transition: background 0.15s, box-shadow 0.2s, border-color 0.2s;
+    }
+
+    .entry:last-child { margin-bottom: 0; }
+
+    .entry {
+      background: #fffcf9;
+      border: 1px solid #f0e2d8;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .entry:hover {
+      background: #fff3ea;
+      border-color: #e8d5c8;
+    }
+
+    .composer {
+      background: #fff3ea;
+      border: 1.5px dashed #d9c3b4;
+      margin-bottom: 0.75rem;
+      transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+    }
+
+    .composer.active {
+      border-style: solid;
+      border-color: #c9b1a2;
+      background: #fff9f3;
+      box-shadow: 0 4px 14px -8px rgba(201, 177, 162, 0.5);
+    }
+
+    .composer.session-active {
+      border-color: #b89f8f;
+      background: #fff7f0;
+    }
+
+    .composer.session-active.active {
+      border-color: #a8846d;
+      box-shadow: 0 4px 16px -8px rgba(168, 132, 109, 0.55);
+    }
+
+    .composer-label {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      font-weight: 700;
+      color: #b7a092;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
+
+    .composer-label .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #d9c3b4;
+      transition: background 0.2s;
+    }
+
+    .composer.active .composer-label .dot { background: #c9b1a2; }
+
+    .composer.session-active .composer-label { color: #a8846d; }
+
+    .composer.session-active .composer-label .dot {
+      background: #a8846d;
+      box-shadow: 0 0 0 3px rgba(168, 132, 109, 0.2);
+    }
+
+    .session-pill {
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      background: #e9d9cf;
+      color: #8a6a55;
+      padding: 0.15rem 0.6rem;
+      border-radius: 2rem;
+      margin-left: auto;
+      text-transform: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .session-pill .pulse {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #a8846d;
+      animation: pulse 1.6s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .continuing-from {
+      font-size: 0.72rem;
+      color: #a28b7e;
+      margin-bottom: 0.6rem;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.25rem 0.6rem;
+      background: #f5ebe3;
+      border-radius: 2rem;
+      width: fit-content;
+    }
+
+    .continuing-from button {
+      background: none;
+      border: none;
+      padding: 0;
+      font-size: 0.7rem;
+      color: #c9b1a2;
+      text-decoration: underline;
+      box-shadow: none;
+      cursor: pointer;
+      border-radius: 0;
+    }
+
+    .continuing-from button:hover {
+      background: none;
+      transform: none;
+      color: #b89f8f;
+      box-shadow: none;
+    }
+
+    .session-actions {
+      display: flex;
+      gap: 0.4rem;
+      margin-bottom: 0.6rem;
+      flex-wrap: wrap;
+    }
+
+    .session-actions button {
+      font-size: 0.7rem;
+      padding: 0.3rem 0.75rem;
+      background: #f5ebe3;
+      border-color: #e8d5c8;
+      color: #8a6a55;
+    }
+
+    .session-actions button:hover { background: #ede0d5; }
+
+    .field-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+    }
+
+    .field-row { display: flex; gap: 0.7rem; }
+
+    .field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .field-group.flex-1 { flex: 1; }
+    .field-group.flex-2 { flex: 1.6; }
+
+    .field-group label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 600;
+      color: #a28b7e;
+      padding-left: 0.2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .field-group label .goal-required {
+      font-size: 0.6rem;
+      text-transform: none;
+      letter-spacing: 0.3px;
+      font-weight: 500;
+      color: #a8846d;
+      background: #f5ebe3;
+      padding: 0.1rem 0.45rem;
+      border-radius: 1rem;
+    }
+
+    .field-group label .outliner-hint {
+      font-size: 0.6rem;
+      text-transform: none;
+      letter-spacing: 0.3px;
+      font-weight: 500;
+      color: #b7a092;
+      margin-left: auto;
+      font-style: italic;
+    }
+
+    .field-group input,
+    .field-group textarea {
+      width: 100%;
+      padding: 0.7rem 0.95rem;
+      border-radius: 0.9rem;
+      border: 1px solid #e8d5c8;
+      background: #fffcf9;
+      font-family: inherit;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border 0.15s, box-shadow 0.15s, background 0.15s;
+      color: #2d211c;
+      resize: vertical;
+    }
+
+    .field-group input:focus,
+    .field-group textarea:focus {
+      border-color: #c9b1a2;
+      background: #fffdfb;
+      box-shadow: 0 0 0 3px rgba(201, 177, 162, 0.18);
+    }
+
+    .field-group textarea {
+      min-height: 180px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      overflow-x: hidden;
+      overflow-y: auto;
+      tab-size: 2;
+      -moz-tab-size: 2;
+      font-variant-numeric: tabular-nums;
+      font-size: 0.9rem;
+      transition: border 0.15s, box-shadow 0.15s, background 0.15s, height 0.1s ease;
+    }
+
+    .field-group textarea.edit-text { min-height: 160px; }
+
+    .entry-text {
+      font-size: 0.88rem;
+      line-height: 1.6;
+      color: #5f4a3e;
+      word-break: break-word;
+      padding-left: 0.1rem;
+    }
+
+    .entry-text.plain::before {
+      content: '→ ';
+      color: #b7a092;
+    }
+
+    .outline-line {
+      display: block;
+      position: relative;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .outline-line.depth-0 { padding-left: 1rem; }
+    .outline-line.depth-0::before {
+      content: '•';
+      position: absolute;
+      left: 0.1rem;
+      top: 0;
+      color: #b89f8f;
+      font-weight: 700;
+    }
+
+    .outline-line.depth-1 { padding-left: 2.15rem; }
+    .outline-line.depth-1::before {
+      content: '◦';
+      position: absolute;
+      left: 1.15rem;
+      top: 0;
+      color: #c9b1a2;
+      font-weight: 700;
+    }
+
+    .outline-line.depth-2 { padding-left: 3.3rem; }
+    .outline-line.depth-2::before {
+      content: '▪';
+      position: absolute;
+      left: 2.3rem;
+      top: 0;
+      color: #d9c3b4;
+      font-weight: 700;
+    }
+
+    .outline-line.depth-3 { padding-left: 4.45rem; }
+    .outline-line.depth-3::before {
+      content: '·';
+      position: absolute;
+      left: 3.45rem;
+      top: 0;
+      color: #d9c3b4;
+      font-weight: 700;
+      font-size: 1.2em;
+    }
+
+    .outline-line.depth-4 { padding-left: 5.6rem; }
+    .outline-line.depth-4::before {
+      content: '·';
+      position: absolute;
+      left: 4.6rem;
+      top: 0;
+      color: #d9c3b4;
+      font-weight: 700;
+      font-size: 1.2em;
+    }
+
+    .entry.editing {
+      background: #fffbf7;
+      border: 1.5px solid #c9b1a2;
+      box-shadow: 0 8px 24px -12px rgba(201, 177, 162, 0.55),
+                  0 0 0 4px rgba(201, 177, 162, 0.1);
+      cursor: default;
+      padding: 1.2rem 1.3rem 1.1rem;
+      animation: expandIn 0.18s ease-out;
+    }
+
+    @keyframes expandIn {
+      from { transform: scale(0.985); opacity: 0.85; }
+      to   { transform: scale(1); opacity: 1; }
+    }
+
+    .edit-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.9rem;
+      padding-bottom: 0.7rem;
+      border-bottom: 1px dashed #e8d5c8;
+    }
+
+    .edit-header .edit-title {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      font-weight: 700;
+      color: #b89f8f;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .edit-header .edit-time {
+      font-size: 0.72rem;
+      color: #b7a092;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .edit-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.6rem;
+      margin-top: 1rem;
+      padding-top: 0.9rem;
+      border-top: 1px dashed #e8d5c8;
+    }
+
+    .edit-actions button {
+      padding: 0.6rem 1.4rem;
+      font-size: 0.85rem;
+    }
+
+    .edit-actions .delete-btn {
+      margin-right: auto;
+      background: transparent;
+      border-color: transparent;
+      color: #b08979;
+      padding: 0.6rem 0.9rem;
+    }
+
+    .edit-actions .delete-btn:hover {
+      background: #fbeae2;
+      color: #a35d44;
+      border-color: #f0d5c8;
+    }
+
+    .entry-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.5rem;
+      margin-bottom: 0.35rem;
+    }
+
+    .entry-focus {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #3e2e28;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .entry-focus.empty-focus {
+      color: #b7a092;
+      font-style: italic;
+      font-weight: 500;
+    }
+
+    .entry-time {
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: #b7a092;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+    }
+
+    /* Hide LOG timestamps only when log dates are off */
+    body.hide-log-dates .entry-time,
+    body.hide-log-dates .edit-time { display: none !important; }
+
+    .entry-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-bottom: 0.4rem;
+      flex-wrap: wrap;
+    }
+
+    .entry-goal {
+      font-size: 0.7rem;
+      background: #e9d9cf;
+      color: #5f4a3e;
+      padding: 0.15rem 0.65rem;
+      border-radius: 2rem;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .entry-no-goal {
+      font-size: 0.68rem;
+      color: #cbb9ae;
+      font-style: italic;
+      padding: 0.1rem 0.55rem;
+      border-radius: 2rem;
+      border: 1px dashed #e8d5c8;
+      white-space: nowrap;
+    }
+
+    .entry-edit-hint {
+      position: absolute;
+      top: 0.7rem;
+      right: 0.8rem;
+      font-size: 0.75rem;
+      color: #cbb9ae;
+      opacity: 0;
+      transition: opacity 0.15s;
+      pointer-events: none;
+      background: #fff3ea;
+      padding: 0.15rem 0.45rem;
+      border-radius: 1rem;
+      border: 1px solid #f0e2d8;
+    }
+
+    .entry:hover .entry-edit-hint { opacity: 1; }
+
+    .empty-state {
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      color: #b7a092;
+      font-style: italic;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .footer-note {
+      text-align: center;
+      font-size: 0.75rem;
+      color: #cbb9ae;
+      margin-top: 1.5rem;
+      letter-spacing: 0.3px;
+    }
+
+    .badge {
+      display: inline-block;
+      background: #e9d9cf;
+      border-radius: 2rem;
+      padding: 0.2rem 0.9rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: #5f4a3e;
+      margin-left: 0.5rem;
+    }
+
+    /* ---------- MODAL ---------- */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(45, 33, 28, 0.45);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      z-index: 1000;
+      animation: fadeIn 0.18s ease-out;
+    }
+
+    .modal-backdrop.open { display: flex; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    .modal {
+      background: #fffcf9;
+      border-radius: 1.8rem;
+      box-shadow: 0 30px 60px -20px rgba(0, 0, 0, 0.35);
+      width: 100%;
+      max-width: 820px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      animation: slideUp 0.22s ease-out;
+      border: 1px solid #f0e6df;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(12px); opacity: 0.9; }
+      to   { transform: translateY(0); opacity: 1; }
+    }
+
+    .modal-header {
+      padding: 1.3rem 1.5rem;
+      border-bottom: 1px solid #f0e2d8;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      background: #fff9f3;
+    }
+
+    .modal-header h3 {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #3e2e28;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .modal-header .subtitle {
+      font-size: 0.78rem;
+      color: #a28b7e;
+      font-weight: 400;
+      display: block;
+      margin-top: 0.15rem;
+    }
+
+    .modal-close {
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      font-size: 1.4rem;
+      line-height: 1;
+      color: #b7a092;
+      padding: 0.3rem 0.6rem;
+      border-radius: 1rem;
+      cursor: pointer;
+    }
+
+    .modal-close:hover {
+      background: #f5ebe3;
+      transform: none;
+      box-shadow: none;
+      color: #8a6a55;
+    }
+
+    .modal-body {
+      padding: 1.4rem 1.5rem;
+      overflow-y: auto;
+      flex: 1;
+      background: #fffcf9;
+    }
+
+    .modal-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid #f0e2d8;
+      display: flex;
+      justify-content: space-between;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      background: #fff9f3;
+    }
+
+    .modal-footer .footer-group {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .modal-footer button {
+      padding: 0.55rem 1.1rem;
+      font-size: 0.82rem;
+    }
+
+    .controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.7rem 1rem;
+      margin-bottom: 1.2rem;
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .control-label {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      font-weight: 700;
+      color: #b7a092;
+      margin-right: 0.15rem;
+    }
+
+    .pill-group {
+      display: flex;
+      gap: 0.2rem;
+      background: #f5ebe3;
+      padding: 0.2rem;
+      border-radius: 2rem;
+    }
+
+    .pill-group button {
+      padding: 0.35rem 0.85rem;
+      font-size: 0.75rem;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      color: #8a6a55;
+      border-radius: 2rem;
+      white-space: nowrap;
+    }
+
+    .pill-group button:hover {
+      background: #ede0d5;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .pill-group button.active {
+      background: #fffcf9;
+      color: #3e2e28;
+      font-weight: 600;
+      box-shadow: 0 2px 6px -2px rgba(0, 0, 0, 0.12);
+    }
+
+    .log-summary {
+      font-size: 0.92rem;
+      line-height: 1.6;
+      color: #3e2e28;
+    }
+
+    .goal-block { margin-bottom: 1.6rem; }
+    .goal-block:last-child { margin-bottom: 0; }
+
+    .goal-block-header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.55rem;
+      padding-bottom: 0.45rem;
+      margin-bottom: 0.8rem;
+      border-bottom: 1px solid #e8d5c8;
+    }
+
+    .goal-block-header .goal-mark {
+      color: #a8846d;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+    }
+
+    .goal-block-header .goal-name {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: #3e2e28;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .focus-block {
+      margin-bottom: 1rem;
+      padding-left: 0.2rem;
+    }
+
+    .focus-block:last-child { margin-bottom: 0; }
+
+    .focus-block-header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+      padding-left: 0.1rem;
+    }
+
+    .focus-block-header .focus-bullet {
+      color: #c9b1a2;
+      font-size: 0.75rem;
+      flex-shrink: 0;
+      font-weight: 700;
+    }
+
+    .focus-block-header .focus-name {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #8a6a55;
+      letter-spacing: 0.2px;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .focus-block-header .focus-name.empty-focus {
+      font-style: italic;
+      font-weight: 500;
+      color: #b7a092;
+    }
+
+    .focus-entries {
+      padding-left: 1.3rem;
+      border-left: 2px solid #f0e2d8;
+      margin-left: 0.4rem;
+    }
+
+    .focus-entry { margin-bottom: 0.7rem; }
+    .focus-entry:last-child { margin-bottom: 0; }
+
+    .focus-entry-time {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #b89f8f;
+      letter-spacing: 0.3px;
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 0.15rem;
+    }
+
+    /* Hide SUMMARY timestamps only when summary dates are off */
+    body.hide-summary-dates .focus-entry-time { display: none !important; }
+    body.hide-summary-dates .focus-entry { margin-bottom: 0.55rem; }
+
+    .focus-entry-body {
+      font-size: 0.88rem;
+      line-height: 1.6;
+      color: #5f4a3e;
+    }
+
+    .ungrouped-block {
+      margin-top: 1.4rem;
+      padding-top: 1.1rem;
+      border-top: 1px dashed #e8d5c8;
+    }
+
+    .ungrouped-block .ungrouped-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      font-weight: 700;
+      color: #b7a092;
+      margin-bottom: 0.7rem;
+    }
+
+    .modal-empty {
+      text-align: center;
+      padding: 2.5rem 1rem;
+      color: #b7a092;
+      font-style: italic;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #3e2e28;
+      color: #fffcf9;
+      padding: 0.7rem 1.3rem;
+      border-radius: 2rem;
+      font-size: 0.85rem;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.4);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+      z-index: 1100;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    @media (max-width: 800px) {
+      .app-card { padding: 1.5rem; border-radius: 2rem; }
+      .main-grid { grid-template-columns: 1fr; gap: 1.5rem; }
+      .timer-display { font-size: 3.5rem; }
+      .pomodoro-panel { position: static; }
+      .stream-card { max-height: none; }
+      .field-row { flex-direction: column; }
+      .edit-actions { flex-wrap: wrap; }
+      .modal { max-height: 95vh; }
+      .modal-footer { flex-direction: column; }
+      .modal-footer .footer-group { width: 100%; }
+      .modal-footer button { flex: 1; }
+      .field-group textarea { min-height: 140px; }
+      .controls-row { gap: 0.5rem 0.8rem; }
+    }
+
+    @media print {
+      body { background: #fff; padding: 0; }
+      .app-card { box-shadow: none; border: none; padding: 0; max-width: none; }
+      .pomodoro-panel, .journal-panel, .footer-note, .modal-backdrop { display: none !important; }
+      .modal-backdrop.open { display: block !important; position: static; background: #fff; }
+      .modal { box-shadow: none; border: none; max-width: none; max-height: none; }
+      .modal-header, .modal-footer { display: none !important; }
+      .modal-body { overflow: visible; padding: 0; }
+      .controls-row { display: none; }
+      .goal-block { page-break-inside: avoid; }
+      .focus-block { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+<div class="app-card">
+  <h1>
+    <span>📓</span> Interstitial · Pomodoro    <span class="badge">independent date toggles</span>
+    <div class="header-actions">
+      <button id="soundToggleBtn" class="cloud-auth-btn" style="background:#8a7a68;" title="Toggle tick / alert sounds">🔊 Sound</button>
+      <button id="keepAwakeBtn" class="cloud-auth-btn" style="background:#7a8a6e;" title="Keep the screen on while a session runs (uses more battery)">🔆 Keep awake: Off</button>
+      <button id="cloudAuthBtn" class="cloud-auth-btn" title="Sign in with Google to sync across devices">🔑 Sign In</button>
+    </div>
+  </h1>
+
+  <div class="main-grid">
+    <div class="pomodoro-panel">
+      <div class="status-row">
+        <span id="phaseLabel">⏳ Focus</span>
+        <span id="cycleCount">🍅 0</span>
+        <span id="elapsedDisplay">⏱️ 00:00</span>
+      </div>
+
+      <div class="timer-display-wrapper">
+        <div class="timer-display" id="timerDisplay">25:00</div>
+        <div class="overtime-banner" id="overtimeBanner">✅ Overtime</div>
+        <div class="analog-container" id="analogContainer" style="display:none;">
+          <canvas id="analogCanvas" width="200" height="200"></canvas>
+        </div>
+      </div>
+
+      <div class="action-row session-row" id="sessionRow" style="display:none;">
+        <button id="finishBtn" disabled>✅ Finish</button>
+        <button id="abandonBtn" disabled>🏳️ Abandon</button>
+      </div>
+
+      <button class="settings-toggle-btn" id="settingsToggleBtn">⚙️ Display &amp; time options <span id="settingsToggleArrow">▾</span></button>
+
+      <div class="settings-panel" id="settingsPanel" style="display:none;">
+        <div class="clock-view-toggle">
+          <button id="digitalViewBtn" class="active">🔢 Digital</button>
+          <button id="analogViewBtn">🕐 Analog</button>
+        </div>
+        <div class="analog-options" id="analogOptions" style="display:none;">
+          <button id="analog60min" class="active">60 min circle</button>
+          <button id="analog25min">25 min circle</button>
+        </div>
+        <div class="clock-mode-toggle">
+          <button id="countdownMode" class="active">⏳ Countdown</button>
+          <button id="countupMode">⏱️ Count up</button>
+        </div>
+        <div class="time-stepper">
+          <button class="stepper-btn" data-minutes="-5" id="settingsMinus5" title="Remove 5 minutes">− 5 min</button>
+          <button class="stepper-btn" data-minutes="5" id="settingsPlus5" title="Add 5 minutes">+ 5 min</button>
+        </div>
+      </div>
+
+      <div class="duration-grid">
+        <div class="duration-item" id="focusDurationItem" title="Click to switch to Focus (only while idle)">
+          <label>Focus</label>
+          <input type="number" id="focusDuration" value="25" min="1" max="120" step="1">
+        </div>
+        <div class="duration-item" id="shortDurationItem" title="Click to switch to Short break (only while idle)">
+          <label>Short break</label>
+          <input type="number" id="shortBreakDuration" value="5" min="1" max="30" step="1">
+        </div>
+        <div class="duration-item" id="longDurationItem" title="Click to switch to Long break (only while idle)">
+          <label>Long break</label>
+          <input type="number" id="longBreakDuration" value="15" min="1" max="60" step="1">
+        </div>
+      </div>
+
+      <div class="action-row">
+        <button class="mini-stepper-btn" data-minutes="-5" title="Remove 5 minutes">−5</button>
+        <button id="startBtn" class="primary">▶ Start</button>
+        <button id="pauseBtn">⏸ Pause</button>
+        <button id="resetBtn">↺ Reset</button>
+        <button class="mini-stepper-btn" data-minutes="5" title="Add 5 minutes">+5</button>
+      </div>
+
+      <div style="font-size: 0.72rem; color: #a28b7e; margin-top: 0.7rem; text-align: center;">
+        ⏲️ keeps counting in background tabs · Finish logs a focus session to the journal
+      </div>
+
+      <div class="cloud-sync-panel" id="cloudSyncPanel">
+        <span class="csp-status" id="cloudSyncStatus">⚫ Not signed in</span><br>
+        Sign in (top right) to sync entries across devices.
+        <div id="gcalSyncRow" style="margin-top:6px; display:none;">
+          <span class="csp-status" id="gcalSyncStatus">📅 Calendar: not connected</span><br>
+          <button class="cloud-auth-btn" id="gcalConnectBtn" type="button" style="margin-top:4px; background:#8a6a55;">Connect Calendar</button>
+          <button class="cloud-auth-btn" id="gcalMergeBtn" type="button" title="Combine duplicate 'Interstitial Journal' calendars into one" style="margin-top:4px; background:#a28b7e;">🧹 Merge duplicates</button>
+        </div>
+        <div style="margin-top:6px;">
+          <button class="cloud-auth-btn" id="exportBackupBtn" type="button" style="background:#8a7a68;">⬇️ Export backup</button>
+          <button class="cloud-auth-btn" id="importBackupBtn" type="button" style="background:#8a7a68;">⬆️ Import backup</button>
+          <button class="cloud-auth-btn" id="restoreBackupBtn" type="button" title="Restore from this device's local backup" style="background:#8a7a68;">🛟 Restore local backup</button>
+          <input type="file" id="importBackupFile" accept="application/json" style="display:none;">
+        </div>
+      </div>
+    </div>
+
+    <div class="journal-panel">
+      <div class="journal-header">
+        <h2>✎ Interstitial log</h2>
+        <div class="journal-header-right">
+          <span class="hint">click any entry to revise</span>
+          <!-- Log dates toggle (controls LOG only) -->
+          <div class="dates-quick" title="Show or hide timestamps in the log cards">
+            <span>Log dates</span>
+            <div class="pill-group" id="quickLogDatesTabs">
+              <button data-dates="show" class="active">Show</button>
+              <button data-dates="hide">Hide</button>
+            </div>
+          </div>
+          <button class="summary-btn" id="openSummaryBtn">📄 Summary</button>
+        </div>
+      </div>
+
+      <div class="filter-bar">
+        <button class="filter-btn active-filter" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="today">Today</button>
+        <button class="filter-btn" data-filter="goals">With goal</button>
+      </div>
+
+      <div class="stream-card">
+        <div class="stream-scroll" id="streamScroll">
+
+          <div class="composer" id="composer">
+            <div class="composer-label">
+              <span class="dot"></span>
+              <span>New entry</span>
+              <span class="session-pill" id="sessionPill" style="display: none;">
+                <span class="pulse"></span>
+                session active
+              </span>
+            </div>
+
+            <div class="continuing-from" id="continuingFrom" style="display: none;">
+              <span>↩ continuing from</span>
+              <button type="button" id="jumpToLastBtn">last entry</button>
+            </div>
+
+            <div class="session-actions" id="sessionActions" style="display: none;">
+              <button type="button" id="clearIntentionBtn">✕ clear focus & goal</button>
+              <button type="button" id="newIntentionBtn">↻ new intention</button>
+            </div>
+
+            <div class="field-stack">
+              <div class="field-row">
+                <div class="field-group flex-2">
+                  <label for="entryFocus">Focus</label>
+                  <input type="text" id="entryFocus" placeholder="What are you focusing on?" autocomplete="off">
+                </div>
+                <div class="field-group flex-1">
+                  <label for="entryGoal">
+                    Goal
+                    <span class="goal-required" title="Entries with a goal are grouped into a section">grouped</span>
+                  </label>
+                  <input type="text" id="entryGoal" placeholder="e.g., finish draft" autocomplete="off">
+                </div>
+              </div>
+              <div class="field-group">
+                <label for="entryText">
+                  Reflection
+                  <span class="outliner-hint">↵ new bullet · ⇥ indent · ⇧⇥ outdent</span>
+                </label>
+                <textarea id="entryText" placeholder="• what actually happened?&#10;• any distractions?&#10;• next step?"></textarea>
+              </div>
+            </div>
+
+            <div class="edit-actions" style="border-top: none; padding-top: 0; margin-top: 0.9rem;">
+              <button id="clearFormBtn">Clear</button>
+              <button id="addEntryBtn" class="primary" disabled>Log entry</button>
+            </div>
+          </div>
+
+          <div id="entriesList"></div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footer-note">
+    ⏳ interstitial journaling — capture intention, action, and reflection
+  </div>
+</div>
+
+<!-- SUMMARY MODAL -->
+<div class="modal-backdrop" id="summaryBackdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
+    <div class="modal-header">
+      <div>
+        <h3 id="summaryTitle">📄 Log summary</h3>
+        <span class="subtitle" id="summarySubtitle">—</span>
+      </div>
+      <button class="modal-close" id="closeSummaryBtn" aria-label="Close">✕</button>
+    </div>
+
+    <div class="modal-body" id="summaryBody">
+
+      <div class="controls-row">
+        <div class="control-group">
+          <span class="control-label">Range</span>
+          <div class="pill-group" id="rangeTabs">
+            <button data-range="today">Today</button>
+            <button data-range="week">This week</button>
+            <button data-range="all" class="active">All time</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <span class="control-label">Entries</span>
+          <div class="pill-group" id="entryOrderTabs">
+            <button data-order="desc" class="active" title="Newest first">↓ Newest</button>
+            <button data-order="asc" title="Oldest first">↑ Oldest</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <span class="control-label">Groups</span>
+          <div class="pill-group" id="groupOrderTabs">
+            <button data-group-order="activity" class="active" title="Most recent activity first">Activity</button>
+            <button data-group-order="alpha" title="Alphabetical A–Z">A–Z</button>
+          </div>
+        </div>
+
+        <!-- Summary dates toggle (controls SUMMARY + exports only) -->
+        <div class="control-group">
+          <span class="control-label">Summary dates</span>
+          <div class="pill-group" id="summaryDatesTabs">
+            <button data-dates="show" class="active">Show</button>
+            <button data-dates="hide">Hide</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="reportContent"></div>
+    </div>
+
+    <div class="modal-footer">
+      <div class="footer-group">
+        <button id="copyMarkdownBtn">📋 Copy as Markdown</button>
+        <button id="copyPlainBtn">📋 Copy as text</button>
+      </div>
+      <div class="footer-group">
+        <button id="downloadMdBtn">⬇ .md</button>
+        <button id="downloadTxtBtn">⬇ .txt</button>
+        <button id="printReportBtn" class="primary">🖨 Print / PDF</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Copied to clipboard</div>
+<div class="cal-toast" id="calToast"></div>
+
+<script>
+  (function() {
+    // ---------- STATE ----------
+    let entries = [];
+    let sessions = [];
+    let currentFilter = 'all';
+    let editingId = null;
+
+    // Summary report state
+    let currentReportRange = 'all';
+    let currentEntryOrder = 'desc';
+    let currentGroupOrder = 'activity';
+
+    // Two independent date prefs
+    let showLogDates = true;      // main log cards + edit header
+    let showSummaryDates = true;  // summary modal + exports + print
+
+    // ---------- Pomodoro phase-engine state ----------
+    let timerInterval = null;
+    let isRunning = false;
+    let isPaused = false;
+    let currentPhase = 'focus'; // 'focus' | 'shortBreak' | 'longBreak'
+    let cycleCount = 0;
+    let remainingSeconds = 25 * 60;
+    let totalDurationSeconds = 25 * 60;
+    let elapsedSeconds = 0;
+    let clockMode = 'countdown'; // 'countdown' | 'countup'
+    let viewMode = 'digital';    // 'digital' | 'analog'
+    let analogMode = '60min';    // '60min' | '25min'
+    let targetEndTime = null;
+    let countUpStartTime = null;
+    let overtimeActive = false;
+    let overtimeSeconds = 0;
+    let overtimeStartTime = null;
+    let sessionStartTimestamp = null; // wall-clock Date the current session truly began
+    let keepAwakeEnabled = false;
+    let wakeLock = null;
+    let soundEnabled = true;
+    let audioCtx = null;
+
+    // A stable per-device id, so entries created on different devices never
+    // collide by local id — mirrors the convention used across the rest of
+    // the app suite (Session-tracker, etc.).
+    let deviceId = null;
+    try {
+      deviceId = localStorage.getItem('interstitialDeviceId');
+      if (!deviceId) {
+        deviceId = 'dev-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        localStorage.setItem('interstitialDeviceId', deviceId);
+      }
+    } catch (e) { deviceId = 'dev-' + Math.random().toString(36).slice(2, 10); }
+
+    // ---------- DOM refs ----------
+    const timerDisplay = document.getElementById('timerDisplay');
+    const analogCanvas = document.getElementById('analogCanvas');
+    const analogContainer = document.getElementById('analogContainer');
+    const overtimeBanner = document.getElementById('overtimeBanner');
+    const phaseLabel = document.getElementById('phaseLabel');
+    const cycleCountSpan = document.getElementById('cycleCount');
+    const elapsedDisplay = document.getElementById('elapsedDisplay');
+    const focusInput = document.getElementById('focusDuration');
+    const shortInput = document.getElementById('shortBreakDuration');
+    const longInput = document.getElementById('longBreakDuration');
+    const focusDurationItem = document.getElementById('focusDurationItem');
+    const shortDurationItem = document.getElementById('shortDurationItem');
+    const longDurationItem = document.getElementById('longDurationItem');
+    const startBtn = document.getElementById('startBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const finishBtn = document.getElementById('finishBtn');
+    const abandonBtn = document.getElementById('abandonBtn');
+    const sessionRow = document.getElementById('sessionRow');
+    const settingsToggleBtn = document.getElementById('settingsToggleBtn');
+    const settingsToggleArrow = document.getElementById('settingsToggleArrow');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const digitalViewBtn = document.getElementById('digitalViewBtn');
+    const analogViewBtn = document.getElementById('analogViewBtn');
+    const analogOptions = document.getElementById('analogOptions');
+    const analog60min = document.getElementById('analog60min');
+    const analog25min = document.getElementById('analog25min');
+    const countdownModeBtn = document.getElementById('countdownMode');
+    const countupModeBtn = document.getElementById('countupMode');
+    const soundToggleBtn = document.getElementById('soundToggleBtn');
+    const keepAwakeBtn = document.getElementById('keepAwakeBtn');
+    const miniStepperButtons = document.querySelectorAll('.mini-stepper-btn');
+    const cloudAuthBtn = document.getElementById('cloudAuthBtn');
+    const cloudSyncStatus = document.getElementById('cloudSyncStatus');
+    const gcalSyncRow = document.getElementById('gcalSyncRow');
+    const gcalSyncStatus = document.getElementById('gcalSyncStatus');
+    const gcalConnectBtn = document.getElementById('gcalConnectBtn');
+    const gcalMergeBtn = document.getElementById('gcalMergeBtn');
+    const exportBackupBtn = document.getElementById('exportBackupBtn');
+    const importBackupBtn = document.getElementById('importBackupBtn');
+    const importBackupFile = document.getElementById('importBackupFile');
+    const restoreBackupBtn = document.getElementById('restoreBackupBtn');
+    const calToast = document.getElementById('calToast');
+    let calToastTimer = null;
+
+    const streamScroll = document.getElementById('streamScroll');
+    const entriesList = document.getElementById('entriesList');
+    const composer = document.getElementById('composer');
+    const continuingFrom = document.getElementById('continuingFrom');
+    const jumpToLastBtn = document.getElementById('jumpToLastBtn');
+    const sessionPill = document.getElementById('sessionPill');
+    const sessionActions = document.getElementById('sessionActions');
+
+    const entryFocus = document.getElementById('entryFocus');
+    const entryGoal = document.getElementById('entryGoal');
+    const entryText = document.getElementById('entryText');
+    const addEntryBtn = document.getElementById('addEntryBtn');
+    const clearFormBtn = document.getElementById('clearFormBtn');
+    const clearIntentionBtn = document.getElementById('clearIntentionBtn');
+    const newIntentionBtn = document.getElementById('newIntentionBtn');
+    const filterButtons = document.querySelectorAll('.filter-btn');
+
+    const openSummaryBtn = document.getElementById('openSummaryBtn');
+    const closeSummaryBtn = document.getElementById('closeSummaryBtn');
+    const summaryBackdrop = document.getElementById('summaryBackdrop');
+    const reportContent = document.getElementById('reportContent');
+    const summarySubtitle = document.getElementById('summarySubtitle');
+    const rangeTabs = document.getElementById('rangeTabs');
+    const entryOrderTabs = document.getElementById('entryOrderTabs');
+    const groupOrderTabs = document.getElementById('groupOrderTabs');
+    const summaryDatesTabs = document.getElementById('summaryDatesTabs');
+    const quickLogDatesTabs = document.getElementById('quickLogDatesTabs');
+    const copyMarkdownBtn = document.getElementById('copyMarkdownBtn');
+    const copyPlainBtn = document.getElementById('copyPlainBtn');
+    const downloadMdBtn = document.getElementById('downloadMdBtn');
+    const downloadTxtBtn = document.getElementById('downloadTxtBtn');
+    const printReportBtn = document.getElementById('printReportBtn');
+    const toast = document.getElementById('toast');
+
+    const LOG_DATES_PREF_KEY = 'interstitial_show_log_dates_v1';
+    const SUMMARY_DATES_PREF_KEY = 'interstitial_show_summary_dates_v1';
+
+    // ---------- OUTLINER HELPERS ----------
+    const BULLET_PREFIX = '• ';
+    const INDENT_UNIT = '  ';
+
+    function getLineInfo(textarea) {
+      const pos = textarea.selectionStart;
+      const value = textarea.value;
+      const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
+      const lineEnd = value.indexOf('\n', pos);
+      const end = lineEnd === -1 ? value.length : lineEnd;
+      const line = value.slice(lineStart, end);
+      const match = line.match(/^( *)/);
+      const indent = match ? match[1].length : 0;
+      const afterIndent = line.slice(indent);
+      const bulletMatch = afterIndent.match(/^[•\-*]\s?/);
+      const content = bulletMatch ? afterIndent.slice(bulletMatch[0].length) : afterIndent;
+      return { lineStart, lineEnd: end, line, indent, content, pos };
+    }
+
+    function setCursor(textarea, pos) {
+      textarea.selectionStart = textarea.selectionEnd = pos;
+    }
+
+    function autoGrowTextarea(ta) {
+      if (!ta) return;
+      const maxHeight = Math.round(window.innerHeight * 0.5);
+      ta.style.height = 'auto';
+      const newHeight = Math.min(ta.scrollHeight, maxHeight);
+      ta.style.height = newHeight + 'px';
+    }
+
+    function replaceAndSetCursor(ta, newValue, newCursor) {
+      ta.value = newValue;
+      setCursor(ta, newCursor);
+      updateComposerState();
+      autoGrowTextarea(ta);
+    }
+
+    function handleOutlinerKeydown(e) {
+      const ta = e.target;
+      const isShift = e.shiftKey;
+
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const { lineStart, lineEnd, line, indent } = getLineInfo(ta);
+
+        if (isShift) {
+          if (indent === 0) return;
+          const remove = Math.min(indent, INDENT_UNIT.length);
+          const newLine = line.slice(remove);
+          const newValue = ta.value.slice(0, lineStart) + newLine + ta.value.slice(lineEnd);
+          const newCursor = Math.max(lineStart, ta.selectionStart - remove);
+          replaceAndSetCursor(ta, newValue, newCursor);
+        } else {
+          const insertAt = lineStart + indent;
+          const newValue = ta.value.slice(0, insertAt) + INDENT_UNIT + ta.value.slice(insertAt);
+          const newCursor = ta.selectionStart + INDENT_UNIT.length;
+          replaceAndSetCursor(ta, newValue, newCursor);
+        }
+        return;
+      }
+
+      if (e.key === 'Enter' && !isShift) {
+        e.preventDefault();
+        const { lineStart, lineEnd, indent, content } = getLineInfo(ta);
+
+        if (content.trim() === '') {
+          const newValue = ta.value.slice(0, lineStart) + ta.value.slice(lineEnd + 1);
+          replaceAndSetCursor(ta, newValue, lineStart);
+          return;
+        }
+
+        const newLine = '\n' + ' '.repeat(indent) + BULLET_PREFIX;
+        const pos = ta.selectionStart;
+        const newValue = ta.value.slice(0, pos) + newLine + ta.value.slice(ta.selectionEnd);
+        replaceAndSetCursor(ta, newValue, pos + newLine.length);
+        return;
+      }
+
+      if (e.key === 'Backspace') {
+        const { lineStart, indent, content, pos } = getLineInfo(ta);
+        if (pos === lineStart + indent + BULLET_PREFIX.length && content === '') {
+          e.preventDefault();
+          if (indent > 0) {
+            const remove = Math.min(indent, INDENT_UNIT.length);
+            const newValue = ta.value.slice(0, lineStart) + ta.value.slice(lineStart + remove);
+            replaceAndSetCursor(ta, newValue, pos - remove);
+          } else {
+            const newValue = ta.value.slice(0, lineStart) + ta.value.slice(lineStart + BULLET_PREFIX.length);
+            replaceAndSetCursor(ta, newValue, lineStart);
+          }
+          return;
+        }
+      }
+
+      if (e.key === 'ArrowDown') {
+        const value = ta.value;
+        const pos = ta.selectionStart;
+        const nextNewline = value.indexOf('\n', pos);
+        if (nextNewline === -1) {
+          e.preventDefault();
+          setCursor(ta, value.length);
+        }
+      }
+    }
+
+    function handleReflectionInput(e) {
+      const ta = e.target;
+      if (ta.value.length === 1 && /[\S]/.test(ta.value) && !ta.value.startsWith('•') && !ta.value.startsWith('-') && !ta.value.startsWith('*')) {
+        const char = ta.value;
+        ta.value = BULLET_PREFIX + char;
+        setCursor(ta, ta.value.length);
+      }
+      updateComposerState();
+      autoGrowTextarea(ta);
+    }
+
+    function handleReflectionPaste(e) {
+      const ta = e.target;
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      if (!text) return;
+
+      if (ta.value.trim().length === 0) {
+        e.preventDefault();
+        const lines = text.split(/\r?\n/);
+        const bulleted = lines.map(l => {
+          if (!l.trim()) return l;
+          const leading = (l.match(/^( *)/) || ['', ''])[1];
+          const rest = l.slice(leading.length);
+          if (/^[•\-*]\s?/.test(rest)) return l;
+          return leading + BULLET_PREFIX + rest;
+        }).join('\n');
+        ta.value = bulleted;
+        setCursor(ta, ta.value.length);
+        updateComposerState();
+        autoGrowTextarea(ta);
+      } else {
+        setTimeout(() => { updateComposerState(); autoGrowTextarea(ta); }, 0);
+      }
+    }
+
+    // ---------- OUTLINE PARSING + RENDERING ----------
+    function parseOutline(raw) {
+      if (!raw) return [];
+      const lines = raw.split('\n');
+      return lines.map((line) => {
+        const m = line.match(/^( *)([•\-*])?\s?(.*)$/);
+        const indentSpaces = m ? m[1].length : 0;
+        const hasBullet = !!(m && m[2]);
+        const content = m ? m[3] : line;
+        const depth = Math.floor(indentSpaces / 2);
+        return { depth, hasBullet, content };
+      });
+    }
+
+    function renderReflection(raw) {
+      if (!raw) return '';
+      const parsed = parseOutline(raw);
+      const anyBullet = parsed.some(p => p.hasBullet);
+      if (!anyBullet) {
+        return parsed.map(p => {
+          const text = escapeHtml(p.content) || '&nbsp;';
+          return `<span class="outline-line" style="padding-left:0;">${text}</span>`;
+        }).join('');
+      }
+      return parsed.map(p => {
+        if (!p.hasBullet && p.content.trim() === '') {
+          return '<span class="outline-line" style="padding-left:0;">&nbsp;</span>';
+        }
+        const depth = Math.min(p.depth, 4);
+        const cls = `outline-line depth-${depth}`;
+        if (p.hasBullet) {
+          return `<span class="${cls}"><span class="ol-content">${escapeHtml(p.content) || '&nbsp;'}</span></span>`;
+        }
+        return `<span class="outline-line" style="padding-left:${(depth + 1) * 1.15}rem;">${escapeHtml(p.content) || '&nbsp;'}</span>`;
+      }).join('');
+    }
+
+    function outlineToMarkdown(raw) {
+      if (!raw) return [];
+      const parsed = parseOutline(raw);
+      return parsed.map(p => {
+        if (!p.content.trim() && !p.hasBullet) return '';
+        const indent = '  '.repeat(p.depth);
+        if (p.hasBullet) return `${indent}- ${p.content}`;
+        return `${indent}  ${p.content}`;
+      }).filter(Boolean);
+    }
+
+    function outlineToPlainText(raw) {
+      if (!raw) return [];
+      const parsed = parseOutline(raw);
+      return parsed.map(p => {
+        if (!p.content.trim() && !p.hasBullet) return '';
+        const indent = '  '.repeat(p.depth);
+        if (p.hasBullet) return `${indent}• ${p.content}`;
+        return `${indent}  ${p.content}`;
+      }).filter(Boolean);
+    }
+
+    // ---------- DATE PREFERENCES (independent) ----------
+    function applyLogDatesPreference() {
+      document.body.classList.toggle('hide-log-dates', !showLogDates);
+      quickLogDatesTabs.querySelectorAll('button').forEach(b => {
+        b.classList.toggle('active', b.dataset.dates === (showLogDates ? 'show' : 'hide'));
+      });
+      try { localStorage.setItem(LOG_DATES_PREF_KEY, showLogDates ? 'show' : 'hide'); } catch (e) {}
+    }
+
+    function applySummaryDatesPreference() {
+      document.body.classList.toggle('hide-summary-dates', !showSummaryDates);
+      summaryDatesTabs.querySelectorAll('button').forEach(b => {
+        b.classList.toggle('active', b.dataset.dates === (showSummaryDates ? 'show' : 'hide'));
+      });
+      try { localStorage.setItem(SUMMARY_DATES_PREF_KEY, showSummaryDates ? 'show' : 'hide'); } catch (e) {}
+    }
+
+    function loadDatePreferences() {
+      try {
+        const logPref = localStorage.getItem(LOG_DATES_PREF_KEY);
+        if (logPref === 'hide') showLogDates = false;
+        else if (logPref === 'show') showLogDates = true;
+      } catch (e) {}
+      try {
+        const sumPref = localStorage.getItem(SUMMARY_DATES_PREF_KEY);
+        if (sumPref === 'hide') showSummaryDates = false;
+        else if (sumPref === 'show') showSummaryDates = true;
+      } catch (e) {}
+      applyLogDatesPreference();
+      applySummaryDatesPreference();
+    }
+
+    // ---------- POMODORO PHASE ENGINE (focus / short break / long break) ----------
+    function formatTime(sec) {
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+
+    function getDurationFromPhase(phase) {
+      const focus = parseInt(focusInput.value, 10) || 25;
+      const short = parseInt(shortInput.value, 10) || 5;
+      const long = parseInt(longInput.value, 10) || 15;
+      if (phase === 'focus') return focus * 60;
+      if (phase === 'shortBreak') return short * 60;
+      return long * 60;
+    }
+
+    const PHASE_ACCENT = {
+      focus: { color: '#b15e5e', bg: '#f7e7e5' },
+      shortBreak: { color: '#4f8a6f', bg: '#e6f0ea' },
+      longBreak: { color: '#4a7a9c', bg: '#e5edf3' },
+    };
+
+    function updatePhaseIndicator() {
+      const items = { focus: focusDurationItem, shortBreak: shortDurationItem, longBreak: longDurationItem };
+      Object.keys(items).forEach((phase) => {
+        const el = items[phase];
+        if (phase === currentPhase) {
+          el.classList.add('phase-active');
+          el.style.setProperty('--phase-color', PHASE_ACCENT[phase].color);
+          el.style.setProperty('--phase-bg', PHASE_ACCENT[phase].bg);
+        } else {
+          el.classList.remove('phase-active');
+          el.style.removeProperty('--phase-color');
+          el.style.removeProperty('--phase-bg');
+        }
+      });
+    }
+
+    function getDisplaySeconds() {
+      if (clockMode === 'countdown') {
+        return overtimeActive ? (totalDurationSeconds + overtimeSeconds) : remainingSeconds;
+      }
+      return elapsedSeconds;
+    }
+
+    // Composer's "session active" styling (pill, session-active border,
+    // clear/new-intention buttons) is only meaningful for FOCUS sessions —
+    // breaks don't tie into the journal composer.
+    function updateSessionUI() {
+      const active = currentPhase === 'focus' && (isRunning || isPaused);
+      composer.classList.toggle('session-active', active);
+      sessionPill.style.display = active ? 'inline-flex' : 'none';
+      sessionActions.style.display = active ? 'flex' : 'none';
+    }
+
+    function updateDisplay() {
+      const secs = getDisplaySeconds();
+      timerDisplay.textContent = formatTime(secs);
+      timerDisplay.classList.toggle('overtime', overtimeActive);
+      elapsedDisplay.textContent = `⏱️ ${formatTime(elapsedSeconds)}`;
+
+      const phaseNames = { focus: '⏳ Focus', shortBreak: '☕ Short break', longBreak: '🌿 Long break' };
+      phaseLabel.textContent = overtimeActive ? '✅ Overtime' : (phaseNames[currentPhase] || 'Focus');
+      cycleCountSpan.textContent = `🍅 ${cycleCount}`;
+      updatePhaseIndicator();
+
+      const active = isRunning || isPaused;
+      finishBtn.disabled = !active;
+      abandonBtn.disabled = !active;
+      sessionRow.style.display = active ? 'flex' : 'none';
+      [focusDurationItem, shortDurationItem, longDurationItem].forEach(el => {
+        el.classList.toggle('locked', active);
+      });
+
+      if (overtimeActive) {
+        const baseMinutes = Math.max(1, Math.round((totalDurationSeconds > 0 ? totalDurationSeconds : 1) / 60));
+        const overtimeMinutes = Math.floor(overtimeSeconds / 60);
+        overtimeBanner.textContent = overtimeMinutes > 0
+          ? `✅ Overtime — ${baseMinutes}+${overtimeMinutes} min`
+          : '✅ Overtime — target reached';
+      }
+      overtimeBanner.classList.toggle('visible', overtimeActive && viewMode === 'digital');
+
+      updateSessionUI();
+      if (viewMode === 'analog') drawAnalog(secs);
+    }
+
+    // ----- Analog clock -----
+    const ANALOG_SIZE = 200;
+
+    function drawAnalog(seconds) {
+      try { drawAnalogInner(seconds); } catch (e) { console.error('drawAnalog failed:', e); }
+    }
+
+    function drawAnalogInner(seconds) {
+      const canvas = analogCanvas;
+      const dpr = window.devicePixelRatio || 1;
+      const targetW = Math.round(ANALOG_SIZE * dpr);
+      const targetH = Math.round(ANALOG_SIZE * dpr);
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const w = ANALOG_SIZE, h = ANALOG_SIZE;
+      const centerX = w / 2, centerY = h / 2;
+      const radius = Math.min(w, h) * 0.44;
+      const scale = ANALOG_SIZE / 190;
+
+      ctx.clearRect(0, 0, w, h);
+
+      const faceGrad = ctx.createRadialGradient(centerX, centerY - radius * 0.15, radius * 0.1, centerX, centerY, radius);
+      faceGrad.addColorStop(0, '#ffffff');
+      faceGrad.addColorStop(1, '#f2e5dc');
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      ctx.fillStyle = faceGrad;
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+      ctx.stroke();
+
+      let totalCircleSeconds = analogMode === '25min' ? 25 * 60 : 60 * 60;
+      let displayTotal = totalCircleSeconds;
+      let useRed = false;
+
+      if (analogMode === '25min' && clockMode === 'countdown' && currentPhase === 'focus') {
+        displayTotal = 25 * 60;
+        useRed = true;
+      } else if (analogMode === '25min' && clockMode === 'countdown') {
+        displayTotal = Math.min(getDurationFromPhase(currentPhase), 25 * 60);
+      } else if (analogMode === '25min' && clockMode === 'countup') {
+        displayTotal = Math.min(Math.max(getDurationFromPhase(currentPhase), seconds || 1), 25 * 60);
+      }
+
+      for (let i = 0; i < 60; i++) {
+        const angle = (i / 60) * Math.PI * 2 - Math.PI / 2;
+        const isMajor = i % 5 === 0;
+        const len = isMajor ? radius * 0.09 : radius * 0.035;
+        const outerR = radius - 6 * scale;
+        const innerR = outerR - len;
+        ctx.beginPath();
+        ctx.moveTo(centerX + Math.cos(angle) * innerR, centerY + Math.sin(angle) * innerR);
+        ctx.lineTo(centerX + Math.cos(angle) * outerR, centerY + Math.sin(angle) * outerR);
+        ctx.strokeStyle = isMajor ? 'rgba(60,55,50,0.55)' : 'rgba(60,55,50,0.18)';
+        ctx.lineWidth = (isMajor ? 2 : 1) * scale;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+
+      let progress = 0;
+      const isOvertime = (clockMode === 'countdown' && overtimeActive);
+      const isOvertimeOn60min = isOvertime && analogMode === '60min';
+      const isOvertimeOn25min = isOvertime && !isOvertimeOn60min;
+      let redProgress = 0, greenProgress = 0;
+      let innerOvertimeProgress = 0;
+
+      if (isOvertimeOn60min) {
+        const target = totalDurationSeconds > 0 ? totalDurationSeconds : displayTotal;
+        redProgress = Math.min(target / 3600, 1);
+        const overtimeMinutes = Math.floor(overtimeSeconds / 60);
+        greenProgress = Math.min(overtimeMinutes / 60, 1 - redProgress);
+      } else if (isOvertimeOn25min) {
+        const overtimeMinutes = Math.floor(overtimeSeconds / 60);
+        const lapMinutes = 5;
+        innerOvertimeProgress = Math.min(overtimeMinutes / lapMinutes, 1);
+      } else if (clockMode === 'countdown') {
+        if (useRed) {
+          const remaining = Math.min(seconds, 25 * 60);
+          progress = Math.ceil(remaining / 60) / 25;
+        } else {
+          const remaining = Math.min(seconds, displayTotal);
+          const totalMinutes = Math.max(1, Math.round(displayTotal / 60));
+          progress = Math.ceil(remaining / 60) / totalMinutes;
+        }
+      } else {
+        const totalMinutes = Math.max(1, Math.round(displayTotal / 60));
+        const elapsedMinutes = Math.floor(seconds / 60);
+        progress = elapsedMinutes / totalMinutes;
+      }
+      progress = Math.max(0, Math.min(1, progress));
+
+      const ringRadius = radius * 0.76;
+      const ringWidth = 8 * scale;
+      const startAngle = -Math.PI / 2;
+      const endAngle = startAngle + progress * Math.PI * 2;
+
+      let originalColor;
+      if (useRed) {
+        originalColor = '#b15e5e';
+      } else {
+        originalColor = currentPhase === 'focus' ? '#b15e5e' : (currentPhase === 'shortBreak' ? '#4f8a6f' : '#4a7a9c');
+      }
+      let progressColor = isOvertime ? '#3f9d63' : originalColor;
+
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, ringRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(60,55,50,0.08)';
+      ctx.lineWidth = ringWidth;
+      ctx.stroke();
+
+      if (isOvertimeOn60min) {
+        if (redProgress > 0) {
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, ringRadius, startAngle, startAngle + redProgress * Math.PI * 2);
+          ctx.strokeStyle = originalColor;
+          ctx.lineWidth = ringWidth;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
+        if (greenProgress > 0) {
+          const greenStart = startAngle + redProgress * Math.PI * 2;
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, ringRadius, greenStart, greenStart + greenProgress * Math.PI * 2);
+          ctx.strokeStyle = '#3f9d63';
+          ctx.lineWidth = ringWidth;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
+      } else if (isOvertimeOn25min) {
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, ringRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = originalColor;
+        ctx.lineWidth = ringWidth;
+        ctx.stroke();
+        const innerRadius = ringRadius - ringWidth - 6 * scale;
+        const innerWidth = ringWidth * 0.75;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, innerRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(60,55,50,0.08)';
+        ctx.lineWidth = innerWidth;
+        ctx.stroke();
+        if (innerOvertimeProgress > 0) {
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, innerRadius, startAngle, startAngle + innerOvertimeProgress * Math.PI * 2);
+          ctx.strokeStyle = '#3f9d63';
+          ctx.lineWidth = innerWidth;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
+      } else if (progress > 0) {
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, ringRadius, startAngle, endAngle);
+        ctx.strokeStyle = progressColor;
+        ctx.lineWidth = ringWidth;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = isOvertime ? progressColor : '#2d211c';
+      ctx.font = `600 ${Math.round(20 * scale)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(formatTime(seconds), centerX, centerY - 3 * scale);
+
+      ctx.font = `600 ${Math.round(9 * scale)}px system-ui, sans-serif`;
+      ctx.fillStyle = progressColor;
+      let phaseLabelShort;
+      if (isOvertime) {
+        const baseMinutes = Math.max(1, Math.round((totalDurationSeconds > 0 ? totalDurationSeconds : displayTotal) / 60));
+        const overtimeMinutes = Math.floor(overtimeSeconds / 60);
+        phaseLabelShort = overtimeMinutes > 0 ? `OVERTIME ${baseMinutes}+${overtimeMinutes}` : 'OVERTIME';
+      } else if (useRed) {
+        phaseLabelShort = '25 MIN FOCUS';
+      } else {
+        phaseLabelShort = currentPhase === 'focus' ? 'FOCUS' : (currentPhase === 'shortBreak' ? 'BREAK' : 'LONG BREAK');
+      }
+      ctx.fillText(phaseLabelShort, centerX, centerY + 28 * scale);
+    }
+
+    // ----- Timer controls -----
+    function stopTimer() {
+      if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+      isRunning = false;
+      isPaused = false;
+      releaseWakeLock();
+    }
+
+    function switchPhase(newPhase) {
+      if (currentPhase === 'focus' && (newPhase === 'shortBreak' || newPhase === 'longBreak')) {
+        cycleCount += 1;
+      }
+      currentPhase = newPhase;
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      const duration = getDurationFromPhase(newPhase);
+      remainingSeconds = duration;
+      totalDurationSeconds = duration;
+      elapsedSeconds = 0;
+      if (newPhase === 'shortBreak' || newPhase === 'longBreak') playBreakStartSound(newPhase);
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    // Jump directly to a phase by clicking its duration box — only while
+    // idle, and doesn't count as a completed cycle.
+    function selectPhase(phase) {
+      if (isRunning || isPaused) return;
+      if (phase === currentPhase) return;
+      sessionStartTimestamp = null;
+      currentPhase = phase;
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      const duration = getDurationFromPhase(phase);
+      remainingSeconds = duration;
+      totalDurationSeconds = duration;
+      elapsedSeconds = 0;
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    function onTimerComplete() {
+      stopTimer();
+      sessionStartTimestamp = null;
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      let nextPhase = 'focus';
+      if (currentPhase === 'focus') {
+        const cycle = cycleCount + 1;
+        nextPhase = (cycle % 4 === 0) ? 'longBreak' : 'shortBreak';
+      }
+      switchPhase(nextPhase);
+    }
+
+    function tick() {
+      const now = Date.now();
+      if (clockMode === 'countdown') {
+        if (overtimeActive) {
+          overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+          elapsedSeconds = totalDurationSeconds + overtimeSeconds;
+          playTickSound();
+          updateDisplay();
+          return;
+        }
+        const secsLeft = Math.max(0, Math.round((targetEndTime - now) / 1000));
+        const delta = remainingSeconds - secsLeft;
+        if (delta > 0) elapsedSeconds += delta;
+        remainingSeconds = secsLeft;
+        if (remainingSeconds <= 0) {
+          remainingSeconds = 0;
+          overtimeActive = true;
+          overtimeStartTime = targetEndTime;
+          overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+          playTimeUpSound();
+          updateDisplay();
+          return;
+        }
+        playTickSound();
+      } else {
+        elapsedSeconds = Math.round((now - countUpStartTime) / 1000);
+        playTickSound();
+      }
+      updateDisplay();
+    }
+
+    function startTimer() {
+      if (isRunning && !isPaused) return;
+      const now = Date.now();
+      if (isPaused) {
+        isPaused = false;
+        if (clockMode === 'countdown') {
+          if (overtimeActive) overtimeStartTime = now - overtimeSeconds * 1000;
+          else targetEndTime = now + remainingSeconds * 1000;
+        } else {
+          countUpStartTime = now - elapsedSeconds * 1000;
+        }
+        timerInterval = setInterval(tick, 1000);
+        isRunning = true;
+        requestWakeLock();
+        updateDisplay();
+        return;
+      }
+      if (clockMode === 'countdown') {
+        if (remainingSeconds <= 0 && !overtimeActive) {
+          const duration = getDurationFromPhase(currentPhase);
+          remainingSeconds = duration;
+          totalDurationSeconds = duration;
+          elapsedSeconds = 0;
+        }
+        if (overtimeActive) overtimeStartTime = now - overtimeSeconds * 1000;
+        else targetEndTime = now + remainingSeconds * 1000;
+      } else {
+        if (elapsedSeconds === 0) totalDurationSeconds = getDurationFromPhase(currentPhase);
+        countUpStartTime = now - elapsedSeconds * 1000;
+      }
+      sessionStartTimestamp = new Date();
+      stopTimer();
+      timerInterval = setInterval(tick, 1000);
+      isRunning = true;
+      isPaused = false;
+      requestWakeLock();
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    function pauseTimer() {
+      if (!isRunning || isPaused) return;
+      const now = Date.now();
+      if (clockMode === 'countdown') {
+        if (overtimeActive) {
+          overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+          elapsedSeconds = totalDurationSeconds + overtimeSeconds;
+        } else {
+          remainingSeconds = Math.max(0, Math.round((targetEndTime - now) / 1000));
+        }
+      } else {
+        elapsedSeconds = Math.round((now - countUpStartTime) / 1000);
+      }
+      stopTimer();
+      isPaused = true;
+      isRunning = false;
+      updateDisplay();
+    }
+
+    function resetTimer() {
+      stopTimer();
+      isPaused = false;
+      isRunning = false;
+      sessionStartTimestamp = null;
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      const duration = getDurationFromPhase(currentPhase);
+      remainingSeconds = duration;
+      totalDurationSeconds = duration;
+      elapsedSeconds = 0;
+      updateDisplay();
+    }
+
+    // Logs whatever's currently in the journal composer (Focus/Goal/
+    // Reflection) as a real entry tagged to this just-finished FOCUS
+    // session — this is what feeds cloud sync and Google Calendar. Breaks
+    // never create an entry. Nothing typed = nothing logged (the composer
+    // fields stay untouched so the person can still fill them in and use
+    // "Log entry" manually).
+    function logFocusEntry(startedAt, durationSec) {
+      const focus = entryFocus.value.trim();
+      const goal = entryGoal.value.trim();
+      const text = entryText.value.trim();
+      if (!focus && !goal && !text) return null;
+      const localId = Date.now() + Math.random().toString(36).substring(2, 8);
+      const entry = {
+        id: localId,
+        uid: `${deviceId}-${localId}`,
+        focus, goal, text,
+        timestamp: startedAt.getTime(),
+        deleted: false,
+        entryUpdatedAt: Date.now(),
+        phase: 'focus',
+        source: 'finish',
+        durationSec: durationSec,
+        sessionStartedAt: startedAt.getTime(),
+      };
+      entries.push(entry);
+      saveEntries();
+      renderStream();
+      scheduleCloudPush();
+      syncEntryToCalendar(entry);
+      return entry;
+    }
+
+    // Sends any "Log entry" entries that were logged WHILE this focus
+    // session was actively counting (and so were deliberately held back
+    // from Calendar until now) — one calendar event each, using the
+    // session's real total duration for their event length. Entries logged
+    // while idle already went to Calendar immediately at the time they
+    // were logged, so they're skipped here (they already have a gcalEventId).
+    function flushPendingCalendarEntries(sessionStartMs, finishedDuration) {
+      const pending = entries.filter(e =>
+        !e.deleted && e.phase === 'focus' && !e.gcalEventId &&
+        e.sessionStartedAt === sessionStartMs
+      );
+      pending.forEach(e => {
+        e.durationSec = finishedDuration;
+        syncEntryToCalendar(e);
+      });
+    }
+
+    // Ends the current session early and counts it as complete — logs a
+    // journal entry (if focus) and advances to the next phase, same as a
+    // natural countdown finish.
+    function finishSession() {
+      if (!isRunning && !isPaused) return;
+      const finishedPhase = currentPhase;
+      const finishedDuration = Math.max(totalDurationSeconds, elapsedSeconds);
+      const finishedStart = sessionStartTimestamp || new Date();
+      if (finishedPhase === 'focus') {
+        logFocusEntry(finishedStart, finishedDuration);
+        flushPendingCalendarEntries(finishedStart.getTime(), finishedDuration);
+        entryFocus.value = '';
+        entryGoal.value = '';
+        updateComposerState();
+      }
+      onTimerComplete();
+    }
+
+    // Ends the session early WITHOUT counting it as complete — stays on the
+    // same phase, restores its full duration, no entry logged.
+    function abandonSession() {
+      if (!isRunning && !isPaused) return;
+      resetTimer();
+    }
+
+    // The +5/-5 quick-adjust stepper.
+    function adjustTime(minutes) {
+      const deltaSeconds = minutes * 60;
+      const isOvertime = (clockMode === 'countdown' && overtimeActive);
+      if (isOvertime) {
+        overtimeSeconds = Math.max(0, overtimeSeconds + deltaSeconds);
+        elapsedSeconds = totalDurationSeconds + overtimeSeconds;
+        if (isRunning && !isPaused) overtimeStartTime = Date.now() - overtimeSeconds * 1000;
+      } else if (clockMode === 'countdown') {
+        remainingSeconds = Math.min(Math.max(remainingSeconds + deltaSeconds, 60), 120 * 60);
+        totalDurationSeconds = remainingSeconds;
+        if (isRunning && !isPaused) targetEndTime = Date.now() + remainingSeconds * 1000;
+      } else {
+        elapsedSeconds = Math.min(Math.max(elapsedSeconds + deltaSeconds, 0), 120 * 60);
+        if (isRunning && !isPaused) countUpStartTime = Date.now() - elapsedSeconds * 1000;
+      }
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+
+    // ----- Sound effects (Web Audio API, no external files) -----
+    function getAudioCtx() {
+      if (!audioCtx) {
+        try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        catch (e) { return null; }
+      }
+      if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+      return audioCtx;
+    }
+    function playTone(freq, duration, type, startOffset, peakGain) {
+      const ctx = getAudioCtx();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      const t0 = ctx.currentTime + (startOffset || 0);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.linearRampToValueAtTime(peakGain, t0 + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + duration + 0.05);
+    }
+    function playTickSound() { if (soundEnabled) playTone(1500, 0.045, 'square', 0, 0.035); }
+    function playTimeUpSound() {
+      if (!soundEnabled) return;
+      playTone(880, 0.16, 'sine', 0, 0.2);
+      playTone(1108, 0.18, 'sine', 0.14, 0.18);
+      playTone(1320, 0.28, 'sine', 0.3, 0.16);
+    }
+    function playBreakStartSound(phase) {
+      if (!soundEnabled) return;
+      if (phase === 'longBreak') {
+        playTone(392.00, 1.3, 'sine', 0, 0.10);
+        playTone(493.88, 1.3, 'sine', 0.12, 0.09);
+        playTone(587.33, 1.4, 'sine', 0.24, 0.08);
+        playTone(783.99, 1.6, 'sine', 0.38, 0.07);
+      } else {
+        playTone(523.25, 1.0, 'sine', 0, 0.09);
+        playTone(659.25, 1.0, 'sine', 0.1, 0.08);
+        playTone(783.99, 1.3, 'sine', 0.22, 0.07);
+      }
+    }
+    function setSoundEnabled(enabled, skipSave) {
+      soundEnabled = enabled;
+      if (soundToggleBtn) {
+        soundToggleBtn.textContent = enabled ? '🔊 Sound' : '🔇 Muted';
+        soundToggleBtn.style.background = enabled ? '#8a7a68' : '#c4b7a9';
+      }
+      if (!skipSave) saveDisplayPrefs();
+    }
+
+    // ----- Wall-clock catch-up + optional wake lock -----
+    function catchUpFromWallClock() {
+      if (!isRunning || isPaused) return;
+      const now = Date.now();
+      if (clockMode === 'countdown') {
+        if (overtimeActive) {
+          overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+          elapsedSeconds = totalDurationSeconds + overtimeSeconds;
+        } else {
+          const secsLeft = Math.max(0, Math.round((targetEndTime - now) / 1000));
+          const delta = remainingSeconds - secsLeft;
+          if (delta > 0) elapsedSeconds += delta;
+          remainingSeconds = secsLeft;
+          if (remainingSeconds <= 0) {
+            remainingSeconds = 0;
+            overtimeActive = true;
+            overtimeStartTime = targetEndTime;
+            overtimeSeconds = Math.max(0, Math.round((now - overtimeStartTime) / 1000));
+            playTimeUpSound();
+          }
+        }
+      } else {
+        elapsedSeconds = Math.round((now - countUpStartTime) / 1000);
+      }
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+    }
+    async function requestWakeLock() {
+      if (!keepAwakeEnabled || !isRunning) return;
+      if (!('wakeLock' in navigator)) return;
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } catch (e) { wakeLock = null; }
+    }
+    function releaseWakeLock() {
+      if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    }
+    function setKeepAwakeEnabled(enabled, skipSave) {
+      keepAwakeEnabled = enabled;
+      const supported = 'wakeLock' in navigator;
+      if (keepAwakeBtn) {
+        keepAwakeBtn.textContent = enabled ? '🔆 Keep awake: On' : '🔆 Keep awake: Off';
+        keepAwakeBtn.style.background = enabled ? '#5c7a4e' : '#7a8a6e';
+        keepAwakeBtn.title = supported
+          ? 'Keep the screen on while a session runs (uses more battery)'
+          : 'Keep the screen on while a session runs (not supported in this browser)';
+      }
+      if (enabled) requestWakeLock(); else releaseWakeLock();
+      if (!skipSave) saveDisplayPrefs();
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        catchUpFromWallClock();
+        requestWakeLock();
+      }
+    });
+    window.addEventListener('focus', catchUpFromWallClock);
+
+    // ----- View / analog / clock mode -----
+    function setViewMode(mode, skipSave) {
+      viewMode = mode;
+      digitalViewBtn.classList.toggle('active', mode === 'digital');
+      analogViewBtn.classList.toggle('active', mode === 'analog');
+      if (mode === 'digital') {
+        timerDisplay.style.display = 'block';
+        analogContainer.style.display = 'none';
+        analogOptions.style.display = 'none';
+      } else {
+        timerDisplay.style.display = 'none';
+        analogContainer.style.display = 'flex';
+        analogOptions.style.display = 'flex';
+      }
+      updateDisplay();
+      if (!skipSave) saveDisplayPrefs();
+    }
+    function setAnalogMode(mode, skipSave) {
+      analogMode = mode;
+      analog60min.classList.toggle('active', mode === '60min');
+      analog25min.classList.toggle('active', mode === '25min');
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+      if (!skipSave) saveDisplayPrefs();
+    }
+    function setClockMode(mode, skipSave) {
+      clockMode = mode;
+      countdownModeBtn.classList.toggle('active', mode === 'countdown');
+      countupModeBtn.classList.toggle('active', mode === 'countup');
+      stopTimer();
+      isPaused = false;
+      isRunning = false;
+      overtimeActive = false;
+      overtimeSeconds = 0;
+      const duration = getDurationFromPhase(currentPhase);
+      remainingSeconds = duration;
+      totalDurationSeconds = duration;
+      elapsedSeconds = 0;
+      updateDisplay();
+      if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+      if (!skipSave) saveDisplayPrefs();
+    }
+
+    const INTERSTITIAL_DISPLAY_PREFS_KEY = 'interstitialDisplayPrefs';
+    function saveDisplayPrefs() {
+      try {
+        localStorage.setItem(INTERSTITIAL_DISPLAY_PREFS_KEY, JSON.stringify({
+          viewMode, analogMode, clockMode, soundEnabled, keepAwakeEnabled,
+        }));
+      } catch (e) {}
+    }
+    function loadDisplayPrefs() {
+      try {
+        const raw = localStorage.getItem(INTERSTITIAL_DISPLAY_PREFS_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) { return null; }
+    }
+
+    // ---------- JOURNAL ----------
+    function loadEntries() {
+      const stored = localStorage.getItem('interstitial_entries_v16');
+      if (stored) {
+        try {
+          entries = JSON.parse(stored).map(e => ({
+            ...e, focus: e.focus || '', goal: e.goal || '', text: e.text || ''
+          }));
+        } catch (err) { entries = []; }
+      } else { entries = []; }
+      renderStream();
+    }
+
+    function saveEntries() {
+      localStorage.setItem('interstitial_entries_v16', JSON.stringify(entries));
+    }
+
+    function loadSessions() {
+      const stored = localStorage.getItem('interstitial_sessions_v10');
+      if (stored) {
+        try { sessions = JSON.parse(stored); } catch (err) { sessions = []; }
+      } else { sessions = []; }
+    }
+
+    function saveSessions() {
+      localStorage.setItem('interstitial_sessions_v10', JSON.stringify(sessions));
+    }
+
+    function formatTimestamp(ts) {
+      return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function formatDate(ts) {
+      return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+
+    function formatDateTime(ts) {
+      return `${formatDate(ts)} · ${formatTimestamp(ts)}`;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function isToday(ts) {
+      return new Date(ts).toDateString() === new Date().toDateString();
+    }
+
+    function isThisWeek(ts) {
+      const now = new Date();
+      const d = new Date(ts);
+      const start = new Date(now);
+      start.setDate(now.getDate() - now.getDay());
+      start.setHours(0, 0, 0, 0);
+      return d >= start;
+    }
+
+    function getFilteredEntries() {
+      let filtered = entries.filter(e => !e.deleted);
+      if (currentFilter === 'today') filtered = filtered.filter(e => isToday(e.timestamp));
+      else if (currentFilter === 'goals') filtered = filtered.filter(e => e.goal && e.goal.trim().length > 0);
+      return filtered.sort((a, b) => b.timestamp - a.timestamp);
+    }
+
+    function renderStream() {
+      const filtered = getFilteredEntries();
+
+      if (filtered.length === 0) {
+        let msg = 'No entries yet. Your first log will appear here.';
+        if (currentFilter === 'today') msg = 'No entries today yet.';
+        if (currentFilter === 'goals') msg = 'No entries with a goal yet.';
+        entriesList.innerHTML = `<div class="empty-state">${msg}</div>`;
+      } else {
+        entriesList.innerHTML = filtered.map(entry => renderEntry(entry)).join('');
+      }
+
+      updateContinuingFrom();
+      updateComposerState();
+      updateSessionUI();
+      attachEntryListeners();
+      entriesList.querySelectorAll('.edit-text').forEach(ta => autoGrowTextarea(ta));
+    }
+
+    function renderEntry(entry) {
+      const isEditing = editingId === entry.id;
+
+      if (isEditing) {
+        return `
+          <div class="entry editing" data-id="${entry.id}">
+            <div class="edit-header">
+              <span class="edit-title">✎ Editing entry</span>
+              <span class="edit-time">${formatTimestamp(entry.timestamp)}</span>
+            </div>
+            <div class="field-stack">
+              <div class="field-row">
+                <div class="field-group flex-2">
+                  <label>Focus</label>
+                  <input type="text" class="edit-focus" value="${escapeHtml(entry.focus)}" placeholder="What were you focusing on?">
+                </div>
+                <div class="field-group flex-1">
+                  <label>Goal</label>
+                  <input type="text" class="edit-goal" value="${escapeHtml(entry.goal)}" placeholder="Goal">
+                </div>
+              </div>
+              <div class="field-group">
+                <label>Reflection <span class="outliner-hint">↵ new bullet · ⇥ indent · ⇧⇥ outdent</span></label>
+                <textarea class="edit-text" data-outliner="true" placeholder="• what happened?">${escapeHtml(entry.text)}</textarea>
+              </div>
+            </div>
+            <div class="edit-actions">
+              <button class="delete-btn" title="Delete this entry">🗑 Delete</button>
+              <button class="cancel-edit">Cancel</button>
+              <button class="primary save-edit">Save changes</button>
+            </div>
+          </div>
+        `;
+      }
+
+      const hasText = entry.text && entry.text.trim().length > 0;
+      const hasGoal = entry.goal && entry.goal.trim().length > 0;
+      const hasFocus = entry.focus && entry.focus.trim().length > 0;
+      const textClass = entry.text && !entry.text.trim().startsWith('•') ? 'entry-text plain' : 'entry-text';
+
+      return `
+        <div class="entry" data-id="${entry.id}">
+          <span class="entry-edit-hint">✎ edit</span>
+          <div class="entry-header">
+            <span class="entry-focus ${hasFocus ? '' : 'empty-focus'}">${hasFocus ? escapeHtml(entry.focus) : 'no focus'}</span>
+            <span class="entry-time">${formatTimestamp(entry.timestamp)}</span>
+          </div>
+          <div class="entry-meta">
+            ${hasGoal
+              ? `<span class="entry-goal">🎯 ${escapeHtml(entry.goal)}</span>`
+              : `<span class="entry-no-goal">no goal</span>`}
+          </div>
+          ${hasText ? `<div class="${textClass}">${renderReflection(entry.text)}</div>` : ''}
+        </div>
+      `;
+    }
+
+    function updateContinuingFrom() {
+      const lastEntry = entries.filter(e => !e.deleted).sort((a, b) => b.timestamp - a.timestamp)[0];
+      const focusSessionActive = currentPhase === 'focus' && (isRunning || isPaused);
+      const showLink = !focusSessionActive && lastEntry && lastEntry.focus && !entryFocus.value.trim() && !editingId;
+      continuingFrom.style.display = showLink ? 'flex' : 'none';
+    }
+
+    function updateComposerState() {
+      const hasContent = entryFocus.value.trim() || entryGoal.value.trim() || entryText.value.trim();
+      composer.classList.toggle('active', !!hasContent);
+      addEntryBtn.disabled = !hasContent;
+      updateContinuingFrom();
+      updateSessionUI();
+    }
+
+    function attachEntryListeners() {
+      entriesList.querySelectorAll('.entry:not(.editing)').forEach(el => {
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('button')) return;
+          startEditing(el.dataset.id);
+        });
+      });
+
+      entriesList.querySelectorAll('.cancel-edit').forEach(btn => {
+        btn.addEventListener('click', (e) => { e.stopPropagation(); cancelEditing(); });
+      });
+
+      entriesList.querySelectorAll('.save-edit').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const entryEl = btn.closest('.entry');
+          const id = entryEl.dataset.id;
+          const focus = entryEl.querySelector('.edit-focus').value.trim();
+          const goal = entryEl.querySelector('.edit-goal').value.trim();
+          const text = entryEl.querySelector('.edit-text').value.trim();
+          saveEdit(id, focus, goal, text);
+        });
+      });
+
+      entriesList.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = btn.closest('.entry').dataset.id;
+          if (confirm('Delete this entry? This cannot be undone.')) {
+            const entry = entries.find(en => en.id === id);
+            if (entry) {
+              entry.deleted = true;
+              entry.entryUpdatedAt = Date.now();
+              if (entry.phase === 'focus') deleteEntryFromCalendar(entry);
+            }
+            editingId = null;
+            saveEntries();
+            scheduleCloudPush();
+            renderStream();
+          }
+        });
+      });
+
+      entriesList.querySelectorAll('textarea.edit-text').forEach(ta => {
+        ta.addEventListener('keydown', handleOutlinerKeydown);
+        ta.addEventListener('input', (e) => { updateComposerState(); autoGrowTextarea(ta); });
+        ta.addEventListener('paste', handleReflectionPaste);
+        autoGrowTextarea(ta);
+      });
+
+      entriesList.querySelectorAll('.entry.editing').forEach(el => {
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') { e.preventDefault(); cancelEditing(); }
+        });
+      });
+    }
+
+    function startEditing(id) {
+      editingId = id;
+      renderStream();
+      const focusField = entriesList.querySelector('.entry.editing .edit-focus');
+      if (focusField) {
+        focusField.focus();
+        focusField.setSelectionRange(focusField.value.length, focusField.value.length);
+      }
+      const editingEl = entriesList.querySelector('.entry.editing');
+      if (editingEl) editingEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function cancelEditing() { editingId = null; renderStream(); }
+
+    function saveEdit(id, focus, goal, text) {
+      const entry = entries.find(e => e.id === id);
+      if (!entry) return;
+      if (!focus && !goal && !text) {
+        entry.deleted = true;
+        entry.entryUpdatedAt = Date.now();
+        if (entry.phase === 'focus') deleteEntryFromCalendar(entry);
+      } else {
+        entry.focus = focus; entry.goal = goal; entry.text = text;
+        entry.entryUpdatedAt = Date.now();
+        if (entry.phase === 'focus' && entry.durationSec != null) syncEntryToCalendar(entry);
+      }
+      editingId = null;
+      saveEntries();
+      scheduleCloudPush();
+      renderStream();
+    }
+
+    function addEntry() {
+      const focus = entryFocus.value.trim();
+      const goal = entryGoal.value.trim();
+      const text = entryText.value.trim();
+      if (!focus && !goal && !text) { entryFocus.focus(); return; }
+
+      const focusSessionActive = currentPhase === 'focus' && (isRunning || isPaused);
+      const localId = Date.now() + Math.random().toString(36).substring(2, 8);
+      const entry = {
+        id: localId,
+        uid: `${deviceId}-${localId}`,
+        focus, goal, text,
+        timestamp: Date.now(),
+        deleted: false,
+        entryUpdatedAt: Date.now(),
+        phase: 'focus',
+        source: 'manual',
+      };
+      if (focusSessionActive) {
+        // A focus session is actively counting — hold this entry back from
+        // Calendar. It shares this session's start time so Finish can find
+        // it later and send it then, all at once, instead of one Calendar
+        // event per "Log entry" click mid-session.
+        entry.sessionStartedAt = (sessionStartTimestamp || new Date()).getTime();
+        entry.durationSec = null; // filled in when Finish flushes it
+      } else {
+        // Not currently counting (idle, or on a break) — nothing further
+        // will trigger a send, so log it to Calendar right away as its own
+        // event, using the configured focus length as its block size.
+        entry.sessionStartedAt = Date.now();
+        entry.durationSec = getDurationFromPhase('focus');
+      }
+      entries.push(entry);
+      saveEntries();
+      scheduleCloudPush();
+      if (!focusSessionActive) syncEntryToCalendar(entry);
+
+      if (focusSessionActive) {
+        entryText.value = '';
+        autoGrowTextarea(entryText);
+        updateComposerState();
+        updateSessionUI();
+        entryText.focus();
+      } else {
+        clearForm();
+        entryFocus.focus();
+      }
+
+      renderStream();
+      streamScroll.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function clearForm() {
+      entryFocus.value = '';
+      entryGoal.value = '';
+      entryText.value = '';
+      autoGrowTextarea(entryText);
+      updateComposerState();
+    }
+
+    function jumpToLastEntry() {
+      const lastEntry = entries.filter(e => !e.deleted).sort((a, b) => b.timestamp - a.timestamp)[0];
+      if (!lastEntry) return;
+      if (lastEntry.focus && !entryFocus.value.trim()) entryFocus.value = lastEntry.focus;
+      if (lastEntry.goal && !entryGoal.value.trim()) entryGoal.value = lastEntry.goal;
+      updateComposerState();
+      entryFocus.focus();
+    }
+
+    function clearIntention() {
+      entryFocus.value = '';
+      entryGoal.value = '';
+      updateComposerState();
+      entryFocus.focus();
+    }
+
+    function newIntention() {
+      const lastEntry = entries.filter(e => !e.deleted).sort((a, b) => b.timestamp - a.timestamp)[0];
+      if (lastEntry) {
+        entryFocus.value = lastEntry.focus || '';
+        entryGoal.value = lastEntry.goal || '';
+      } else {
+        entryFocus.value = '';
+        entryGoal.value = '';
+      }
+      updateComposerState();
+      entryFocus.focus();
+    }
+
+    // ---------- SUMMARY ----------
+    function getRangeEntries(range) {
+      const active = entries.filter(e => !e.deleted);
+      if (range === 'today') return active.filter(e => isToday(e.timestamp));
+      if (range === 'week') return active.filter(e => isThisWeek(e.timestamp));
+      return active;
+    }
+
+    function sortEntries(list) {
+      const sorted = [...list].sort((a, b) => b.timestamp - a.timestamp);
+      if (currentEntryOrder === 'asc') sorted.reverse();
+      return sorted;
+    }
+
+    function sortFocusGroups(groups) {
+      const arr = [...groups];
+      if (currentGroupOrder === 'alpha') {
+        arr.sort((a, b) => (a.focus || 'no focus').localeCompare(b.focus || 'no focus', undefined, { sensitivity: 'base' }));
+      } else {
+        arr.sort((a, b) => b.lastActivity - a.lastActivity);
+      }
+      return arr;
+    }
+
+    function sortGoalGroups(groups) {
+      const arr = [...groups];
+      if (currentGroupOrder === 'alpha') {
+        arr.sort((a, b) => a.goal.localeCompare(b.goal, undefined, { sensitivity: 'base' }));
+      } else {
+        arr.sort((a, b) => b.lastActivity - a.lastActivity);
+      }
+      return arr;
+    }
+
+    function buildSummaryStructure(rEntries) {
+      const norm = (s) => (s || '').trim().toLowerCase();
+      const goalGroups = new Map();
+      const ungroupedMap = new Map();
+
+      rEntries.forEach(e => {
+        const goalKey = norm(e.goal);
+        const focusKey = norm(e.focus) || '__no_focus__';
+        const focusLabel = e.focus && e.focus.trim() ? e.focus.trim() : '';
+
+        if (!goalKey) {
+          if (!ungroupedMap.has(focusKey)) ungroupedMap.set(focusKey, { focus: focusLabel, entries: [] });
+          ungroupedMap.get(focusKey).entries.push(e);
+          return;
+        }
+
+        if (!goalGroups.has(goalKey)) {
+          goalGroups.set(goalKey, { label: e.goal.trim(), focusMap: new Map(), lastActivity: 0 });
+        }
+        const g = goalGroups.get(goalKey);
+        g.lastActivity = Math.max(g.lastActivity, e.timestamp);
+
+        if (!g.focusMap.has(focusKey)) {
+          g.focusMap.set(focusKey, { focus: focusLabel, entries: [] });
+        }
+        g.focusMap.get(focusKey).entries.push(e);
+      });
+
+      const toFocusArray = (focusMap) => {
+        return [...focusMap.values()].map(fg => {
+          const sorted = sortEntries(fg.entries);
+          return { focus: fg.focus, entries: sorted, lastActivity: sorted[0] ? Math.max(...sorted.map(s => s.timestamp)) : 0 };
+        });
+      };
+
+      const groups = [...goalGroups.values()].map(g => ({
+        goal: g.label,
+        focusGroups: toFocusArray(g.focusMap),
+        lastActivity: g.lastActivity
+      }));
+
+      return { groups, ungroupedFocusGroups: toFocusArray(ungroupedMap) };
+    }
+
+    function buildSummary(range) {
+      const rEntries = getRangeEntries(range);
+      const { groups, ungroupedFocusGroups } = buildSummaryStructure(rEntries);
+
+      const sortedGoals = sortGoalGroups(groups).map(g => ({
+        ...g,
+        focusGroups: sortFocusGroups(g.focusGroups)
+      }));
+      const sortedUngrouped = sortFocusGroups(ungroupedFocusGroups);
+
+      if (rEntries.length === 0) {
+        reportContent.innerHTML = `<div class="modal-empty">No log entries in this range.<br>Add a reflection to see it here.</div>`;
+        summarySubtitle.textContent = `${rangeLabel(range)} · no entries`;
+        return;
+      }
+
+      const rangeText = rangeLabel(range);
+      const orderText = currentEntryOrder === 'asc' ? 'oldest first' : 'newest first';
+      let subtitleParts = [rangeText];
+      if (showSummaryDates) {
+        const firstEntry = [...rEntries].sort((a, b) => a.timestamp - b.timestamp)[0];
+        const lastEntry = [...rEntries].sort((a, b) => b.timestamp - a.timestamp)[0];
+        const spanText = rEntries.length > 1
+          ? `${formatDateTime(firstEntry.timestamp)} → ${formatDateTime(lastEntry.timestamp)}`
+          : formatDateTime(firstEntry.timestamp);
+        subtitleParts.push(spanText);
+      }
+      subtitleParts.push(orderText);
+      summarySubtitle.textContent = subtitleParts.join(' · ');
+
+      let html = `<div class="log-summary">`;
+
+      sortedGoals.forEach(g => {
+        html += `
+          <div class="goal-block">
+            <div class="goal-block-header">
+              <span class="goal-mark">🎯</span>
+              <span class="goal-name">${escapeHtml(g.goal)}</span>
+            </div>
+            ${g.focusGroups.map(fg => renderFocusGroup(fg)).join('')}
+          </div>
+        `;
+      });
+
+      if (sortedUngrouped.length > 0) {
+        html += `
+          <div class="ungrouped-block">
+            <div class="ungrouped-label">No goal</div>
+            ${sortedUngrouped.map(fg => renderFocusGroup(fg)).join('')}
+          </div>
+        `;
+      }
+
+      html += `</div>`;
+
+      reportContent.innerHTML = html;
+    }
+
+    function renderFocusGroup(fg) {
+      const focusLabel = fg.focus || 'no focus';
+      const isEmpty = !fg.focus;
+      return `
+        <div class="focus-block">
+          <div class="focus-block-header">
+            <span class="focus-bullet">▪</span>
+            <span class="focus-name ${isEmpty ? 'empty-focus' : ''}">${escapeHtml(focusLabel)}</span>
+          </div>
+          <div class="focus-entries">
+            ${fg.entries.map(e => {
+              const hasText = e.text && e.text.trim().length > 0;
+              return `
+                <div class="focus-entry">
+                  ${showSummaryDates ? `<div class="focus-entry-time">${formatDateTime(e.timestamp)}</div>` : ''}
+                  ${hasText ? `<div class="focus-entry-body">${renderReflection(e.text)}</div>` : ''}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function rangeLabel(range) {
+      if (range === 'today') return 'Today';
+      if (range === 'week') return 'This week';
+      return 'All time';
+    }
+
+    function openSummary() {
+      summaryBackdrop.classList.add('open');
+      buildSummary(currentReportRange);
+    }
+
+    function closeSummary() { summaryBackdrop.classList.remove('open'); }
+
+    // ---------- EXPORTS (respect SUMMARY dates) ----------
+    function buildMarkdown(range) {
+      const rEntries = getRangeEntries(range);
+      const { groups, ungroupedFocusGroups } = buildSummaryStructure(rEntries);
+
+      const sortedGoals = sortGoalGroups(groups).map(g => ({
+        ...g,
+        focusGroups: sortFocusGroups(g.focusGroups)
+      }));
+      const sortedUngrouped = sortFocusGroups(ungroupedFocusGroups);
+
+      const lines = [];
+      lines.push(`# Interstitial Log — ${rangeLabel(range)}`);
+      lines.push('');
+      if (showSummaryDates) {
+        lines.push(`_${new Date().toLocaleString()}_`);
+        lines.push('');
+      }
+
+      if (sortedGoals.length === 0 && sortedUngrouped.length === 0) {
+        lines.push('_No entries in this range._');
+        return lines.join('\n');
+      }
+
+      sortedGoals.forEach(g => {
+        lines.push(`## 🎯 ${g.goal}`);
+        lines.push('');
+        g.focusGroups.forEach(fg => {
+          lines.push(`### ${fg.focus || 'no focus'}`);
+          lines.push('');
+          fg.entries.forEach(e => {
+            if (showSummaryDates) {
+              lines.push(`**${formatDateTime(e.timestamp)}**`);
+            }
+            const outline = outlineToMarkdown(e.text);
+            if (outline.length > 0) outline.forEach(l => lines.push(l));
+            lines.push('');
+          });
+        });
+      });
+
+      if (sortedUngrouped.length > 0) {
+        lines.push(`## No goal`);
+        lines.push('');
+        sortedUngrouped.forEach(fg => {
+          lines.push(`### ${fg.focus || 'no focus'}`);
+          lines.push('');
+          fg.entries.forEach(e => {
+            if (showSummaryDates) {
+              lines.push(`**${formatDateTime(e.timestamp)}**`);
+            }
+            const outline = outlineToMarkdown(e.text);
+            if (outline.length > 0) outline.forEach(l => lines.push(l));
+            lines.push('');
+          });
+        });
+      }
+
+      return lines.join('\n');
+    }
+
+    function buildPlainText(range) {
+      const rEntries = getRangeEntries(range);
+      const { groups, ungroupedFocusGroups } = buildSummaryStructure(rEntries);
+
+      const sortedGoals = sortGoalGroups(groups).map(g => ({
+        ...g,
+        focusGroups: sortFocusGroups(g.focusGroups)
+      }));
+      const sortedUngrouped = sortFocusGroups(ungroupedFocusGroups);
+
+      const lines = [];
+      lines.push(`INTERSTITIAL LOG — ${rangeLabel(range).toUpperCase()}`);
+      if (showSummaryDates) lines.push(new Date().toLocaleString());
+      lines.push('='.repeat(50));
+      lines.push('');
+
+      if (sortedGoals.length === 0 && sortedUngrouped.length === 0) {
+        lines.push('No entries in this range.');
+        return lines.join('\n');
+      }
+
+      const renderFocusGroupPlain = (fg) => {
+        const out = [];
+        out.push(`▪ ${fg.focus || 'no focus'}`);
+        out.push('-'.repeat(35));
+        fg.entries.forEach(e => {
+          if (showSummaryDates) out.push(`[${formatDateTime(e.timestamp)}]`);
+          const outline = outlineToPlainText(e.text);
+          if (outline.length > 0) outline.forEach(l => out.push(l));
+          out.push('');
+        });
+        return out;
+      };
+
+      sortedGoals.forEach(g => {
+        lines.push(`🎯 ${g.goal}`);
+        lines.push('='.repeat(50));
+        lines.push('');
+        g.focusGroups.forEach(fg => renderFocusGroupPlain(fg).forEach(l => lines.push(l)));
+        lines.push('');
+      });
+
+      if (sortedUngrouped.length > 0) {
+        lines.push(`NO GOAL`);
+        lines.push('='.repeat(50));
+        lines.push('');
+        sortedUngrouped.forEach(fg => renderFocusGroupPlain(fg).forEach(l => lines.push(l)));
+      }
+
+      return lines.join('\n');
+    }
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 1800);
+    }
+
+    async function copyToClipboard(text, label) {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast(`${label} copied to clipboard`);
+      } catch (err) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); showToast(`${label} copied`); }
+        catch (e) { showToast('Copy failed — try download instead'); }
+        document.body.removeChild(ta);
+      }
+    }
+
+    function downloadFile(filename, content, mime) {
+      const blob = new Blob([content], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 500);
+    }
+
+    function printReport() { window.print(); }
+
+    // ---------- DATE TOGGLE HANDLERS (independent) ----------
+    quickLogDatesTabs.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        showLogDates = btn.dataset.dates === 'show';
+        applyLogDatesPreference();
+        renderStream(); // only re-render log cards
+      });
+    });
+
+    summaryDatesTabs.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        showSummaryDates = btn.dataset.dates === 'show';
+        applySummaryDatesPreference();
+        if (summaryBackdrop.classList.contains('open')) buildSummary(currentReportRange);
+      });
+    });
+
+    // ---------- EVENTS ----------
+    addEntryBtn.addEventListener('click', addEntry);
+    clearFormBtn.addEventListener('click', clearForm);
+
+    [entryFocus, entryGoal].forEach(el => el.addEventListener('input', updateComposerState));
+
+    entryText.addEventListener('keydown', handleOutlinerKeydown);
+    entryText.addEventListener('input', handleReflectionInput);
+    entryText.addEventListener('paste', handleReflectionPaste);
+    autoGrowTextarea(entryText);
+
+    entryFocus.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); entryGoal.focus(); }
+    });
+
+    entryGoal.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); entryText.focus(); }
+    });
+
+    jumpToLastBtn.addEventListener('click', jumpToLastEntry);
+    clearIntentionBtn.addEventListener('click', clearIntention);
+    newIntentionBtn.addEventListener('click', newIntention);
+
+    filterButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterButtons.forEach(b => b.classList.remove('active-filter'));
+        btn.classList.add('active-filter');
+        currentFilter = btn.dataset.filter;
+        renderStream();
+      });
+    });
+
+    openSummaryBtn.addEventListener('click', openSummary);
+    closeSummaryBtn.addEventListener('click', closeSummary);
+
+    summaryBackdrop.addEventListener('click', (e) => {
+      if (e.target === summaryBackdrop) closeSummary();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && summaryBackdrop.classList.contains('open')) closeSummary();
+    });
+
+    rangeTabs.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        rangeTabs.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentReportRange = btn.dataset.range;
+        buildSummary(currentReportRange);
+      });
+    });
+
+    entryOrderTabs.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        entryOrderTabs.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentEntryOrder = btn.dataset.order;
+        buildSummary(currentReportRange);
+      });
+    });
+
+    groupOrderTabs.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        groupOrderTabs.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentGroupOrder = btn.dataset.groupOrder;
+        buildSummary(currentReportRange);
+      });
+    });
+
+    copyMarkdownBtn.addEventListener('click', () => {
+      copyToClipboard(buildMarkdown(currentReportRange), 'Markdown');
+    });
+
+    copyPlainBtn.addEventListener('click', () => {
+      copyToClipboard(buildPlainText(currentReportRange), 'Text');
+    });
+
+    downloadMdBtn.addEventListener('click', () => {
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadFile(`interstitial-log-${currentReportRange}-${stamp}.md`, buildMarkdown(currentReportRange), 'text/markdown');
+      showToast('Markdown downloaded');
+    });
+
+    downloadTxtBtn.addEventListener('click', () => {
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadFile(`interstitial-log-${currentReportRange}-${stamp}.txt`, buildPlainText(currentReportRange), 'text/plain');
+      showToast('Text file downloaded');
+    });
+
+    printReportBtn.addEventListener('click', printReport);
+
+    // =====================================================================
+    // Cloud sync (Firestore) — syncs journal entries + timer settings
+    // across devices via Google sign-in. Uses this app's OWN Firestore
+    // collection ('interstitial_journal') within the shared qtodo-syn
+    // project, so it never touches Pomodoro Tracker's or any other app's
+    // data. Entry identity/merge/tombstone conventions mirror the rest of
+    // the app suite.
+    // =====================================================================
+    function entryIdentity(e) { return e.uid || `legacy-${e.id}-${e.timestamp}`; }
+
+    function mergeEntryArrays(localArr, remoteArr) {
+      const map = new Map();
+      for (const e of localArr) map.set(entryIdentity(e), e);
+      for (const e of remoteArr) {
+        const key = entryIdentity(e);
+        const existing = map.get(key);
+        if (!existing || (e.entryUpdatedAt || 0) > (existing.entryUpdatedAt || 0)) {
+          map.set(key, e);
+        }
+      }
+      return Array.from(map.values());
+    }
+
+    function showCalToast(message, isError) {
+      if (!calToast) return;
+      calToast.textContent = message;
+      calToast.classList.toggle('error', !!isError);
+      calToast.classList.add('show');
+      clearTimeout(calToastTimer);
+      calToastTimer = setTimeout(() => calToast.classList.remove('show'), 2600);
+    }
+
+    function buildSyncPayload() {
+      return {
+        app: 'interstitial-journal-sync',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        entries: entries,
+        cycleCount: cycleCount,
+        settings: {
+          focusDuration: focusInput.value,
+          shortBreakDuration: shortInput.value,
+          longBreakDuration: longInput.value,
+          journalCalendarId: gcalCalendarId || null,
+        },
+      };
+    }
+
+    const IJ_LOCAL_KEY = 'interstitialJournalSyncData';
+    let localEntriesUpdatedAt = 0;
+    let lastSyncedAt = 0;
+
+    function saveLocalSyncMirror() {
+      try {
+        const payload = buildSyncPayload();
+        payload.localUpdatedAt = localEntriesUpdatedAt;
+        payload.lastSyncedAt = lastSyncedAt;
+        localStorage.setItem(IJ_LOCAL_KEY, JSON.stringify(payload));
+      } catch (e) {}
+    }
+
+    function loadLocalSyncMirror() {
+      try {
+        const raw = localStorage.getItem(IJ_LOCAL_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (typeof data.cycleCount === 'number') cycleCount = data.cycleCount;
+        if (data.settings) {
+          if (data.settings.focusDuration) focusInput.value = data.settings.focusDuration;
+          if (data.settings.shortBreakDuration) shortInput.value = data.settings.shortBreakDuration;
+          if (data.settings.longBreakDuration) longInput.value = data.settings.longBreakDuration;
+          if (data.settings.journalCalendarId) gcalCalendarId = data.settings.journalCalendarId;
+        }
+        localEntriesUpdatedAt = data.localUpdatedAt || 0;
+        lastSyncedAt = data.lastSyncedAt || 0;
+      } catch (e) {}
+    }
+
+    // Automatic/silent path (realtime listener, reconcile-on-sign-in) —
+    // always merges by entry identity, never destructively replaces, so
+    // using the app from more than one device is safe.
+    function applyCloudSnapshot(data) {
+      entries = mergeEntryArrays(entries, Array.isArray(data.entries) ? data.entries : []);
+      if (data.settings) {
+        if (data.settings.focusDuration) focusInput.value = data.settings.focusDuration;
+        if (data.settings.shortBreakDuration) shortInput.value = data.settings.shortBreakDuration;
+        if (data.settings.longBreakDuration) longInput.value = data.settings.longBreakDuration;
+        if (data.settings.journalCalendarId) gcalCalendarId = data.settings.journalCalendarId;
+      }
+      lastSyncedAt = data.updatedAt || Date.now();
+      saveEntries();
+      renderStream();
+    }
+
+    // Explicit/manual path (restoring a chosen backup file) — can knowingly
+    // hard-replace or merge, per the user's choice in the confirm dialog.
+    function applySyncPayload(data, replace) {
+      if (replace) {
+        entries = data.entries.slice();
+      } else {
+        entries = mergeEntryArrays(entries, data.entries || []);
+      }
+      if (data.settings) {
+        if (data.settings.focusDuration) focusInput.value = data.settings.focusDuration;
+        if (data.settings.shortBreakDuration) shortInput.value = data.settings.shortBreakDuration;
+        if (data.settings.longBreakDuration) longInput.value = data.settings.longBreakDuration;
+        if (data.settings.journalCalendarId) gcalCalendarId = data.settings.journalCalendarId;
+      }
+      if (replace && typeof data.cycleCount === 'number') cycleCount = data.cycleCount;
+      lastSyncedAt = data.updatedAt || Date.now();
+      saveEntries();
+      renderStream();
+    }
+
+    function exportBackup() {
+      const backup = buildSyncPayload();
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `interstitial-journal-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function importBackupFromFile(file) {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        let data;
+        try { data = JSON.parse(e.target.result); }
+        catch (err) { alert("Could not read this file — make sure it's a backup exported from this app."); return; }
+        if (!data || !Array.isArray(data.entries)) { alert("This file doesn't look like a valid backup."); return; }
+        const replace = confirm(
+          `This backup has ${data.entries.length} entrie(s).\n\nOK = replace all current entries with the backup.\nCancel = merge the backup into your current entries.`
+        );
+        applySyncPayload(data, replace);
+        localEntriesUpdatedAt = Date.now();
+        alert('Backup imported!');
+        scheduleCloudPush();
+      };
+      reader.readAsText(file);
+    }
+
+    // Independent, ever-growing local safety net — separate from cloud
+    // sync, so even a bad sync or cleared browser data leaves a real copy
+    // restorable on this device.
+    const IJ_BACKUP_KEY = 'interstitialJournalBackup';
+    function updateLocalBackup() {
+      try {
+        const active = entries.filter(e => !e.deleted);
+        if (!active.length) return;
+        const raw = localStorage.getItem(IJ_BACKUP_KEY);
+        const prev = raw ? JSON.parse(raw) : null;
+        const prevActiveCount = (prev && Array.isArray(prev.entries)) ? prev.entries.filter(e => !e.deleted).length : -1;
+        if (active.length >= prevActiveCount) {
+          localStorage.setItem(IJ_BACKUP_KEY, JSON.stringify({ entries: entries, savedAt: Date.now() }));
+        }
+      } catch (e) {}
+    }
+    function restoreFromLocalBackup() {
+      let backup;
+      try {
+        const raw = localStorage.getItem(IJ_BACKUP_KEY);
+        backup = raw ? JSON.parse(raw) : null;
+      } catch (e) { backup = null; }
+      if (!backup || !Array.isArray(backup.entries) || backup.entries.length === 0) {
+        alert('No local backup found on this device.');
+        return;
+      }
+      const savedWhen = backup.savedAt ? new Date(backup.savedAt).toLocaleString() : 'an earlier point';
+      const confirmed = confirm(
+        `Found a local backup with ${backup.entries.filter(e => !e.deleted).length} entrie(s), last updated ${savedWhen}.\n\n` +
+        `This will merge in anything from that backup you don't already have, then sync the result to the cloud. Continue?`
+      );
+      if (!confirmed) return;
+      const beforeIds = new Set(entries.map(entryIdentity));
+      const merged = mergeEntryArrays(entries, backup.entries);
+      const addedCount = merged.filter(e => !beforeIds.has(entryIdentity(e))).length;
+      if (addedCount === 0) { alert('Everything in the backup is already in your current list — nothing to restore.'); return; }
+      entries = merged;
+      localEntriesUpdatedAt = Date.now();
+      saveEntries();
+      renderStream();
+      scheduleCloudPush();
+      alert(`Restored ${addedCount} entrie(s).`);
+    }
+
+    const IJ_FB_CONFIG = {
+      apiKey: "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
+      authDomain: "qtodo-syn.firebaseapp.com",
+      projectId: "qtodo-syn",
+      storageBucket: "qtodo-syn.firebasestorage.app",
+      messagingSenderId: "663058774385",
+      appId: "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
+    };
+
+    let cloudApp, cloudAuth, cloudDb;
+    let cloudUser = null;
+    let cloudUnsub = null;
+    let cloudPushTimer = null;
+    let cloudPushing = false;
+    let cloudLastPushTs = 0;
+    let cloudReady = false;
+
+    try {
+      if (typeof firebase !== 'undefined') {
+        try { cloudApp = firebase.app('interstitial-journal'); }
+        catch (e) { cloudApp = firebase.initializeApp(IJ_FB_CONFIG, 'interstitial-journal'); }
+        cloudAuth = firebase.auth(cloudApp);
+        cloudDb = firebase.firestore(cloudApp);
+        cloudReady = true;
+      }
+    } catch (e) { console.warn('Cloud sync unavailable:', e); }
+
+    function cloudDocRef() {
+      if (!cloudUser || !cloudDb) return null;
+      return cloudDb.collection('users').doc(cloudUser.uid)
+                    .collection('interstitial_journal').doc('data');
+    }
+
+    function updateCloudUI() {
+      if (!cloudAuthBtn) return;
+      if (cloudUser) {
+        const first = cloudUser.displayName ? cloudUser.displayName.split(' ')[0] : 'Account';
+        cloudAuthBtn.textContent = '☁️ ' + first;
+        cloudAuthBtn.style.background = '#2e7d32';
+        cloudAuthBtn.title = 'Signed in as ' + cloudUser.email + ' — click to sign out';
+        if (cloudSyncStatus) cloudSyncStatus.textContent = '🟢 Synced as ' + cloudUser.email;
+        if (gcalSyncRow) gcalSyncRow.style.display = 'block';
+        setCalendarConnected(gcalTokenIsFresh());
+      } else {
+        cloudAuthBtn.textContent = '🔑 Sign In';
+        cloudAuthBtn.style.background = '#a28b7e';
+        cloudAuthBtn.title = 'Sign in with Google to sync across devices';
+        if (cloudSyncStatus) cloudSyncStatus.textContent = '⚫ Not signed in';
+        if (gcalSyncRow) gcalSyncRow.style.display = 'none';
+      }
+    }
+
+    function setCloudStatus(state) {
+      if (!cloudSyncStatus || !cloudUser) return;
+      if (state === 'pending') cloudSyncStatus.textContent = '🟡 Saving to cloud…';
+      else if (state === 'synced') cloudSyncStatus.textContent = '🟢 Synced as ' + cloudUser.email;
+      else if (state === 'error') cloudSyncStatus.textContent = '🔴 Cloud save failed — will retry';
+    }
+
+    function scheduleCloudPush() {
+      saveEntries();
+      localEntriesUpdatedAt = Date.now();
+      saveLocalSyncMirror();
+      updateLocalBackup();
+      if (!cloudUser) return;
+      clearTimeout(cloudPushTimer);
+      cloudPushTimer = setTimeout(cloudPushNow, 1000);
+    }
+
+    function cloudPushNow() {
+      const ref = cloudDocRef();
+      if (!ref) return;
+      const payload = buildSyncPayload();
+      payload.updatedAt = Date.now();
+      if (payload.entries.length === 0) {
+        ref.get().then((existing) => {
+          const cloudEntries = existing.exists && Array.isArray(existing.data().entries) ? existing.data().entries : [];
+          if (cloudEntries.length > 0) {
+            console.warn('Refused to push an empty entries list over existing cloud data.');
+            setCloudStatus('error');
+            return;
+          }
+          doCloudPush(payload);
+        }).catch((e) => { console.warn('Cloud pre-push check failed:', e); setCloudStatus('error'); });
+        return;
+      }
+      doCloudPush(payload);
+    }
+
+    function doCloudPush(payload) {
+      const ref = cloudDocRef();
+      if (!ref) return;
+      cloudLastPushTs = payload.updatedAt;
+      cloudPushing = true;
+      setCloudStatus('pending');
+      ref.set(payload).then(() => {
+        lastSyncedAt = payload.updatedAt;
+        saveLocalSyncMirror();
+        setTimeout(() => { cloudPushing = false; setCloudStatus('synced'); }, 1200);
+      }).catch((e) => {
+        cloudPushing = false;
+        setCloudStatus('error');
+        console.warn('Cloud push error:', e);
+      });
+    }
+
+    function startCloudListener() {
+      const ref = cloudDocRef();
+      if (!ref || cloudUnsub) return;
+      cloudUnsub = ref.onSnapshot((snap) => {
+        if (!snap.exists || cloudPushing) return;
+        const data = snap.data();
+        const remoteTs = data.updatedAt || 0;
+        if (remoteTs <= cloudLastPushTs) return;
+        applyCloudSnapshot(data);
+        setCloudStatus('synced');
+      }, (e) => console.warn('Cloud listener error:', e));
+    }
+    function stopCloudListener() { if (cloudUnsub) { cloudUnsub(); cloudUnsub = null; } }
+
+    function cloudReconcile() {
+      const ref = cloudDocRef();
+      if (!ref) return;
+      ref.get().then((doc) => {
+        if (!doc.exists) {
+          cloudPushNow();
+        } else {
+          const data = doc.data();
+          const remoteTs = data.updatedAt || 0;
+          const cloudIsNewer = remoteTs > lastSyncedAt;
+          const localIsNewer = localEntriesUpdatedAt > lastSyncedAt;
+          if (cloudIsNewer && localIsNewer) { applyCloudSnapshot(data); cloudPushNow(); }
+          else if (cloudIsNewer) { applyCloudSnapshot(data); }
+          else if (localIsNewer) { cloudPushNow(); }
+        }
+        startCloudListener();
+        updateCloudUI();
+      }).catch((e) => { console.warn('Cloud reconcile error:', e); updateCloudUI(); });
+    }
+
+    // =====================================================================
+    // Google Calendar sync — auto-creates a dedicated "Interstitial
+    // Journal" calendar and logs each finished FOCUS session there the
+    // moment Finish is clicked (if the composer has content). Reuses the
+    // same Google sign-in as cloud sync above, with the Calendar scope
+    // added.
+    // =====================================================================
+    const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar';
+    const GCAL_CALENDAR_NAME = 'Interstitial Journal';
+    let gcalAccessToken = null;
+    let gcalTokenObtainedAt = 0;
+    let gcalCalendarId = null;
+    let gcalCreatingCalendar = null;
+
+    function gcalTokenIsFresh() {
+      return !!gcalAccessToken && (Date.now() - gcalTokenObtainedAt) < 50 * 60 * 1000;
+    }
+    function setCalendarConnected(connected) {
+      if (gcalSyncStatus) gcalSyncStatus.textContent = connected ? '📅 Calendar: connected' : '📅 Calendar: not connected';
+      if (gcalConnectBtn) gcalConnectBtn.textContent = connected ? 'Reconnect' : 'Connect Calendar';
+    }
+
+    // NOTE: this client ID is shared with the rest of the app suite (same
+    // Google Cloud project as Pomodoro Tracker). If this file is hosted at
+    // a different origin than that app, add this origin to the OAuth
+    // client's "Authorized JavaScript origins" in Google Cloud Console, or
+    // swap in a separate client ID.
+    const GCAL_CLIENT_ID = '663058774385-0209ekni5vchpbf9mr3rkofd369hrhr3.apps.googleusercontent.com';
+    let gisTokenClient = null;
+    let silentReconnectResolvers = [];
+
+    function initGisTokenClient() {
+      if (gisTokenClient) return gisTokenClient;
+      if (!window.google || !google.accounts || !google.accounts.oauth2) return null;
+      gisTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GCAL_CLIENT_ID,
+        scope: GCAL_SCOPE,
+        callback: (tokenResponse) => {
+          const resolvers = silentReconnectResolvers.splice(0);
+          if (tokenResponse && tokenResponse.access_token) {
+            gcalAccessToken = tokenResponse.access_token;
+            gcalTokenObtainedAt = Date.now();
+            setCalendarConnected(true);
+            ensureJournalCalendarId().then(() => backfillMissingCalendarEvents());
+            resolvers.forEach(fn => fn(true));
+          } else {
+            setCalendarConnected(false);
+            resolvers.forEach(fn => fn(false));
+            if (resolvers.length === 0) alert('Calendar connection failed — Google did not return an access token.');
+          }
+        },
+        error_callback: (err) => {
+          const resolvers = silentReconnectResolvers.splice(0);
+          resolvers.forEach(fn => fn(false));
+          if (err && (err.type === 'popup_closed' || err.type === 'popup_failed_to_open')) return;
+          console.warn('GIS token error:', err);
+          if (resolvers.length === 0) alert('Calendar connection failed: ' + (err && err.message ? err.message : 'please try again.'));
+        },
+      });
+      return gisTokenClient;
+    }
+
+    let calendarReconnectPromise = null;
+    function ensureCalendarConnected() {
+      if (gcalTokenIsFresh()) return Promise.resolve(true);
+      if (!cloudUser) return Promise.resolve(false);
+      if (calendarReconnectPromise) return calendarReconnectPromise;
+      const client = initGisTokenClient();
+      if (!client) return Promise.resolve(false);
+      calendarReconnectPromise = new Promise((resolve) => {
+        let settled = false;
+        const finish = (ok) => {
+          if (settled) return;
+          settled = true;
+          calendarReconnectPromise = null;
+          resolve(ok);
+        };
+        silentReconnectResolvers.push(finish);
+        setTimeout(() => finish(gcalTokenIsFresh()), 8000);
+        try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
+      });
+      return calendarReconnectPromise;
+    }
+
+    function connectGoogleCalendar() {
+      if (!cloudReady) { alert("Cloud sync is unavailable right now (couldn't load Firebase)."); return; }
+      if (!cloudUser) { alert('Please sign in first (top right), then click Connect Calendar.'); return; }
+      const client = initGisTokenClient();
+      if (!client) { alert("Google's sign-in library hasn't finished loading yet — please wait a moment and try again."); return; }
+      client.requestAccessToken({ prompt: 'consent' });
+    }
+
+    async function gcalFetch(path, options) {
+      if (!gcalTokenIsFresh()) { setCalendarConnected(false); return null; }
+      let res;
+      try {
+        res = await fetch('https://www.googleapis.com/calendar/v3/' + path, Object.assign({
+          headers: Object.assign({
+            'Authorization': 'Bearer ' + gcalAccessToken,
+            'Content-Type': 'application/json',
+          }, (options && options.headers) || {}),
+        }, options || {}));
+      } catch (e) { console.warn('Calendar request failed:', e); return null; }
+      if (res.status === 401) { gcalAccessToken = null; setCalendarConnected(false); return null; }
+      return res;
+    }
+
+    async function findExistingJournalCalendarId() {
+      const res = await gcalFetch('users/me/calendarList?maxResults=250');
+      if (!res || !res.ok) return null;
+      const list = await res.json();
+      const items = (list && list.items) || [];
+      const matches = items.filter(c => (c.summaryOverride || c.summary) === GCAL_CALENDAR_NAME && c.accessRole === 'owner');
+      if (matches.length === 0) return null;
+      matches.sort((a, b) => a.id.localeCompare(b.id));
+      return matches[0].id;
+    }
+
+    let gcalCalendarIdVerifiedAt = 0;
+    async function calendarStillExists(id) {
+      if (!id) return false;
+      const res = await gcalFetch(`calendars/${encodeURIComponent(id)}`);
+      return !!(res && res.ok);
+    }
+
+    async function ensureJournalCalendarId() {
+      if (gcalCalendarId) {
+        if (Date.now() - gcalCalendarIdVerifiedAt < 5 * 60 * 1000) return gcalCalendarId;
+        if (await calendarStillExists(gcalCalendarId)) { gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId; }
+        gcalCalendarId = null;
+      }
+      if (gcalCreatingCalendar) return gcalCreatingCalendar;
+      gcalCreatingCalendar = (async () => {
+        try {
+          if (cloudUser) {
+            const ref = cloudDocRef();
+            if (ref) {
+              const doc = await ref.get();
+              const savedId = doc.exists && doc.data().settings && doc.data().settings.journalCalendarId;
+              if (savedId && await calendarStillExists(savedId)) {
+                gcalCalendarId = savedId;
+                gcalCalendarIdVerifiedAt = Date.now();
+                return gcalCalendarId;
+              }
+            }
+          }
+          const foundId = await findExistingJournalCalendarId();
+          if (foundId) {
+            gcalCalendarId = foundId;
+            gcalCalendarIdVerifiedAt = Date.now();
+            scheduleCloudPush();
+            return gcalCalendarId;
+          }
+          const res = await gcalFetch('calendars', {
+            method: 'POST',
+            body: JSON.stringify({
+              summary: GCAL_CALENDAR_NAME,
+              description: 'Auto-created by the Interstitial Journal app to log completed focus sessions.',
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            }),
+          });
+          if (!res || !res.ok) return null;
+          const created = await res.json();
+          gcalCalendarId = created.id;
+          gcalCalendarIdVerifiedAt = Date.now();
+          scheduleCloudPush();
+          return gcalCalendarId;
+        } finally { gcalCreatingCalendar = null; }
+      })();
+      return gcalCreatingCalendar;
+    }
+
+    async function consolidateJournalCalendars() {
+      if (!cloudUser) { alert('Please sign in first (top right).'); return; }
+      if (!gcalTokenIsFresh()) { alert('Please click Connect Calendar (or Reconnect) first, then try merging again.'); return; }
+      const listRes = await gcalFetch('users/me/calendarList?maxResults=250');
+      if (!listRes || !listRes.ok) { alert('Could not read your calendar list — please try again.'); return; }
+      const list = await listRes.json();
+      const items = (list && list.items) || [];
+      const dupes = items.filter(c => (c.summaryOverride || c.summary) === GCAL_CALENDAR_NAME && c.accessRole === 'owner');
+      if (dupes.length <= 1) { alert('No duplicate "Interstitial Journal" calendars found — nothing to merge.'); return; }
+      dupes.sort((a, b) => a.id.localeCompare(b.id));
+      const keepId = await ensureJournalCalendarId() || dupes[0].id;
+      const extras = dupes.filter(c => c.id !== keepId);
+      const confirmed = confirm(
+        `Found ${dupes.length} "Interstitial Journal" calendars.\n\n` +
+        `This will move every event from the other ${extras.length} into the one the app keeps using, then delete those now-empty duplicates.\n\nContinue?`
+      );
+      if (!confirmed) return;
+      let movedCount = 0;
+      for (const cal of extras) {
+        let pageToken = undefined;
+        do {
+          const q = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
+          const evRes = await gcalFetch(`calendars/${encodeURIComponent(cal.id)}/events?maxResults=250${q}`);
+          if (!evRes || !evRes.ok) break;
+          const evData = await evRes.json();
+          const events = (evData && evData.items) || [];
+          for (const ev of events) {
+            const moveRes = await gcalFetch(
+              `calendars/${encodeURIComponent(cal.id)}/events/${encodeURIComponent(ev.id)}/move?destination=${encodeURIComponent(keepId)}`,
+              { method: 'POST' }
+            );
+            if (moveRes && moveRes.ok) movedCount++;
+          }
+          pageToken = evData && evData.nextPageToken;
+        } while (pageToken);
+        await gcalFetch(`calendars/${encodeURIComponent(cal.id)}`, { method: 'DELETE' });
+      }
+      alert(`Done — moved ${movedCount} event(s) into one calendar and removed ${extras.length} duplicate(s).`);
+      backfillMissingCalendarEvents();
+    }
+
+    function gcalEventBody(entry) {
+      const start = new Date(entry.sessionStartedAt || entry.timestamp);
+      const end = new Date(start.getTime() + (entry.durationSec || 1500) * 1000);
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const title = entry.focus || entry.goal || 'Focus session';
+      // 🏁 = logged by Finish (a completed/ended timer session);
+      // 🗒️ = logged manually via "Log entry" (idle, or held from a
+      // counting session and flushed once Finish was hit).
+      const sourceIcon = entry.source === 'finish' ? '🏁' : '🗒️';
+      const bodyLines = [];
+      if (entry.goal) bodyLines.push(`Goal: ${entry.goal}`);
+      if (entry.text) bodyLines.push('', outlineToPlainText(entry.text));
+      return {
+        summary: `🍅 ${sourceIcon} ${title}`,
+        description: bodyLines.join('\n'),
+        start: { dateTime: start.toISOString(), timeZone: tz },
+        end: { dateTime: end.toISOString(), timeZone: tz },
+      };
+    }
+
+    let calendarSyncQueue = new Map();
+    function syncEntryToCalendar(entry, opts) {
+      if (!entry || entry.phase !== 'focus') return Promise.resolve();
+      const key = entry.uid || entry.id;
+      const prior = calendarSyncQueue.get(key) || Promise.resolve();
+      const next = prior.then(() => syncEntryToCalendarInner(entry, opts)).catch((e) => console.warn('Calendar sync error:', e));
+      calendarSyncQueue.set(key, next);
+      return next;
+    }
+
+    async function syncEntryToCalendarInner(entry, opts) {
+      const silent = !!(opts && opts.silent);
+      const onlyIfMissing = !!(opts && opts.onlyIfMissing);
+      if (!entry || entry.phase !== 'focus') return;
+      if (onlyIfMissing && entry.gcalEventId) return;
+      if (!gcalTokenIsFresh()) {
+        if (!silent) showCalToast('🔄 Reconnecting to Calendar…');
+        const reconnected = await ensureCalendarConnected();
+        if (!reconnected) {
+          if (!silent) showCalToast('⚠️ Calendar not connected — entry saved, but not sent', true);
+          return;
+        }
+      }
+      if (onlyIfMissing && entry.gcalEventId) return;
+      if (!silent) showCalToast('📤 Sending to Calendar…');
+      try {
+        const calendarId = await ensureJournalCalendarId();
+        if (!calendarId) { if (!silent) showCalToast('⚠️ Calendar sync failed', true); return; }
+        if (entry.gcalEventId) {
+          if (onlyIfMissing) return;
+          const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(entry.gcalEventId)}`, {
+            method: 'PATCH', body: JSON.stringify(gcalEventBody(entry)),
+          });
+          if (res && res.status === 404) { entry.gcalEventId = null; await syncEntryToCalendarInner(entry, opts); return; }
+          if (res && res.ok) { if (!silent) showCalToast('✅ Updated in Calendar'); }
+          else if (!silent) showCalToast('⚠️ Calendar sync failed', true);
+        } else {
+          const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events`, {
+            method: 'POST', body: JSON.stringify(gcalEventBody(entry)),
+          });
+          if (res && res.ok) {
+            const created = await res.json();
+            entry.gcalEventId = created.id;
+            scheduleCloudPush();
+            if (!silent) showCalToast('✅ Added to Calendar');
+          } else if (!silent) showCalToast('⚠️ Calendar sync failed', true);
+        }
+      } catch (e) {
+        console.warn('Calendar sync error:', e);
+        if (!silent) showCalToast('⚠️ Calendar sync failed', true);
+      }
+    }
+
+    async function deleteEntryFromCalendar(entry) {
+      if (!entry || entry.phase !== 'focus' || !entry.gcalEventId) return;
+      try {
+        const calendarId = await ensureJournalCalendarId();
+        if (!calendarId) return;
+        await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(entry.gcalEventId)}`, { method: 'DELETE' });
+      } catch (e) { console.warn('Calendar delete error:', e); }
+    }
+
+    async function backfillMissingCalendarEvents() {
+      // Skip entries still deliberately held back (durationSec null) —
+      // those belong to a focus session that hasn't been Finished yet, and
+      // should only ever be sent by flushPendingCalendarEntries().
+      const pending = entries.filter(e => !e.deleted && e.phase === 'focus' && !e.gcalEventId && e.durationSec != null);
+      for (const entry of pending) await syncEntryToCalendar(entry, { silent: true, onlyIfMissing: true });
+      if (pending.length > 0) showCalToast(`✅ Caught up ${pending.length} entrie(s) to Calendar`);
+    }
+
+    window.toggleCloudAuth = async function() {
+      if (!cloudReady) { alert("Cloud sync is unavailable right now (couldn't load Firebase). Check your connection and try again."); return; }
+      if (cloudUser) {
+        stopCloudListener();
+        gcalAccessToken = null;
+        setCalendarConnected(false);
+        await cloudAuth.signOut();
+      } else {
+        try {
+          const provider = new firebase.auth.GoogleAuthProvider();
+          await cloudAuth.signInWithPopup(provider);
+        } catch (e) {
+          if (e.code !== 'auth/popup-closed-by-user') alert('Sign-in failed: ' + e.message);
+        }
+      }
+    };
+
+    if (cloudReady) {
+      let lastCloudUid = null;
+      cloudAuth.onAuthStateChanged((user) => {
+        cloudUser = user;
+        const uid = user ? user.uid : null;
+        if (uid !== lastCloudUid) {
+          gcalAccessToken = null;
+          gcalTokenObtainedAt = 0;
+          gcalCalendarId = null;
+          gcalCalendarIdVerifiedAt = 0;
+          setCalendarConnected(false);
+          lastCloudUid = uid;
+        }
+        if (user) cloudReconcile();
+        else { stopCloudListener(); updateCloudUI(); }
+      });
+    }
+
+    // ---------- INIT ----------
+    function init() {
+      loadDatePreferences();
+      loadLocalSyncMirror();
+      loadEntries();
+      loadSessions();
+
+      const savedPrefs = loadDisplayPrefs();
+      currentPhase = 'focus';
+      cycleCount = cycleCount || 0;
+      setViewMode(savedPrefs && savedPrefs.viewMode ? savedPrefs.viewMode : 'digital', true);
+      setAnalogMode(savedPrefs && savedPrefs.analogMode ? savedPrefs.analogMode : '60min', true);
+      setClockMode(savedPrefs && savedPrefs.clockMode ? savedPrefs.clockMode : 'countdown', true);
+      setSoundEnabled(savedPrefs && typeof savedPrefs.soundEnabled === 'boolean' ? savedPrefs.soundEnabled : true, true);
+      setKeepAwakeEnabled(savedPrefs && typeof savedPrefs.keepAwakeEnabled === 'boolean' ? savedPrefs.keepAwakeEnabled : false, true);
+
+      updateComposerState();
+      updateSessionUI();
+
+      startBtn.addEventListener('click', startTimer);
+      pauseBtn.addEventListener('click', pauseTimer);
+      resetBtn.addEventListener('click', resetTimer);
+      finishBtn.addEventListener('click', finishSession);
+      abandonBtn.addEventListener('click', abandonSession);
+      soundToggleBtn.addEventListener('click', () => setSoundEnabled(!soundEnabled));
+      keepAwakeBtn.addEventListener('click', () => setKeepAwakeEnabled(!keepAwakeEnabled));
+      digitalViewBtn.addEventListener('click', () => setViewMode('digital'));
+      analogViewBtn.addEventListener('click', () => setViewMode('analog'));
+      analog60min.addEventListener('click', () => setAnalogMode('60min'));
+      analog25min.addEventListener('click', () => setAnalogMode('25min'));
+      countdownModeBtn.addEventListener('click', () => setClockMode('countdown'));
+      countupModeBtn.addEventListener('click', () => setClockMode('countup'));
+
+      settingsToggleBtn.addEventListener('click', () => {
+        const isOpen = settingsPanel.style.display !== 'none';
+        settingsPanel.style.display = isOpen ? 'none' : 'block';
+        settingsToggleArrow.textContent = isOpen ? '▾' : '▴';
+      });
+
+      [[focusDurationItem, 'focus'], [shortDurationItem, 'shortBreak'], [longDurationItem, 'longBreak']].forEach(([el, phase]) => {
+        el.addEventListener('click', (e) => {
+          if (e.target.tagName === 'INPUT') return;
+          selectPhase(phase);
+        });
+      });
+
+      [focusInput, shortInput, longInput].forEach(input => {
+        input.addEventListener('change', function() {
+          if (!isRunning && !isPaused) {
+            overtimeActive = false;
+            overtimeSeconds = 0;
+            const duration = getDurationFromPhase(currentPhase);
+            remainingSeconds = duration;
+            totalDurationSeconds = duration;
+            elapsedSeconds = 0;
+            updateDisplay();
+            if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+          }
+          scheduleCloudPush();
+        });
+      });
+
+      document.querySelectorAll('#settingsMinus5, #settingsPlus5, .mini-stepper-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const minutes = parseInt(btn.dataset.minutes, 10);
+          if (!isNaN(minutes)) adjustTime(minutes);
+        });
+      });
+
+      cloudAuthBtn.addEventListener('click', () => window.toggleCloudAuth());
+      if (gcalConnectBtn) gcalConnectBtn.addEventListener('click', () => connectGoogleCalendar());
+      if (gcalMergeBtn) gcalMergeBtn.addEventListener('click', () => consolidateJournalCalendars());
+      if (exportBackupBtn) exportBackupBtn.addEventListener('click', exportBackup);
+      if (importBackupBtn) importBackupBtn.addEventListener('click', () => importBackupFile.click());
+      if (importBackupFile) importBackupFile.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files[0]) importBackupFromFile(e.target.files[0]);
+        e.target.value = '';
+      });
+      if (restoreBackupBtn) restoreBackupBtn.addEventListener('click', restoreFromLocalBackup);
+
+      resetTimer();
+      updateDisplay();
+    }
+
+    init();
+  })();
+</script>
+</body>
+</html>
