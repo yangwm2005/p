@@ -297,6 +297,68 @@
             flex-shrink: 0;
         }
         .thread-reply-del:hover { color: #ef4444; }
+
+        /* ── Sub-thread (level 2) ── */
+        .sub-thread-toggle {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 0.72em;
+            color: #a5b4fc;
+            padding: 0 3px;
+            border-radius: 4px;
+            flex-shrink: 0;
+            line-height: 1.4;
+            transition: background .12s;
+        }
+        .sub-thread-toggle:hover { background: #eef0ff; color: #6e8efb; }
+        .sub-thread-toggle.has-subreplies { color: #818cf8; font-weight: 600; }
+        .sub-thread-panel {
+            display: none;
+            flex-direction: column;
+            gap: 1px;
+            margin: 2px 0 2px 18px;
+            padding-left: 8px;
+            border-left: 2px solid #e0e7ff;
+        }
+        .sub-thread-panel.open { display: flex; }
+        .sub-reply-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 5px;
+            background: #f8f8ff;
+            border-radius: 5px;
+            border: 1px solid #ede9fe;
+            font-size: 13px;
+        }
+        .sub-reply-text { flex: 1; font-size: 13px; color: #475569; }
+        .sub-reply-ts { font-size: 0.72em; color: #a5b4fc; flex-shrink: 0; white-space: nowrap; }
+        .sub-reply-del {
+            background: none; border: none; cursor: pointer;
+            color: #ddd6fe; font-size: 0.75em; padding: 0 2px; flex-shrink: 0;
+        }
+        .sub-reply-del:hover { color: #ef4444; }
+        .sub-input-row {
+            display: flex; gap: 3px; margin-top: 2px; align-items: center;
+            opacity: 0; pointer-events: none; transition: opacity .12s;
+        }
+        .sub-thread-panel.open:hover .sub-input-row,
+        .sub-input-row:focus-within { opacity: 1; pointer-events: all; }
+        .sub-input-row textarea {
+            flex: 1; min-width: 0; padding: 2px 8px;
+            border: 1px solid #c4b5fd; border-radius: 16px;
+            font-size: 0.76em; font-family: Arial, sans-serif;
+            resize: none; outline: none; height: 22px; line-height: 18px;
+            overflow: hidden; box-sizing: border-box;
+        }
+        .sub-input-row textarea:focus { border-color: #818cf8; }
+        .sub-input-row button {
+            padding: 0 8px; background: #818cf8; color: #fff;
+            border: none; border-radius: 14px; font-size: 0.74em;
+            cursor: pointer; flex-shrink: 0; height: 22px; white-space: nowrap;
+        }
+        .sub-input-row button:hover { background: #6366f1; }
         .thread-input-row {
             display: flex;
             gap: 4px;
@@ -476,9 +538,9 @@
         #fabTimestripe {
             position: fixed;
             z-index: 9999;
-            top: 50vh;
+            top: calc(50vh - 62px);
             left: 0; /* overridden by JS */
-            transform: translateY(-70px); /* sit above thread FAB */
+            transform: none;
             background: #5c6bc0;
             color: #fff;
             border: none;
@@ -486,13 +548,14 @@
             width: 40px;
             height: 40px;
             font-size: 18px;
-            cursor: pointer;
+            cursor: grab;
             box-shadow: 0 3px 10px rgba(0,0,0,.28);
             display: flex;
             align-items: center;
             justify-content: center;
             user-select: none;
             transition: background .15s, box-shadow .15s;
+            touch-action: none;
         }
         #fabTimestripe:hover { background: #3949ab; box-shadow: 0 5px 14px rgba(0,0,0,.32); }
 
@@ -860,8 +923,8 @@
 <button id="fabThreadToggle" title="Toggle all threads open / closed">💬</button>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260907: v25: 💬 Fixed — sending a subitem reply now scrolls the new row into view, so it's visible immediately instead of only after scrolling or typing the next one.<br>
-            20260730: v24: 📥 Paste now restores an item's subitems (thread replies) along with it — works for both the app clipboard (Copy → Paste in-app) and the system clipboard (pasting the copied text, including into another window/instance).<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260907: v26: 💬 Fixed — sending a subitem or sub-thread reply now scrolls the new row into view, so it's visible immediately instead of only after scrolling or typing the next one.<br>
+            20260730: v25: 📥 Paste now restores an item's subitems (thread replies, including nested level-2 sub-replies) along with it — works for both the app clipboard (Copy → Paste in-app) and the system clipboard (pasting the copied text elsewhere, including into another window/instance).<br>
 <!--        20260626: v24t: 📄 Save .txt button added to View modal footer next to 🖨️ Print — exports current view mode as a named .txt file.<br>
             20260622: v25s: Simplified view modal bar — removed redundant Copy button, keeping only 📄 Save .txt.<br>
             20260615: v25i: 4 view modes — ¶ Plain, ¶• Thread Bullets, • Msg Bullets, •• Full Bullets; shared _pvRenderParagraph for screen+print; no vertical lines in any mode.
@@ -1060,7 +1123,7 @@
                     let tsm = rest.match(/\s{2}@(.{4,8})$/);
                     let replyTs = tsm ? tsm[1].replace(/\r$/, '') : '';
                     let replyText = tsm ? rest.slice(0, rest.length - tsm[0].length).trim() : rest.trim();
-                    if (replyText) pendingReplies.push({ text: replyText, ts: replyTs });
+                    if (replyText) pendingReplies.push({ text: replyText, ts: replyTs, subreplies: [] });
                     return;
                 }
                 const match = line.match(/(  •|•) (\[H\]\s)?(.*?) \((\d+:\d+ [APM]{2})\)/);
@@ -1449,7 +1512,11 @@
             isHighlighted: msg.classList.contains("highlighted-yellow") || msg.classList.contains("highlighted-orange"),
             threadReplies: Array.from(msg.querySelectorAll('.thread-reply-row')).map(row => ({
                 text: row.querySelector('.thread-reply-text') ? row.querySelector('.thread-reply-text').textContent : '',
-                ts: row.querySelector('.thread-reply-ts') ? row.querySelector('.thread-reply-ts').textContent : ''
+                ts: row.querySelector('.thread-reply-ts') ? row.querySelector('.thread-reply-ts').textContent : '',
+                subreplies: Array.from(row.querySelectorAll('.sub-reply-row')).map(sr => ({
+                    text: sr.querySelector('.sub-reply-text') ? sr.querySelector('.sub-reply-text').textContent : '',
+                    ts: sr.querySelector('.sub-reply-ts') ? sr.querySelector('.sub-reply-ts').textContent : ''
+                }))
             }))
         }));
 
@@ -1469,7 +1536,14 @@
             msg.querySelectorAll('.thread-reply-row').forEach(row => {
                 let rt = row.querySelector('.thread-reply-text');
                 let rts = row.querySelector('.thread-reply-ts');
-                if (rt) lines.push("  ↳ " + rt.textContent + (rts && rts.textContent ? "  @" + rts.textContent : ""));
+                if (rt) {
+                    lines.push("  ↳ " + rt.textContent + (rts && rts.textContent ? "  @" + rts.textContent : ""));
+                    row.querySelectorAll('.sub-reply-row').forEach(sr => {
+                        let st = sr.querySelector('.sub-reply-text');
+                        let sts = sr.querySelector('.sub-reply-ts');
+                        if (st) lines.push("    ↳↳ " + st.textContent + (sts && sts.textContent ? "  @" + sts.textContent : ""));
+                    });
+                }
             });
             return lines.join("\n");
         }).join("\n");
@@ -1486,8 +1560,9 @@
             });
     }
 
-    // Attach thread replies (subitems) to a message that already has its (empty) thread panel.
-    // `replies` is an array of {text, ts} in the order they should appear.
+    // Attach thread replies (and their level-2 sub-replies) to a message that already
+    // has its (empty) thread panel — used by Paste to restore an item's subitems.
+    // `replies` is an array of {text, ts, subreplies: [{text, ts}, ...]}.
     function attachThreadReplies(msgEl, replies) {
         if (!replies || !replies.length) return;
         var inner = msgEl.querySelector('.thread-panel-inner');
@@ -1495,7 +1570,7 @@
         if (!inner) return;
         var inputRow = inner.querySelector('.thread-input-row');
 
-        function updateLabel() {
+        function updateToggleLabel() {
             var cnt = inner.querySelectorAll('.thread-reply-row').length;
             if (toggleBtn) {
                 toggleBtn.textContent = cnt ? '💬 ' + cnt : '💬';
@@ -1505,11 +1580,22 @@
 
         replies.forEach(function(r) {
             if (!r || !r.text) return;
+
             var row = document.createElement('div');
             row.className = 'thread-reply-row';
+            row.style.flexDirection = 'column';
+            row.style.alignItems = 'stretch';
+
+            var topBar = document.createElement('div');
+            topBar.style.cssText = 'display:flex;align-items:center;gap:4px;';
+
+            var subToggle = document.createElement('button');
+            subToggle.className = 'sub-thread-toggle';
+            subToggle.textContent = '↩';
+
             var rtSpan = document.createElement('span');
             rtSpan.className = 'thread-reply-text';
-            rtSpan.textContent = r.text;
+            rtSpan.textContent = r.text || '';
             var tsSpan = document.createElement('span');
             tsSpan.className = 'thread-reply-ts';
             tsSpan.textContent = r.ts || '';
@@ -1517,19 +1603,108 @@
             delBtn.className = 'thread-reply-del';
             delBtn.title = 'Delete reply';
             delBtn.textContent = '✕';
+
+            topBar.appendChild(subToggle);
+            topBar.appendChild(rtSpan);
+            topBar.appendChild(tsSpan);
+            topBar.appendChild(delBtn);
+            row.appendChild(topBar);
+
+            // ── sub-thread panel (level 2) ──
+            var subPanel = document.createElement('div');
+            subPanel.className = 'sub-thread-panel';
+
+            function updateSubToggleLabel() {
+                var cnt = subPanel.querySelectorAll('.sub-reply-row').length;
+                subToggle.textContent = cnt ? '↩' + cnt : '↩';
+                subToggle.classList.toggle('has-subreplies', cnt > 0);
+                subToggle.title = cnt ? (cnt + ' sub-repl' + (cnt !== 1 ? 'ies' : 'y') + ' — click to toggle') : 'Add sub-thread reply';
+            }
+
+            function addSubReplyRow(sText, sTs) {
+                var sRow = document.createElement('div');
+                sRow.className = 'sub-reply-row';
+                var sTxt = document.createElement('span');
+                sTxt.className = 'sub-reply-text';
+                sTxt.textContent = sText;
+                var sTs2 = document.createElement('span');
+                sTs2.className = 'sub-reply-ts';
+                sTs2.textContent = sTs || '';
+                var sDel = document.createElement('button');
+                sDel.className = 'sub-reply-del';
+                sDel.textContent = '✕';
+                sDel.onclick = function(e) {
+                    e.stopPropagation();
+                    sRow.parentNode && sRow.parentNode.removeChild(sRow);
+                    updateSubToggleLabel();
+                    autosaveTick();
+                };
+                sRow.appendChild(sTxt); sRow.appendChild(sTs2); sRow.appendChild(sDel);
+                var siRow = subPanel.querySelector('.sub-input-row');
+                subPanel.insertBefore(sRow, siRow);
+                updateSubToggleLabel();
+            }
+
+            var siRow = document.createElement('div');
+            siRow.className = 'sub-input-row';
+            var siTa = document.createElement('textarea');
+            siTa.placeholder = 'Sub-reply… (Enter to send)';
+            siTa.rows = 1;
+            siTa.addEventListener('input', function() {
+                siTa.style.height = 'auto';
+                siTa.style.height = Math.min(siTa.scrollHeight, 70) + 'px';
+            });
+            var siBtn = document.createElement('button');
+            siBtn.textContent = '↩ Send';
+            function doSendSubReply() {
+                var txt = siTa.value.trim();
+                if (!txt) return;
+                addSubReplyRow(txt, getCurrentTimeFmt ? getCurrentTimeFmt() : getCurrentTime());
+                siTa.value = ''; siTa.style.height = 'auto'; siTa.focus();
+                siTa.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                autosaveTick();
+            }
+            siBtn.onclick = function(e) { e.stopPropagation(); doSendSubReply(); };
+            siTa.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSendSubReply(); }
+            });
+            siRow.appendChild(siTa); siRow.appendChild(siBtn);
+            subPanel.appendChild(siRow);
+            row.appendChild(subPanel);
+
+            if (r.subreplies && r.subreplies.length) {
+                r.subreplies.forEach(function(sr) { addSubReplyRow(sr.text, sr.ts); });
+            }
+
+            subToggle.onclick = function(e) {
+                e.stopPropagation();
+                var isOpen = subPanel.classList.contains('open');
+                subPanel.classList.toggle('open', !isOpen);
+                if (!isOpen) { setTimeout(function() { siTa.focus(); }, 60); }
+                updateSubToggleLabel();
+            };
+            subPanel.addEventListener('focusout', function() {
+                setTimeout(function() {
+                    if (subPanel.contains(document.activeElement)) return;
+                    if (!subPanel.querySelectorAll('.sub-reply-row').length) {
+                        subPanel.classList.remove('open');
+                        updateSubToggleLabel();
+                    }
+                }, 150);
+            });
+            updateSubToggleLabel();
+
             delBtn.onclick = function(e) {
                 e.stopPropagation();
-                row.parentNode.removeChild(row);
-                updateLabel();
+                row.parentNode && row.parentNode.removeChild(row);
+                updateToggleLabel();
             };
-            row.appendChild(rtSpan);
-            row.appendChild(tsSpan);
-            row.appendChild(delBtn);
+
             if (inputRow) inner.insertBefore(row, inputRow);
             else inner.appendChild(row);
         });
 
-        updateLabel();
+        updateToggleLabel();
     }
 
     function pasteMessages() {
@@ -1590,14 +1765,22 @@
                         if (isSubchat) newMessage.classList.add("subchat");
                         if (isHighlighted) newMessage.classList.add("highlighted-yellow");
 
-                        // Collect any following "  ↳ text  @timestamp" lines as subitems (thread replies)
+                        // Collect any following "  ↳ text  @ts" reply lines, and any nested
+                        // "    ↳↳ text  @ts" sub-reply lines under each of them, as subitems.
                         const replies = [];
                         let j = i + 1;
                         while (j < lines.length) {
                             const replyMatch = lines[j].match(/^ {2}↳ (.*?)(?:  @(\d+:\d+ [APM]{2}))?$/);
                             if (!replyMatch) break;
-                            replies.push({ text: replyMatch[1], ts: replyMatch[2] || '' });
+                            const reply = { text: replyMatch[1], ts: replyMatch[2] || '', subreplies: [] };
                             j++;
+                            while (j < lines.length) {
+                                const subMatch = lines[j].match(/^ {4}↳↳ (.*?)(?:  @(\d+:\d+ [APM]{2}))?$/);
+                                if (!subMatch) break;
+                                reply.subreplies.push({ text: subMatch[1], ts: subMatch[2] || '' });
+                                j++;
+                            }
+                            replies.push(reply);
                         }
                         if (replies.length) attachThreadReplies(newMessage, replies);
                         i = j;
@@ -1737,7 +1920,13 @@
             var prefix = msgBullet ? (p.isSubchat ? '◦ ' : '• ') : '';
             out.push(indent + prefix + p.text);
             p.replies.forEach(function(r) {
-                out.push((p.isSubchat ? '        ' : '    ') + (thrBullet ? '• ' : '') + r);
+                var rText = (typeof r === 'string') ? r : r.text;
+                var rSubs = (typeof r === 'object' && r.subreplies) ? r.subreplies : [];
+                out.push((p.isSubchat ? '        ' : '    ') + (thrBullet ? '• ' : '') + rText);
+                rSubs.forEach(function(sr) {
+                    var srText = (typeof sr === 'string') ? sr : sr.text;
+                    out.push((p.isSubchat ? '          ' : '      ') + (thrBullet ? '↳ ' : '↳ ') + srText);
+                });
             });
             if (!p.isSubchat) out.push('');
         });
@@ -1763,7 +1952,13 @@
             var prefix = msgBullet ? (p.isSubchat ? '◦ ' : '• ') : '';
             out.push(indent + prefix + p.text);
             p.replies.forEach(function(r) {
-                out.push((p.isSubchat ? '        ' : '    ') + (thrBullet ? '• ' : '') + r);
+                var rText = (typeof r === 'string') ? r : r.text;
+                var rSubs = (typeof r === 'object' && r.subreplies) ? r.subreplies : [];
+                out.push((p.isSubchat ? '        ' : '    ') + (thrBullet ? '• ' : '') + rText);
+                rSubs.forEach(function(sr) {
+                    var srText = (typeof sr === 'string') ? sr : sr.text;
+                    out.push((p.isSubchat ? '          ' : '      ') + (thrBullet ? '↳ ' : '↳ ') + srText);
+                });
             });
             if (!p.isSubchat) out.push('');
         });
@@ -1819,17 +2014,32 @@
         }
         if (p.replies.length > 0) {
             var ri = p.isSubchat ? '44px' : '20px';
+            var sri = p.isSubchat ? '64px' : '36px';
             if (thrBullet) {
                 html += '<ul style="margin:3px 0 8px ' + ri + ';padding:0;list-style:none;">';
                 p.replies.forEach(function(r) {
+                    var rText = (typeof r === 'string') ? r : r.text;
+                    var rSubs = (typeof r === 'object' && r.subreplies) ? r.subreplies : [];
                     html += '<li style="display:flex;gap:7px;align-items:baseline;color:#546e7a;font-size:0.91em;margin:3px 0;">' +
                         '<span style="color:#9fa8da;flex-shrink:0;">•</span>' +
-                        '<span>' + safe(r) + '</span></li>';
+                        '<span>' + safe(rText) + '</span></li>';
+                    rSubs.forEach(function(sr) {
+                        var srText = (typeof sr === 'string') ? sr : sr.text;
+                        html += '<li style="display:flex;gap:7px;align-items:baseline;color:#78909c;font-size:0.84em;margin:2px 0 2px 18px;">' +
+                            '<span style="color:#c5cae9;flex-shrink:0;">↳</span>' +
+                            '<span>' + safe(srText) + '</span></li>';
+                    });
                 });
                 html += '</ul>';
             } else {
                 p.replies.forEach(function(r) {
-                    html += '<p style="margin:2px 0 2px ' + ri + ';color:#607d8b;font-size:0.91em;font-style:italic;">' + safe(r) + '</p>';
+                    var rText = (typeof r === 'string') ? r : r.text;
+                    var rSubs = (typeof r === 'object' && r.subreplies) ? r.subreplies : [];
+                    html += '<p style="margin:2px 0 2px ' + ri + ';color:#607d8b;font-size:0.91em;font-style:italic;">' + safe(rText) + '</p>';
+                    rSubs.forEach(function(sr) {
+                        var srText = (typeof sr === 'string') ? sr : sr.text;
+                        html += '<p style="margin:1px 0 1px ' + sri + ';color:#90a4ae;font-size:0.84em;font-style:italic;">↳ ' + safe(srText) + '</p>';
+                    });
                 });
                 html += '<div style="height:4px;"></div>';
             }
@@ -1859,8 +2069,10 @@
         var mc = document.getElementById('pv-msg-count');
         if (mc) {
             var rc = paragraphs.reduce(function(n,p){ return n+p.replies.length; },0);
+            var src = paragraphs.reduce(function(n,p){ return n+p.replies.reduce(function(m,r){ return m+((typeof r==='object'&&r.subreplies)?r.subreplies.length:0); },0); },0);
             mc.textContent = paragraphs.length + ' msg' + (paragraphs.length!==1?'s':'') +
-                (rc ? ' · ' + rc + ' repl' + (rc!==1?'ies':'y') : '');
+                (rc ? ' · ' + rc + ' repl' + (rc!==1?'ies':'y') : '') +
+                (src ? ' · ' + src + ' sub-repl' + (src!==1?'ies':'y') : '');
         }
         var html = '';
         paragraphs.forEach(function(p,i){ html += _pvRenderParagraph(p,i,paragraphs,mode); });
@@ -1930,7 +2142,13 @@
             let replies = [];
             div.querySelectorAll('.thread-reply-row').forEach(row => {
                 let rt = row.querySelector('.thread-reply-text');
-                if (rt && rt.textContent.trim()) replies.push(rt.textContent.trim());
+                if (!rt || !rt.textContent.trim()) return;
+                let subreplies = [];
+                row.querySelectorAll('.sub-reply-row').forEach(sr => {
+                    let st = sr.querySelector('.sub-reply-text');
+                    if (st && st.textContent.trim()) subreplies.push(st.textContent.trim());
+                });
+                replies.push({ text: rt.textContent.trim(), subreplies: subreplies });
             });
             paragraphs.push({ text: messageText, isSubchat, replies });
         });
@@ -1970,8 +2188,19 @@
                 var inner = lastMsg.querySelector('.thread-panel-inner');
                 if (inner) {
                     pendingReplies.forEach(function(r) {
+                        // Build row with sub-thread panel
                         var row = document.createElement('div');
                         row.className = 'thread-reply-row';
+                        row.style.flexDirection = 'column';
+                        row.style.alignItems = 'stretch';
+
+                        var topBar = document.createElement('div');
+                        topBar.style.cssText = 'display:flex;align-items:center;gap:4px;';
+
+                        var subTog = document.createElement('button');
+                        subTog.className = 'sub-thread-toggle';
+                        subTog.textContent = '↳';
+
                         var rt = document.createElement('span');
                         rt.className = 'thread-reply-text';
                         rt.textContent = r.text;
@@ -1981,21 +2210,56 @@
                         var btn = document.createElement('button');
                         btn.className = 'thread-reply-del';
                         btn.textContent = '✕';
-                        (function(capMsg, capInner, capRow) {
-                            btn.onclick = function(e) {
+
+                        topBar.appendChild(subTog); topBar.appendChild(rt);
+                        topBar.appendChild(rts); topBar.appendChild(btn);
+                        row.appendChild(topBar);
+
+                        var subP = document.createElement('div');
+                        subP.className = 'sub-thread-panel';
+
+                        (function(subPanel, subToggle, capMsg, capInner, capRow) {
+                            function updSub() {
+                                var c = subPanel.querySelectorAll('.sub-reply-row').length;
+                                subToggle.textContent = c ? '↳'+c : '↳';
+                                subToggle.classList.toggle('has-subreplies', c > 0);
+                            }
+                            function addSR(sText, sTs) {
+                                var sr = document.createElement('div'); sr.className = 'sub-reply-row';
+                                var st = document.createElement('span'); st.className = 'sub-reply-text'; st.textContent = sText;
+                                var ss = document.createElement('span'); ss.className = 'sub-reply-ts'; ss.textContent = sTs||'';
+                                var sd = document.createElement('button'); sd.className = 'sub-reply-del'; sd.textContent = '✕';
+                                sd.onclick = function(e){e.stopPropagation();sr.parentNode&&sr.parentNode.removeChild(sr);updSub();};
+                                sr.appendChild(st);sr.appendChild(ss);sr.appendChild(sd);
+                                var si=subPanel.querySelector('.sub-input-row'); subPanel.insertBefore(sr,si); updSub();
+                            }
+                            var siR=document.createElement('div'); siR.className='sub-input-row';
+                            var siT=document.createElement('textarea'); siT.placeholder='Sub-reply…'; siT.rows=1;
+                            siT.addEventListener('input',function(){siT.style.height='auto';siT.style.height=Math.min(siT.scrollHeight,70)+'px';});
+                            var siB=document.createElement('button'); siB.textContent='↳ Send';
+                            function doSub(){var t=siT.value.trim();if(!t)return;addSR(t,getCurrentTimeFmt?getCurrentTimeFmt():getCurrentTime());siT.value='';siT.style.height='auto';siT.focus();siT.scrollIntoView({behavior:'smooth',block:'nearest'});autosaveTick();}
+                            siB.onclick=function(e){e.stopPropagation();doSub();};
+                            siT.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();doSub();}});
+                            siR.appendChild(siT);siR.appendChild(siB);
+                            subPanel.appendChild(siR);
+
+                            if (r.subreplies && r.subreplies.length) {
+                                r.subreplies.forEach(function(sr){addSR(sr.text,sr.ts);});
+                            }
+
+                            subToggle.onclick=function(e){e.stopPropagation();subPanel.classList.toggle('open');if(subPanel.classList.contains('open')){setTimeout(function(){siTa3&&siTa3.focus();},60);}updSub();};
+                            subPanel.addEventListener('focusout',function(){setTimeout(function(){if(subPanel.contains(document.activeElement))return;if(!subPanel.querySelectorAll('.sub-reply-row').length){subPanel.classList.remove('open');updSub();}},150);});
+                            updSub();
+                            capRow.appendChild(subPanel);
+
+                            btn.onclick=function(e){
                                 e.stopPropagation();
-                                capRow.parentNode && capRow.parentNode.removeChild(capRow);
-                                var tb = capMsg.querySelector('.thread-toggle-btn');
-                                if (tb) {
-                                    var n = capInner.querySelectorAll('.thread-reply-row').length;
-                                    tb.textContent = n ? '💬 ' + n : '💬';
-                                    tb.classList.toggle('has-replies', n > 0);
-                                }
+                                capRow.parentNode&&capRow.parentNode.removeChild(capRow);
+                                var tb=capMsg.querySelector('.thread-toggle-btn');
+                                if(tb){var n=capInner.querySelectorAll('.thread-reply-row').length;tb.textContent=n?'💬 '+n:'💬';tb.classList.toggle('has-replies',n>0);}
                             };
-                        })(lastMsg, inner, row);
-                        row.appendChild(rt);
-                        row.appendChild(rts);
-                        row.appendChild(btn);
+                        })(subP, subTog, lastMsg, inner, row);
+
                         var inputRow = inner.querySelector('.thread-input-row');
                         inner.insertBefore(row, inputRow);
                     });
@@ -2014,6 +2278,21 @@
         // Parse from line 2 if title was on line 0 (skip blank line 1), else from line 0
         var startLine = (!isMessageLine && firstLine.length > 0) ? 2 : 0;
         lines.slice(startLine).forEach(function(line) {
+            // Sub-reply line (level 2): "    ↳↳ text  @timestamp"
+            if (/^    \u21b3\u21b3 /.test(line)) {
+                if (pendingReplies.length > 0) {
+                    var last = pendingReplies[pendingReplies.length - 1];
+                    var subRest = line.slice(6);
+                    var subTsm = subRest.match(/  @(.{1,12})$/);
+                    var subTs  = subTsm ? subTsm[1].replace(/\r$/, '') : '';
+                    var subTxt = subTsm ? subRest.slice(0, subRest.length - subTsm[0].length).trim() : subRest.trim();
+                    if (subTxt) {
+                        if (!last.subreplies) last.subreplies = [];
+                        last.subreplies.push({ text: subTxt, ts: subTs });
+                    }
+                }
+                return;
+            }
             // Thread reply line: "  ↳ text  @timestamp"
             if (/^  \u21b3 /.test(line)) {
                 var rest  = line.slice(4);
@@ -2134,7 +2413,13 @@
             replies.forEach(function(row) {
                 var rt = row.querySelector('.thread-reply-text');
                 var rts = row.querySelector('.thread-reply-ts');
-                if (rt) html += '<div class="thread-line"><span>' + rt.textContent + '</span>' + (rts ? ' <small>' + rts.textContent + '</small>' : '') + '</div>';
+                if (!rt) return;
+                html += '<div class="thread-line"><span>' + rt.textContent + '</span>' + (rts ? ' <small>' + rts.textContent + '</small>' : '') + '</div>';
+                row.querySelectorAll('.sub-reply-row').forEach(function(sr) {
+                    var st = sr.querySelector('.sub-reply-text');
+                    var sts = sr.querySelector('.sub-reply-ts');
+                    if (st) html += '<div class="sub-thread-line"><span style="color:#9fa8da;margin-right:4px;">↳</span><span>' + st.textContent + '</span>' + (sts ? ' <small>' + sts.textContent + '</small>' : '') + '</div>';
+                });
             });
             return html;
         } else {
@@ -2142,7 +2427,14 @@
             replies.forEach(function(row) {
                 var rt = row.querySelector('.thread-reply-text');
                 var rts = row.querySelector('.thread-reply-ts');
-                if (rt) lines.push('    ↳ ' + rt.textContent + (rts ? '  @' + rts.textContent : ''));
+                if (rt) {
+                    lines.push('    ↳ ' + rt.textContent + (rts ? '  @' + rts.textContent : ''));
+                    row.querySelectorAll('.sub-reply-row').forEach(function(sr) {
+                        var st = sr.querySelector('.sub-reply-text');
+                        var sts = sr.querySelector('.sub-reply-ts');
+                        if (st) lines.push('      ↳↳ ' + st.textContent + (sts ? '  @' + sts.textContent : ''));
+                    });
+                }
             });
             return lines;
         }
@@ -2254,6 +2546,8 @@ function openChatInNewWindow() {
                 .msg-threads { margin-top: 3px; padding-left: 12px; border-left: 2px solid #3b5bdb; }
                 .thread-line { font-size: 0.88em; color: #444; padding: 1px 0; }
                 .thread-line small { color: #999; }
+                .sub-thread-line { font-size: 0.82em; color: #78909c; padding: 1px 0 1px 16px; }
+                .sub-thread-line small { color: #bbb; }
             </style>
         </head>
         <body>
@@ -2317,6 +2611,8 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
                 .msg-threads { margin-top: 3px; padding-left: 12px; border-left: 2px solid #3b5bdb; }
                 .thread-line { font-size: 0.88em; color: #444; padding: 1px 0; }
                 .thread-line small { color: #999; }
+                .sub-thread-line { font-size: 0.82em; color: #78909c; padding: 1px 0 1px 16px; }
+                .sub-thread-line small { color: #bbb; }
                 </style>
             </head>
             <body>
@@ -2553,6 +2849,8 @@ function openChatInNewWindow5() {
                 }
                 .thread-line::before { content: "↳"; color: #5c7cfa; flex-shrink: 0; }
                 .thread-line small { color: #aaa; font-size: 0.85em; margin-left: auto; white-space: nowrap; }
+                .sub-thread-line { display:flex; align-items:baseline; gap:4px; font-size: 0.82em; color: #78909c; padding: 1px 0 1px 16px; }
+                .sub-thread-line small { color: #aaa; font-size: 0.85em; margin-left: auto; white-space: nowrap; }
             </style>
         </head>
         <body>
@@ -2591,7 +2889,11 @@ function openChatInNewWindow7() {
         if (replyRows.length) {
             let replyItems = Array.from(replyRows).map(row => {
                 let rt = row.querySelector('.thread-reply-text');
-                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? rt.textContent : ''}</span></div>`;
+                let subRows = Array.from(row.querySelectorAll('.sub-reply-row')).map(sr => {
+                    let st = sr.querySelector('.sub-reply-text');
+                    return `<div class="sub-reply-row"><span style="color:#c5cae9;margin-right:4px;">↳</span><span class="sub-reply-text">${st ? st.textContent : ''}</span></div>`;
+                }).join('');
+                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? rt.textContent : ''}</span></div>${subRows}`;
             }).join('');
             threadHtml = `<div class="thread-panel"><div class="thread-panel-inner">${replyItems}</div></div>`;
         }
@@ -2623,6 +2925,7 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
 .thread-panel-inner { border-left: 2px solid #c7d2fe; padding-left: 8px; display: flex; flex-direction: column; gap: 2px; }
 .thread-reply-row { display: flex; align-items: center; gap: 4px; padding: 3px 6px; background: #fff; border-radius: 6px; border: 1px solid #e0e7ff; }
 .thread-reply-text { flex: 1; font-size: 13px; color: #334155; line-height: 1.35; word-break: break-word; }
+.sub-reply-row { display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 18px; }
 </style>
 </head>
 <body>
@@ -2656,14 +2959,19 @@ function openChatInNewWindow6() {
         let messageContent = textSpan.innerHTML;
         let ts = timestamp ? timestamp.textContent : '';
 
-        // Collect thread replies
+        // Collect thread replies + sub-replies
         let threadHtml = '';
         let replyRows = div.querySelectorAll('.thread-reply-row');
         if (replyRows.length) {
             let replyItems = Array.from(replyRows).map(row => {
                 let rt = row.querySelector('.thread-reply-text');
                 let rts = row.querySelector('.thread-reply-ts');
-                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? rt.textContent : ''}</span><span class="thread-reply-ts">${rts ? rts.textContent : ''}</span></div>`;
+                let subRows = Array.from(row.querySelectorAll('.sub-reply-row')).map(sr => {
+                    let st = sr.querySelector('.sub-reply-text');
+                    let sts = sr.querySelector('.sub-reply-ts');
+                    return `<div class="sub-reply-row"><span style="color:#c5cae9;margin-right:4px;font-size:0.82em;">↳</span><span class="sub-reply-text" style="font-size:0.82em;color:#78909c;">${st ? st.textContent : ''}</span><span class="thread-reply-ts" style="font-size:0.72em;">${sts ? sts.textContent : ''}</span></div>`;
+                }).join('');
+                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? rt.textContent : ''}</span><span class="thread-reply-ts">${rts ? rts.textContent : ''}</span></div>${subRows}`;
             }).join('');
             threadHtml = `<div class="thread-panel"><div class="thread-panel-inner">${replyItems}</div></div>`;
         }
@@ -2701,6 +3009,7 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
 .thread-reply-row { display: flex; align-items: center; gap: 4px; padding: 3px 6px; background: #fff; border-radius: 6px; border: 1px solid #e0e7ff; }
 .thread-reply-text { flex: 1; font-size: 13px; color: #334155; line-height: 1.35; word-break: break-word; }
 .thread-reply-ts { font-size: .78em; color: #94a3b8; white-space: nowrap; flex-shrink: 0; }
+.sub-reply-row { display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 18px; }
 </style>
 </head>
 <body>
@@ -3183,7 +3492,15 @@ function getChatContent() {
         div.querySelectorAll('.thread-reply-row').forEach(row => {
             let rt = row.querySelector('.thread-reply-text');
             let rts = row.querySelector('.thread-reply-ts');
-            if (rt) lines.push("  ↳ " + rt.textContent + "  @" + (rts ? rts.textContent : ''));
+            if (rt) {
+                lines.push("  ↳ " + rt.textContent + "  @" + (rts ? rts.textContent : ''));
+                // sub-replies (level 2)
+                row.querySelectorAll('.sub-reply-row').forEach(sr => {
+                    let st = sr.querySelector('.sub-reply-text');
+                    let sts = sr.querySelector('.sub-reply-ts');
+                    if (st) lines.push("    ↳↳ " + st.textContent + "  @" + (sts ? sts.textContent : ''));
+                });
+            }
         });
     });
     return lines.length > 0 ? chatTitle + "\n\n" + lines.join("\n") : "";
@@ -3818,9 +4135,21 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         };
 
-        function addReplyRow(text, ts) {
+        function addReplyRow(text, ts, subreplies) {
             var row = document.createElement('div');
             row.className = 'thread-reply-row';
+            row.style.flexDirection = 'column';
+            row.style.alignItems = 'stretch';
+
+            // ── top bar: sub-toggle + text + ts + del ──
+            var topBar = document.createElement('div');
+            topBar.style.cssText = 'display:flex;align-items:center;gap:4px;';
+
+            var subToggle = document.createElement('button');
+            subToggle.className = 'sub-thread-toggle';
+            subToggle.title = 'Open sub-thread';
+            subToggle.textContent = '↩';
+
             var rtSpan = document.createElement('span');
             rtSpan.className = 'thread-reply-text';
             rtSpan.textContent = text;
@@ -3836,13 +4165,110 @@ document.addEventListener("DOMContentLoaded", function() {
                 row.parentNode.removeChild(row);
                 updateToggleLabel();
             };
-            row.appendChild(rtSpan);
-            row.appendChild(tsSpan);
-            row.appendChild(delBtn);
+            topBar.appendChild(subToggle);
+            topBar.appendChild(rtSpan);
+            topBar.appendChild(tsSpan);
+            topBar.appendChild(delBtn);
+            row.appendChild(topBar);
+
+            // ── sub-thread panel (level 2) ──
+            var subPanel = document.createElement('div');
+            subPanel.className = 'sub-thread-panel';
+
+            function updateSubToggleLabel() {
+                var cnt = subPanel.querySelectorAll('.sub-reply-row').length;
+                subToggle.textContent = cnt ? '↩' + cnt : '↩';
+                subToggle.classList.toggle('has-subreplies', cnt > 0);
+                subToggle.title = cnt ? (cnt + ' sub-repl' + (cnt>1?'ies':'y') + ' — click to toggle') : 'Add sub-thread reply';
+            }
+
+            function addSubReplyRow(sText, sTs) {
+                var sRow = document.createElement('div');
+                sRow.className = 'sub-reply-row';
+                var sTxt = document.createElement('span');
+                sTxt.className = 'sub-reply-text';
+                sTxt.textContent = sText;
+                var sTs2 = document.createElement('span');
+                sTs2.className = 'sub-reply-ts';
+                sTs2.textContent = sTs || '';
+                var sDel = document.createElement('button');
+                sDel.className = 'sub-reply-del';
+                sDel.textContent = '✕';
+                sDel.onclick = function(e) {
+                    e.stopPropagation();
+                    sRow.parentNode && sRow.parentNode.removeChild(sRow);
+                    updateSubToggleLabel();
+                    autosaveTick();
+                };
+                sRow.appendChild(sTxt); sRow.appendChild(sTs2); sRow.appendChild(sDel);
+                var siRow = subPanel.querySelector('.sub-input-row');
+                subPanel.insertBefore(sRow, siRow);
+                updateSubToggleLabel();
+            }
+
+            // sub-input row
+            var siRow = document.createElement('div');
+            siRow.className = 'sub-input-row';
+            var siTa = document.createElement('textarea');
+            siTa.placeholder = 'Sub-reply… (Enter to send)';
+            siTa.rows = 1;
+            siTa.addEventListener('input', function() {
+                siTa.style.height = 'auto';
+                siTa.style.height = Math.min(siTa.scrollHeight, 70) + 'px';
+            });
+            var siBtn = document.createElement('button');
+            siBtn.textContent = '↩ Send';
+            function doSendSubReply() {
+                var txt = siTa.value.trim();
+                if (!txt) return;
+                addSubReplyRow(txt, getCurrentTimeFmt ? getCurrentTimeFmt() : getCurrentTime());
+                siTa.value = ''; siTa.style.height = 'auto'; siTa.focus();
+                siTa.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                autosaveTick();
+            }
+            siBtn.onclick = function(e) { e.stopPropagation(); doSendSubReply(); };
+            siTa.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSendSubReply(); }
+            });
+            siRow.appendChild(siTa); siRow.appendChild(siBtn);
+            subPanel.appendChild(siRow);
+            row.appendChild(subPanel);
+
+            // populate existing sub-replies (from restore/import)
+            if (subreplies && subreplies.length) {
+                subreplies.forEach(function(sr) { addSubReplyRow(sr.text, sr.ts); });
+            }
+
+            subToggle.onclick = function(e) {
+                e.stopPropagation();
+                var isOpen = subPanel.classList.contains('open');
+                subPanel.classList.toggle('open', !isOpen);
+                if (!isOpen) {
+                    setTimeout(function() { siTa.focus(); }, 60);
+                }
+                updateSubToggleLabel();
+            };
+
+            // Auto-close when focus leaves and there are no sub-replies
+            subPanel.addEventListener('focusout', function() {
+                setTimeout(function() {
+                    if (subPanel.contains(document.activeElement)) return;
+                    var hasSubs = subPanel.querySelectorAll('.sub-reply-row').length > 0;
+                    if (!hasSubs) {
+                        subPanel.classList.remove('open');
+                        updateSubToggleLabel();
+                    }
+                }, 150);
+            });
+
+            updateSubToggleLabel();
+
             // insert before the input row
             var inputRow = inner.querySelector('.thread-input-row');
             inner.insertBefore(row, inputRow);
             updateToggleLabel();
+
+            return { addSubReplyRow: addSubReplyRow }; // expose for external restore
         }
 
         // Input row
@@ -4125,7 +4551,14 @@ function cmSerializeChat() {
         div.querySelectorAll('.thread-reply-row').forEach(function(row) {
             var rt  = row.querySelector('.thread-reply-text');
             var rts = row.querySelector('.thread-reply-ts');
-            if (rt) replies.push({ text: rt.textContent, ts: rts ? rts.textContent : '' });
+            if (!rt) return;
+            var subreplies = [];
+            row.querySelectorAll('.sub-reply-row').forEach(function(sr) {
+                var st = sr.querySelector('.sub-reply-text');
+                var sts = sr.querySelector('.sub-reply-ts');
+                if (st) subreplies.push({ text: st.textContent, ts: sts ? sts.textContent : '' });
+            });
+            replies.push({ text: rt.textContent, ts: rts ? rts.textContent : '', subreplies: subreplies });
         });
         var threadPanel = div.querySelector('.thread-panel');
         msgs.push({
@@ -4157,41 +4590,158 @@ function cmRestoreChat(data) {
             var inner = msgEl.querySelector('.thread-panel-inner');
             var toggleBtn = msgEl.querySelector('.thread-toggle-btn');
             if (inner) {
-                m.replies.forEach(function(r) {
-                    var row = document.createElement('div');
-                    row.className = 'thread-reply-row';
-                    var rtSpan = document.createElement('span');
-                    rtSpan.className = 'thread-reply-text';
-                    rtSpan.textContent = r.text || '';
-                    var tsSpan = document.createElement('span');
-                    tsSpan.className = 'thread-reply-ts';
-                    tsSpan.textContent = r.ts || '';
-                    var delBtn = document.createElement('button');
-                    delBtn.className = 'thread-reply-del';
-                    delBtn.title = 'Delete reply';
-                    delBtn.textContent = '✕';
-                    delBtn.onclick = function(e) {
-                        e.stopPropagation();
-                        row.parentNode && row.parentNode.removeChild(row);
-                        // update badge
-                        var cnt = inner.querySelectorAll('.thread-reply-row').length;
-                        if (toggleBtn) {
-                            toggleBtn.textContent = cnt ? '💬 ' + cnt : '💬';
-                            toggleBtn.classList.toggle('has-replies', cnt > 0);
+                // Use a temporary dummy msgEl to call addThreadPanel's addReplyRow via DOM trick:
+                // We find the thread-panel-inner's context by re-building inline (same as addThreadPanel does)
+                // Instead, we call the helper via the panel's own addReplyRow by invoking addThreadPanel again
+                // Cleanest: call inner's own thread context by reconstructing with addReplyRow directly
+                // Since addReplyRow is closure-scoped, we invoke it via a helper on the existing panel
+                var tp = msgEl.querySelector('.thread-panel');
+                if (tp && tp._addReplyRow) {
+                    // panel already has helper attached
+                    m.replies.forEach(function(r) {
+                        tp._addReplyRow(r.text || '', r.ts || '', r.subreplies || []);
+                    });
+                } else {
+                    // Fallback: rebuild rows manually with sub-reply support
+                    m.replies.forEach(function(r) {
+                        var row = document.createElement('div');
+                        row.className = 'thread-reply-row';
+                        row.style.flexDirection = 'column';
+                        row.style.alignItems = 'stretch';
+
+                        var topBar = document.createElement('div');
+                        topBar.style.cssText = 'display:flex;align-items:center;gap:4px;';
+
+                        var subToggle = document.createElement('button');
+                        subToggle.className = 'sub-thread-toggle';
+                        subToggle.textContent = '↩';
+
+                        var rtSpan = document.createElement('span');
+                        rtSpan.className = 'thread-reply-text';
+                        rtSpan.textContent = r.text || '';
+                        var tsSpan = document.createElement('span');
+                        tsSpan.className = 'thread-reply-ts';
+                        tsSpan.textContent = r.ts || '';
+                        var delBtn = document.createElement('button');
+                        delBtn.className = 'thread-reply-del';
+                        delBtn.title = 'Delete reply';
+                        delBtn.textContent = '✕';
+
+                        topBar.appendChild(subToggle);
+                        topBar.appendChild(rtSpan);
+                        topBar.appendChild(tsSpan);
+                        topBar.appendChild(delBtn);
+                        row.appendChild(topBar);
+
+                        var subPanel = document.createElement('div');
+                        subPanel.className = 'sub-thread-panel';
+
+                        function makeSubUpdater(st, sp) {
+                            return function() {
+                                var cnt = sp.querySelectorAll('.sub-reply-row').length;
+                                st.textContent = cnt ? '↩' + cnt : '↩';
+                                st.classList.toggle('has-subreplies', cnt > 0);
+                            };
                         }
-                    };
-                    row.appendChild(rtSpan);
-                    row.appendChild(tsSpan);
-                    row.appendChild(delBtn);
-                    // insert before the input row
-                    var inputRow = inner.querySelector('.thread-input-row');
-                    inner.insertBefore(row, inputRow);
-                });
-                // Update badge count
-                var cnt = inner.querySelectorAll('.thread-reply-row').length;
-                if (toggleBtn) {
-                    toggleBtn.textContent = cnt ? '💬 ' + cnt : '💬';
-                    toggleBtn.classList.toggle('has-replies', cnt > 0);
+                        var updSubLabel = makeSubUpdater(subToggle, subPanel);
+
+                        function makeSubReplyAdder(sp, upd) {
+                            return function(sText, sTs) {
+                                var sRow = document.createElement('div');
+                                sRow.className = 'sub-reply-row';
+                                var sTxt = document.createElement('span');
+                                sTxt.className = 'sub-reply-text';
+                                sTxt.textContent = sText;
+                                var sTs2 = document.createElement('span');
+                                sTs2.className = 'sub-reply-ts';
+                                sTs2.textContent = sTs || '';
+                                var sDel = document.createElement('button');
+                                sDel.className = 'sub-reply-del';
+                                sDel.textContent = '✕';
+                                sDel.onclick = function(e) {
+                                    e.stopPropagation();
+                                    sRow.parentNode && sRow.parentNode.removeChild(sRow);
+                                    upd();
+                                };
+                                sRow.appendChild(sTxt); sRow.appendChild(sTs2); sRow.appendChild(sDel);
+                                var siRow = sp.querySelector('.sub-input-row');
+                                sp.insertBefore(sRow, siRow);
+                                upd();
+                            };
+                        }
+                        var addSubRow = makeSubReplyAdder(subPanel, updSubLabel);
+
+                        var siRow2 = document.createElement('div');
+                        siRow2.className = 'sub-input-row';
+                        var siTa2 = document.createElement('textarea');
+                        siTa2.placeholder = 'Sub-reply… (Enter to send)';
+                        siTa2.rows = 1;
+                        siTa2.addEventListener('input', function() {
+                            siTa2.style.height = 'auto';
+                            siTa2.style.height = Math.min(siTa2.scrollHeight, 70) + 'px';
+                        });
+                        var siBtn2 = document.createElement('button');
+                        siBtn2.textContent = '↩ Send';
+                        (function(sta, sib, asp) {
+                            function doSub() {
+                                var t = sta.value.trim(); if (!t) return;
+                                asp(t, getCurrentTimeFmt ? getCurrentTimeFmt() : getCurrentTime());
+                                sta.value = ''; sta.style.height = 'auto'; sta.focus();
+                                sta.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                autosaveTick();
+                            }
+                            sib.onclick = function(e) { e.stopPropagation(); doSub(); };
+                            sta.addEventListener('keydown', function(e) {
+                                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSub(); }
+                            });
+                        })(siTa2, siBtn2, addSubRow);
+                        siRow2.appendChild(siTa2); siRow2.appendChild(siBtn2);
+                        subPanel.appendChild(siRow2);
+
+                        if (r.subreplies && r.subreplies.length) {
+                            r.subreplies.forEach(function(sr) { addSubRow(sr.text, sr.ts); });
+                        }
+
+                        subToggle.onclick = (function(sp, st, ula) {
+                            return function(e) {
+                                e.stopPropagation();
+                                sp.classList.toggle('open');
+                                if (sp.classList.contains('open')) { setTimeout(function(){ var ta=sp.querySelector('textarea'); if(ta)ta.focus(); }, 60); }
+                                ula();
+                            };
+                        })(subPanel, subToggle, updSubLabel);
+                        (function(sp, ula) {
+                            sp.addEventListener('focusout', function() {
+                                setTimeout(function() {
+                                    if (sp.contains(document.activeElement)) return;
+                                    if (!sp.querySelectorAll('.sub-reply-row').length) {
+                                        sp.classList.remove('open'); ula();
+                                    }
+                                }, 150);
+                            });
+                        })(subPanel, updSubLabel);
+                        updSubLabel();
+
+                        row.appendChild(subPanel);
+
+                        var cnt2 = inner.querySelectorAll('.thread-reply-row').length;
+                        delBtn.onclick = (function(rw, upd2, tb2) {
+                            return function(e) {
+                                e.stopPropagation();
+                                rw.parentNode && rw.parentNode.removeChild(rw);
+                                var c = inner.querySelectorAll('.thread-reply-row').length;
+                                if (tb2) { tb2.textContent = c ? '💬 ' + c : '💬'; tb2.classList.toggle('has-replies', c > 0); }
+                            };
+                        })(row, updSubLabel, toggleBtn);
+
+                        var inputRow = inner.querySelector('.thread-input-row');
+                        inner.insertBefore(row, inputRow);
+                    });
+                    var cnt = inner.querySelectorAll('.thread-reply-row').length;
+                    if (toggleBtn) {
+                        toggleBtn.textContent = cnt ? '💬 ' + cnt : '💬';
+                        toggleBtn.classList.toggle('has-replies', cnt > 0);
+                    }
                 }
             }
         }
@@ -4370,6 +4920,7 @@ function cmDuplicateChat(id) {
 }
 
 // ── Render sidebar ────────────────────────────────────────
+// ── Week-group helper ────────────────────────────────────
 // ── Sort mode (persisted) ────────────────────────────────
 var _sortMode = localStorage.getItem('sc_sort_mode') || 'week';
 
@@ -4383,6 +4934,7 @@ function setSortMode(mode) {
     renderSidebar();
 }
 
+// Init active button state on load
 (function() {
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() { setSortMode(_sortMode); });
@@ -4418,7 +4970,9 @@ function _weekLabel(key) {
     var mon = new Date(jan4);
     mon.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
     var sun = new Date(mon); sun.setDate(mon.getDate() + 6);
-    var fmt = function(dt) { return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
+    var fmt = function(dt) {
+        return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    };
     var thisKey = _weekKey(Date.now());
     var lastKey = _weekKey(Date.now() - 7 * 86400000);
     if (key === thisKey) return 'This week';
@@ -4430,7 +4984,8 @@ function _renderChatItem(chat, current, el) {
     var item = document.createElement('div');
     item.className = 'chat-list-item' + (chat.id === current ? ' active' : '');
     item.title = chat.title;
-    var syncDot = localStorage.getItem('sc_sync_' + chat.id) === '1' ? '<span class="cli-sync">●</span>' : '';
+    var syncDot = localStorage.getItem('sc_sync_' + chat.id) === '1'
+        ? '<span class="cli-sync">●</span>' : '';
     item.innerHTML =
         syncDot +
         '<span class="cli-name">' + escHtml(chat.title) + '</span>' +
@@ -4457,7 +5012,6 @@ function renderSidebar() {
     if (!el) return;
     el.innerHTML = '';
 
-    // Apply search filter
     if (_chatSearchQ) {
         list = list.filter(function(c) {
             return (c.title || '').toLowerCase().indexOf(_chatSearchQ) !== -1;
@@ -4474,6 +5028,7 @@ function renderSidebar() {
     var mode = _sortMode || 'week';
 
     if (mode === 'week') {
+        // ── Group by creation week, newest first ──
         var sorted = list.slice().sort(function(a, b) {
             return (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0);
         });
@@ -4489,11 +5044,12 @@ function renderSidebar() {
         });
 
     } else if (mode === 'updated') {
+        // ── Sort by last-updated, group by Today / Yesterday / This week / Last week / Older ──
         var sorted = list.slice().sort(function(a, b) {
             return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
         });
-        var now = new Date();
-        var sod = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        var now   = new Date();
+        var sod   = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(); // start of today
         var groups = [
             { label: 'Today',     chats: [], test: function(ts) { return ts >= sod; } },
             { label: 'Yesterday', chats: [], test: function(ts) { return ts >= sod - 86400000 && ts < sod; } },
@@ -4514,6 +5070,7 @@ function renderSidebar() {
         });
 
     } else if (mode === 'name') {
+        // ── Sort alphabetically, group by first letter ──
         var sorted = list.slice().sort(function(a, b) {
             return (a.title || '').toLowerCase().localeCompare((b.title || '').toLowerCase());
         });
@@ -4579,7 +5136,6 @@ function toggleAllThreads() {
             var x = (cr.right - fab.offsetWidth / 2) + 'px';
             fab.style.left  = x;
             fab.style.right = 'auto';
-            // Keep Timestripe FAB aligned to same X
             var ts = document.getElementById('fabTimestripe');
             if (ts) { ts.style.left = x; ts.style.right = 'auto'; }
         }
@@ -4655,6 +5211,46 @@ function toggleAllThreads() {
         initFab();
     }
 })();
+// ── Close empty open sub-thread panels on outside click ──
+document.addEventListener('mousedown', function(e) {
+    document.querySelectorAll('.sub-thread-panel.open').forEach(function(sp) {
+        // If the click is inside this panel or on its toggle button, leave it alone
+        var toggleBtn = sp.closest('.thread-reply-row') && sp.closest('.thread-reply-row').querySelector('.sub-thread-toggle');
+        if (sp.contains(e.target) || (toggleBtn && toggleBtn.contains(e.target))) return;
+        // Only auto-close if there are no sub-replies
+        if (!sp.querySelectorAll('.sub-reply-row').length) {
+            sp.classList.remove('open');
+            if (toggleBtn) { toggleBtn.textContent = '↩'; toggleBtn.classList.remove('has-subreplies'); }
+        }
+    });
+});
+
+// ── Timestripe FAB: independent vertical drag ────────────
+(function() {
+    var TS_POS_KEY = 'sc_fab_ts_pos';
+    function initTsFab() {
+        var ts = document.getElementById('fabTimestripe');
+        if (!ts) return;
+        try {
+            var saved = JSON.parse(localStorage.getItem(TS_POS_KEY));
+            if (saved && saved.y !== undefined) { ts.style.top = saved.y + 'px'; }
+        } catch(e) {}
+        if (window._fabPinX) window._fabPinX();
+        var dragging = false, startY, origTop, moved;
+        function onStart(cy) { dragging=true; moved=false; origTop=ts.getBoundingClientRect().top; ts.style.top=origTop+'px'; startY=cy; ts.style.cursor='grabbing'; }
+        function onMove(cy) { if(!dragging) return; var dy=cy-startY; if(Math.abs(dy)>3) moved=true; ts.style.top=Math.max(0,Math.min(window.innerHeight-ts.offsetHeight,origTop+dy))+'px'; if(window._fabPinX) window._fabPinX(); }
+        function onEnd() { if(!dragging) return; dragging=false; ts.style.cursor='grab'; localStorage.setItem(TS_POS_KEY,JSON.stringify({y:parseFloat(ts.style.top)})); if(!moved) window.open('https://timestripe.com/horizons/','_blank','width=1000,height=700,resizable=yes,scrollbars=yes'); }
+        ts.addEventListener('mousedown', function(e){e.preventDefault();onStart(e.clientY);});
+        document.addEventListener('mousemove', function(e){onMove(e.clientY);});
+        document.addEventListener('mouseup', function(){onEnd();});
+        ts.addEventListener('touchstart', function(e){onStart(e.touches[0].clientY);},{passive:true});
+        ts.addEventListener('touchmove',  function(e){onMove(e.touches[0].clientY);}, {passive:true});
+        ts.addEventListener('touchend',   function(){onEnd();});
+        ts.removeAttribute('onclick');
+    }
+    if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',initTsFab); } else { initTsFab(); }
+})();
+
 // ── Hook autosaveTick to also save to localStorage list ───
 (function() {
     var _orig = window.autosaveTick;
@@ -4831,78 +5427,45 @@ function scParseDoc(data, chatId) {
 // ── Load all chats from Firestore, merge with localStorage ─
 function scLoadFromCloud() {
     if (!scUser) return;
-
-    // Step 1: fetch tombstones first, then fetch chats
-    var tRef = scTombstoneRef();
-    var tombstonePromise = tRef
-        ? tRef.get().then(function(doc) { return doc.exists ? (doc.data() || {}) : {}; })
-              .catch(function() { return {}; })
-        : Promise.resolve({});
-
-    tombstonePromise.then(function(tombstones) {
-        return scDb.collection('users').doc(scUser.uid)
-            .collection('selfchat').get()
-            .then(function(snapshot) {
-                if (snapshot.empty) {
-                    // First sign-in: push local chats up to cloud (skip tombstoned)
-                    var localList = cmLoad().filter(function(c) {
-                        return !tombstones[c.id] || (c.createdAt || 0) > tombstones[c.id];
-                    });
-                    cmSave(localList);
-                    localList.forEach(function(c) { scPushChat(c.id); scListenChat(c.id); });
-                    scUpdateAuthUI();
-                    renderSidebar();
-                    return;
-                }
-
-                var cloudChats = [];
-                snapshot.forEach(function(doc) { cloudChats.push(scParseDoc(doc.data(), doc.id)); });
-
-                // Merge cloud + local (newer timestamp wins),
-                // but exclude any chat that has a tombstone newer than its creation time
-                var merged = {};
-                cmLoad().forEach(function(c) {
-                    var deletedAt = tombstones[c.id] || 0;
-                    if (!deletedAt || (c.createdAt || 0) > deletedAt) {
-                        merged[c.id] = c;
-                    }
-                });
-                cloudChats.forEach(function(c) {
-                    var deletedAt = tombstones[c.id] || 0;
-                    if (deletedAt && (c.createdAt || 0) <= deletedAt) return; // skip tombstoned
-                    var localTs = merged[c.id] ? (merged[c.id].updatedAt || 0) : 0;
-                    if (!merged[c.id] || (c.updatedAt || 0) >= localTs) {
-                        merged[c.id] = c;
-                    }
-                });
-
-                var mergedList = Object.values(merged).sort(function(a,b) {
-                    return (b.updatedAt||0) - (a.updatedAt||0);
-                });
-                cmSave(mergedList);
-
-                // If the active chat was deleted on another device, switch away
-                if (_windowChatId && tombstones[_windowChatId]) {
-                    _windowChatId = null;
-                    if (mergedList.length > 0) {
-                        cmSetCurrent(mergedList[0].id);
-                        cmRestoreChat(mergedList[0]);
-                    } else {
-                        document.getElementById('chatBox').innerHTML = '';
-                        document.getElementById('chatTitle').textContent = 'Untitled';
-                    }
-                } else {
-                    var curChat = mergedList.find(function(c) { return c.id === _windowChatId; });
-                    if (curChat) cmRestoreChat(curChat);
-                }
-
-                renderSidebar();
+    scDb.collection('users').doc(scUser.uid)
+        .collection('selfchat').get()
+        .then(function(snapshot) {
+            if (snapshot.empty) {
+                // First sign-in: push local chats up to cloud
+                cmLoad().forEach(function(c) { scPushChat(c.id); });
+                cmLoad().forEach(function(c) { scListenChat(c.id); });
                 scUpdateAuthUI();
+                return;
+            }
+            var cloudChats = [];
+            snapshot.forEach(function(doc) { cloudChats.push(scParseDoc(doc.data(), doc.id)); });
 
-                // Start listeners for all surviving chats
-                mergedList.forEach(function(c) { scListenChat(c.id); });
+            // Merge cloud + local (newer timestamp wins)
+            var merged = {};
+            cmLoad().forEach(function(c) { merged[c.id] = c; });
+            cloudChats.forEach(function(c) {
+                var localTs = merged[c.id] ? (merged[c.id].updatedAt || 0) : 0;
+                if (!merged[c.id] || (c.updatedAt || 0) >= localTs) {
+                    merged[c.id] = c;
+                }
             });
-    }).catch(function(e) { console.warn('Selfchat cloud load error:', e); });
+
+            var mergedList = Object.values(merged).sort(function(a,b) {
+                return (b.updatedAt||0) - (a.updatedAt||0);
+            });
+            cmSave(mergedList);
+
+            // Refresh current window's active chat if updated
+            var curChat = mergedList.find(function(c) { return c.id === _windowChatId; });
+            if (curChat) cmRestoreChat(curChat);
+
+            renderSidebar();
+            scUpdateAuthUI();
+
+            // Start listeners for all chats
+            mergedList.forEach(function(c) { scListenChat(c.id); });
+        })
+        .catch(function(e) { console.warn('Selfchat cloud load error:', e); });
 }
 
 // ── Real-time listener for one chat ──────────────────────
@@ -4940,27 +5503,13 @@ function scStopAllListeners() {
     scLastPushTs = {};
 }
 
-// ── Tombstone ref (tracks deleted chat IDs across devices) ──
-function scTombstoneRef() {
-    if (!scUser) return null;
-    return scDb.collection('users').doc(scUser.uid)
-               .collection('selfchat_meta').doc('tombstones');
-}
-
-// ── Delete chat from Firestore + write tombstone ──────────
+// ── Delete chat from Firestore too ────────────────────────
 function scDeleteChat(chatId) {
     if (!scUser) return;
     var ref = scChatRef(chatId);
     if (!ref) return;
     if (scListeners[chatId]) { scListeners[chatId](); delete scListeners[chatId]; }
     ref.delete().catch(function(e) { console.warn('Selfchat delete error:', e); });
-
-    // Record deletion tombstone so other devices know to remove this chat
-    var tRef = scTombstoneRef();
-    if (tRef) {
-        tRef.set({ [chatId]: Date.now() }, { merge: true })
-            .catch(function(e) { console.warn('Selfchat tombstone write error:', e); });
-    }
 }
 
 // ── Auth UI ───────────────────────────────────────────────
@@ -5342,9 +5891,11 @@ document.addEventListener('DOMContentLoaded', function() { scUpdateAuthUI(); });
 // ===================================================================
 // Google Calendar — send the current Paragraph View (whole chat, in
 // whichever mode — Plain or any of the Bullets modes — is active) to
-// a dedicated "Selfchat" calendar, as ONE event per send:
+// a dedicated "Selfchat" calendar, as ONE event per send. Uses the
+// SAME calendar name as the other Selfchat build, so events from
+// either file land in the same Google Calendar:
 //   • Whole-day event → asks which day (Today / Created day / Pick a
-//     date), same as the previous [[jots-app]] design
+//     date), same as the [[jots-app]] design
 //   • Timed event → uses this chat's own creation date & time
 //     directly (no extra prompt), with a 30-minute default duration
 // Uses its own Google OAuth token (Calendar scope) on top of the
