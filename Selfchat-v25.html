@@ -8,6 +8,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <!-- Google Identity Services (for Calendar OAuth token, separate from Firebase sign-in) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -861,6 +863,10 @@
     <div id="chatList"></div>
     <div id="sidebarFooter">
         <div id="scUserLabel">Not signed in</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:11px;color:#94a3b8;">
+            <span id="gcalSyncStatus">📅 Calendar: not connected</span>
+            <button type="button" id="gcalConnectBtn" style="background:none;border:none;color:#5c6bc0;text-decoration:underline;cursor:pointer;font-size:11px;padding:0;">Connect</button>
+        </div>
     </div>
 </div>
 <div class="chat-container">
@@ -5733,7 +5739,480 @@ document.addEventListener('DOMContentLoaded', function() { scUpdateAuthUI(); });
                 style="background:#1565c0;color:white;border:none;border-radius:7px;padding:7px 18px;cursor:pointer;font-size:13px;font-weight:500;">
                 📄 Save .txt
             </button>
+            <button onclick="openCalEventTypeModal()" id="paragraph-cal-btn"
+                style="background:#2e7d32;color:white;border:none;border-radius:7px;padding:7px 18px;cursor:pointer;font-size:13px;font-weight:500;">
+                📅 Calendar
+            </button>
             <span style="margin-left:auto;font-size:11px;color:#9fa8da;" id="pv-msg-count"></span>
         </div>
     </div>
 </div>
+
+<!-- Calendar toast -->
+<div class="cal-toast" id="calToast"></div>
+
+<!-- Calendar: step 1 — event type -->
+<div class="cal-modal-backdrop hidden" id="calTypeModalBackdrop">
+    <div class="cal-modal">
+        <div class="cal-modal-title">📅 Send to Calendar</div>
+        <div class="cal-modal-text" id="calTypeModalNoteText"></div>
+        <button type="button" class="cal-opt-btn" id="calTypeAllDayBtn">🗓️ Whole-day event</button>
+        <button type="button" class="cal-opt-btn" id="calTypeTimedBtn">🕐 Timed event (created date &amp; time)</button>
+        <button type="button" class="cal-cancel-btn" id="calTypeCancelBtn">Cancel</button>
+    </div>
+</div>
+
+<!-- Calendar: step 2 — which day (whole-day events only) -->
+<div class="cal-modal-backdrop hidden" id="calDateModalBackdrop">
+    <div class="cal-modal">
+        <div class="cal-modal-title">🗓️ Which day?</div>
+        <button type="button" class="cal-opt-btn" id="calDateTodayBtn">Today</button>
+        <button type="button" class="cal-opt-btn" id="calDateCreatedBtn">Created day</button>
+        <div class="cal-date-pick-row">
+            <input type="date" id="calDatePickInput">
+            <button type="button" class="cal-opt-btn" id="calDatePickBtn">Use date</button>
+        </div>
+        <button type="button" class="cal-cancel-btn" id="calDateBackBtn">← Back</button>
+    </div>
+</div>
+
+<style>
+/* ===================================================================
+   Google Calendar: toast + event-type/date-choice modals
+   =================================================================== */
+.cal-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%) translateY(8px);
+    background: #1e293b;
+    color: #f8fafc;
+    padding: 0.55rem 1.1rem;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    z-index: 2100;
+    opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    pointer-events: none;
+    max-width: 90vw;
+    text-align: center;
+}
+.cal-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.cal-toast.error { background: #b91c1c; }
+
+.cal-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2200;
+    padding: 16px;
+}
+.cal-modal-backdrop.hidden { display: none; }
+.cal-modal {
+    background: #fff;
+    border-radius: 20px;
+    padding: 22px 22px 18px;
+    max-width: 360px;
+    width: 100%;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+}
+.cal-modal-title {
+    font-weight: 600;
+    font-size: 1.05rem;
+    color: #1e293b;
+    margin-bottom: 6px;
+}
+.cal-modal-text {
+    font-size: 0.85rem;
+    color: #64748b;
+    margin-bottom: 16px;
+    max-height: 90px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    line-height: 1.4;
+}
+.cal-opt-btn {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: #f1f5f9;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    color: #1e293b;
+    cursor: pointer;
+    margin-bottom: 8px;
+    transition: background 0.15s, border-color 0.15s;
+}
+.cal-opt-btn:hover { background: #e2e8f0; border-color: #cbd5e1; }
+.cal-date-pick-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.cal-date-pick-row input[type="date"] {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 10px;
+    border-radius: 12px;
+    border: 1.5px solid #e2e8f0;
+    font-family: inherit;
+    font-size: 0.88rem;
+    color: #1e293b;
+}
+.cal-date-pick-row .cal-opt-btn {
+    width: auto;
+    margin-bottom: 0;
+    flex-shrink: 0;
+}
+.cal-cancel-btn {
+    display: block;
+    width: 100%;
+    text-align: center;
+    background: none;
+    border: none;
+    padding: 8px;
+    font-size: 0.85rem;
+    font-family: inherit;
+    color: #94a3b8;
+    cursor: pointer;
+    margin-top: 4px;
+}
+.cal-cancel-btn:hover { color: #475569; }
+</style>
+
+<script>
+// ===================================================================
+// Google Calendar — send the current Paragraph View (whole chat, in
+// whichever mode — Plain or any of the Bullets modes — is active) to
+// a dedicated "Selfchat" calendar, as ONE event per send. Uses the
+// SAME calendar name as the other Selfchat build, so events from
+// either file land in the same Google Calendar:
+//   • Whole-day event → asks which day (Today / Created day / Pick a
+//     date), same as the [[jots-app]] design
+//   • Timed event → uses this chat's own creation date & time
+//     directly (no extra prompt), with a 30-minute default duration
+// Uses its own Google OAuth token (Calendar scope) on top of the
+// existing Firebase sign-in — same pattern as the rest of the app
+// suite. Shares the suite's OAuth client ID, so if this file is
+// hosted at a different origin than the other apps, that origin
+// needs adding to the client's "Authorized JavaScript origins" in
+// Google Cloud Console.
+// ===================================================================
+const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar';
+const GCAL_CALENDAR_NAME = 'Selfchat';
+const GCAL_CLIENT_ID = '663058774385-0209ekni5vchpbf9mr3rkofd369hrhr3.apps.googleusercontent.com';
+let gcalAccessToken = null;
+let gcalTokenObtainedAt = 0;
+let gcalCalendarId = null;
+let gcalCreatingCalendar = null;
+let gcalCalendarIdVerifiedAt = 0;
+let gisTokenClient = null;
+let calendarReconnectPromise = null;
+let silentReconnectResolvers = [];
+
+const gcalSyncStatus = document.getElementById('gcalSyncStatus');
+const gcalConnectBtn = document.getElementById('gcalConnectBtn');
+const calToast = document.getElementById('calToast');
+const calTypeModalBackdrop = document.getElementById('calTypeModalBackdrop');
+const calTypeModalNoteText = document.getElementById('calTypeModalNoteText');
+const calTypeAllDayBtn = document.getElementById('calTypeAllDayBtn');
+const calTypeTimedBtn = document.getElementById('calTypeTimedBtn');
+const calTypeCancelBtn = document.getElementById('calTypeCancelBtn');
+const calDateModalBackdrop = document.getElementById('calDateModalBackdrop');
+const calDateTodayBtn = document.getElementById('calDateTodayBtn');
+const calDateCreatedBtn = document.getElementById('calDateCreatedBtn');
+const calDatePickInput = document.getElementById('calDatePickInput');
+const calDatePickBtn = document.getElementById('calDatePickBtn');
+const calDateBackBtn = document.getElementById('calDateBackBtn');
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function ymd(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+
+function gcalTokenIsFresh() {
+    return !!gcalAccessToken && (Date.now() - gcalTokenObtainedAt) < 50 * 60 * 1000;
+}
+function setCalendarConnected(connected) {
+    if (gcalSyncStatus) gcalSyncStatus.textContent = connected ? '📅 Calendar: connected' : '📅 Calendar: not connected';
+    if (gcalConnectBtn) gcalConnectBtn.textContent = connected ? 'Reconnect' : 'Connect';
+}
+function showCalToast(message, isError) {
+    if (!calToast) return;
+    calToast.textContent = message;
+    calToast.classList.toggle('error', !!isError);
+    calToast.classList.add('show');
+    clearTimeout(showCalToast._t);
+    showCalToast._t = setTimeout(() => calToast.classList.remove('show'), 2600);
+}
+
+function initGisTokenClient() {
+    if (gisTokenClient) return gisTokenClient;
+    if (!window.google || !google.accounts || !google.accounts.oauth2) return null;
+    gisTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GCAL_CLIENT_ID,
+        scope: GCAL_SCOPE,
+        callback: (tokenResponse) => {
+            const resolvers = silentReconnectResolvers.splice(0);
+            if (tokenResponse && tokenResponse.access_token) {
+                gcalAccessToken = tokenResponse.access_token;
+                gcalTokenObtainedAt = Date.now();
+                setCalendarConnected(true);
+                resolvers.forEach(fn => fn(true));
+            } else {
+                setCalendarConnected(false);
+                resolvers.forEach(fn => fn(false));
+                if (resolvers.length === 0) showCalToast('⚠️ Calendar connection failed', true);
+            }
+        },
+        error_callback: (err) => {
+            const resolvers = silentReconnectResolvers.splice(0);
+            resolvers.forEach(fn => fn(false));
+            if (err && (err.type === 'popup_closed' || err.type === 'popup_failed_to_open')) return;
+            console.warn('GIS token error:', err);
+            if (resolvers.length === 0) showCalToast('⚠️ Calendar connection failed', true);
+        },
+    });
+    return gisTokenClient;
+}
+
+function ensureCalendarConnected() {
+    if (gcalTokenIsFresh()) return Promise.resolve(true);
+    if (!scUser) return Promise.resolve(false);
+    if (calendarReconnectPromise) return calendarReconnectPromise;
+    const client = initGisTokenClient();
+    if (!client) return Promise.resolve(false);
+    calendarReconnectPromise = new Promise((resolve) => {
+        let settled = false;
+        const finish = (ok) => {
+            if (settled) return;
+            settled = true;
+            calendarReconnectPromise = null;
+            resolve(ok);
+        };
+        silentReconnectResolvers.push(finish);
+        setTimeout(() => finish(gcalTokenIsFresh()), 8000);
+        try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
+    });
+    return calendarReconnectPromise;
+}
+
+if (gcalConnectBtn) {
+    gcalConnectBtn.addEventListener('click', () => {
+        if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
+        const client = initGisTokenClient();
+        if (!client) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+        client.requestAccessToken({ prompt: 'consent' });
+    });
+}
+
+async function gcalFetch(path, options) {
+    if (!gcalTokenIsFresh()) { setCalendarConnected(false); return null; }
+    let res;
+    try {
+        res = await fetch('https://www.googleapis.com/calendar/v3/' + path, Object.assign({
+            headers: Object.assign({
+                'Authorization': 'Bearer ' + gcalAccessToken,
+                'Content-Type': 'application/json',
+            }, (options && options.headers) || {}),
+        }, options || {}));
+    } catch (e) { console.warn('Calendar request failed:', e); return null; }
+    if (res.status === 401) { gcalAccessToken = null; setCalendarConnected(false); return null; }
+    return res;
+}
+
+async function findExistingSelfchatCalendarId() {
+    const res = await gcalFetch('users/me/calendarList?maxResults=250');
+    if (!res || !res.ok) return null;
+    const list = await res.json();
+    const items = (list && list.items) || [];
+    const matches = items.filter(c => (c.summaryOverride || c.summary) === GCAL_CALENDAR_NAME && c.accessRole === 'owner');
+    if (matches.length === 0) return null;
+    matches.sort((a, b) => a.id.localeCompare(b.id));
+    return matches[0].id;
+}
+async function calendarStillExists(id) {
+    if (!id) return false;
+    const res = await gcalFetch(`calendars/${encodeURIComponent(id)}`);
+    return !!(res && res.ok);
+}
+function selfchatSettingsDocRef() {
+    if (!scUser) return null;
+    return scDb.collection('users').doc(scUser.uid)
+               .collection('selfchat_meta').doc('settings');
+}
+async function ensureSelfchatCalendarId() {
+    if (gcalCalendarId) {
+        if (Date.now() - gcalCalendarIdVerifiedAt < 5 * 60 * 1000) return gcalCalendarId;
+        if (await calendarStillExists(gcalCalendarId)) { gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId; }
+        gcalCalendarId = null;
+    }
+    if (gcalCreatingCalendar) return gcalCreatingCalendar;
+    gcalCreatingCalendar = (async () => {
+        try {
+            const ref = selfchatSettingsDocRef();
+            if (ref) {
+                const doc = await ref.get();
+                const savedId = doc.exists && doc.data().calendarId;
+                if (savedId && await calendarStillExists(savedId)) {
+                    gcalCalendarId = savedId;
+                    gcalCalendarIdVerifiedAt = Date.now();
+                    return gcalCalendarId;
+                }
+            }
+            const foundId = await findExistingSelfchatCalendarId();
+            if (foundId) {
+                gcalCalendarId = foundId;
+                gcalCalendarIdVerifiedAt = Date.now();
+                if (ref) ref.set({ calendarId: foundId }, { merge: true }).catch(() => {});
+                return gcalCalendarId;
+            }
+            const res = await gcalFetch('calendars', {
+                method: 'POST',
+                body: JSON.stringify({
+                    summary: GCAL_CALENDAR_NAME,
+                    description: 'Auto-created by the Selfchat app to hold chats sent from it as calendar events.',
+                    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                }),
+            });
+            if (!res || !res.ok) return null;
+            const created = await res.json();
+            gcalCalendarId = created.id;
+            gcalCalendarIdVerifiedAt = Date.now();
+            if (ref) ref.set({ calendarId: created.id }, { merge: true }).catch(() => {});
+            return gcalCalendarId;
+        } finally { gcalCreatingCalendar = null; }
+    })();
+    return gcalCreatingCalendar;
+}
+
+// Builds the event description from the current Paragraph View data,
+// respecting whichever mode (Plain / Thread Bullets / Msg Bullets /
+// Full Bullets) is currently selected — same formatting logic as
+// copyParagraphView()/saveTxtParagraphView().
+function buildCalDescriptionText() {
+    var paragraphs = buildParagraphData();
+    var mode      = _paragraphViewMode;
+    var msgBullet = (mode === 'msg-bullets' || mode === 'full-bullets');
+    var thrBullet = (mode === 'plain-bullets' || mode === 'full-bullets');
+    var out = [];
+    paragraphs.forEach(function(p) {
+        var indent = p.isSubchat ? '    ' : '';
+        var prefix = msgBullet ? (p.isSubchat ? '◦ ' : '• ') : '';
+        out.push(indent + prefix + p.text);
+        p.replies.forEach(function(r) {
+            var rText = (typeof r === 'string') ? r : r.text;
+            var rSubs = (typeof r === 'object' && r.subreplies) ? r.subreplies : [];
+            out.push((p.isSubchat ? '        ' : '    ') + (thrBullet ? '• ' : '') + rText);
+            rSubs.forEach(function(sr) {
+                var srText = (typeof sr === 'string') ? sr : sr.text;
+                out.push((p.isSubchat ? '          ' : '      ') + '↳ ' + srText);
+            });
+        });
+        if (!p.isSubchat) out.push('');
+    });
+    while (out.length && out[out.length - 1] === '') out.pop();
+    return out.join('\n');
+}
+function getCurrentChatCreatedAt() {
+    var id = (typeof cmCurrentId === 'function') ? cmCurrentId() : null;
+    var list = (typeof cmLoad === 'function') ? cmLoad() : [];
+    var chat = list.find(function(c) { return c.id === id; });
+    return new Date((chat && chat.createdAt) || Date.now());
+}
+
+async function sendCalEvent(eventBody) {
+    if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
+    showCalToast('📤 Sending to Calendar…');
+    const connected = await ensureCalendarConnected();
+    if (!connected) { showCalToast('⚠️ Calendar not connected — click Connect first', true); return; }
+    const calendarId = await ensureSelfchatCalendarId();
+    if (!calendarId) { showCalToast('⚠️ Calendar sync failed', true); return; }
+    try {
+        const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events`, {
+            method: 'POST',
+            body: JSON.stringify(eventBody),
+        });
+        if (res && res.ok) showCalToast('✅ Added to Calendar');
+        else showCalToast('⚠️ Calendar sync failed', true);
+    } catch (e) {
+        console.warn('Send to calendar failed:', e);
+        showCalToast('⚠️ Calendar sync failed', true);
+    }
+}
+
+function sendCalAllDay(dateStr) {
+    var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
+    var nextDay = new Date(dateStr + 'T00:00:00');
+    nextDay.setDate(nextDay.getDate() + 1);
+    var nextDayStr = ymd(nextDay);
+    sendCalEvent({
+        summary: title,
+        description: buildCalDescriptionText(),
+        start: { date: dateStr },
+        end: { date: nextDayStr },
+    });
+}
+function sendCalTimed() {
+    var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
+    var start = getCurrentChatCreatedAt();
+    var end = new Date(start.getTime() + 30 * 60 * 1000); // 30-min default duration
+    var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    sendCalEvent({
+        summary: title,
+        description: buildCalDescriptionText(),
+        start: { dateTime: start.toISOString(), timeZone: tz },
+        end: { dateTime: end.toISOString(), timeZone: tz },
+    });
+}
+
+// ---- modal flow: step 1 (event type) → step 2 (which day, all-day only) ----
+function openCalEventTypeModal() {
+    if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
+    var title = document.getElementById('chatTitle').textContent.trim();
+    calTypeModalNoteText.textContent = title || '(untitled chat)';
+    calTypeModalBackdrop.classList.remove('hidden');
+}
+function closeCalEventTypeModal() { calTypeModalBackdrop.classList.add('hidden'); }
+function closeCalDateModal() { calDateModalBackdrop.classList.add('hidden'); }
+
+calTypeCancelBtn.addEventListener('click', closeCalEventTypeModal);
+calTypeModalBackdrop.addEventListener('click', (e) => { if (e.target === calTypeModalBackdrop) closeCalEventTypeModal(); });
+calDateModalBackdrop.addEventListener('click', (e) => { if (e.target === calDateModalBackdrop) closeCalDateModal(); });
+
+calTypeTimedBtn.addEventListener('click', () => {
+    closeCalEventTypeModal();
+    sendCalTimed();
+});
+calTypeAllDayBtn.addEventListener('click', () => {
+    closeCalEventTypeModal();
+    var today = new Date();
+    var created = getCurrentChatCreatedAt();
+    calDateTodayBtn.textContent = `Today (${ymd(today)})`;
+    calDateCreatedBtn.textContent = `Created day (${ymd(created)})`;
+    calDatePickInput.value = ymd(today);
+    calDateModalBackdrop.classList.remove('hidden');
+});
+calDateBackBtn.addEventListener('click', () => {
+    closeCalDateModal();
+    calTypeModalBackdrop.classList.remove('hidden');
+});
+calDateTodayBtn.addEventListener('click', () => {
+    closeCalDateModal();
+    sendCalAllDay(ymd(new Date()));
+});
+calDateCreatedBtn.addEventListener('click', () => {
+    closeCalDateModal();
+    sendCalAllDay(ymd(getCurrentChatCreatedAt()));
+});
+calDatePickBtn.addEventListener('click', () => {
+    var val = calDatePickInput.value;
+    closeCalDateModal();
+    if (val) sendCalAllDay(val);
+});
+</script>
