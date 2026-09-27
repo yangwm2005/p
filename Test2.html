@@ -3960,10 +3960,38 @@
       entryGoal.value = focusModalGoalInput.value;
       updateComposerState();
     });
-    focusModalTextarea.addEventListener('input', () => {
+    // handleReflectionInput auto-prefixes "• " the moment the very first
+    // character is typed into an empty field (same as the main composer);
+    // it operates on e.target directly, so it works here too — just needs
+    // its result mirrored back to the real composer textarea afterward.
+    focusModalTextarea.addEventListener('input', (e) => {
+      handleReflectionInput(e);
       entryText.value = focusModalTextarea.value;
       autoGrowTextarea(entryText);
       updateComposerState();
+    });
+    // Same for pasting into an empty field (auto-bullets each pasted line).
+    // handleReflectionPaste's "already has content" branch defers its own
+    // update a tick via setTimeout — queuing our mirror-sync in a setTimeout
+    // right after guarantees it runs after that, whichever branch fires.
+    focusModalTextarea.addEventListener('paste', (e) => {
+      handleReflectionPaste(e);
+      setTimeout(() => {
+        entryText.value = focusModalTextarea.value;
+        autoGrowTextarea(entryText);
+        updateComposerState();
+      }, 0);
+    });
+    // handleOutlinerKeydown (Tab to indent/un-indent, Enter to continue the
+    // current bullet at the same level) sets .value directly rather than
+    // through a real keystroke, so it doesn't fire a native 'input' event —
+    // mirror the result back to the real composer textarea explicitly here.
+    focusModalTextarea.addEventListener('keydown', (e) => {
+      handleOutlinerKeydown(e);
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        entryText.value = focusModalTextarea.value;
+        autoGrowTextarea(entryText);
+      }
     });
     composerFocusModeBtn.addEventListener('click', openFocusMode);
     focusModalCloseBtn.addEventListener('click', closeFocusMode);
