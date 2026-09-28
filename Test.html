@@ -5365,6 +5365,8 @@ let gcalCalendarIdVerifiedAt = 0;
 let gisTokenClient = null;
 let calendarReconnectPromise = null;
 let silentReconnectResolvers = [];
+let pendingCalEvent = null;   // event waiting for Calendar to finish connecting
+let pendingCalEventAt = 0;
 
 const gcalSyncStatus = document.getElementById('gcalSyncStatus');
 const gcalConnectBtn = document.getElementById('gcalConnectBtn');
@@ -5413,6 +5415,12 @@ function initGisTokenClient() {
                 gcalTokenObtainedAt = Date.now();
                 setCalendarConnected(true);
                 resolvers.forEach(fn => fn(true));
+                // If a send was given up on (not connected yet), finish it now
+                if (pendingCalEvent && (Date.now() - pendingCalEventAt) < 5 * 60 * 1000) {
+                    const ev = pendingCalEvent;
+                    pendingCalEvent = null;
+                    sendCalEvent(ev);
+                } else { pendingCalEvent = null; }
             } else {
                 setCalendarConnected(false);
                 resolvers.forEach(fn => fn(false));
@@ -5422,7 +5430,8 @@ function initGisTokenClient() {
         error_callback: (err) => {
             const resolvers = silentReconnectResolvers.splice(0);
             resolvers.forEach(fn => fn(false));
-            if (err && (err.type === 'popup_closed' || err.type === 'popup_failed_to_open')) return;
+            if (err && err.type === 'popup_failed_to_open') { showCalToast('⚠️ Popup blocked — allow popups for this page, then click 📅 Calendar again', true); return; }
+            if (err && err.type === 'popup_closed') return;
             console.warn('GIS token error:', err);
             if (resolvers.length === 0) showCalToast('⚠️ Calendar connection failed', true);
         },
@@ -5445,7 +5454,9 @@ function ensureCalendarConnected() {
             resolve(ok);
         };
         silentReconnectResolvers.push(finish);
-        setTimeout(() => finish(gcalTokenIsFresh()), 8000);
+        showCalToast('🔑 Connecting to Google Calendar…');
+        // Give the Google sign-in popup plenty of time (was 8s, too short if you pick an account)
+        setTimeout(() => finish(gcalTokenIsFresh()), 90000);
         try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
     });
     return calendarReconnectPromise;
@@ -5578,7 +5589,13 @@ async function sendCalEvent(eventBody) {
     if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
     showCalToast('📤 Sending to Calendar…');
     const connected = await ensureCalendarConnected();
-    if (!connected) { showCalToast('⚠️ Calendar not connected — click Connect first', true); return; }
+    if (!connected) {
+        // Keep the event so it is sent automatically as soon as Connect succeeds
+        pendingCalEvent = eventBody;
+        pendingCalEventAt = Date.now();
+        showCalToast('⚠️ Not connected yet — click Connect (sidebar); it will then send automatically', true);
+        return;
+    }
     const calendarId = await ensureSelfchatCalendarId();
     if (!calendarId) { showCalToast('⚠️ Calendar sync failed', true); return; }
     try {
@@ -5607,21 +5624,35 @@ function sendCalAllDay(dateStr) {
     });
 }
 function sendCalTimed() {
-    var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
-    var start = getCurrentChatCreatedAt();
-    var end = new Date(start.getTime() + 30 * 60 * 1000); // 30-min default duration
-    var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    sendCalEvent({
-        summary: title,
-        description: buildCalDescriptionText(),
-        start: { dateTime: start.toISOString(), timeZone: tz },
-        end: { dateTime: end.toISOString(), timeZone: tz },
-    });
+    try {
+        var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
+        var start = getCurrentChatCreatedAt();
+        if (isNaN(start.getTime())) start = new Date();
+        var end = new Date(start.getTime() + 30 * 60 * 1000); // 30-min default duration
+        var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        sendCalEvent({
+            summary: title,
+            description: buildCalDescriptionText(),
+            start: { dateTime: start.toISOString(), timeZone: tz },
+            end: { dateTime: end.toISOString(), timeZone: tz },
+        });
+    } catch (e) {
+        console.warn('Timed event failed:', e);
+        showCalToast('⚠️ Could not build the timed event', true);
+    }
 }
 
 // ---- modal flow: step 1 (event type) → step 2 (which day, all-day only) ----
-function openCalEventTypeModal() {
+async function openCalEventTypeModal() {
     if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
+    // Connect FIRST (this click is the user gesture that lets Google's popup open).
+    // Only once the token is ready do we show the event-type choices, so Timed and
+    // Whole-day both send with an already-connected calendar.
+    if (!gcalTokenIsFresh()) {
+        if (!initGisTokenClient()) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+        const ok = await ensureCalendarConnected();
+        if (!ok) { showCalToast('⚠️ Calendar not connected — finish the Google popup, then click 📅 Calendar again', true); return; }
+    }
     var title = document.getElementById('chatTitle').textContent.trim();
     calTypeModalNoteText.textContent = title || '(untitled chat)';
     calTypeModalBackdrop.classList.remove('hidden');
