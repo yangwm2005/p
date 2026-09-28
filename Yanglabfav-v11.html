@@ -9,7 +9,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
     <!-- Font Awesome 6 (free) -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" />
     <style>
         * {
             margin: 0;
@@ -1052,6 +1052,26 @@
             gap: 6px;
         }
         .history-step-back:hover { color: #1f3357; }
+        .icon-field-row {
+            display: flex; align-items: center; gap: 8px; margin: 4px 0 10px;
+        }
+        .icon-field-preview {
+            flex: 0 0 auto; width: 42px; height: 42px; border-radius: 12px;
+            background: #eef3fc; border: 1.5px solid #d5def0; color: #1f3357;
+            display: flex; align-items: center; justify-content: center; font-size: 1.3rem;
+        }
+        .modal-box .icon-field-row input {
+            flex: 1 1 auto; min-width: 0; margin: 0;
+            font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85rem;
+        }
+        .modal-box .icon-field-row input.invalid { border-color: #b13e4b; }
+        .icon-browse-btn {
+            flex: 0 0 auto; border: none; cursor: pointer; white-space: nowrap;
+            background: #3a6bf0; color: #fff; font-weight: 600; font-size: 0.85rem;
+            padding: 0.6rem 0.9rem; border-radius: 12px;
+        }
+        .icon-browse-btn:hover { background: #2a55c9; }
+        .icon-field-hint { font-size: 0.75rem; color: #5d6f8f; margin: -4px 0 8px; }
         .icon-picker-wrapper {
             margin: 0.4rem 0 0.6rem;
             border: 1px solid #d7e0ee;
@@ -1312,6 +1332,12 @@
         <label for="modalTagsInput">Tags <span style="font-weight:400;color:#5d6f8f;font-size:0.8rem;">(comma-separated, optional)</span></label>
         <input type="text" id="modalTagsInput" placeholder="e.g. lab, reference, tools" />
         <label>Choose an icon <span style="font-weight:400;color:#5d6f8f;font-size:0.8rem;">(click to select)</span></label>
+        <div class="icon-field-row">
+            <div class="icon-field-preview" id="iconFieldPreview"><i class="fa-solid fa-globe"></i></div>
+            <input type="text" id="iconFieldInput" placeholder="fa-solid fa-rocket" autocomplete="off" spellcheck="false" />
+            <button type="button" class="icon-browse-btn" id="iconBrowseBtn" title="Open Font Awesome in a pop-up window"><i class="fas fa-arrow-up-right-from-square"></i> Browse</button>
+        </div>
+        <div class="icon-field-hint">On fontawesome.com click an icon, then Copy Icon (HTML) and paste it here.</div>
         <div class="icon-picker-wrapper">
             <div class="icon-picker-grid" id="iconPickerGrid"></div>
         </div>
@@ -1426,6 +1452,9 @@ const inputTitle = document.getElementById('modalTitleInput');
 const inputUrl = document.getElementById('modalUrlInput');
 const inputTags = document.getElementById('modalTagsInput');
 const pickerGrid = document.getElementById('iconPickerGrid');
+const iconFieldInput = document.getElementById('iconFieldInput');
+const iconFieldPreview = document.getElementById('iconFieldPreview');
+const iconBrowseBtn = document.getElementById('iconBrowseBtn');
 const addBtn = document.getElementById('addNewBtn');
 const saveBtn = document.getElementById('modalSaveBtn');
 const cancelBtn = document.getElementById('modalCancelBtn');
@@ -2146,7 +2175,63 @@ ylAuth.onAuthStateChanged((user) => {
 });
 
 // ── RENDER ──────────────────────────────────────────────────
+const FA_ICON_SITE = 'https://fontawesome.com/search?o=r&m=free';
+let faPopup = null;
+
+// Accepts "fa-solid fa-rocket" or a pasted snippet like <i class="fa-solid fa-rocket"></i>.
+// Returns a clean class string, or null if nothing usable was found.
+function parseIconInput(raw) {
+    let text = (raw || '').trim();
+    if (!text) return null;
+    const m = text.match(/class\s*=\s*["']([^"']+)["']/i);
+    if (m) text = m[1];
+    const tokens = text.split(/\s+/).filter(t => /^fa[a-z0-9-]*$/i.test(t));
+    const styles = ['fa-solid','fa-regular','fa-brands','fa-light','fa-thin','fa-duotone','fas','far','fab','fal','fat','fad'];
+    const style = tokens.find(t => styles.includes(t.toLowerCase()));
+    const name = tokens.find(t => /^fa-/i.test(t) && !styles.includes(t.toLowerCase()) && !/^fa-(sharp|fw|lg|xs|sm|2x|3x|spin|pulse)$/i.test(t));
+    if (!name) return null;
+    return (style || 'fa-solid') + ' ' + name;
+}
+
+function updateIconFieldPreview(cls, valid) {
+    iconFieldPreview.innerHTML = valid ? `<i class="${cls}"></i>` : '<i class="fa-solid fa-question"></i>';
+    iconFieldInput.classList.toggle('invalid', !valid);
+}
+
+function openIconSite() {
+    const w = 1000, h = Math.min(820, screen.availHeight - 60);
+    const left = Math.max(0, (window.screenX || 0) + (window.outerWidth || 1200) - w + 40);
+    const top = Math.max(0, (window.screenY || 0) + 30);
+    faPopup = window.open(FA_ICON_SITE, 'faIconPicker', `popup=yes,width=${w},height=${h},left=${left},top=${top}`);
+    if (!faPopup) { alert('The pop-up was blocked. Please allow pop-ups for this page, then try again.'); return; }
+    faPopup.focus();
+    iconFieldInput.focus();
+}
+
+iconBrowseBtn.addEventListener('click', openIconSite);
+iconFieldInput.addEventListener('input', () => {
+    const raw = iconFieldInput.value;
+    if (!raw.trim()) { updateIconFieldPreview('', false); iconFieldInput.classList.remove('invalid'); return; }
+    const cls = parseIconInput(raw);
+    if (!cls) { updateIconFieldPreview('', false); return; }
+    ylSelectedIcon = cls;
+    renderPicker(ylSelectedIcon);
+    updateIconFieldPreview(cls, true);
+});
+iconFieldInput.addEventListener('paste', () => {
+    // After the paste lands, replace a pasted <i ...> snippet with just the class string.
+    setTimeout(() => {
+        const cls = parseIconInput(iconFieldInput.value);
+        if (cls) iconFieldInput.value = cls;
+    }, 0);
+});
+iconFieldInput.addEventListener('blur', () => { iconFieldInput.value = ylSelectedIcon; updateIconFieldPreview(ylSelectedIcon, true); });
+
 function renderPicker(selectedClass) {
+    if (document.activeElement !== iconFieldInput) {
+        iconFieldInput.value = selectedClass;
+        updateIconFieldPreview(selectedClass, true);
+    }
     pickerGrid.innerHTML = '';
     ICON_CATEGORIES.forEach(category => {
         const label = document.createElement('div');
@@ -3156,6 +3241,7 @@ function openAddModal(target = 'my') {
 }
 
 function closeModal() {
+    if (faPopup && !faPopup.closed) faPopup.close();
     overlay.classList.remove('active');
     ylCurrentEditId = null;
     ylModalTarget = 'my';
