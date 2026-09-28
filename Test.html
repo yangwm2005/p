@@ -5208,7 +5208,7 @@ document.addEventListener('DOMContentLoaded', function() { scUpdateAuthUI(); });
         <div class="cal-modal-title">📅 Send to Calendar</div>
         <div class="cal-modal-text" id="calTypeModalNoteText"></div>
         <button type="button" class="cal-opt-btn" id="calTypeAllDayBtn">🗓️ Whole-day event</button>
-        <button type="button" class="cal-opt-btn" id="calTypeTimedBtn">🕐 Timed event (created date &amp; time)</button>
+        <button type="button" class="cal-opt-btn" id="calTypeTimedBtn">🕐 Timed event (created time → last message)</button>
         <button type="button" class="cal-cancel-btn" id="calTypeCancelBtn">Cancel</button>
     </div>
 </div>
@@ -5611,6 +5611,25 @@ async function sendCalEvent(eventBody) {
     }
 }
 
+// Duration of a Timed event = from the chat's created time to the last message/reply
+// timestamp in it (stamps are time-of-day only, so this assumes same-day activity).
+function calcChatDurationMinutes(start) {
+    var mins = [];
+    document.querySelectorAll('#chatBox .timestamp, #chatBox .thread-reply-ts, #chatBox .sub-reply-ts').forEach(function(el) {
+        var m = /(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(el.textContent || '');
+        if (!m) return;
+        var h = parseInt(m[1], 10) % 12;
+        if (m[3].toUpperCase() === 'PM') h += 12;
+        mins.push(h * 60 + parseInt(m[2], 10));
+    });
+    if (!mins.length) return 30;                       // nothing to measure -> old default
+    var maxMin = Math.max.apply(null, mins), minMin = Math.min.apply(null, mins);
+    var startMin = start.getHours() * 60 + start.getMinutes();
+    var d = maxMin - startMin;                         // created time -> last activity
+    if (d < 1 || d > 720) d = maxMin - minMin;         // fallback: first -> last stamp
+    if (d < 1 || d > 720) return 30;                   // still unusable (e.g. spans midnight)
+    return Math.max(5, d);
+}
 function sendCalAllDay(dateStr) {
     var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
     var nextDay = new Date(dateStr + 'T00:00:00');
@@ -5628,7 +5647,8 @@ function sendCalTimed() {
         var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
         var start = getCurrentChatCreatedAt();
         if (isNaN(start.getTime())) start = new Date();
-        var end = new Date(start.getTime() + 30 * 60 * 1000); // 30-min default duration
+        start.setSeconds(0, 0);
+        var end = new Date(start.getTime() + calcChatDurationMinutes(start) * 60 * 1000);
         var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
         sendCalEvent({
             summary: title,
