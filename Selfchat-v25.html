@@ -923,9 +923,9 @@
 <button id="fabThreadToggle" title="Toggle all threads open / closed">💬</button>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20260907: v25: 💬 Fixed — sending a subitem or sub-thread reply now scrolls the new row into view, so it's visible immediately instead of only after scrolling or typing the next one.<br>
-<!--        20260730: v25: 📥 Paste now restores an item's subitems (thread replies, including nested level-2 sub-replies) along with it — works for both the app clipboard (Copy → Paste in-app) and the system clipboard (pasting the copied text elsewhere, including into another window/instance).<br>
-            20260626: v24t: 📄 Save .txt button added to View modal footer next to 🖨️ Print — exports current view mode as a named .txt file.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260907: v26: 💬 Fixed — sending a subitem or sub-thread reply now scrolls the new row into view, so it's visible immediately instead of only after scrolling or typing the next one.<br>
+            20260730: v25: 📥 Paste now restores an item's subitems (thread replies, including nested level-2 sub-replies) along with it — works for both the app clipboard (Copy → Paste in-app) and the system clipboard (pasting the copied text elsewhere, including into another window/instance).<br>
+<!--        20260626: v24t: 📄 Save .txt button added to View modal footer next to 🖨️ Print — exports current view mode as a named .txt file.<br>
             20260622: v25s: Simplified view modal bar — removed redundant Copy button, keeping only 📄 Save .txt.<br>
             20260615: v25i: 4 view modes — ¶ Plain, ¶• Thread Bullets, • Msg Bullets, •• Full Bullets; shared _pvRenderParagraph for screen+print; no vertical lines in any mode.
             20260615: v25h: Beautiful print view — Plain/Bullets tabs in modal; 🖨️ Print button opens styled print window with title, date, clean typography; threads shown as indented replies; Save as PDF via browser print.<br>
@@ -5757,7 +5757,7 @@ document.addEventListener('DOMContentLoaded', function() { scUpdateAuthUI(); });
         <div class="cal-modal-title">📅 Send to Calendar</div>
         <div class="cal-modal-text" id="calTypeModalNoteText"></div>
         <button type="button" class="cal-opt-btn" id="calTypeAllDayBtn">🗓️ Whole-day event</button>
-        <button type="button" class="cal-opt-btn" id="calTypeTimedBtn">🕐 Timed event (created date &amp; time)</button>
+        <button type="button" class="cal-opt-btn" id="calTypeTimedBtn">🕐 Timed event (created time → last message)</button>
         <button type="button" class="cal-cancel-btn" id="calTypeCancelBtn">Cancel</button>
     </div>
 </div>
@@ -5916,6 +5916,8 @@ let gcalCalendarIdVerifiedAt = 0;
 let gisTokenClient = null;
 let calendarReconnectPromise = null;
 let silentReconnectResolvers = [];
+let pendingCalEvent = null;   // event waiting for Calendar to finish connecting
+let pendingCalEventAt = 0;
 
 const gcalSyncStatus = document.getElementById('gcalSyncStatus');
 const gcalConnectBtn = document.getElementById('gcalConnectBtn');
@@ -5964,6 +5966,12 @@ function initGisTokenClient() {
                 gcalTokenObtainedAt = Date.now();
                 setCalendarConnected(true);
                 resolvers.forEach(fn => fn(true));
+                // If a send was given up on (not connected yet), finish it now
+                if (pendingCalEvent && (Date.now() - pendingCalEventAt) < 5 * 60 * 1000) {
+                    const ev = pendingCalEvent;
+                    pendingCalEvent = null;
+                    sendCalEvent(ev);
+                } else { pendingCalEvent = null; }
             } else {
                 setCalendarConnected(false);
                 resolvers.forEach(fn => fn(false));
@@ -5973,7 +5981,8 @@ function initGisTokenClient() {
         error_callback: (err) => {
             const resolvers = silentReconnectResolvers.splice(0);
             resolvers.forEach(fn => fn(false));
-            if (err && (err.type === 'popup_closed' || err.type === 'popup_failed_to_open')) return;
+            if (err && err.type === 'popup_failed_to_open') { showCalToast('⚠️ Popup blocked — allow popups for this page, then click 📅 Calendar again', true); return; }
+            if (err && err.type === 'popup_closed') return;
             console.warn('GIS token error:', err);
             if (resolvers.length === 0) showCalToast('⚠️ Calendar connection failed', true);
         },
@@ -5996,7 +6005,9 @@ function ensureCalendarConnected() {
             resolve(ok);
         };
         silentReconnectResolvers.push(finish);
-        setTimeout(() => finish(gcalTokenIsFresh()), 8000);
+        showCalToast('🔑 Connecting to Google Calendar…');
+        // Give the Google sign-in popup plenty of time (was 8s, too short if you pick an account)
+        setTimeout(() => finish(gcalTokenIsFresh()), 90000);
         try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
     });
     return calendarReconnectPromise;
@@ -6136,7 +6147,13 @@ async function sendCalEvent(eventBody) {
     if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
     showCalToast('📤 Sending to Calendar…');
     const connected = await ensureCalendarConnected();
-    if (!connected) { showCalToast('⚠️ Calendar not connected — click Connect first', true); return; }
+    if (!connected) {
+        // Keep the event so it is sent automatically as soon as Connect succeeds
+        pendingCalEvent = eventBody;
+        pendingCalEventAt = Date.now();
+        showCalToast('⚠️ Not connected yet — click Connect (sidebar); it will then send automatically', true);
+        return;
+    }
     const calendarId = await ensureSelfchatCalendarId();
     if (!calendarId) { showCalToast('⚠️ Calendar sync failed', true); return; }
     try {
@@ -6152,8 +6169,28 @@ async function sendCalEvent(eventBody) {
     }
 }
 
+// Duration of a Timed event = from the chat's created time to the last message/reply
+// timestamp in it (stamps are time-of-day only, so this assumes same-day activity).
+function calcChatDurationMinutes(start) {
+    var mins = [];
+    document.querySelectorAll('#chatBox .timestamp, #chatBox .thread-reply-ts, #chatBox .sub-reply-ts').forEach(function(el) {
+        var m = /(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(el.textContent || '');
+        if (!m) return;
+        var h = parseInt(m[1], 10) % 12;
+        if (m[3].toUpperCase() === 'PM') h += 12;
+        mins.push(h * 60 + parseInt(m[2], 10));
+    });
+    if (!mins.length) return 30;                       // nothing to measure -> old default
+    var maxMin = Math.max.apply(null, mins), minMin = Math.min.apply(null, mins);
+    var startMin = start.getHours() * 60 + start.getMinutes();
+    var d = maxMin - startMin;                         // created time -> last activity
+    if (d < 1 || d > 720) d = maxMin - minMin;         // fallback: first -> last stamp
+    if (d < 1 || d > 720) return 30;                   // still unusable (e.g. spans midnight)
+    return Math.max(5, d);
+}
+const CAL_TITLE_ICON = '🎯 ';
 function sendCalAllDay(dateStr) {
-    var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
+    var title = CAL_TITLE_ICON + (document.getElementById('chatTitle').textContent.trim() || 'Chat');
     var nextDay = new Date(dateStr + 'T00:00:00');
     nextDay.setDate(nextDay.getDate() + 1);
     var nextDayStr = ymd(nextDay);
@@ -6165,21 +6202,36 @@ function sendCalAllDay(dateStr) {
     });
 }
 function sendCalTimed() {
-    var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
-    var start = getCurrentChatCreatedAt();
-    var end = new Date(start.getTime() + 30 * 60 * 1000); // 30-min default duration
-    var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    sendCalEvent({
-        summary: title,
-        description: buildCalDescriptionText(),
-        start: { dateTime: start.toISOString(), timeZone: tz },
-        end: { dateTime: end.toISOString(), timeZone: tz },
-    });
+    try {
+        var title = CAL_TITLE_ICON + (document.getElementById('chatTitle').textContent.trim() || 'Chat');
+        var start = getCurrentChatCreatedAt();
+        if (isNaN(start.getTime())) start = new Date();
+        start.setSeconds(0, 0);
+        var end = new Date(start.getTime() + calcChatDurationMinutes(start) * 60 * 1000);
+        var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        sendCalEvent({
+            summary: title,
+            description: buildCalDescriptionText(),
+            start: { dateTime: start.toISOString(), timeZone: tz },
+            end: { dateTime: end.toISOString(), timeZone: tz },
+        });
+    } catch (e) {
+        console.warn('Timed event failed:', e);
+        showCalToast('⚠️ Could not build the timed event', true);
+    }
 }
 
 // ---- modal flow: step 1 (event type) → step 2 (which day, all-day only) ----
-function openCalEventTypeModal() {
+async function openCalEventTypeModal() {
     if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
+    // Connect FIRST (this click is the user gesture that lets Google's popup open).
+    // Only once the token is ready do we show the event-type choices, so Timed and
+    // Whole-day both send with an already-connected calendar.
+    if (!gcalTokenIsFresh()) {
+        if (!initGisTokenClient()) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+        const ok = await ensureCalendarConnected();
+        if (!ok) { showCalToast('⚠️ Calendar not connected — finish the Google popup, then click 📅 Calendar again', true); return; }
+    }
     var title = document.getElementById('chatTitle').textContent.trim();
     calTypeModalNoteText.textContent = title || '(untitled chat)';
     calTypeModalBackdrop.classList.remove('hidden');
