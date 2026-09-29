@@ -280,6 +280,7 @@
         .thread-reply-text {
             flex: 1;
             font-size: 15px;
+            white-space: pre-wrap;
         }
         .thread-reply-ts {
             font-size: 0.78em;
@@ -3783,6 +3784,118 @@ document.addEventListener("DOMContentLoaded", function() {
         return h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
     }
 
+    // ── Outliner-style editing for thread replies: bullet points + Tab indent,
+    // same convention as the rest of the app suite (Interstitial Journal, Jots) ──
+    const BULLET_PREFIX = '\u2022 ';
+    const INDENT_UNIT = '  ';
+
+    function getLineInfo(textarea) {
+        const pos = textarea.selectionStart;
+        const value = textarea.value;
+        const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
+        const lineEnd = value.indexOf('\n', pos);
+        const end = lineEnd === -1 ? value.length : lineEnd;
+        const line = value.slice(lineStart, end);
+        const match = line.match(/^( *)/);
+        const indent = match ? match[1].length : 0;
+        const afterIndent = line.slice(indent);
+        const bulletMatch = afterIndent.match(/^[\u2022\-*]\s?/);
+        const content = bulletMatch ? afterIndent.slice(bulletMatch[0].length) : afterIndent;
+        return { lineStart, lineEnd: end, line, indent, content, pos };
+    }
+    function setCursor(textarea, pos) { textarea.selectionStart = textarea.selectionEnd = pos; }
+    function autoGrowReplyTextarea(ta) {
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+    }
+    function replaceAndSetCursor(ta, newValue, newCursor) {
+        ta.value = newValue;
+        setCursor(ta, newCursor);
+        autoGrowReplyTextarea(ta);
+    }
+    function handleOutlinerKeydown(e) {
+        const ta = e.target;
+        const isShift = e.shiftKey;
+
+        // Ctrl/Cmd+Enter sends the reply (Enter alone continues the outline — see below)
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) return; // let the row's own handler send it
+
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const { lineStart, lineEnd, line, indent } = getLineInfo(ta);
+            if (isShift) {
+                if (indent === 0) return;
+                const remove = Math.min(indent, INDENT_UNIT.length);
+                const newLine = line.slice(remove);
+                const newValue = ta.value.slice(0, lineStart) + newLine + ta.value.slice(lineEnd);
+                const newCursor = Math.max(lineStart, ta.selectionStart - remove);
+                replaceAndSetCursor(ta, newValue, newCursor);
+            } else {
+                const insertAt = lineStart + indent;
+                const newValue = ta.value.slice(0, insertAt) + INDENT_UNIT + ta.value.slice(insertAt);
+                const newCursor = ta.selectionStart + INDENT_UNIT.length;
+                replaceAndSetCursor(ta, newValue, newCursor);
+            }
+            return;
+        }
+
+        if (e.key === 'Enter' && !isShift) {
+            e.preventDefault();
+            const { lineStart, lineEnd, indent, content } = getLineInfo(ta);
+            if (content.trim() === '') {
+                const newValue = ta.value.slice(0, lineStart) + ta.value.slice(lineEnd + 1);
+                replaceAndSetCursor(ta, newValue, lineStart);
+                return;
+            }
+            const newLine = '\n' + ' '.repeat(indent) + BULLET_PREFIX;
+            const pos = ta.selectionStart;
+            const newValue = ta.value.slice(0, pos) + newLine + ta.value.slice(ta.selectionEnd);
+            replaceAndSetCursor(ta, newValue, pos + newLine.length);
+            return;
+        }
+
+        if (e.key === 'Backspace') {
+            const { lineStart, indent, content, pos } = getLineInfo(ta);
+            if (pos === lineStart + indent + BULLET_PREFIX.length && content === '') {
+                e.preventDefault();
+                if (indent > 0) {
+                    const remove = Math.min(indent, INDENT_UNIT.length);
+                    const newValue = ta.value.slice(0, lineStart) + ta.value.slice(lineStart + remove);
+                    replaceAndSetCursor(ta, newValue, pos - remove);
+                } else {
+                    const newValue = ta.value.slice(0, lineStart) + ta.value.slice(lineStart + BULLET_PREFIX.length);
+                    replaceAndSetCursor(ta, newValue, lineStart);
+                }
+            }
+        }
+    }
+    function handleOutlinerInput(e) {
+        const ta = e.target;
+        if (ta.value.length === 1 && /\S/.test(ta.value) && !/^[\u2022\-*]/.test(ta.value)) {
+            const char = ta.value;
+            ta.value = BULLET_PREFIX + char;
+            setCursor(ta, ta.value.length);
+        }
+        autoGrowReplyTextarea(ta);
+    }
+    function handleOutlinerPaste(e) {
+        const ta = e.target;
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        if (!text || ta.value.trim().length > 0) { setTimeout(() => autoGrowReplyTextarea(ta), 0); return; }
+        e.preventDefault();
+        const lines = text.split(/\r?\n/);
+        const bulleted = lines.map(l => {
+            if (!l.trim()) return l;
+            const leading = (l.match(/^( *)/) || ['', ''])[1];
+            const rest = l.slice(leading.length);
+            if (/^[\u2022\-*]\s?/.test(rest)) return l;
+            return leading + BULLET_PREFIX + rest;
+        }).join('\n');
+        ta.value = bulleted;
+        setCursor(ta, ta.value.length);
+        autoGrowReplyTextarea(ta);
+    }
+
     // Add a thread panel to an existing message element
     function addThreadPanel(msgEl, replies) {
         if (msgEl.querySelector('.thread-toggle-btn')) return; // already has one
@@ -3849,12 +3962,10 @@ document.addEventListener("DOMContentLoaded", function() {
         var inputRow = document.createElement('div');
         inputRow.className = 'thread-input-row';
         var ta = document.createElement('textarea');
-        ta.placeholder = 'Reply… (Enter to send, Shift+Enter new line)';
+        ta.placeholder = 'Reply… (bullets: Tab to indent, Enter for new bullet, Ctrl+Enter to send)';
         ta.rows = 1;
-        ta.addEventListener('input', function() {
-            ta.style.height = 'auto';
-            ta.style.height = Math.min(ta.scrollHeight, 90) + 'px';
-        });
+        ta.addEventListener('input', handleOutlinerInput);
+        ta.addEventListener('paste', handleOutlinerPaste);
         var sendBtn = document.createElement('button');
         sendBtn.textContent = 'Reply';
         function doSendReply() {
@@ -3870,7 +3981,8 @@ document.addEventListener("DOMContentLoaded", function() {
         }
         sendBtn.onclick = function(e) { e.stopPropagation(); doSendReply(); };
         ta.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSendReply(); }
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSendReply(); return; }
+            handleOutlinerKeydown(e);
         });
         inputRow.appendChild(ta);
         inputRow.appendChild(sendBtn);
@@ -5630,8 +5742,9 @@ function calcChatDurationMinutes(start) {
     if (d < 1 || d > 720) return 30;                   // still unusable (e.g. spans midnight)
     return Math.max(5, d);
 }
+const CAL_TITLE_ICON = '🎯 ';
 function sendCalAllDay(dateStr) {
-    var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
+    var title = CAL_TITLE_ICON + (document.getElementById('chatTitle').textContent.trim() || 'Chat');
     var nextDay = new Date(dateStr + 'T00:00:00');
     nextDay.setDate(nextDay.getDate() + 1);
     var nextDayStr = ymd(nextDay);
@@ -5644,7 +5757,7 @@ function sendCalAllDay(dateStr) {
 }
 function sendCalTimed() {
     try {
-        var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
+        var title = CAL_TITLE_ICON + (document.getElementById('chatTitle').textContent.trim() || 'Chat');
         var start = getCurrentChatCreatedAt();
         if (isNaN(start.getTime())) start = new Date();
         start.setSeconds(0, 0);
