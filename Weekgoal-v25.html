@@ -1745,6 +1745,9 @@ body:not(.pre-hover) .outline-node-row:hover,
 .outline-drop-before { box-shadow: inset 0 2px 0 0 #2d8cff; }
 .outline-drop-after { box-shadow: inset 0 -2px 0 0 #2d8cff; }
 .outline-drop-child { background: rgba(45, 140, 255, 0.12); }
+/* Drop at the very end of another outline table (empty area below its
+   last line) — cross-table moves. */
+.outline-drop-end { box-shadow: inset 0 -3px 0 0 #2d8cff; background: rgba(45, 140, 255, 0.06); }
 
 /* Toggle/drag/menu icons for the outline table are position:fixed
    overlays shown on hover (same trick the main table's ☰ icon uses),
@@ -5336,19 +5339,55 @@ function insertNewCheckboxLine(currentLine) {
             document.addEventListener('mouseup', onManualDragEnd);
         }
 
+        // --- Edge auto-scroll while dragging, so an item can be carried
+        // to an outline table that's currently off-screen. ---
+        let dragScrollTimer = null, dragScrollSpeed = 0;
+        function updateDragAutoScroll(clientY) {
+            const edge = 90, maxSpeed = 22;
+            let speed = 0;
+            if (clientY < edge + 60) speed = -Math.ceil(maxSpeed * Math.min(1, (edge + 60 - clientY) / edge)); // +60 clears the sticky toolbar
+            else if (clientY > window.innerHeight - edge) speed = Math.ceil(maxSpeed * Math.min(1, (clientY - (window.innerHeight - edge)) / edge));
+            dragScrollSpeed = speed;
+            if (speed && !dragScrollTimer) {
+                dragScrollTimer = setInterval(function () { window.scrollBy(0, dragScrollSpeed); }, 16);
+            } else if (!speed && dragScrollTimer) {
+                clearInterval(dragScrollTimer); dragScrollTimer = null;
+            }
+        }
+        function stopDragAutoScroll() {
+            if (dragScrollTimer) clearInterval(dragScrollTimer);
+            dragScrollTimer = null; dragScrollSpeed = 0;
+        }
+
         function onManualDragMove(e) {
             if (!manualDragNodeId) return;
+            updateDragAutoScroll(e.clientY);
             const el = document.elementFromPoint(e.clientX, e.clientY);
             const row = el && el.closest && el.closest('.outline-node-row');
-            if (!row || row.dataset.rootId !== manualDragRootId || row.dataset.nodeId === manualDragNodeId) {
-                clearDropIndicator();
+            // Rows of ANY outline table are valid targets now (cross-table
+            // move); only the dragged row itself is excluded.
+            if (row && row.dataset.rootId && roots[row.dataset.rootId]) {
+                if (row.dataset.rootId === manualDragRootId && row.dataset.nodeId === manualDragNodeId) {
+                    clearDropIndicator();
+                    return;
+                }
+                const rect = row.getBoundingClientRect();
+                const relY = e.clientY - rect.top;
+                const third = rect.height / 3;
+                const mode = relY < third ? 'before' : (relY > third * 2 ? 'after' : 'child');
+                showDropIndicator(row, mode);
                 return;
             }
-            const rect = row.getBoundingClientRect();
-            const relY = e.clientY - rect.top;
-            const third = rect.height / 3;
-            const mode = relY < third ? 'before' : (relY > third * 2 ? 'after' : 'child');
-            showDropIndicator(row, mode);
+            // Not on a row: if the pointer is over another outline table's
+            // cell (blank area below its lines), drop at the end of that
+            // table's top level.
+            const cell = el && el.closest && el.closest('td, .table-wrapper');
+            const rootEl = cell && cell.querySelector && cell.querySelector('.outline-root');
+            if (rootEl && rootEl.id && roots[rootEl.id] && rootEl.id !== manualDragRootId) {
+                showDropIndicator(rootEl, 'end');
+                return;
+            }
+            clearDropIndicator();
         }
 
         function onManualDragEnd(e) {
@@ -5356,13 +5395,18 @@ function insertNewCheckboxLine(currentLine) {
             document.removeEventListener('mouseup', onManualDragEnd);
             document.body.style.userSelect = manualDragPrevUserSelect || '';
             document.querySelectorAll('.outline-dragging').forEach(function (el) { el.classList.remove('outline-dragging'); });
+            stopDragAutoScroll();
 
-            const targetRow = dropTargetEl;
+            const targetEl = dropTargetEl;
             const mode = dropMode;
             clearDropIndicator();
 
-            if (manualDragNodeId && targetRow && targetRow.dataset.nodeId) {
-                performDrop(manualDragRootId, manualDragNodeId, targetRow.dataset.nodeId, mode);
+            if (manualDragNodeId && targetEl) {
+                if (mode === 'end' && targetEl.classList.contains('outline-root')) {
+                    performDrop(manualDragRootId, manualDragNodeId, null, 'end', targetEl.id);
+                } else if (targetEl.dataset && targetEl.dataset.nodeId) {
+                    performDrop(manualDragRootId, manualDragNodeId, targetEl.dataset.nodeId, mode, targetEl.dataset.rootId);
+                }
             }
             manualDragNodeId = null; manualDragRootId = null;
             dragNodeId = null; dragRootId = null;
@@ -5924,31 +5968,69 @@ function insertNewCheckboxLine(currentLine) {
             dropTargetEl = row; dropMode = mode;
             if (mode === 'before') row.classList.add('outline-drop-before');
             else if (mode === 'after') row.classList.add('outline-drop-after');
+            else if (mode === 'end') row.classList.add('outline-drop-end');
             else row.classList.add('outline-drop-child');
         }
         function clearDropIndicator() {
-            if (dropTargetEl) dropTargetEl.classList.remove('outline-drop-before', 'outline-drop-after', 'outline-drop-child');
+            if (dropTargetEl) dropTargetEl.classList.remove('outline-drop-before', 'outline-drop-after', 'outline-drop-child', 'outline-drop-end');
             dropTargetEl = null; dropMode = null;
         }
 
-        function performDrop(rootId, sourceId, targetId, mode) {
+        function performDrop(rootId, sourceId, targetId, mode, targetRootId) {
             clearDropIndicator();
+            targetRootId = targetRootId || rootId;
             const st = roots[rootId];
+            if (!st) return;
             const srcFound = findNodeAndParent(st.tree, sourceId);
             if (!srcFound) return;
-            if (isDescendant(srcFound.node, targetId)) return; // can't drop onto own descendant
+
+            // --- Same outline table: original behavior ---
+            if (targetRootId === rootId) {
+                if (mode === 'end') return;
+                if (isDescendant(srcFound.node, targetId)) return; // can't drop onto own descendant
+                srcFound.parentArr.splice(srcFound.index, 1);
+                const tgtFound = findNodeAndParent(st.tree, targetId);
+                if (!tgtFound) { renderRoot(rootId); return; }
+                if (mode === 'child') {
+                    tgtFound.node.children.push(srcFound.node);
+                    tgtFound.node.collapsed = false;
+                } else if (mode === 'before') {
+                    tgtFound.parentArr.splice(tgtFound.index, 0, srcFound.node);
+                } else {
+                    tgtFound.parentArr.splice(tgtFound.index + 1, 0, srcFound.node);
+                }
+                renderRoot(rootId, { focusId: srcFound.node.id, cursorPos: 'keep' });
+                return;
+            }
+
+            // --- Different outline table: move the node (with all its
+            // sub-items) out of one tree and into the other. ---
+            const tst = roots[targetRootId];
+            if (!tst) return;
+            let tgtFound = null;
+            if (mode !== 'end') {
+                tgtFound = findNodeAndParent(tst.tree, targetId);
+                if (!tgtFound) return;
+            }
+            const moved = srcFound.node;
             srcFound.parentArr.splice(srcFound.index, 1);
-            const tgtFound = findNodeAndParent(st.tree, targetId);
-            if (!tgtFound) { renderRoot(rootId); return; }
-            if (mode === 'child') {
-                tgtFound.node.children.push(srcFound.node);
+            // A table must never be left with zero lines (nothing to click).
+            if (st.tree.length === 0) st.tree.push(newNode(''));
+
+            if (mode === 'end' || !tgtFound) {
+                tst.tree.push(moved);
+            } else if (mode === 'child') {
+                tgtFound.node.children.push(moved);
                 tgtFound.node.collapsed = false;
             } else if (mode === 'before') {
-                tgtFound.parentArr.splice(tgtFound.index, 0, srcFound.node);
+                tgtFound.parentArr.splice(tgtFound.index, 0, moved);
             } else {
-                tgtFound.parentArr.splice(tgtFound.index + 1, 0, srcFound.node);
+                tgtFound.parentArr.splice(tgtFound.index + 1, 0, moved);
             }
-            renderRoot(rootId, { focusId: srcFound.node.id, cursorPos: 'keep' });
+            // Re-render both tables; each render also re-syncs that
+            // table's saved tree data and triggers the cloud auto-save.
+            renderRoot(rootId);
+            renderRoot(targetRootId, { focusId: moved.id, cursorPos: 'keep' });
         }
 
         // --- Keyboard: Enter / Tab / Shift+Tab / Backspace / arrows ---
