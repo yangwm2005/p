@@ -280,6 +280,7 @@
         .thread-reply-text {
             flex: 1;
             font-size: 15px;
+            white-space: pre-wrap;
         }
         .thread-reply-ts {
             font-size: 0.78em;
@@ -1812,10 +1813,10 @@
                 (p.isSubchat ? '5px 0 2px '+si : '12px 0 2px 0') + ';">' +
                 '<span style="color:#7986cb;flex-shrink:0;font-size:1.1em;">' +
                 (p.isSubchat ? '◦' : '•') + '</span>' +
-                '<span style="color:' + mc + ';font-size:' + ms + ';">' + safe(p.text) + '</span></div>';
+                '<span style="color:' + mc + ';font-size:' + ms + ';white-space:pre-wrap;">' + safe(p.text) + '</span></div>';
         } else {
             html += '<p style="margin:' + (p.isSubchat ? '6px 0 2px '+si : '13px 0 2px 0') +
-                ';color:' + mc + ';font-size:' + ms + ';">' + safe(p.text) + '</p>';
+                ';color:' + mc + ';font-size:' + ms + ';white-space:pre-wrap;">' + safe(p.text) + '</p>';
         }
         if (p.replies.length > 0) {
             var ri = p.isSubchat ? '44px' : '20px';
@@ -1824,12 +1825,12 @@
                 p.replies.forEach(function(r) {
                     html += '<li style="display:flex;gap:7px;align-items:baseline;color:#546e7a;font-size:0.91em;margin:3px 0;">' +
                         '<span style="color:#9fa8da;flex-shrink:0;">•</span>' +
-                        '<span>' + safe(r) + '</span></li>';
+                        '<span style="white-space:pre-wrap;">' + safe(r) + '</span></li>';
                 });
                 html += '</ul>';
             } else {
                 p.replies.forEach(function(r) {
-                    html += '<p style="margin:2px 0 2px ' + ri + ';color:#607d8b;font-size:0.91em;font-style:italic;">' + safe(r) + '</p>';
+                    html += '<p style="margin:2px 0 2px ' + ri + ';color:#607d8b;font-size:0.91em;font-style:italic;white-space:pre-wrap;">' + safe(r) + '</p>';
                 });
                 html += '<div style="height:4px;"></div>';
             }
@@ -3783,6 +3784,118 @@ document.addEventListener("DOMContentLoaded", function() {
         return h + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
     }
 
+    // ── Outliner-style editing for thread replies: bullet points + Tab indent,
+    // same convention as the rest of the app suite (Interstitial Journal, Jots) ──
+    const BULLET_PREFIX = '\u2022 ';
+    const INDENT_UNIT = '  ';
+
+    function getLineInfo(textarea) {
+        const pos = textarea.selectionStart;
+        const value = textarea.value;
+        const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
+        const lineEnd = value.indexOf('\n', pos);
+        const end = lineEnd === -1 ? value.length : lineEnd;
+        const line = value.slice(lineStart, end);
+        const match = line.match(/^( *)/);
+        const indent = match ? match[1].length : 0;
+        const afterIndent = line.slice(indent);
+        const bulletMatch = afterIndent.match(/^[\u2022\-*]\s?/);
+        const content = bulletMatch ? afterIndent.slice(bulletMatch[0].length) : afterIndent;
+        return { lineStart, lineEnd: end, line, indent, content, pos };
+    }
+    function setCursor(textarea, pos) { textarea.selectionStart = textarea.selectionEnd = pos; }
+    function autoGrowReplyTextarea(ta) {
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+    }
+    function replaceAndSetCursor(ta, newValue, newCursor) {
+        ta.value = newValue;
+        setCursor(ta, newCursor);
+        autoGrowReplyTextarea(ta);
+    }
+    function handleOutlinerKeydown(e) {
+        const ta = e.target;
+        const isShift = e.shiftKey;
+
+        // Ctrl/Cmd+Enter sends the reply (Enter alone continues the outline — see below)
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) return; // let the row's own handler send it
+
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const { lineStart, lineEnd, line, indent } = getLineInfo(ta);
+            if (isShift) {
+                if (indent === 0) return;
+                const remove = Math.min(indent, INDENT_UNIT.length);
+                const newLine = line.slice(remove);
+                const newValue = ta.value.slice(0, lineStart) + newLine + ta.value.slice(lineEnd);
+                const newCursor = Math.max(lineStart, ta.selectionStart - remove);
+                replaceAndSetCursor(ta, newValue, newCursor);
+            } else {
+                const insertAt = lineStart + indent;
+                const newValue = ta.value.slice(0, insertAt) + INDENT_UNIT + ta.value.slice(insertAt);
+                const newCursor = ta.selectionStart + INDENT_UNIT.length;
+                replaceAndSetCursor(ta, newValue, newCursor);
+            }
+            return;
+        }
+
+        if (e.key === 'Enter' && !isShift) {
+            e.preventDefault();
+            const { lineStart, lineEnd, indent, content } = getLineInfo(ta);
+            if (content.trim() === '') {
+                const newValue = ta.value.slice(0, lineStart) + ta.value.slice(lineEnd + 1);
+                replaceAndSetCursor(ta, newValue, lineStart);
+                return;
+            }
+            const newLine = '\n' + ' '.repeat(indent) + BULLET_PREFIX;
+            const pos = ta.selectionStart;
+            const newValue = ta.value.slice(0, pos) + newLine + ta.value.slice(ta.selectionEnd);
+            replaceAndSetCursor(ta, newValue, pos + newLine.length);
+            return;
+        }
+
+        if (e.key === 'Backspace') {
+            const { lineStart, indent, content, pos } = getLineInfo(ta);
+            if (pos === lineStart + indent + BULLET_PREFIX.length && content === '') {
+                e.preventDefault();
+                if (indent > 0) {
+                    const remove = Math.min(indent, INDENT_UNIT.length);
+                    const newValue = ta.value.slice(0, lineStart) + ta.value.slice(lineStart + remove);
+                    replaceAndSetCursor(ta, newValue, pos - remove);
+                } else {
+                    const newValue = ta.value.slice(0, lineStart) + ta.value.slice(lineStart + BULLET_PREFIX.length);
+                    replaceAndSetCursor(ta, newValue, lineStart);
+                }
+            }
+        }
+    }
+    function handleOutlinerInput(e) {
+        const ta = e.target;
+        if (ta.value.length === 1 && /\S/.test(ta.value) && !/^[\u2022\-*]/.test(ta.value)) {
+            const char = ta.value;
+            ta.value = BULLET_PREFIX + char;
+            setCursor(ta, ta.value.length);
+        }
+        autoGrowReplyTextarea(ta);
+    }
+    function handleOutlinerPaste(e) {
+        const ta = e.target;
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        if (!text || ta.value.trim().length > 0) { setTimeout(() => autoGrowReplyTextarea(ta), 0); return; }
+        e.preventDefault();
+        const lines = text.split(/\r?\n/);
+        const bulleted = lines.map(l => {
+            if (!l.trim()) return l;
+            const leading = (l.match(/^( *)/) || ['', ''])[1];
+            const rest = l.slice(leading.length);
+            if (/^[\u2022\-*]\s?/.test(rest)) return l;
+            return leading + BULLET_PREFIX + rest;
+        }).join('\n');
+        ta.value = bulleted;
+        setCursor(ta, ta.value.length);
+        autoGrowReplyTextarea(ta);
+    }
+
     // Add a thread panel to an existing message element
     function addThreadPanel(msgEl, replies) {
         if (msgEl.querySelector('.thread-toggle-btn')) return; // already has one
@@ -3849,12 +3962,10 @@ document.addEventListener("DOMContentLoaded", function() {
         var inputRow = document.createElement('div');
         inputRow.className = 'thread-input-row';
         var ta = document.createElement('textarea');
-        ta.placeholder = 'Reply… (Enter to send, Shift+Enter new line)';
+        ta.placeholder = 'Reply… (bullets: Tab to indent, Enter for new bullet, Ctrl+Enter to send)';
         ta.rows = 1;
-        ta.addEventListener('input', function() {
-            ta.style.height = 'auto';
-            ta.style.height = Math.min(ta.scrollHeight, 90) + 'px';
-        });
+        ta.addEventListener('input', handleOutlinerInput);
+        ta.addEventListener('paste', handleOutlinerPaste);
         var sendBtn = document.createElement('button');
         sendBtn.textContent = 'Reply';
         function doSendReply() {
@@ -3870,7 +3981,8 @@ document.addEventListener("DOMContentLoaded", function() {
         }
         sendBtn.onclick = function(e) { e.stopPropagation(); doSendReply(); };
         ta.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSendReply(); }
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); doSendReply(); return; }
+            handleOutlinerKeydown(e);
         });
         inputRow.appendChild(ta);
         inputRow.appendChild(sendBtn);
@@ -5208,7 +5320,7 @@ document.addEventListener('DOMContentLoaded', function() { scUpdateAuthUI(); });
         <div class="cal-modal-title">📅 Send to Calendar</div>
         <div class="cal-modal-text" id="calTypeModalNoteText"></div>
         <button type="button" class="cal-opt-btn" id="calTypeAllDayBtn">🗓️ Whole-day event</button>
-        <button type="button" class="cal-opt-btn" id="calTypeTimedBtn">🕐 Timed event (created date &amp; time)</button>
+        <button type="button" class="cal-opt-btn" id="calTypeTimedBtn">🕐 Timed event (created time → last message)</button>
         <button type="button" class="cal-cancel-btn" id="calTypeCancelBtn">Cancel</button>
     </div>
 </div>
@@ -5365,6 +5477,8 @@ let gcalCalendarIdVerifiedAt = 0;
 let gisTokenClient = null;
 let calendarReconnectPromise = null;
 let silentReconnectResolvers = [];
+let pendingCalEvent = null;   // event waiting for Calendar to finish connecting
+let pendingCalEventAt = 0;
 
 const gcalSyncStatus = document.getElementById('gcalSyncStatus');
 const gcalConnectBtn = document.getElementById('gcalConnectBtn');
@@ -5413,6 +5527,12 @@ function initGisTokenClient() {
                 gcalTokenObtainedAt = Date.now();
                 setCalendarConnected(true);
                 resolvers.forEach(fn => fn(true));
+                // If a send was given up on (not connected yet), finish it now
+                if (pendingCalEvent && (Date.now() - pendingCalEventAt) < 5 * 60 * 1000) {
+                    const ev = pendingCalEvent;
+                    pendingCalEvent = null;
+                    sendCalEvent(ev);
+                } else { pendingCalEvent = null; }
             } else {
                 setCalendarConnected(false);
                 resolvers.forEach(fn => fn(false));
@@ -5422,7 +5542,8 @@ function initGisTokenClient() {
         error_callback: (err) => {
             const resolvers = silentReconnectResolvers.splice(0);
             resolvers.forEach(fn => fn(false));
-            if (err && (err.type === 'popup_closed' || err.type === 'popup_failed_to_open')) return;
+            if (err && err.type === 'popup_failed_to_open') { showCalToast('⚠️ Popup blocked — allow popups for this page, then click 📅 Calendar again', true); return; }
+            if (err && err.type === 'popup_closed') return;
             console.warn('GIS token error:', err);
             if (resolvers.length === 0) showCalToast('⚠️ Calendar connection failed', true);
         },
@@ -5445,7 +5566,9 @@ function ensureCalendarConnected() {
             resolve(ok);
         };
         silentReconnectResolvers.push(finish);
-        setTimeout(() => finish(gcalTokenIsFresh()), 8000);
+        showCalToast('🔑 Connecting to Google Calendar…');
+        // Give the Google sign-in popup plenty of time (was 8s, too short if you pick an account)
+        setTimeout(() => finish(gcalTokenIsFresh()), 90000);
         try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
     });
     return calendarReconnectPromise;
@@ -5565,7 +5688,12 @@ function buildCalDescriptionText() {
         if (!p.isSubchat) out.push('');
     });
     while (out.length && out[out.length - 1] === '') out.pop();
-    return out.join('\n');
+    // Google Calendar's own renderer collapses runs of regular spaces, which
+    // would flatten the outline's indentation — convert each line's leading
+    // spaces to non-breaking spaces so the nesting survives there.
+    return out.join('\n').split('\n').map(function(line) {
+        return line.replace(/^ +/, function(m) { return m.replace(/ /g, '\u00A0'); });
+    }).join('\n');
 }
 function getCurrentChatCreatedAt() {
     var id = (typeof cmCurrentId === 'function') ? cmCurrentId() : null;
@@ -5578,7 +5706,13 @@ async function sendCalEvent(eventBody) {
     if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
     showCalToast('📤 Sending to Calendar…');
     const connected = await ensureCalendarConnected();
-    if (!connected) { showCalToast('⚠️ Calendar not connected — click Connect first', true); return; }
+    if (!connected) {
+        // Keep the event so it is sent automatically as soon as Connect succeeds
+        pendingCalEvent = eventBody;
+        pendingCalEventAt = Date.now();
+        showCalToast('⚠️ Not connected yet — click Connect (sidebar); it will then send automatically', true);
+        return;
+    }
     const calendarId = await ensureSelfchatCalendarId();
     if (!calendarId) { showCalToast('⚠️ Calendar sync failed', true); return; }
     try {
@@ -5594,8 +5728,28 @@ async function sendCalEvent(eventBody) {
     }
 }
 
+// Duration of a Timed event = from the chat's created time to the last message/reply
+// timestamp in it (stamps are time-of-day only, so this assumes same-day activity).
+function calcChatDurationMinutes(start) {
+    var mins = [];
+    document.querySelectorAll('#chatBox .timestamp, #chatBox .thread-reply-ts, #chatBox .sub-reply-ts').forEach(function(el) {
+        var m = /(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(el.textContent || '');
+        if (!m) return;
+        var h = parseInt(m[1], 10) % 12;
+        if (m[3].toUpperCase() === 'PM') h += 12;
+        mins.push(h * 60 + parseInt(m[2], 10));
+    });
+    if (!mins.length) return 30;                       // nothing to measure -> old default
+    var maxMin = Math.max.apply(null, mins), minMin = Math.min.apply(null, mins);
+    var startMin = start.getHours() * 60 + start.getMinutes();
+    var d = maxMin - startMin;                         // created time -> last activity
+    if (d < 1 || d > 720) d = maxMin - minMin;         // fallback: first -> last stamp
+    if (d < 1 || d > 720) return 30;                   // still unusable (e.g. spans midnight)
+    return Math.max(5, d);
+}
+const CAL_TITLE_ICON = '🎯 ';
 function sendCalAllDay(dateStr) {
-    var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
+    var title = CAL_TITLE_ICON + (document.getElementById('chatTitle').textContent.trim() || 'Chat');
     var nextDay = new Date(dateStr + 'T00:00:00');
     nextDay.setDate(nextDay.getDate() + 1);
     var nextDayStr = ymd(nextDay);
@@ -5607,21 +5761,36 @@ function sendCalAllDay(dateStr) {
     });
 }
 function sendCalTimed() {
-    var title = document.getElementById('chatTitle').textContent.trim() || 'Chat';
-    var start = getCurrentChatCreatedAt();
-    var end = new Date(start.getTime() + 30 * 60 * 1000); // 30-min default duration
-    var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    sendCalEvent({
-        summary: title,
-        description: buildCalDescriptionText(),
-        start: { dateTime: start.toISOString(), timeZone: tz },
-        end: { dateTime: end.toISOString(), timeZone: tz },
-    });
+    try {
+        var title = CAL_TITLE_ICON + (document.getElementById('chatTitle').textContent.trim() || 'Chat');
+        var start = getCurrentChatCreatedAt();
+        if (isNaN(start.getTime())) start = new Date();
+        start.setSeconds(0, 0);
+        var end = new Date(start.getTime() + calcChatDurationMinutes(start) * 60 * 1000);
+        var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        sendCalEvent({
+            summary: title,
+            description: buildCalDescriptionText(),
+            start: { dateTime: start.toISOString(), timeZone: tz },
+            end: { dateTime: end.toISOString(), timeZone: tz },
+        });
+    } catch (e) {
+        console.warn('Timed event failed:', e);
+        showCalToast('⚠️ Could not build the timed event', true);
+    }
 }
 
 // ---- modal flow: step 1 (event type) → step 2 (which day, all-day only) ----
-function openCalEventTypeModal() {
+async function openCalEventTypeModal() {
     if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
+    // Connect FIRST (this click is the user gesture that lets Google's popup open).
+    // Only once the token is ready do we show the event-type choices, so Timed and
+    // Whole-day both send with an already-connected calendar.
+    if (!gcalTokenIsFresh()) {
+        if (!initGisTokenClient()) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+        const ok = await ensureCalendarConnected();
+        if (!ok) { showCalToast('⚠️ Calendar not connected — finish the Google popup, then click 📅 Calendar again', true); return; }
+    }
     var title = document.getElementById('chatTitle').textContent.trim();
     calTypeModalNoteText.textContent = title || '(untitled chat)';
     calTypeModalBackdrop.classList.remove('hidden');
