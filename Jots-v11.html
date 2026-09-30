@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <title>✍🏻Cloud Jots</title>
+    <title>📝 Cloud Leader</title>
     <!-- Firebase SDK (cloud sync) -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -295,6 +295,82 @@
             background: #f59e0b;
             display: inline-block;
         }
+
+        /* HINT-ROW FILTER PULL-DOWNS (Tag / Date) */
+        .fm-btn {
+            background: #eef2ff;
+            border: 1px solid #c7d2fe;
+            color: #4338ca;
+            font-size: 0.7rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            padding: 2px 8px;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            line-height: 1.4;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+        .fm-btn:hover { background: #e0e7ff; }
+        .fm-btn .fm-caret { font-size: 0.6rem; transition: transform 0.15s ease; display: inline-block; }
+        .fm-btn.open .fm-caret { transform: rotate(180deg); }
+        .fm-btn.has-filter {
+            background: #fef3c7;
+            border-color: #fcd34d;
+            color: #92400e;
+        }
+        .fm-btn.has-filter:hover { background: #fde68a; }
+        .fm-menu {
+            position: fixed;
+            z-index: 1000;
+            min-width: 200px;
+            max-width: min(320px, calc(100vw - 16px));
+            max-height: min(340px, 60vh);
+            overflow-y: auto;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18);
+            padding: 6px;
+            font-size: 0.8rem;
+            color: #1e293b;
+        }
+        .fm-menu.hidden { display: none; }
+        .fm-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .fm-item:hover { background: #f1f5f9; }
+        .fm-item.active { background: #eef2ff; color: #3730a3; font-weight: 600; }
+        .fm-check { width: 14px; text-align: center; color: #4f46e5; visibility: hidden; flex: none; }
+        .fm-item.active .fm-check { visibility: visible; }
+        .fm-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .fm-count, .fm-range { font-size: 0.68rem; color: #94a3b8; font-weight: 500; flex: none; }
+        .fm-empty { padding: 8px; color: #94a3b8; font-size: 0.75rem; }
+        .fm-clear {
+            display: block;
+            width: 100%;
+            margin-top: 4px;
+            padding: 6px 8px;
+            border: none;
+            border-top: 1px solid #e2e8f0;
+            background: none;
+            color: #b45309;
+            font-family: inherit;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-align: left;
+            cursor: pointer;
+            border-radius: 0 0 8px 8px;
+        }
+        .fm-clear:hover { background: #fef3c7; }
 
         /* TAG PANEL */
         .tag-panel {
@@ -1204,7 +1280,6 @@
             .item-actions,
             .reply-actions { opacity: 1; pointer-events: auto; }
         }
-
         /* ===================================================================
            Google Calendar: toast + date-choice modal
            =================================================================== */
@@ -1318,7 +1393,7 @@
 <body>
     <div class="app-container" id="appContainer">
         <div class="app-header">
-            <h1><span>📋</span> Cloud Jots</h1>
+            <h1><span>📋</span> Cloud Leader</h1>
 
             <div class="user-chip" id="userChip">
                 <button id="googleSignInBtn" class="chip-btn sign-in hidden">🔑 Sign in</button>
@@ -1351,6 +1426,9 @@
             <span><kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span>
             <span class="hint-sep">·</span>
             <span>click text to edit</span>
+            <span class="hint-sep">·</span>
+            <button type="button" class="fm-btn" id="tagMenuBtn" aria-haspopup="listbox" aria-expanded="false" title="Filter by tag">🏷️ <span id="tagMenuLabel">Tag</span> <span class="fm-caret">▾</span></button>
+            <button type="button" class="fm-btn" id="dateMenuBtn" aria-haspopup="listbox" aria-expanded="false" title="Filter by date">📅 <span id="dateMenuLabel">Date</span> <span class="fm-caret">▾</span></button>
             <span class="hint-sep">·</span>
             <span><span class="hint-tag">#tag</span> or "Sep 16"/"20260916" in search</span>
             <span class="hint-sep">·</span>
@@ -1409,6 +1487,9 @@
             Copyright 2026 Dr. Wen-Ming Yang. All Rights Reserved
         </div>
     </div>
+
+    <!-- Filter pull-down menu (shared by Tag / Date buttons) -->
+    <div class="fm-menu hidden" id="filterMenu" role="listbox"></div>
 
     <!-- Calendar toast -->
     <div class="cal-toast" id="calToast"></div>
@@ -1474,7 +1555,7 @@
         let editingReply = null;
         let tagEditingItemId = null;
         let collapsedItems = new Set();
-        const COLLAPSE_KEY = 'cloudNotesCollapsed';
+        const COLLAPSE_KEY = 'cloudLeaderCollapsed';
         let activeTagFilters = new Set();
         let pendingTags = [];
 
@@ -1490,7 +1571,7 @@
         let nullUserTimer = null;
         const NULL_USER_GRACE_MS = 1500;
 
-        const PREF_KEY = 'cloudNotesPrefs';
+        const PREF_KEY = 'cloudLeaderPrefs';
         let bulletMode = false;
         let manuallyResized = false;
         let resizeCycleIndex = 0;
@@ -1546,6 +1627,11 @@
         const bulletBtn = document.getElementById('bulletBtn');
         const resizeBtn = document.getElementById('resizeBtn');
         const hintRow = document.getElementById('hintRow');
+        const tagMenuBtn = document.getElementById('tagMenuBtn');
+        const dateMenuBtn = document.getElementById('dateMenuBtn');
+        const tagMenuLabel = document.getElementById('tagMenuLabel');
+        const dateMenuLabel = document.getElementById('dateMenuLabel');
+        const filterMenuEl = document.getElementById('filterMenu');
         const itemsList = document.getElementById('itemsList');
         const syncStatus = document.getElementById('syncStatus');
         const searchInput = document.getElementById('searchInput');
@@ -1829,6 +1915,7 @@
                 tagToggleDot.style.display = 'none';
                 tagToggleLink.title = 'Show / hide tags, search & date filters panel';
             }
+            refreshFilterMenus();
         }
 
         function renderPendingTags() {
@@ -2185,7 +2272,7 @@
         function itemsCollectionRef() {
             if (!cloudUser || !cloudDb) return null;
             return cloudDb.collection('users').doc(cloudUser.uid)
-                          .collection('cloud_notes').doc('data')
+                          .collection('cloud_leader').doc('data')
                           .collection('items');
         }
         function subscribeToItems() {
@@ -2244,15 +2331,16 @@
             }
             else if (state === 'error') syncStatus.textContent = '🔴 Cloud error — retrying';
         }
+
         function notesDataDocRef() {
             if (!cloudUser || !cloudDb) return null;
             return cloudDb.collection('users').doc(cloudUser.uid)
-                          .collection('cloud_notes').doc('data');
+                          .collection('cloud_leader').doc('data');
         }
 
         // ===================================================================
         // Google Calendar — send a note (with its replies as sub-items in
-        // the description) to a dedicated "Cloud Jots" calendar as an
+        // the description) to a dedicated "Cloud Leader" calendar as an
         // ALL-DAY event. Uses its own Google OAuth token (Calendar scope)
         // on top of the existing Firebase sign-in, same pattern as the
         // Interstitial Journal / Session-tracker apps.
@@ -2262,7 +2350,7 @@
         // client's "Authorized JavaScript origins" in Google Cloud Console.
         // ===================================================================
         const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar';
-        const GCAL_CALENDAR_NAME = 'Cloud Jots';
+        const GCAL_CALENDAR_NAME = 'Cloud Leader';
         const GCAL_CLIENT_ID = '663058774385-0209ekni5vchpbf9mr3rkofd369hrhr3.apps.googleusercontent.com';
         let gcalAccessToken = null;
         let gcalTokenObtainedAt = 0;
@@ -2366,7 +2454,7 @@
             return res;
         }
 
-        async function findExistingCloudJotsCalendarId() {
+        async function findExistingCloudLeaderCalendarId() {
             const res = await gcalFetch('users/me/calendarList?maxResults=250');
             if (!res || !res.ok) return null;
             const list = await res.json();
@@ -2381,7 +2469,7 @@
             const res = await gcalFetch(`calendars/${encodeURIComponent(id)}`);
             return !!(res && res.ok);
         }
-        async function ensureCloudJotsCalendarId() {
+        async function ensureCloudLeaderCalendarId() {
             if (gcalCalendarId) {
                 if (Date.now() - gcalCalendarIdVerifiedAt < 5 * 60 * 1000) return gcalCalendarId;
                 if (await calendarStillExists(gcalCalendarId)) { gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId; }
@@ -2400,7 +2488,7 @@
                             return gcalCalendarId;
                         }
                     }
-                    const foundId = await findExistingCloudJotsCalendarId();
+                    const foundId = await findExistingCloudLeaderCalendarId();
                     if (foundId) {
                         gcalCalendarId = foundId;
                         gcalCalendarIdVerifiedAt = Date.now();
@@ -2411,7 +2499,7 @@
                         method: 'POST',
                         body: JSON.stringify({
                             summary: GCAL_CALENDAR_NAME,
-                            description: 'Auto-created by the Cloud Jots app to hold notes sent from it as day events.',
+                            description: 'Auto-created by the Cloud Leader app to hold notes sent from it as day events.',
                             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                         }),
                     });
@@ -2459,7 +2547,7 @@
             showCalToast('📤 Sending to Calendar…');
             const connected = await ensureCalendarConnected();
             if (!connected) { showCalToast('⚠️ Calendar not connected — click Connect first', true); return; }
-            const calendarId = await ensureCloudJotsCalendarId();
+            const calendarId = await ensureCloudLeaderCalendarId();
             if (!calendarId) { showCalToast('⚠️ Calendar sync failed', true); return; }
             try {
                 const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events`, {
@@ -3600,6 +3688,137 @@
             updateTagToggle();
             renderDateFilters();
         });
+
+
+        // ===================================================================
+        // Hint-row pull-down menus: Tag (multi-select) + Date (single-select)
+        // They share state with the Search panel (activeTagFilters /
+        // activeDateFilter), so both UIs always stay in sync.
+        // ===================================================================
+        let openFilterMenu = null; // 'tag' | 'date' | null
+        const DATE_FILTER_DEFS = [
+            { key: 'today',     label: '☀️ Today',     range: () => getTodayRange() },
+            { key: 'threeDays', label: '🕒 3 days',    range: () => getThreeDayRange() },
+            { key: 'thisWeek',  label: '📅 This week', range: () => getThisWeekRange() },
+            { key: 'lastWeek',  label: '📅 Last week', range: () => getLastWeekRange() },
+        ];
+
+        function updateFilterMenuButtons() {
+            const nTags = activeTagFilters.size;
+            let tagLabel = 'Tag';
+            if (nTags === 1) tagLabel = '#' + Array.from(activeTagFilters)[0];
+            else if (nTags > 1) tagLabel = `Tag (${nTags})`;
+            tagMenuLabel.textContent = tagLabel;
+            tagMenuBtn.classList.toggle('has-filter', nTags > 0);
+
+            const def = DATE_FILTER_DEFS.find(d => d.key === activeDateFilter);
+            dateMenuLabel.textContent = def ? def.label.replace(/^\S+\s/, '') : 'Date';
+            dateMenuBtn.classList.toggle('has-filter', !!def);
+        }
+
+        function renderFilterMenu() {
+            if (openFilterMenu === 'tag') {
+                const all = getAllTagsWithCounts();
+                let html = '';
+                if (!all.length) {
+                    html = '<div class="fm-empty">No tags yet</div>';
+                } else {
+                    html = all.map(({ tag, count }) => {
+                        const active = activeTagFilters.has(tag);
+                        return `<div class="fm-item ${active ? 'active' : ''}" role="option" aria-selected="${active}" data-fm-tag="${escapeHtml(tag)}"><span class="fm-check">✓</span><span class="fm-label">#${escapeHtml(tag)}</span><span class="fm-count">${count}</span></div>`;
+                    }).join('');
+                }
+                if (activeTagFilters.size > 0) html += '<button type="button" class="fm-clear" data-fm-clear="tag">✕ Clear tags</button>';
+                filterMenuEl.innerHTML = html;
+            } else if (openFilterMenu === 'date') {
+                let html = DATE_FILTER_DEFS.map(d => {
+                    const active = activeDateFilter === d.key;
+                    return `<div class="fm-item ${active ? 'active' : ''}" role="option" aria-selected="${active}" data-fm-date="${d.key}"><span class="fm-check">✓</span><span class="fm-label">${d.label}</span><span class="fm-range">${escapeHtml(formatDateRangeShort(d.range()))}</span></div>`;
+                }).join('');
+                if (activeDateFilter) html += '<button type="button" class="fm-clear" data-fm-clear="date">✕ Clear date</button>';
+                filterMenuEl.innerHTML = html;
+            }
+        }
+
+        function positionFilterMenu() {
+            const btn = openFilterMenu === 'tag' ? tagMenuBtn : dateMenuBtn;
+            const r = btn.getBoundingClientRect();
+            const w = filterMenuEl.offsetWidth;
+            const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+            filterMenuEl.style.left = left + 'px';
+            filterMenuEl.style.top = (r.bottom + 4) + 'px';
+        }
+
+        function openFilterMenuFor(which) {
+            openFilterMenu = which;
+            renderFilterMenu();
+            filterMenuEl.classList.remove('hidden');
+            positionFilterMenu();
+            tagMenuBtn.classList.toggle('open', which === 'tag');
+            dateMenuBtn.classList.toggle('open', which === 'date');
+            tagMenuBtn.setAttribute('aria-expanded', String(which === 'tag'));
+            dateMenuBtn.setAttribute('aria-expanded', String(which === 'date'));
+        }
+        function closeFilterMenu() {
+            openFilterMenu = null;
+            filterMenuEl.classList.add('hidden');
+            tagMenuBtn.classList.remove('open');
+            dateMenuBtn.classList.remove('open');
+            tagMenuBtn.setAttribute('aria-expanded', 'false');
+            dateMenuBtn.setAttribute('aria-expanded', 'false');
+        }
+        // Called from updateTagToggle(): keeps button labels + open menu in sync.
+        function refreshFilterMenus() {
+            updateFilterMenuButtons();
+            if (openFilterMenu) { renderFilterMenu(); positionFilterMenu(); }
+        }
+
+        tagMenuBtn.addEventListener('click', () => {
+            if (openFilterMenu === 'tag') closeFilterMenu(); else openFilterMenuFor('tag');
+        });
+        dateMenuBtn.addEventListener('click', () => {
+            if (openFilterMenu === 'date') closeFilterMenu(); else openFilterMenuFor('date');
+        });
+
+        filterMenuEl.addEventListener('click', (e) => {
+            const clr = e.target.closest('[data-fm-clear]');
+            if (clr) {
+                if (clr.dataset.fmClear === 'tag') activeTagFilters.clear();
+                else activeDateFilter = null;
+                renderItems();
+                renderExistingTags();
+                renderDateFilters();
+                if (clr.dataset.fmClear === 'date') closeFilterMenu();
+                return;
+            }
+            const tagEl = e.target.closest('[data-fm-tag]');
+            if (tagEl) {
+                const t = tagEl.dataset.fmTag;
+                if (activeTagFilters.has(t)) activeTagFilters.delete(t); else activeTagFilters.add(t);
+                renderItems();          // also refreshes buttons + this menu
+                renderExistingTags();
+                return;                 // menu stays open so several tags can be picked
+            }
+            const dateEl = e.target.closest('[data-fm-date]');
+            if (dateEl) {
+                const k = dateEl.dataset.fmDate;
+                activeDateFilter = (activeDateFilter === k) ? null : k;
+                renderItems();
+                renderDateFilters();
+                closeFilterMenu();
+            }
+        });
+
+        document.addEventListener('mousedown', (e) => {
+            if (!openFilterMenu) return;
+            if (filterMenuEl.contains(e.target) || tagMenuBtn.contains(e.target) || dateMenuBtn.contains(e.target)) return;
+            closeFilterMenu();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && openFilterMenu) { closeFilterMenu(); }
+        });
+        window.addEventListener('resize', () => { if (openFilterMenu) positionFilterMenu(); });
+        window.addEventListener('scroll', () => { if (openFilterMenu) positionFilterMenu(); }, true);
 
         // ===================================================================
         // Search (inside the panel)

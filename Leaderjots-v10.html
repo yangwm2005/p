@@ -8,6 +8,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <!-- Google Identity Services (for Calendar OAuth token, separate from Firebase sign-in) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
         * {
             box-sizing: border-box;
@@ -293,6 +295,82 @@
             background: #f59e0b;
             display: inline-block;
         }
+
+        /* HINT-ROW FILTER PULL-DOWNS (Tag / Date) */
+        .fm-btn {
+            background: #eef2ff;
+            border: 1px solid #c7d2fe;
+            color: #4338ca;
+            font-size: 0.7rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            padding: 2px 8px;
+            border-radius: 999px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            line-height: 1.4;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+        .fm-btn:hover { background: #e0e7ff; }
+        .fm-btn .fm-caret { font-size: 0.6rem; transition: transform 0.15s ease; display: inline-block; }
+        .fm-btn.open .fm-caret { transform: rotate(180deg); }
+        .fm-btn.has-filter {
+            background: #fef3c7;
+            border-color: #fcd34d;
+            color: #92400e;
+        }
+        .fm-btn.has-filter:hover { background: #fde68a; }
+        .fm-menu {
+            position: fixed;
+            z-index: 1000;
+            min-width: 200px;
+            max-width: min(320px, calc(100vw - 16px));
+            max-height: min(340px, 60vh);
+            overflow-y: auto;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18);
+            padding: 6px;
+            font-size: 0.8rem;
+            color: #1e293b;
+        }
+        .fm-menu.hidden { display: none; }
+        .fm-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .fm-item:hover { background: #f1f5f9; }
+        .fm-item.active { background: #eef2ff; color: #3730a3; font-weight: 600; }
+        .fm-check { width: 14px; text-align: center; color: #4f46e5; visibility: hidden; flex: none; }
+        .fm-item.active .fm-check { visibility: visible; }
+        .fm-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .fm-count, .fm-range { font-size: 0.68rem; color: #94a3b8; font-weight: 500; flex: none; }
+        .fm-empty { padding: 8px; color: #94a3b8; font-size: 0.75rem; }
+        .fm-clear {
+            display: block;
+            width: 100%;
+            margin-top: 4px;
+            padding: 6px 8px;
+            border: none;
+            border-top: 1px solid #e2e8f0;
+            background: none;
+            color: #b45309;
+            font-family: inherit;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-align: left;
+            cursor: pointer;
+            border-radius: 0 0 8px 8px;
+        }
+        .fm-clear:hover { background: #fef3c7; }
 
         /* TAG PANEL */
         .tag-panel {
@@ -806,6 +884,13 @@
             background: #dbeafe;
             color: #2563eb;
         }
+        .item-actions button.cal-btn:hover {
+            background: #dcfce7;
+            color: #16a34a;
+        }
+        .item-actions button.cal-btn.sent {
+            color: #16a34a;
+        }
         .item-actions button.reply-btn.active {
             background: #dbeafe;
             color: #2563eb;
@@ -1195,6 +1280,114 @@
             .item-actions,
             .reply-actions { opacity: 1; pointer-events: auto; }
         }
+        /* ===================================================================
+           Google Calendar: toast + date-choice modal
+           =================================================================== */
+        .cal-toast {
+            position: fixed;
+            left: 50%;
+            bottom: 28px;
+            transform: translateX(-50%) translateY(8px);
+            background: #1e293b;
+            color: #f8fafc;
+            padding: 0.55rem 1.1rem;
+            border-radius: 999px;
+            font-size: 0.82rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+            z-index: 300;
+            opacity: 0;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            pointer-events: none;
+            max-width: 90vw;
+            text-align: center;
+        }
+        .cal-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+        .cal-toast.error { background: #b91c1c; }
+
+        .cal-date-modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.45);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 400;
+            padding: 16px;
+        }
+        .cal-date-modal-backdrop.hidden { display: none; }
+        .cal-date-modal {
+            background: #fff;
+            border-radius: 20px;
+            padding: 22px 22px 18px;
+            max-width: 360px;
+            width: 100%;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+        }
+        .cal-date-modal-title {
+            font-weight: 600;
+            font-size: 1.05rem;
+            color: #1e293b;
+            margin-bottom: 6px;
+        }
+        .cal-date-modal-text {
+            font-size: 0.85rem;
+            color: #64748b;
+            margin-bottom: 16px;
+            max-height: 90px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            line-height: 1.4;
+        }
+        .cal-date-opt-btn {
+            display: block;
+            width: 100%;
+            text-align: left;
+            background: #f1f5f9;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 10px 14px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            color: #1e293b;
+            cursor: pointer;
+            margin-bottom: 8px;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .cal-date-opt-btn:hover { background: #e2e8f0; border-color: #cbd5e1; }
+        .cal-date-pick-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .cal-date-pick-row input[type="date"] {
+            flex: 1;
+            min-width: 0;
+            padding: 9px 10px;
+            border-radius: 12px;
+            border: 1.5px solid #e2e8f0;
+            font-family: inherit;
+            font-size: 0.88rem;
+            color: #1e293b;
+        }
+        .cal-date-pick-row .cal-date-opt-btn {
+            width: auto;
+            margin-bottom: 0;
+            flex-shrink: 0;
+        }
+        .cal-date-cancel-btn {
+            display: block;
+            width: 100%;
+            text-align: center;
+            background: none;
+            border: none;
+            padding: 8px;
+            font-size: 0.85rem;
+            font-family: inherit;
+            color: #94a3b8;
+            cursor: pointer;
+            margin-top: 4px;
+        }
+        .cal-date-cancel-btn:hover { color: #475569; }
     </style>
 </head>
 <body>
@@ -1233,6 +1426,9 @@
             <span><kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span>
             <span class="hint-sep">·</span>
             <span>click text to edit</span>
+            <span class="hint-sep">·</span>
+            <button type="button" class="fm-btn" id="tagMenuBtn" aria-haspopup="listbox" aria-expanded="false" title="Filter by tag">🏷️ <span id="tagMenuLabel">Tag</span> <span class="fm-caret">▾</span></button>
+            <button type="button" class="fm-btn" id="dateMenuBtn" aria-haspopup="listbox" aria-expanded="false" title="Filter by date">📅 <span id="dateMenuLabel">Date</span> <span class="fm-caret">▾</span></button>
             <span class="hint-sep">·</span>
             <span><span class="hint-tag">#tag</span> or "Sep 16"/"20260916" in search</span>
             <span class="hint-sep">·</span>
@@ -1282,10 +1478,34 @@
 
         <div class="footer-note">
             <span id="syncStatus">☁️ Not signed in</span>
+            <span class="chip-sep">·</span>
+            <span id="gcalSyncStatus">📅 Calendar: not connected</span>
+            <button type="button" id="gcalConnectBtn" class="chip-btn" style="text-decoration:underline;">Connect</button>
         </div>
 
         <div class="copyright">
             Copyright 2026 Dr. Wen-Ming Yang. All Rights Reserved
+        </div>
+    </div>
+
+    <!-- Filter pull-down menu (shared by Tag / Date buttons) -->
+    <div class="fm-menu hidden" id="filterMenu" role="listbox"></div>
+
+    <!-- Calendar toast -->
+    <div class="cal-toast" id="calToast"></div>
+
+    <!-- Calendar date-choice modal -->
+    <div class="cal-date-modal-backdrop hidden" id="calDateModalBackdrop">
+        <div class="cal-date-modal">
+            <div class="cal-date-modal-title">📅 Send to Calendar</div>
+            <div class="cal-date-modal-text" id="calDateModalNoteText"></div>
+            <button type="button" class="cal-date-opt-btn" id="calDateTodayBtn">Today</button>
+            <button type="button" class="cal-date-opt-btn" id="calDateCreatedBtn">Created day</button>
+            <div class="cal-date-pick-row">
+                <input type="date" id="calDatePickInput">
+                <button type="button" class="cal-date-opt-btn" id="calDatePickBtn">Use date</button>
+            </div>
+            <button type="button" class="cal-date-cancel-btn" id="calDateCancelBtn">Cancel</button>
         </div>
     </div>
 
@@ -1407,10 +1627,25 @@
         const bulletBtn = document.getElementById('bulletBtn');
         const resizeBtn = document.getElementById('resizeBtn');
         const hintRow = document.getElementById('hintRow');
+        const tagMenuBtn = document.getElementById('tagMenuBtn');
+        const dateMenuBtn = document.getElementById('dateMenuBtn');
+        const tagMenuLabel = document.getElementById('tagMenuLabel');
+        const dateMenuLabel = document.getElementById('dateMenuLabel');
+        const filterMenuEl = document.getElementById('filterMenu');
         const itemsList = document.getElementById('itemsList');
         const syncStatus = document.getElementById('syncStatus');
         const searchInput = document.getElementById('searchInput');
         const searchClearBtn = document.getElementById('searchClearBtn');
+        const gcalSyncStatus = document.getElementById('gcalSyncStatus');
+        const gcalConnectBtn = document.getElementById('gcalConnectBtn');
+        const calToast = document.getElementById('calToast');
+        const calDateModalBackdrop = document.getElementById('calDateModalBackdrop');
+        const calDateModalNoteText = document.getElementById('calDateModalNoteText');
+        const calDateTodayBtn = document.getElementById('calDateTodayBtn');
+        const calDateCreatedBtn = document.getElementById('calDateCreatedBtn');
+        const calDatePickInput = document.getElementById('calDatePickInput');
+        const calDatePickBtn = document.getElementById('calDatePickBtn');
+        const calDateCancelBtn = document.getElementById('calDateCancelBtn');
 
         // ===================================================================
         // Tag helpers
@@ -1680,6 +1915,7 @@
                 tagToggleDot.style.display = 'none';
                 tagToggleLink.title = 'Show / hide tags, search & date filters panel';
             }
+            refreshFilterMenus();
         }
 
         function renderPendingTags() {
@@ -2096,6 +2332,281 @@
             else if (state === 'error') syncStatus.textContent = '🔴 Cloud error — retrying';
         }
 
+        function notesDataDocRef() {
+            if (!cloudUser || !cloudDb) return null;
+            return cloudDb.collection('users').doc(cloudUser.uid)
+                          .collection('cloud_leader').doc('data');
+        }
+
+        // ===================================================================
+        // Google Calendar — send a note (with its replies as sub-items in
+        // the description) to a dedicated "Cloud Leader" calendar as an
+        // ALL-DAY event. Uses its own Google OAuth token (Calendar scope)
+        // on top of the existing Firebase sign-in, same pattern as the
+        // Interstitial Journal / Session-tracker apps.
+        // NOTE: this client ID is shared with the rest of the app suite
+        // (same Google Cloud project). If this file is hosted at a
+        // different origin than those apps, add this origin to the OAuth
+        // client's "Authorized JavaScript origins" in Google Cloud Console.
+        // ===================================================================
+        const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar';
+        const GCAL_CALENDAR_NAME = 'Cloud Leader';
+        const GCAL_CLIENT_ID = '663058774385-0209ekni5vchpbf9mr3rkofd369hrhr3.apps.googleusercontent.com';
+        let gcalAccessToken = null;
+        let gcalTokenObtainedAt = 0;
+        let gcalCalendarId = null;
+        let gcalCreatingCalendar = null;
+        let gcalCalendarIdVerifiedAt = 0;
+        let gisTokenClient = null;
+        let calendarReconnectPromise = null;
+        let silentReconnectResolvers = [];
+        let pendingCalendarItemId = null;
+
+        function gcalTokenIsFresh() {
+            return !!gcalAccessToken && (Date.now() - gcalTokenObtainedAt) < 50 * 60 * 1000;
+        }
+        function setCalendarConnected(connected) {
+            if (gcalSyncStatus) gcalSyncStatus.textContent = connected ? '📅 Calendar: connected' : '📅 Calendar: not connected';
+            if (gcalConnectBtn) gcalConnectBtn.textContent = connected ? 'Reconnect' : 'Connect';
+        }
+        function showCalToast(message, isError) {
+            if (!calToast) return;
+            calToast.textContent = message;
+            calToast.classList.toggle('error', !!isError);
+            calToast.classList.add('show');
+            clearTimeout(showCalToast._t);
+            showCalToast._t = setTimeout(() => calToast.classList.remove('show'), 2600);
+        }
+
+        function initGisTokenClient() {
+            if (gisTokenClient) return gisTokenClient;
+            if (!window.google || !google.accounts || !google.accounts.oauth2) return null;
+            gisTokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: GCAL_CLIENT_ID,
+                scope: GCAL_SCOPE,
+                callback: (tokenResponse) => {
+                    const resolvers = silentReconnectResolvers.splice(0);
+                    if (tokenResponse && tokenResponse.access_token) {
+                        gcalAccessToken = tokenResponse.access_token;
+                        gcalTokenObtainedAt = Date.now();
+                        setCalendarConnected(true);
+                        resolvers.forEach(fn => fn(true));
+                    } else {
+                        setCalendarConnected(false);
+                        resolvers.forEach(fn => fn(false));
+                        if (resolvers.length === 0) showCalToast('⚠️ Calendar connection failed', true);
+                    }
+                },
+                error_callback: (err) => {
+                    const resolvers = silentReconnectResolvers.splice(0);
+                    resolvers.forEach(fn => fn(false));
+                    if (err && (err.type === 'popup_closed' || err.type === 'popup_failed_to_open')) return;
+                    console.warn('GIS token error:', err);
+                    if (resolvers.length === 0) showCalToast('⚠️ Calendar connection failed', true);
+                },
+            });
+            return gisTokenClient;
+        }
+
+        function ensureCalendarConnected() {
+            if (gcalTokenIsFresh()) return Promise.resolve(true);
+            if (!cloudUser) return Promise.resolve(false);
+            if (calendarReconnectPromise) return calendarReconnectPromise;
+            const client = initGisTokenClient();
+            if (!client) return Promise.resolve(false);
+            calendarReconnectPromise = new Promise((resolve) => {
+                let settled = false;
+                const finish = (ok) => {
+                    if (settled) return;
+                    settled = true;
+                    calendarReconnectPromise = null;
+                    resolve(ok);
+                };
+                silentReconnectResolvers.push(finish);
+                setTimeout(() => finish(gcalTokenIsFresh()), 8000);
+                try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
+            });
+            return calendarReconnectPromise;
+        }
+
+        if (gcalConnectBtn) {
+            gcalConnectBtn.addEventListener('click', () => {
+                if (!cloudReady) { showCalToast("Cloud sync is unavailable right now.", true); return; }
+                if (!cloudUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
+                const client = initGisTokenClient();
+                if (!client) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+                client.requestAccessToken({ prompt: 'consent' });
+            });
+        }
+
+        async function gcalFetch(path, options) {
+            if (!gcalTokenIsFresh()) { setCalendarConnected(false); return null; }
+            let res;
+            try {
+                res = await fetch('https://www.googleapis.com/calendar/v3/' + path, Object.assign({
+                    headers: Object.assign({
+                        'Authorization': 'Bearer ' + gcalAccessToken,
+                        'Content-Type': 'application/json',
+                    }, (options && options.headers) || {}),
+                }, options || {}));
+            } catch (e) { console.warn('Calendar request failed:', e); return null; }
+            if (res.status === 401) { gcalAccessToken = null; setCalendarConnected(false); return null; }
+            return res;
+        }
+
+        async function findExistingCloudLeaderCalendarId() {
+            const res = await gcalFetch('users/me/calendarList?maxResults=250');
+            if (!res || !res.ok) return null;
+            const list = await res.json();
+            const items = (list && list.items) || [];
+            const matches = items.filter(c => (c.summaryOverride || c.summary) === GCAL_CALENDAR_NAME && c.accessRole === 'owner');
+            if (matches.length === 0) return null;
+            matches.sort((a, b) => a.id.localeCompare(b.id));
+            return matches[0].id;
+        }
+        async function calendarStillExists(id) {
+            if (!id) return false;
+            const res = await gcalFetch(`calendars/${encodeURIComponent(id)}`);
+            return !!(res && res.ok);
+        }
+        async function ensureCloudLeaderCalendarId() {
+            if (gcalCalendarId) {
+                if (Date.now() - gcalCalendarIdVerifiedAt < 5 * 60 * 1000) return gcalCalendarId;
+                if (await calendarStillExists(gcalCalendarId)) { gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId; }
+                gcalCalendarId = null;
+            }
+            if (gcalCreatingCalendar) return gcalCreatingCalendar;
+            gcalCreatingCalendar = (async () => {
+                try {
+                    const ref = notesDataDocRef();
+                    if (ref) {
+                        const doc = await ref.get();
+                        const savedId = doc.exists && doc.data().settings && doc.data().settings.calendarId;
+                        if (savedId && await calendarStillExists(savedId)) {
+                            gcalCalendarId = savedId;
+                            gcalCalendarIdVerifiedAt = Date.now();
+                            return gcalCalendarId;
+                        }
+                    }
+                    const foundId = await findExistingCloudLeaderCalendarId();
+                    if (foundId) {
+                        gcalCalendarId = foundId;
+                        gcalCalendarIdVerifiedAt = Date.now();
+                        if (ref) ref.set({ settings: { calendarId: foundId } }, { merge: true }).catch(() => {});
+                        return gcalCalendarId;
+                    }
+                    const res = await gcalFetch('calendars', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            summary: GCAL_CALENDAR_NAME,
+                            description: 'Auto-created by the Cloud Leader app to hold notes sent from it as day events.',
+                            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                        }),
+                    });
+                    if (!res || !res.ok) return null;
+                    const created = await res.json();
+                    gcalCalendarId = created.id;
+                    gcalCalendarIdVerifiedAt = Date.now();
+                    if (ref) ref.set({ settings: { calendarId: created.id } }, { merge: true }).catch(() => {});
+                    return gcalCalendarId;
+                } finally { gcalCreatingCalendar = null; }
+            })();
+            return gcalCreatingCalendar;
+        }
+
+        // Builds an all-day event: title = note text (first line), the
+        // rest of the note's own text plus every reply becomes the
+        // description, one line per sub-item.
+        function gcalEventBody(item, dateStr) {
+            const stripLeadingBullet = (s) => String(s || '').replace(/^[•◦\-\*]\s+/, '');
+            const lines = String(item.text || '').split('\n');
+            const title = stripLeadingBullet(lines[0] || '(untitled note)').trim() || '(untitled note)';
+            const descLines = [];
+            if (lines.length > 1) {
+                lines.slice(1).forEach(l => { if (l.trim()) descLines.push(stripLeadingBullet(l.trim())); });
+            }
+            (item.replies || []).forEach(r => {
+                String(r.text || '').split('\n').forEach(l => { if (l.trim()) descLines.push('• ' + stripLeadingBullet(l.trim())); });
+            });
+            const nextDay = new Date(dateStr + 'T00:00:00');
+            nextDay.setDate(nextDay.getDate() + 1);
+            const nextDayStr = `${nextDay.getFullYear()}-${pad(nextDay.getMonth() + 1)}-${pad(nextDay.getDate())}`;
+            return {
+                summary: title,
+                description: descLines.join('\n'),
+                start: { date: dateStr },
+                end: { date: nextDayStr },
+            };
+        }
+
+        async function sendItemToCalendarOnDate(itemId, dateStr) {
+            const item = itemsArray.find(it => it.id === itemId);
+            if (!item) return;
+            if (!cloudReady) { showCalToast("Cloud sync is unavailable right now.", true); return; }
+            if (!cloudUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
+            showCalToast('📤 Sending to Calendar…');
+            const connected = await ensureCalendarConnected();
+            if (!connected) { showCalToast('⚠️ Calendar not connected — click Connect first', true); return; }
+            const calendarId = await ensureCloudLeaderCalendarId();
+            if (!calendarId) { showCalToast('⚠️ Calendar sync failed', true); return; }
+            try {
+                const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events`, {
+                    method: 'POST',
+                    body: JSON.stringify(gcalEventBody(item, dateStr)),
+                });
+                if (res && res.ok) {
+                    showCalToast('✅ Added to Calendar');
+                } else {
+                    showCalToast('⚠️ Calendar sync failed', true);
+                }
+            } catch (e) {
+                console.warn('Send to calendar failed:', e);
+                showCalToast('⚠️ Calendar sync failed', true);
+            }
+        }
+
+        // ---- date-choice modal ----
+        function ymd(d) {
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        }
+        function openCalDateModal(itemId) {
+            const item = itemsArray.find(it => it.id === itemId);
+            if (!item) return;
+            if (!cloudUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
+            pendingCalendarItemId = itemId;
+            const preview = String(item.text || '').split('\n')[0].replace(/^•\s*/, '').trim();
+            calDateModalNoteText.textContent = preview || '(untitled note)';
+            const today = new Date();
+            const created = item.createdAt ? new Date(item.createdAt) : today;
+            calDateTodayBtn.textContent = `Today (${ymd(today)})`;
+            calDateCreatedBtn.textContent = `Created day (${ymd(created)})`;
+            calDatePickInput.value = ymd(today);
+            calDateModalBackdrop.classList.remove('hidden');
+        }
+        function closeCalDateModal() {
+            calDateModalBackdrop.classList.add('hidden');
+            pendingCalendarItemId = null;
+        }
+        calDateCancelBtn.addEventListener('click', closeCalDateModal);
+        calDateModalBackdrop.addEventListener('click', (e) => { if (e.target === calDateModalBackdrop) closeCalDateModal(); });
+        calDateTodayBtn.addEventListener('click', () => {
+            const id = pendingCalendarItemId;
+            closeCalDateModal();
+            if (id) sendItemToCalendarOnDate(id, ymd(new Date()));
+        });
+        calDateCreatedBtn.addEventListener('click', () => {
+            const id = pendingCalendarItemId;
+            const item = itemsArray.find(it => it.id === id);
+            closeCalDateModal();
+            if (id) sendItemToCalendarOnDate(id, ymd(item && item.createdAt ? new Date(item.createdAt) : new Date()));
+        });
+        calDatePickBtn.addEventListener('click', () => {
+            const id = pendingCalendarItemId;
+            const val = calDatePickInput.value;
+            closeCalDateModal();
+            if (id && val) sendItemToCalendarOnDate(id, val);
+        });
+
         // ===================================================================
         // Date helpers (display)
         // ===================================================================
@@ -2396,6 +2907,7 @@
                                         <button class="tag-btn ${showTagEditor ? 'active' : ''}" data-id="${item.id}" data-action="open-tag-editor" aria-label="tags" title="Edit tags">🏷️</button>
                                         <button class="reply-btn ${showReplyBox ? 'active' : ''}" data-id="${item.id}" data-action="open-reply" aria-label="reply" title="Add a reply / sub-note">💬</button>
                                         <button class="pin-btn ${item.pinned ? 'pinned' : ''}" data-id="${item.id}" aria-label="pin" title="${item.pinned ? 'Unpin' : 'Pin to top'}">${item.pinned ? '📌' : '📍'}</button>
+                                        <button class="cal-btn" data-id="${item.id}" data-action="send-to-calendar" aria-label="send to calendar" title="Send to Google Calendar (as a day event)">📅</button>
                                         <button class="edit-btn" data-id="${item.id}" aria-label="edit" title="Edit (or click text)">✎</button>
                                         <button class="del-btn" data-id="${item.id}" aria-label="delete" title="Delete">✕</button>
                                     </div>
@@ -2511,6 +3023,7 @@
             if (action === 'save-tags') { await saveItemTags(itemId); return; }
             if (action === 'cancel-tags') { tagEditingItemId = null; hideItemSuggestions(); renderItems(); return; }
             if (action === 'filter-tag') { toggleTagFilter(target.dataset.tag); return; }
+            if (action === 'send-to-calendar') { openCalDateModal(itemId); return; }
 
             if (editingItemId === itemId && !target.classList.contains('item-check')) return;
 
@@ -3175,6 +3688,137 @@
             updateTagToggle();
             renderDateFilters();
         });
+
+
+        // ===================================================================
+        // Hint-row pull-down menus: Tag (multi-select) + Date (single-select)
+        // They share state with the Search panel (activeTagFilters /
+        // activeDateFilter), so both UIs always stay in sync.
+        // ===================================================================
+        let openFilterMenu = null; // 'tag' | 'date' | null
+        const DATE_FILTER_DEFS = [
+            { key: 'today',     label: '☀️ Today',     range: () => getTodayRange() },
+            { key: 'threeDays', label: '🕒 3 days',    range: () => getThreeDayRange() },
+            { key: 'thisWeek',  label: '📅 This week', range: () => getThisWeekRange() },
+            { key: 'lastWeek',  label: '📅 Last week', range: () => getLastWeekRange() },
+        ];
+
+        function updateFilterMenuButtons() {
+            const nTags = activeTagFilters.size;
+            let tagLabel = 'Tag';
+            if (nTags === 1) tagLabel = '#' + Array.from(activeTagFilters)[0];
+            else if (nTags > 1) tagLabel = `Tag (${nTags})`;
+            tagMenuLabel.textContent = tagLabel;
+            tagMenuBtn.classList.toggle('has-filter', nTags > 0);
+
+            const def = DATE_FILTER_DEFS.find(d => d.key === activeDateFilter);
+            dateMenuLabel.textContent = def ? def.label.replace(/^\S+\s/, '') : 'Date';
+            dateMenuBtn.classList.toggle('has-filter', !!def);
+        }
+
+        function renderFilterMenu() {
+            if (openFilterMenu === 'tag') {
+                const all = getAllTagsWithCounts();
+                let html = '';
+                if (!all.length) {
+                    html = '<div class="fm-empty">No tags yet</div>';
+                } else {
+                    html = all.map(({ tag, count }) => {
+                        const active = activeTagFilters.has(tag);
+                        return `<div class="fm-item ${active ? 'active' : ''}" role="option" aria-selected="${active}" data-fm-tag="${escapeHtml(tag)}"><span class="fm-check">✓</span><span class="fm-label">#${escapeHtml(tag)}</span><span class="fm-count">${count}</span></div>`;
+                    }).join('');
+                }
+                if (activeTagFilters.size > 0) html += '<button type="button" class="fm-clear" data-fm-clear="tag">✕ Clear tags</button>';
+                filterMenuEl.innerHTML = html;
+            } else if (openFilterMenu === 'date') {
+                let html = DATE_FILTER_DEFS.map(d => {
+                    const active = activeDateFilter === d.key;
+                    return `<div class="fm-item ${active ? 'active' : ''}" role="option" aria-selected="${active}" data-fm-date="${d.key}"><span class="fm-check">✓</span><span class="fm-label">${d.label}</span><span class="fm-range">${escapeHtml(formatDateRangeShort(d.range()))}</span></div>`;
+                }).join('');
+                if (activeDateFilter) html += '<button type="button" class="fm-clear" data-fm-clear="date">✕ Clear date</button>';
+                filterMenuEl.innerHTML = html;
+            }
+        }
+
+        function positionFilterMenu() {
+            const btn = openFilterMenu === 'tag' ? tagMenuBtn : dateMenuBtn;
+            const r = btn.getBoundingClientRect();
+            const w = filterMenuEl.offsetWidth;
+            const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+            filterMenuEl.style.left = left + 'px';
+            filterMenuEl.style.top = (r.bottom + 4) + 'px';
+        }
+
+        function openFilterMenuFor(which) {
+            openFilterMenu = which;
+            renderFilterMenu();
+            filterMenuEl.classList.remove('hidden');
+            positionFilterMenu();
+            tagMenuBtn.classList.toggle('open', which === 'tag');
+            dateMenuBtn.classList.toggle('open', which === 'date');
+            tagMenuBtn.setAttribute('aria-expanded', String(which === 'tag'));
+            dateMenuBtn.setAttribute('aria-expanded', String(which === 'date'));
+        }
+        function closeFilterMenu() {
+            openFilterMenu = null;
+            filterMenuEl.classList.add('hidden');
+            tagMenuBtn.classList.remove('open');
+            dateMenuBtn.classList.remove('open');
+            tagMenuBtn.setAttribute('aria-expanded', 'false');
+            dateMenuBtn.setAttribute('aria-expanded', 'false');
+        }
+        // Called from updateTagToggle(): keeps button labels + open menu in sync.
+        function refreshFilterMenus() {
+            updateFilterMenuButtons();
+            if (openFilterMenu) { renderFilterMenu(); positionFilterMenu(); }
+        }
+
+        tagMenuBtn.addEventListener('click', () => {
+            if (openFilterMenu === 'tag') closeFilterMenu(); else openFilterMenuFor('tag');
+        });
+        dateMenuBtn.addEventListener('click', () => {
+            if (openFilterMenu === 'date') closeFilterMenu(); else openFilterMenuFor('date');
+        });
+
+        filterMenuEl.addEventListener('click', (e) => {
+            const clr = e.target.closest('[data-fm-clear]');
+            if (clr) {
+                if (clr.dataset.fmClear === 'tag') activeTagFilters.clear();
+                else activeDateFilter = null;
+                renderItems();
+                renderExistingTags();
+                renderDateFilters();
+                if (clr.dataset.fmClear === 'date') closeFilterMenu();
+                return;
+            }
+            const tagEl = e.target.closest('[data-fm-tag]');
+            if (tagEl) {
+                const t = tagEl.dataset.fmTag;
+                if (activeTagFilters.has(t)) activeTagFilters.delete(t); else activeTagFilters.add(t);
+                renderItems();          // also refreshes buttons + this menu
+                renderExistingTags();
+                return;                 // menu stays open so several tags can be picked
+            }
+            const dateEl = e.target.closest('[data-fm-date]');
+            if (dateEl) {
+                const k = dateEl.dataset.fmDate;
+                activeDateFilter = (activeDateFilter === k) ? null : k;
+                renderItems();
+                renderDateFilters();
+                closeFilterMenu();
+            }
+        });
+
+        document.addEventListener('mousedown', (e) => {
+            if (!openFilterMenu) return;
+            if (filterMenuEl.contains(e.target) || tagMenuBtn.contains(e.target) || dateMenuBtn.contains(e.target)) return;
+            closeFilterMenu();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && openFilterMenu) { closeFilterMenu(); }
+        });
+        window.addEventListener('resize', () => { if (openFilterMenu) positionFilterMenu(); });
+        window.addEventListener('scroll', () => { if (openFilterMenu) positionFilterMenu(); }, true);
 
         // ===================================================================
         // Search (inside the panel)
