@@ -601,6 +601,9 @@
         .project-row:hover {
             background: rgba(0, 0, 0, 0.045);
         }
+        .project-row.dragging { opacity: 0.4; }
+        .project-row.drop-before { box-shadow: inset 0 2px 0 #2b6cff; }
+        .project-row.drop-after { box-shadow: inset 0 -2px 0 #2b6cff; }
         .project-row.current {
             background: rgba(43, 108, 255, 0.10);
             font-weight: 600;
@@ -1980,6 +1983,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
             <option value="modified">Recently modified</option>
             <option value="created">Recently created</option>
             <option value="name">Name (A–Z)</option>
+            <option value="manual">Manual (drag to arrange)</option>
         </select>
     </div>
     <div class="file-sidebar-add">
@@ -5564,6 +5568,7 @@ function insertNewCheckboxLine(currentLine) {
             const st = roots[rootId];
             if (!st) return;
             st.rootEl.dataset.tree = JSON.stringify(st.tree);
+            undoRecord(rootId);
             // Cloud sync (if signed in) is defined in a separate <script>
             // block further down the file and may not have loaded yet on
             // very first render — guard for that.
@@ -5575,6 +5580,124 @@ function insertNewCheckboxLine(currentLine) {
             clearTimeout(syncDebounceTimers[rootId]);
             syncDebounceTimers[rootId] = setTimeout(function () { syncTreeData(rootId); }, 500);
         }
+
+        // --- Undo / Redo (Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z, Ctrl+Y) ---
+        // The browser's native undo can't work here: every line is its
+        // own contenteditable and renderRoot() rebuilds the DOM, which
+        // wipes the native undo stack. Instead each outline tree is
+        // snapshotted whenever syncTreeData runs (structural edits go
+        // through renderRoot; typing is batched by the 500ms debounce).
+        // Collapse/expand is deliberately not a history step.
+        const UNDO_LIMIT = 100;
+        const undoStack = [];   // { rootId, snap, group }
+        const redoStack = [];
+        const undoLastKey = {}, undoLastSnap = {};
+        let undoApplying = false, undoLastPushAt = 0, undoGroupCounter = 0;
+
+        function treeKey(tree) {
+            return JSON.stringify(tree, function (k, v) { return k === 'collapsed' ? undefined : v; });
+        }
+        function undoForgetRoot(rootId) {
+            delete undoLastKey[rootId]; delete undoLastSnap[rootId];
+            [undoStack, redoStack].forEach(function (stack) {
+                for (let i = stack.length - 1; i >= 0; i--) if (stack[i].rootId === rootId) stack.splice(i, 1);
+            });
+        }
+        function undoRecord(rootId) {
+            const st = roots[rootId];
+            if (!st) return;
+            const key = treeKey(st.tree);
+            if (undoLastKey[rootId] === undefined) {
+                undoLastKey[rootId] = key; undoLastSnap[rootId] = JSON.stringify(st.tree);
+                return;
+            }
+            if (key !== undoLastKey[rootId] && !undoApplying) {
+                const now = Date.now();
+                if (now - undoLastPushAt > 60) undoGroupCounter++; // edits in the same instant (cross-table move, bulk delete) undo together
+                undoLastPushAt = now;
+                undoStack.push({ rootId: rootId, snap: undoLastSnap[rootId], group: undoGroupCounter });
+                if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+                redoStack.length = 0;
+            }
+            undoLastKey[rootId] = key; undoLastSnap[rootId] = JSON.stringify(st.tree);
+        }
+        function flushPendingUndo() {
+            Object.keys(roots).forEach(function (id) {
+                const st = roots[id];
+                if (!st.rootEl.isConnected || undoLastKey[id] === undefined) return;
+                if (treeKey(st.tree) !== undoLastKey[id]) { clearTimeout(syncDebounceTimers[id]); syncTreeData(id); }
+            });
+        }
+        function flattenForDiff(tree) {
+            const m = new Map(), order = [];
+            (function walk(arr, pid) {
+                arr.forEach(function (n) {
+                    const c = Object.assign({}, n); delete c.children; delete c.collapsed; c.__p = pid;
+                    m.set(n.id, JSON.stringify(c)); order.push(n.id);
+                    walk(n.children || [], n.id);
+                });
+            })(tree, null);
+            return { m: m, order: order };
+        }
+        function firstChangedNodeId(cur, res) {
+            const a = flattenForDiff(cur), b = flattenForDiff(res);
+            for (let i = 0; i < b.order.length; i++) if (a.m.get(b.order[i]) !== b.m.get(b.order[i])) return b.order[i];
+            return null;
+        }
+        function applyHistory(fromStack, toStack) {
+            flushPendingUndo();
+            while (fromStack.length) {
+                const g = fromStack[fromStack.length - 1].group;
+                const batch = [];
+                while (fromStack.length && fromStack[fromStack.length - 1].group === g) batch.push(fromStack.pop());
+                let applied = false;
+                undoApplying = true;
+                try {
+                    batch.forEach(function (entry) {
+                        const st = roots[entry.rootId];
+                        if (!st || !st.rootEl.isConnected) return; // table no longer on screen
+                        const current = st.tree;
+                        toStack.push({ rootId: entry.rootId, snap: JSON.stringify(current), group: g });
+                        if (toStack.length > UNDO_LIMIT) toStack.shift();
+                        const restored = JSON.parse(entry.snap);
+                        const collapsedNow = {};
+                        (function walk(arr) { arr.forEach(function (n) { collapsedNow[n.id] = n.collapsed; walk(n.children || []); }); })(current);
+                        (function walk(arr) { arr.forEach(function (n) { if (n.id in collapsedNow) n.collapsed = collapsedNow[n.id]; walk(n.children || []); }); })(restored);
+                        const focusId = firstChangedNodeId(current, restored);
+                        st.tree = restored;
+                        renderRoot(entry.rootId, focusId ? { focusId: focusId, cursorPos: 'end' } : undefined);
+                        applied = true;
+                    });
+                } finally { undoApplying = false; }
+                if (applied) return true;
+            }
+            return false;
+        }
+        function undoShouldHandle(target) {
+            const el = target && (target.nodeType === 1 ? target : target.parentElement);
+            if (!el || el === document.body || el === document.documentElement) return true;
+            if (el.closest('.outline-text')) return true;
+            // titles, notes, Think Log, inputs keep the browser's own undo
+            if (el.closest('input, textarea, select, [contenteditable="true"]')) return false;
+            return true;
+        }
+        document.addEventListener('keydown', function (e) {
+            if (e.isComposing || e.altKey || !(e.metaKey || e.ctrlKey)) return;
+            const k = (e.key || '').toLowerCase();
+            const isUndo = k === 'z' && !e.shiftKey;
+            const isRedo = (k === 'z' && e.shiftKey) || (k === 'y' && e.ctrlKey && !e.metaKey);
+            if (!isUndo && !isRedo) return;
+            if (!undoShouldHandle(e.target)) return;
+            e.preventDefault(); e.stopPropagation();
+            if (isUndo) applyHistory(undoStack, redoStack); else applyHistory(redoStack, undoStack);
+        }, true);
+        // Edit-menu Undo/Redo (and iOS shake-to-undo) arrive as beforeinput
+        document.addEventListener('beforeinput', function (e) {
+            if (e.inputType !== 'historyUndo' && e.inputType !== 'historyRedo') return;
+            if (!undoShouldHandle(e.target)) return;
+            e.preventDefault();
+            if (e.inputType === 'historyUndo') applyHistory(undoStack, redoStack); else applyHistory(redoStack, undoStack);
+        });
 
         function renderRoot(rootId, focusOpts) {
             const st = roots[rootId];
@@ -5668,6 +5791,7 @@ function insertNewCheckboxLine(currentLine) {
                 cb.addEventListener('change', function () {
                     n.done = cb.checked;
                     text.classList.toggle('done', n.done);
+                    syncTreeData(rootId);
                 });
                 row.appendChild(cb);
             }
@@ -6131,6 +6255,7 @@ function insertNewCheckboxLine(currentLine) {
             }
             if (!tree) tree = [newNode(initialText || '')];
             roots[id] = { rootEl: rootEl, tree: tree };
+            undoForgetRoot(id);
             renderRoot(id);
         };
 
@@ -6621,7 +6746,8 @@ function insertNewCheckboxLine(currentLine) {
                 name: data.name || 'Untitled',
                 updatedAt: data.updatedAt,
                 createdAt: data.createdAt,
-                pinned: !!data.pinned
+                pinned: !!data.pinned,
+                sortOrder: (typeof data.sortOrder === 'number') ? data.sortOrder : null
             };
         }
 
@@ -7376,6 +7502,43 @@ function insertNewCheckboxLine(currentLine) {
                 if (p.id !== currentProjectId) window.switchProjectFromMenu(p.id);
             });
 
+            // --- Drag a row to arrange the list by hand -------------
+            row.draggable = true;
+            // an inline rename in progress needs normal text selection
+            row.addEventListener('mousedown', function (e) { row.draggable = !e.target.isContentEditable; });
+            row.addEventListener('dragstart', function (e) {
+                projectDragId = p.id;
+                e.dataTransfer.effectAllowed = 'move';
+                try { e.dataTransfer.setData('text/plain', 'project-row-drag'); } catch (err) {}
+                setTimeout(function () { row.classList.add('dragging'); }, 0);
+            });
+            row.addEventListener('dragover', function (e) {
+                if (!projectDragId || projectDragId === p.id) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                const r = row.getBoundingClientRect();
+                const before = (e.clientY - r.top) < r.height / 2;
+                row.classList.toggle('drop-before', before);
+                row.classList.toggle('drop-after', !before);
+            });
+            row.addEventListener('dragleave', function () { row.classList.remove('drop-before', 'drop-after'); });
+            row.addEventListener('drop', function (e) {
+                if (!projectDragId) return;
+                e.preventDefault();
+                const r = row.getBoundingClientRect();
+                const before = (e.clientY - r.top) < r.height / 2;
+                const dragId = projectDragId;
+                projectDragId = null;
+                document.querySelectorAll('.project-row.dragging, .project-row.drop-before, .project-row.drop-after')
+                    .forEach(function (el) { el.classList.remove('dragging', 'drop-before', 'drop-after'); });
+                reorderProject(dragId, p.id, !before);
+            });
+            row.addEventListener('dragend', function () {
+                projectDragId = null;
+                document.querySelectorAll('.project-row.dragging, .project-row.drop-before, .project-row.drop-after')
+                    .forEach(function (el) { el.classList.remove('dragging', 'drop-before', 'drop-after'); });
+            });
+
             return row;
         }
 
@@ -7391,6 +7554,17 @@ function insertNewCheckboxLine(currentLine) {
             const mode = getProjectSortMode();
             const list = projectsCache.slice();
             function cmp(a, b) {
+                if (mode === 'manual') {
+                    // Hand-arranged order (drag rows in the list). Projects
+                    // that have never been placed (e.g. just created) float
+                    // to the top, newest first, until you drag them.
+                    const ao = (typeof a.sortOrder === 'number') ? a.sortOrder : null;
+                    const bo = (typeof b.sortOrder === 'number') ? b.sortOrder : null;
+                    if (ao !== null && bo !== null) return ao - bo;
+                    if (ao === null && bo !== null) return -1;
+                    if (ao !== null && bo === null) return 1;
+                    return tsToMillis(b.updatedAt) - tsToMillis(a.updatedAt);
+                }
                 if (mode === 'name') return (a.name || '').localeCompare(b.name || '');
                 if (mode === 'created') return tsToMillis(b.createdAt) - tsToMillis(a.createdAt);
                 return tsToMillis(b.updatedAt) - tsToMillis(a.updatedAt); // 'modified' default
@@ -7400,6 +7574,43 @@ function insertNewCheckboxLine(currentLine) {
                 return cmp(a, b);
             });
             return list;
+        }
+        // Moves one project next to another in the list and saves the
+        // new order (a numeric sortOrder on each project doc, so it
+        // follows you across devices). Dragging from any sort mode
+        // switches the list to Manual, starting from the order you
+        // were looking at. Pinned projects stay grouped at the top.
+        let projectDragId = null;
+        function reorderProject(dragId, targetId, after) {
+            if (!dragId || dragId === targetId) return;
+            const list = getSortedProjectsCache();
+            const moving = list.find(function (p) { return p.id === dragId; });
+            if (!moving) return;
+            const rest = list.filter(function (p) { return p.id !== dragId; });
+            const ti = rest.findIndex(function (p) { return p.id === targetId; });
+            if (ti < 0) return;
+            rest.splice(after ? ti + 1 : ti, 0, moving);
+            const ordered = rest.filter(function (p) { return p.pinned; }).concat(rest.filter(function (p) { return !p.pinned; }));
+            const changed = [];
+            ordered.forEach(function (p, i) {
+                if (p.sortOrder !== i) { p.sortOrder = i; changed.push(p.id); }
+            });
+            window.setProjectSortMode('manual');
+            if (!changed.length) return;
+            if (currentUser) writeLocalProjectsList(currentUser.uid, projectsCache);
+            if (!currentUser) return;
+            const batch = db.batch();
+            const col = projectsCollection();
+            changed.forEach(function (id) {
+                const p = projectsCache.find(function (x) { return x.id === id; });
+                batch.set(col.doc(id), { sortOrder: p.sortOrder }, { merge: true });
+            });
+            batch.commit().then(function () {
+                setStatus('List order saved');
+            }).catch(function (err) {
+                console.error('Saving list order failed:', err);
+                setStatus('Order kept on this device only');
+            });
         }
         window.setProjectSortMode = function (mode) {
             localStorage.setItem('th_project_sort_mode', mode);
