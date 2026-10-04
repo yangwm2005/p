@@ -1152,7 +1152,7 @@
         <div class="file-divider"></div>
         <button class="file-btn new-btn" id="newFileBtn">🗑 Clear All</button>
         <div class="file-divider"></div>
-        <button class="file-btn" id="exportExcelBtn" style="background:#1d6f42;color:white;border:none;" title="Export events to Excel (.xlsx)">📊 Export Excel</button>
+        <button class="file-btn" id="exportExcelBtn" style="background:#1d6f42;color:white;border:none;" title="Export events to Excel (.xlsx) or CSV">📊 Export Events</button>
     </div>
 
     <div class="view-switcher">
@@ -1313,14 +1313,25 @@
         </div>
     </div>
     <div style="text-align:center;padding:10px 20px;font-size:12px;color:#94a3b8;border-top:1px solid #e0e0e0;background:#fafafa;letter-spacing:0.03em;">
-        Copyright © 2026 Dr. Wen-Ming Yang &nbsp;·&nbsp; Monthplan v24 (Excel export by week/month/custom range)
+        Copyright © 2026 Dr. Wen-Ming Yang &nbsp;·&nbsp; Monthplan v25 (Excel / CSV export by week/month/custom range)
     </div>
 </div>
 
 <!-- Excel Export Modal -->
 <div class="modal-overlay hidden" id="exportModal">
     <div class="modal-box" style="width:480px;max-width:95vw;">
-        <h3>📊 Export Events to Excel</h3>
+        <h3>📊 Export Events</h3>
+        <div class="modal-field">
+            <label>File Format</label>
+            <div style="display:flex;gap:10px;margin-top:6px;">
+                <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+                    <input type="radio" name="exportFormat" value="xlsx" id="exportFmtXlsx" checked> Excel (.xlsx)
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+                    <input type="radio" name="exportFormat" value="csv" id="exportFmtCsv"> CSV (.csv)
+                </label>
+            </div>
+        </div>
         <div class="modal-field">
             <label>Export Range</label>
             <div style="display:flex;gap:10px;margin-top:6px;">
@@ -1360,7 +1371,7 @@
         <p id="exportPreviewCount" style="font-size:12px;color:#64748b;margin-top:4px;"></p>
         <div class="modal-actions">
             <button class="btn-cancel" id="exportModalCancel">Cancel</button>
-            <button class="btn-save" id="exportModalGo" style="background:#1d6f42;">⬇ Download Excel</button>
+            <button class="btn-save" id="exportModalGo" style="background:#1d6f42;">⬇ Download</button>
         </div>
     </div>
 </div>
@@ -4798,14 +4809,50 @@
                 `${rows.length} event row${rows.length !== 1 ? 's' : ''} across ${days} day${days !== 1 ? 's' : ''}`;
         }
 
+        const HEADERS = ['Date', 'Type', 'Title', 'Start Time', 'End Time', 'All Day', 'Notes', 'Calendar', 'Color'];
+
+        function csvCell(v) {
+            const t = String(v == null ? '' : v);
+            return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+        }
+        function downloadCSV(rows, filename) {
+            const lines = [HEADERS.map(csvCell).join(',')];
+            rows.forEach(r => lines.push(HEADERS.map(h => csvCell(r[h])).join(',')));
+            // UTF-8 BOM so Excel opens non-ASCII text (e.g. Chinese) correctly
+            const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
         goBtn.addEventListener('click', () => {
-            if (typeof XLSX === 'undefined') {
-                alert('SheetJS library not loaded. Please check your internet connection and try again.');
+            const fmt = document.querySelector('input[name="exportFormat"]:checked').value;
+            if (fmt === 'xlsx' && typeof XLSX === 'undefined') {
+                alert('SheetJS library not loaded. Please check your internet connection, or choose CSV.');
                 return;
             }
             const range = getDateRange();
             if (!range) { alert('Please select a valid date range.'); return; }
             const rows = collectRows(range.start, range.end);
+
+            // Filename base
+            const rangeType = document.querySelector('input[name="exportRange"]:checked').value;
+            let filename = 'planner-events';
+            if (rangeType === 'month') {
+                filename += '-' + document.getElementById('exportMonthPicker').value;
+            } else if (rangeType === 'week') {
+                filename += '-week-' + document.getElementById('exportWeekStart').value;
+            } else {
+                filename += '-' + document.getElementById('exportCustomFrom').value + '-to-' + document.getElementById('exportCustomTo').value;
+            }
+
+            if (fmt === 'csv') {
+                downloadCSV(rows, filename + '.csv');
+                modal.classList.add('hidden');
+                return;
+            }
 
             // Build worksheet
             const ws = XLSX.utils.json_to_sheet(rows, {
@@ -4829,16 +4876,6 @@
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Events');
 
-            // Filename
-            const rangeType = document.querySelector('input[name="exportRange"]:checked').value;
-            let filename = 'planner-events';
-            if (rangeType === 'month') {
-                filename += '-' + document.getElementById('exportMonthPicker').value;
-            } else if (rangeType === 'week') {
-                filename += '-week-' + document.getElementById('exportWeekStart').value;
-            } else {
-                filename += '-' + document.getElementById('exportCustomFrom').value + '-to-' + document.getElementById('exportCustomTo').value;
-            }
             filename += '.xlsx';
 
             XLSX.writeFile(wb, filename);
