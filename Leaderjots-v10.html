@@ -1547,6 +1547,7 @@
                 <span class="tag-toggle-caret">▾</span>
             </button>
             <button type="button" class="fm-btn clear-all-btn hidden" id="clearFiltersBtn" title="Clear tag, date and search filters">✕ Clear filters</button>
+            <button type="button" class="fm-btn hidden" id="remindersBtn" title="Show only notes with a reminder">⏰ Reminders (0)</button>
             <button type="button" class="fm-btn hidden" id="collapseAllBtn" title="Collapse or expand all sub-items (replies)">▼ Collapse all</button>
             <button type="button" class="fm-btn help-btn" id="helpBtn" aria-expanded="false" title="How to use">❓ Help</button>
         </div>
@@ -2039,7 +2040,7 @@
                 tagToggleCount.textContent = String(n);
                 tagToggleCount.classList.remove('hidden');
             }
-            const hasFilter = activeTagFilters.size > 0 || activeDateFilter !== null || searchQuery.trim();
+            const hasFilter = activeTagFilters.size > 0 || activeDateFilter !== null || searchQuery.trim() || remindersOnly;
             const cfb = document.getElementById('clearFiltersBtn');
             if (cfb) cfb.classList.toggle('hidden', !hasFilter);
             if (hasFilter) {
@@ -2878,6 +2879,9 @@
                 }));
             }
 
+            if (remindersOnly) {
+                return list.filter(it => !it.done && it.remindAt).sort((a, b) => a.remindAt - b.remindAt);
+            }
             const pinned = list.filter(it => it.pinned);
             const unpinned = list.filter(it => !it.pinned);
             return pinned.concat(unpinned);
@@ -2894,7 +2898,7 @@
             }
 
             const visible = getVisibleItems();
-            const hasFilters = searchQuery.trim() || activeTagFilters.size || activeDateFilter;
+            const hasFilters = searchQuery.trim() || activeTagFilters.size || activeDateFilter || remindersOnly;
 
             if (!visible.length) {
                 if (hasFilters) {
@@ -3062,6 +3066,7 @@
             itemsList.innerHTML = html;
             applyClamping();
             updateCollapseAllBtn();
+            updateRemindersBtn();
 
             if (editingItemId) {
                 const ta = itemsList.querySelector(`.edit-textarea[data-id="${editingItemId}"]:not([data-reply-edit])`);
@@ -3281,6 +3286,25 @@
                 el.insertAdjacentElement('afterend', btn);
             });
         }
+        // ---- "Reminders" list: show only notes with an active (snoozed) reminder ----
+        let remindersOnly = false;
+        function activeReminderItems() {
+            return itemsArray.filter(i => !i.done && i.remindAt);
+        }
+        function updateRemindersBtn() {
+            const btn = document.getElementById('remindersBtn');
+            if (!btn) return;
+            const n = activeReminderItems().length;
+            btn.classList.toggle('hidden', n === 0 && !remindersOnly);
+            btn.classList.toggle('has-filter', remindersOnly);
+            btn.textContent = '⏰ Reminders (' + n + ')';
+            btn.title = remindersOnly ? 'Showing only notes with reminders — click to show all' : 'Show only notes with a reminder, soonest first';
+        }
+        document.getElementById('remindersBtn').addEventListener('click', () => {
+            remindersOnly = !remindersOnly;
+            renderItems();
+        });
+
         // ---- Collapse / expand all sub-items (replies) at once ----
         function itemsWithReplies() {
             return itemsArray.filter(i => Array.isArray(i.replies) && i.replies.length);
@@ -4310,6 +4334,7 @@
         // Clear all filters (tags + date + search) in one click
         // ===================================================================
         document.getElementById('clearFiltersBtn').addEventListener('click', () => {
+            remindersOnly = false;
             activeTagFilters.clear();
             activeDateFilter = null;
             searchQuery = '';
