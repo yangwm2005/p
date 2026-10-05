@@ -846,6 +846,17 @@
             border-radius: 6px;
             box-shadow: 0 0 0 4px #f8fafc;
         }
+        /* Share menu */
+        .item-actions button.share-btn:hover { background: #e0e7ff; color: #4f46e5; }
+        .share-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+        .share-grid .cal-date-opt-btn { margin-bottom: 0; text-align: center; padding: 10px 6px; font-size: 0.85rem; }
+        .share-preview {
+            max-height: 110px; overflow: auto; white-space: pre-wrap; text-align: left;
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+            padding: 8px 10px; font-size: 0.8rem; color: #475569; margin-bottom: 10px;
+        }
+        .share-hint { font-size: 0.72rem; color: #94a3b8; margin: -2px 0 8px; text-align: left; }
+
         /* Reminders / Snooze */
         .item-meta .chip.remind-chip {
             background: #fef3c7; color: #92400e; cursor: pointer; transition: background 0.15s;
@@ -1616,6 +1627,15 @@
 
     <!-- Filter pull-down menu (shared by Tag / Date buttons) -->
     <div class="fm-menu hidden" id="filterMenu" role="listbox"></div>
+
+    <!-- Share modal -->
+    <div class="cal-date-modal-backdrop hidden" id="shareModalBackdrop">
+        <div class="cal-date-modal">
+            <div class="cal-date-modal-title">📤 Share note</div>
+            <div class="share-preview" id="shareModalPreview"></div>
+            <div id="shareModalBody"></div>
+        </div>
+    </div>
 
     <!-- Reminder / snooze modal -->
     <div class="cal-date-modal-backdrop hidden" id="remindModalBackdrop">
@@ -3050,6 +3070,7 @@
                                         <button class="tag-btn ${showTagEditor ? 'active' : ''}" data-id="${item.id}" data-action="open-tag-editor" aria-label="tags" title="Edit tags">🏷️</button>
                                         <button class="reply-btn ${showReplyBox ? 'active' : ''}" data-id="${item.id}" data-action="open-reply" aria-label="reply" title="Add a reply / sub-note">💬</button>
                                         <button class="pin-btn ${item.pinned ? 'pinned' : ''}" data-id="${item.id}" aria-label="pin" title="${item.pinned ? 'Unpin' : 'Pin to top'}">${item.pinned ? '📌' : '📍'}</button>
+                                        <button class="share-btn" data-id="${item.id}" data-action="share-item" aria-label="share" title="Share to X, Facebook, Messenger, LINE…">📤</button>
                                         <button class="remind-btn ${item.remindAt ? 'active' : ''}" data-id="${item.id}" data-action="open-remind" aria-label="reminder" title="Remind me / snooze">⏰</button>
                                         <button class="cal-btn" data-id="${item.id}" data-action="send-to-calendar" aria-label="send to calendar" title="Send to Google Calendar (as a day event)">📅</button>
                                         <button class="edit-btn" data-id="${item.id}" aria-label="edit" title="Edit (or click text)">✎</button>
@@ -3265,6 +3286,117 @@
         document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDueReminders(); });
         window.addEventListener('focus', checkDueReminders);
 
+        // ===================================================================
+        // Share a note to other apps. Uses the phone/OS share sheet when the
+        // browser has one (covers Messenger, Facebook, LINE, WhatsApp, Mail…),
+        // plus direct links for X, Facebook, Messenger, LINE, WhatsApp,
+        // Telegram, Threads and email. Facebook/Messenger cannot prefill
+        // free text from a web link, so for those the note is copied first
+        // and you paste it into the post / chat.
+        // ===================================================================
+        const shareBackdrop = document.getElementById('shareModalBackdrop');
+        const sharePreviewEl = document.getElementById('shareModalPreview');
+        const shareBodyEl = document.getElementById('shareModalBody');
+        let shareText = '';
+
+        function buildShareText(item, includeReplies) {
+            const clean = (t) => String(t || '').trim();
+            let out = clean(item.text);
+            if (includeReplies && Array.isArray(item.replies) && item.replies.length) {
+                const lines = item.replies.map(r => '  ↳ ' + clean(r.text).replace(/\n/g, '\n    ')).filter(l => l.trim() !== '↳');
+                if (lines.length) out += '\n' + lines.join('\n');
+            }
+            return out;
+        }
+        async function copyShareText(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                return true;
+            } catch (e) {
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                    document.body.appendChild(ta); ta.select();
+                    const ok = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    return ok;
+                } catch (e2) { return false; }
+            }
+        }
+        function openShareModal(itemId) {
+            const item = itemsArray.find(i => i.id === itemId);
+            if (!item) return;
+            const hasReplies = Array.isArray(item.replies) && item.replies.length > 0;
+            shareBackdrop.dataset.itemId = itemId;
+            shareText = buildShareText(item, hasReplies);
+            sharePreviewEl.textContent = shareText;
+            const nativeBtn = navigator.share
+                ? '<button type="button" class="cal-date-opt-btn" data-sh="native" style="margin-bottom:8px">📲 Share via device… (Messenger, LINE, Facebook, …)</button>'
+                : '';
+            const replyToggle = hasReplies
+                ? `<label style="display:flex;gap:6px;align-items:center;font-size:0.8rem;color:#475569;margin:0 0 10px;cursor:pointer"><input type="checkbox" id="shareIncludeReplies" checked> Include sub-items (${item.replies.length})</label>`
+                : '';
+            shareBodyEl.innerHTML = replyToggle + nativeBtn + `
+                <div class="share-grid">
+                    <button type="button" class="cal-date-opt-btn" data-sh="x">𝕏 X</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="threads">🧵 Threads</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="facebook">📘 Facebook</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="messenger">💬 Messenger</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="line">🟢 LINE</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="whatsapp">🟩 WhatsApp</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="telegram">✈️ Telegram</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="email">✉️ Email</button>
+                </div>
+                <div class="share-hint">Facebook &amp; Messenger can't prefill text — the note is copied for you to paste.</div>
+                <button type="button" class="cal-date-opt-btn" data-sh="copy">📋 Copy text</button>
+                <button type="button" class="cal-date-cancel-btn" data-sh="cancel">Close</button>`;
+            shareBackdrop.classList.remove('hidden');
+        }
+        function closeShareModal() { shareBackdrop.classList.add('hidden'); }
+        shareBodyEl.addEventListener('change', (e) => {
+            if (e.target && e.target.id === 'shareIncludeReplies') {
+                const item = itemsArray.find(i => i.id === shareBackdrop.dataset.itemId);
+                if (!item) return;
+                shareText = buildShareText(item, e.target.checked);
+                sharePreviewEl.textContent = shareText;
+            }
+        });
+        shareBodyEl.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-sh]');
+            if (!btn) return;
+            const k = btn.dataset.sh;
+            const t = shareText;
+            const enc = encodeURIComponent;
+            const open = (url) => window.open(url, '_blank', 'noopener');
+            if (k === 'cancel') { closeShareModal(); return; }
+            if (k === 'copy') {
+                showCalToast((await copyShareText(t)) ? '📋 Copied to clipboard' : 'Could not copy', false);
+                return;
+            }
+            if (k === 'native') {
+                try { await navigator.share({ text: t }); closeShareModal(); } catch (err) { /* cancelled */ }
+                return;
+            }
+            if (k === 'x') { open('https://twitter.com/intent/tweet?text=' + enc(t.slice(0, 270))); return; }
+            if (k === 'threads') { open('https://www.threads.net/intent/post?text=' + enc(t)); return; }
+            if (k === 'line') { open('https://line.me/R/share?text=' + enc(t)); return; }
+            if (k === 'whatsapp') { open('https://wa.me/?text=' + enc(t)); return; }
+            if (k === 'telegram') { open('https://t.me/share/url?url=' + enc(' ') + '&text=' + enc(t)); return; }
+            if (k === 'email') {
+                const subject = t.split('\n')[0].slice(0, 80);
+                window.location.href = 'mailto:?subject=' + enc(subject) + '&body=' + enc(t);
+                return;
+            }
+            if (k === 'facebook' || k === 'messenger') {
+                const ok = await copyShareText(t);
+                showCalToast(ok ? '📋 Note copied — paste it into your ' + (k === 'facebook' ? 'post' : 'message') : 'Could not copy the note', !ok);
+                if (k === 'facebook') open('https://www.facebook.com/');
+                else open('https://www.messenger.com/');
+            }
+        });
+        shareBackdrop.addEventListener('click', (e) => { if (e.target === shareBackdrop) closeShareModal(); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !shareBackdrop.classList.contains('hidden')) closeShareModal(); });
+
         // ---- Long-entry clamping (collapse to a few lines + Show more/less) ----
         const expandedTexts = new Set(); // keys: itemId or itemId:replyId
         function applyClamping() {
@@ -3403,6 +3535,7 @@
             if (action === 'cancel-tags') { tagEditingItemId = null; hideItemSuggestions(); renderItems(); return; }
             if (action === 'filter-tag') { toggleTagFilter(target.dataset.tag); return; }
             if (action === 'send-to-calendar') { openCalDateModal(itemId); return; }
+            if (action === 'share-item') { openShareModal(itemId); return; }
             if (action === 'open-remind') { openRemindModal(itemId, 'set'); return; }
             if (action === 'toggle-expand') { toggleExpanded(itemId); return; }
 
