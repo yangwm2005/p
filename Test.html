@@ -846,6 +846,34 @@
             border-radius: 6px;
             box-shadow: 0 0 0 4px #f8fafc;
         }
+        /* Share menu */
+        .item-actions button.share-btn:hover { background: #e0e7ff; color: #4f46e5; }
+        .share-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+        .share-grid .cal-date-opt-btn { margin-bottom: 0; text-align: center; padding: 10px 6px; font-size: 0.85rem; }
+        .share-preview {
+            max-height: 110px; overflow: auto; white-space: pre-wrap; text-align: left;
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+            padding: 8px 10px; font-size: 0.8rem; color: #475569; margin-bottom: 10px;
+        }
+        .share-hint { font-size: 0.72rem; color: #94a3b8; margin: -2px 0 8px; text-align: left; }
+
+        /* Reminders / Snooze */
+        .item-meta .chip.remind-chip {
+            background: #fef3c7; color: #92400e; cursor: pointer; transition: background 0.15s;
+        }
+        .item-meta .chip.remind-chip:hover { background: #fde68a; }
+        .item-meta .chip.remind-chip.overdue { background: #fee2e2; color: #b91c1c; }
+        .item-actions button.remind-btn:hover { background: #fef3c7; color: #d97706; }
+        .item-actions button.remind-btn.active { color: #d97706; }
+        .remind-custom-row { display: flex; gap: 8px; margin-bottom: 8px; }
+        .remind-custom-row input[type="datetime-local"] {
+            flex: 1; min-width: 0; padding: 9px 10px; border-radius: 12px;
+            border: 1.5px solid #e2e8f0; font-family: inherit; font-size: 0.85rem; color: #1e293b;
+        }
+        .remind-custom-row .cal-date-opt-btn { width: auto; margin-bottom: 0; flex-shrink: 0; }
+        .cal-date-opt-btn.remind-danger { color: #b91c1c; }
+        .cal-date-opt-btn.remind-ok { background: #dcfce7; border-color: #bbf7d0; color: #166534; }
+
         /* Long-note clamping: collapsed to a few lines with "Show more" */
         .item-text.clamped, .reply-text.clamped {
             display: -webkit-box;
@@ -1531,6 +1559,8 @@
                 <span class="tag-toggle-caret">▾</span>
             </button>
             <button type="button" class="fm-btn clear-all-btn hidden" id="clearFiltersBtn" title="Clear tag, date and search filters">✕ Clear filters</button>
+            <button type="button" class="fm-btn hidden" id="remindersBtn" title="Show only notes with a reminder">⏰ Reminders (0)</button>
+            <button type="button" class="fm-btn hidden" id="collapseAllBtn" title="Collapse or expand all sub-items (replies)">▼ Collapse all</button>
             <button type="button" class="fm-btn help-btn" id="helpBtn" aria-expanded="false" title="How to use">❓ Help</button>
         </div>
 
@@ -1598,6 +1628,24 @@
 
     <!-- Filter pull-down menu (shared by Tag / Date buttons) -->
     <div class="fm-menu hidden" id="filterMenu" role="listbox"></div>
+
+    <!-- Share modal -->
+    <div class="cal-date-modal-backdrop hidden" id="shareModalBackdrop">
+        <div class="cal-date-modal">
+            <div class="cal-date-modal-title">📤 Share note</div>
+            <div class="share-preview" id="shareModalPreview"></div>
+            <div id="shareModalBody"></div>
+        </div>
+    </div>
+
+    <!-- Reminder / snooze modal -->
+    <div class="cal-date-modal-backdrop hidden" id="remindModalBackdrop">
+        <div class="cal-date-modal">
+            <div class="cal-date-modal-title" id="remindModalTitle">⏰ Remind me</div>
+            <div class="cal-date-modal-text" id="remindModalText"></div>
+            <div id="remindModalBody"></div>
+        </div>
+    </div>
 
     <!-- Calendar toast -->
     <div class="cal-toast" id="calToast"></div>
@@ -2013,7 +2061,7 @@
                 tagToggleCount.textContent = String(n);
                 tagToggleCount.classList.remove('hidden');
             }
-            const hasFilter = activeTagFilters.size > 0 || activeDateFilter !== null || searchQuery.trim();
+            const hasFilter = activeTagFilters.size > 0 || activeDateFilter !== null || searchQuery.trim() || remindersOnly;
             const cfb = document.getElementById('clearFiltersBtn');
             if (cfb) cfb.classList.toggle('hidden', !hasFilter);
             if (hasFilter) {
@@ -2399,6 +2447,7 @@
                             text: data.text || '',
                             done: data.done || false,
                             pinned: data.pinned || false,
+                            remindAt: data.remindAt || 0,
                             tags: Array.isArray(data.tags) ? data.tags : [],
                             createdAt: data.createdAt || 0,
                             updatedAt: data.updatedAt || 0,
@@ -2413,6 +2462,7 @@
                         });
                     });
                     itemsArray = newItems;
+                    setTimeout(checkDueReminders, 300);
                     renderItems();
                     if (tagPanelOpen) {
                         renderExistingTags();
@@ -2849,6 +2899,9 @@
                 }));
             }
 
+            if (remindersOnly) {
+                return list.filter(it => !it.done && it.remindAt).sort((a, b) => a.remindAt - b.remindAt);
+            }
             const pinned = list.filter(it => it.pinned);
             const unpinned = list.filter(it => !it.pinned);
             return pinned.concat(unpinned);
@@ -2865,7 +2918,7 @@
             }
 
             const visible = getVisibleItems();
-            const hasFilters = searchQuery.trim() || activeTagFilters.size || activeDateFilter;
+            const hasFilters = searchQuery.trim() || activeTagFilters.size || activeDateFilter || remindersOnly;
 
             if (!visible.length) {
                 if (hasFilters) {
@@ -3010,12 +3063,15 @@
                                     <span class="chip" title="${escapeHtml(fullTooltip)}">🕒 ${escapeHtml(createdLabel)} · ${escapeHtml(timeLabel)}</span>
                                     ${item.pinned ? `<span class="chip pin-chip" title="Pinned to top">📌 pinned</span>` : ''}
                                     ${wasEdited ? `<span class="chip edited" title="Last edited: ${escapeHtml(formatFullTooltip(item.updatedAt))}">✎ edited</span>` : ''}
+                                    ${(item.remindAt && !item.done) ? `<span class="chip remind-chip ${item.remindAt <= Date.now() ? 'overdue' : ''}" data-id="${item.id}" data-action="open-remind" title="Click to change or remove the reminder">⏰ ${escapeHtml(formatRemindLabel(item.remindAt))}</span>` : ''}
                                     ${itemTagChips}
                                     ${replyChipHtml}
                                     <div class="item-actions">
                                         <button class="tag-btn ${showTagEditor ? 'active' : ''}" data-id="${item.id}" data-action="open-tag-editor" aria-label="tags" title="Edit tags">🏷️</button>
                                         <button class="reply-btn ${showReplyBox ? 'active' : ''}" data-id="${item.id}" data-action="open-reply" aria-label="reply" title="Add a reply / sub-note">💬</button>
                                         <button class="pin-btn ${item.pinned ? 'pinned' : ''}" data-id="${item.id}" aria-label="pin" title="${item.pinned ? 'Unpin' : 'Pin to top'}">${item.pinned ? '📌' : '📍'}</button>
+                                        <button class="share-btn" data-id="${item.id}" data-action="share-item" aria-label="share" title="Share to X, Facebook, Messenger, LINE…">📤</button>
+                                        <button class="remind-btn ${item.remindAt ? 'active' : ''}" data-id="${item.id}" data-action="open-remind" aria-label="reminder" title="Remind me / snooze">⏰</button>
                                         <button class="cal-btn" data-id="${item.id}" data-action="send-to-calendar" aria-label="send to calendar" title="Send to Google Calendar (as a day event)">📅</button>
                                         <button class="edit-btn" data-id="${item.id}" aria-label="edit" title="Edit (or click text)">✎</button>
                                         <button class="del-btn" data-id="${item.id}" aria-label="delete" title="Delete">✕</button>
@@ -3030,6 +3086,8 @@
             });
             itemsList.innerHTML = html;
             applyClamping();
+            updateCollapseAllBtn();
+            updateRemindersBtn();
 
             if (editingItemId) {
                 const ta = itemsList.querySelector(`.edit-textarea[data-id="${editingItemId}"]:not([data-reply-edit])`);
@@ -3071,6 +3129,274 @@
             }
         }
 
+        // ===================================================================
+        // Reminders / Snooze — each note can carry a remindAt timestamp
+        // (stored in Firestore with the note, so it syncs across devices).
+        // While the app is open, a due reminder pops up a modal (plus a
+        // browser notification if allowed) offering Snooze / Done / Dismiss.
+        // ===================================================================
+        const remindBackdrop = document.getElementById('remindModalBackdrop');
+        const remindTitleEl = document.getElementById('remindModalTitle');
+        const remindTextEl = document.getElementById('remindModalText');
+        const remindBodyEl = document.getElementById('remindModalBody');
+        let remindModalItemId = null;
+        let remindModalMode = null; // 'set' | 'due'
+        const notifiedReminders = new Set();
+        const REMIND_OPTIONS = [
+            ['m10', 'In 10 minutes'],
+            ['h1', 'In 1 hour'],
+            ['h3', 'In 3 hours'],
+            ['t9', 'Tomorrow 9:00'],
+        ];
+
+        function reminderPreview(item) {
+            return String(item.text || '').split('\n')[0].replace(/^[•◦\-\*]\s*/, '').trim() || '(untitled note)';
+        }
+        function formatRemindLabel(ts) {
+            return formatCreatedLabel(ts) + ' · ' + formatTimeLabel(ts);
+        }
+        function remindOptionTime(key) {
+            const now = Date.now();
+            if (key === 'm10') return now + 10 * 60 * 1000;
+            if (key === 'h1') return now + 60 * 60 * 1000;
+            if (key === 'h3') return now + 3 * 60 * 60 * 1000;
+            if (key === 't9') {
+                const d = new Date();
+                d.setDate(d.getDate() + 1);
+                d.setHours(9, 0, 0, 0);
+                return d.getTime();
+            }
+            return 0;
+        }
+        function toLocalInputValue(ts) {
+            const d = new Date(ts);
+            return `${ymd(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        }
+
+        async function setReminder(itemId, ts) {
+            const item = itemsArray.find(i => i.id === itemId);
+            if (!item) return;
+            item.remindAt = ts || 0;
+            renderItems();
+            try {
+                await itemsCollectionRef().doc(itemId).update({ remindAt: ts || 0 });
+            } catch (error) {
+                console.error('Error saving reminder:', error);
+                alert('Could not save the reminder. Check your connection.');
+            }
+        }
+
+        function openRemindModal(itemId, mode) {
+            const item = itemsArray.find(i => i.id === itemId);
+            if (!item) return;
+            remindModalItemId = itemId;
+            remindModalMode = mode;
+            const due = mode === 'due';
+            remindTitleEl.textContent = due ? '⏰ Reminder' : '⏰ Remind me';
+            let text = reminderPreview(item);
+            if (due && item.remindAt) text += '\n(due ' + formatRemindLabel(item.remindAt) + ')';
+            remindTextEl.textContent = text;
+            let html = REMIND_OPTIONS.map(([k, label]) =>
+                `<button type="button" class="cal-date-opt-btn" data-rm="${k}">${due ? 'Snooze: ' : ''}${label}</button>`
+            ).join('');
+            const base = (item.remindAt && !due) ? item.remindAt : Date.now() + 60 * 60 * 1000;
+            html += `<div class="remind-custom-row">
+                <input type="datetime-local" id="remindCustomInput" value="${toLocalInputValue(base)}">
+                <button type="button" class="cal-date-opt-btn" data-rm="custom">${due ? 'Snooze' : 'Set'}</button>
+            </div>`;
+            if (due) {
+                html += `<button type="button" class="cal-date-opt-btn remind-ok" data-rm="done">✓ Mark done</button>`;
+                html += `<button type="button" class="cal-date-opt-btn remind-danger" data-rm="clear">✕ Dismiss</button>`;
+            } else {
+                if (item.remindAt) html += `<button type="button" class="cal-date-opt-btn remind-danger" data-rm="clear">🗑 Remove reminder</button>`;
+                html += `<button type="button" class="cal-date-cancel-btn" data-rm="cancel">Cancel</button>`;
+            }
+            remindBodyEl.innerHTML = html;
+            remindBackdrop.classList.remove('hidden');
+        }
+        function closeRemindModal() {
+            remindBackdrop.classList.add('hidden');
+            remindModalItemId = null;
+            remindModalMode = null;
+        }
+        function applyReminderChoice(ts) {
+            const id = remindModalItemId;
+            if (!id) return;
+            closeRemindModal();
+            setReminder(id, ts);
+            showCalToast('⏰ Reminder set: ' + formatRemindLabel(ts));
+            try {
+                if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+            } catch (e) { /* ignore */ }
+            setTimeout(checkDueReminders, 400);
+        }
+        remindBodyEl.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-rm]');
+            if (!btn) return;
+            const k = btn.dataset.rm;
+            const id = remindModalItemId;
+            if (k === 'cancel') { closeRemindModal(); return; }
+            if (k === 'clear') { closeRemindModal(); if (id) setReminder(id, 0); setTimeout(checkDueReminders, 400); return; }
+            if (k === 'done') {
+                closeRemindModal();
+                if (id) { await setReminder(id, 0); await toggleItemDone(id); }
+                setTimeout(checkDueReminders, 400);
+                return;
+            }
+            if (k === 'custom') {
+                const input = document.getElementById('remindCustomInput');
+                const ts = input && input.value ? new Date(input.value).getTime() : NaN;
+                if (!Number.isFinite(ts) || ts <= Date.now()) { showCalToast('Pick a time in the future.', true); return; }
+                applyReminderChoice(ts);
+                return;
+            }
+            const ts = remindOptionTime(k);
+            if (ts) applyReminderChoice(ts);
+        });
+        remindBackdrop.addEventListener('click', (e) => {
+            // A due reminder must be answered; the picker can be dismissed.
+            if (e.target === remindBackdrop && remindModalMode === 'set') closeRemindModal();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && remindModalMode === 'set') closeRemindModal();
+        });
+
+        function checkDueReminders() {
+            if (!cloudUser) return;
+            if (!remindBackdrop.classList.contains('hidden')) return;
+            const now = Date.now();
+            const due = itemsArray
+                .filter(i => !i.done && i.remindAt && i.remindAt <= now)
+                .sort((a, b) => a.remindAt - b.remindAt);
+            if (!due.length) return;
+            const it = due[0];
+            const key = it.id + ':' + it.remindAt;
+            if (!notifiedReminders.has(key)) {
+                notifiedReminders.add(key);
+                try {
+                    if ('Notification' in window && Notification.permission === 'granted') {
+                        const appName = (document.querySelector('.app-header h1') || {}).textContent || 'Reminder';
+                        new Notification('⏰ ' + appName.trim(), { body: reminderPreview(it) });
+                    }
+                } catch (e) { /* ignore */ }
+            }
+            openRemindModal(it.id, 'due');
+        }
+        setInterval(checkDueReminders, 15000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDueReminders(); });
+        window.addEventListener('focus', checkDueReminders);
+
+        // ===================================================================
+        // Share a note to other apps. Uses the phone/OS share sheet when the
+        // browser has one (covers Messenger, Facebook, LINE, WhatsApp, Mail…),
+        // plus direct links for X, Facebook, Messenger, LINE, WhatsApp,
+        // Telegram, Threads and email. Facebook/Messenger cannot prefill
+        // free text from a web link, so for those the note is copied first
+        // and you paste it into the post / chat.
+        // ===================================================================
+        const shareBackdrop = document.getElementById('shareModalBackdrop');
+        const sharePreviewEl = document.getElementById('shareModalPreview');
+        const shareBodyEl = document.getElementById('shareModalBody');
+        let shareText = '';
+
+        function buildShareText(item, includeReplies) {
+            const clean = (t) => String(t || '').trim();
+            let out = clean(item.text);
+            if (includeReplies && Array.isArray(item.replies) && item.replies.length) {
+                const lines = item.replies.map(r => '  ↳ ' + clean(r.text).replace(/\n/g, '\n    ')).filter(l => l.trim() !== '↳');
+                if (lines.length) out += '\n' + lines.join('\n');
+            }
+            return out;
+        }
+        async function copyShareText(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                return true;
+            } catch (e) {
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                    document.body.appendChild(ta); ta.select();
+                    const ok = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    return ok;
+                } catch (e2) { return false; }
+            }
+        }
+        function openShareModal(itemId) {
+            const item = itemsArray.find(i => i.id === itemId);
+            if (!item) return;
+            const hasReplies = Array.isArray(item.replies) && item.replies.length > 0;
+            shareBackdrop.dataset.itemId = itemId;
+            shareText = buildShareText(item, hasReplies);
+            sharePreviewEl.textContent = shareText;
+            const nativeBtn = navigator.share
+                ? '<button type="button" class="cal-date-opt-btn" data-sh="native" style="margin-bottom:8px">📲 Share via device… (Messenger, LINE, Facebook, …)</button>'
+                : '';
+            const replyToggle = hasReplies
+                ? `<label style="display:flex;gap:6px;align-items:center;font-size:0.8rem;color:#475569;margin:0 0 10px;cursor:pointer"><input type="checkbox" id="shareIncludeReplies" checked> Include sub-items (${item.replies.length})</label>`
+                : '';
+            shareBodyEl.innerHTML = replyToggle + nativeBtn + `
+                <div class="share-grid">
+                    <button type="button" class="cal-date-opt-btn" data-sh="x">𝕏 X</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="threads">🧵 Threads</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="facebook">📘 Facebook</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="messenger">💬 Messenger</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="line">🟢 LINE</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="whatsapp">🟩 WhatsApp</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="telegram">✈️ Telegram</button>
+                    <button type="button" class="cal-date-opt-btn" data-sh="email">✉️ Email</button>
+                </div>
+                <div class="share-hint">Facebook &amp; Messenger can't prefill text — the note is copied for you to paste.</div>
+                <button type="button" class="cal-date-opt-btn" data-sh="copy">📋 Copy text</button>
+                <button type="button" class="cal-date-cancel-btn" data-sh="cancel">Close</button>`;
+            shareBackdrop.classList.remove('hidden');
+        }
+        function closeShareModal() { shareBackdrop.classList.add('hidden'); }
+        shareBodyEl.addEventListener('change', (e) => {
+            if (e.target && e.target.id === 'shareIncludeReplies') {
+                const item = itemsArray.find(i => i.id === shareBackdrop.dataset.itemId);
+                if (!item) return;
+                shareText = buildShareText(item, e.target.checked);
+                sharePreviewEl.textContent = shareText;
+            }
+        });
+        shareBodyEl.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-sh]');
+            if (!btn) return;
+            const k = btn.dataset.sh;
+            const t = shareText;
+            const enc = encodeURIComponent;
+            const open = (url) => window.open(url, '_blank', 'noopener');
+            if (k === 'cancel') { closeShareModal(); return; }
+            if (k === 'copy') {
+                showCalToast((await copyShareText(t)) ? '📋 Copied to clipboard' : 'Could not copy', false);
+                return;
+            }
+            if (k === 'native') {
+                try { await navigator.share({ text: t }); closeShareModal(); } catch (err) { /* cancelled */ }
+                return;
+            }
+            if (k === 'x') { open('https://twitter.com/intent/tweet?text=' + enc(t.slice(0, 270))); return; }
+            if (k === 'threads') { open('https://www.threads.net/intent/post?text=' + enc(t)); return; }
+            if (k === 'line') { open('https://line.me/R/share?text=' + enc(t)); return; }
+            if (k === 'whatsapp') { open('https://wa.me/?text=' + enc(t)); return; }
+            if (k === 'telegram') { open('https://t.me/share/url?url=' + enc(' ') + '&text=' + enc(t)); return; }
+            if (k === 'email') {
+                const subject = t.split('\n')[0].slice(0, 80);
+                window.location.href = 'mailto:?subject=' + enc(subject) + '&body=' + enc(t);
+                return;
+            }
+            if (k === 'facebook' || k === 'messenger') {
+                const ok = await copyShareText(t);
+                showCalToast(ok ? '📋 Note copied — paste it into your ' + (k === 'facebook' ? 'post' : 'message') : 'Could not copy the note', !ok);
+                if (k === 'facebook') open('https://www.facebook.com/');
+                else open('https://www.messenger.com/');
+            }
+        });
+        shareBackdrop.addEventListener('click', (e) => { if (e.target === shareBackdrop) closeShareModal(); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !shareBackdrop.classList.contains('hidden')) closeShareModal(); });
+
         // ---- Long-entry clamping (collapse to a few lines + Show more/less) ----
         const expandedTexts = new Set(); // keys: itemId or itemId:replyId
         function applyClamping() {
@@ -3092,6 +3418,53 @@
                 el.insertAdjacentElement('afterend', btn);
             });
         }
+        // ---- "Reminders" list: show only notes with an active (snoozed) reminder ----
+        let remindersOnly = false;
+        function activeReminderItems() {
+            return itemsArray.filter(i => !i.done && i.remindAt);
+        }
+        function updateRemindersBtn() {
+            const btn = document.getElementById('remindersBtn');
+            if (!btn) return;
+            const n = activeReminderItems().length;
+            btn.classList.toggle('hidden', n === 0 && !remindersOnly);
+            btn.classList.toggle('has-filter', remindersOnly);
+            btn.textContent = '⏰ Reminders (' + n + ')';
+            btn.title = remindersOnly ? 'Showing only notes with reminders — click to show all' : 'Show only notes with a reminder, soonest first';
+        }
+        document.getElementById('remindersBtn').addEventListener('click', () => {
+            remindersOnly = !remindersOnly;
+            renderItems();
+        });
+
+        // ---- Collapse / expand all sub-items (replies) at once ----
+        function itemsWithReplies() {
+            return itemsArray.filter(i => Array.isArray(i.replies) && i.replies.length);
+        }
+        function updateCollapseAllBtn() {
+            const btn = document.getElementById('collapseAllBtn');
+            if (!btn) return;
+            const list = itemsWithReplies();
+            btn.classList.toggle('hidden', list.length === 0);
+            const allCollapsed = list.length > 0 && list.every(i => collapsedItems.has(i.id));
+            btn.textContent = allCollapsed ? '▶ Expand all' : '▼ Collapse all';
+        }
+        function toggleAllReplies() {
+            const list = itemsWithReplies();
+            if (!list.length) return;
+            const allCollapsed = list.every(i => collapsedItems.has(i.id));
+            if (allCollapsed) {
+                list.forEach(i => collapsedItems.delete(i.id));
+            } else {
+                list.forEach(i => collapsedItems.add(i.id));
+                replyingToId = null;
+                editingReply = null;
+            }
+            saveCollapseState();
+            renderItems();
+        }
+        document.getElementById('collapseAllBtn').addEventListener('click', toggleAllReplies);
+
         function toggleExpanded(key) {
             if (expandedTexts.has(key)) expandedTexts.delete(key);
             else expandedTexts.add(key);
@@ -3162,6 +3535,8 @@
             if (action === 'cancel-tags') { tagEditingItemId = null; hideItemSuggestions(); renderItems(); return; }
             if (action === 'filter-tag') { toggleTagFilter(target.dataset.tag); return; }
             if (action === 'send-to-calendar') { openCalDateModal(itemId); return; }
+            if (action === 'share-item') { openShareModal(itemId); return; }
+            if (action === 'open-remind') { openRemindModal(itemId, 'set'); return; }
             if (action === 'toggle-expand') { toggleExpanded(itemId); return; }
 
             if (editingItemId === itemId && !target.classList.contains('item-check')) return;
@@ -4092,6 +4467,7 @@
         // Clear all filters (tags + date + search) in one click
         // ===================================================================
         document.getElementById('clearFiltersBtn').addEventListener('click', () => {
+            remindersOnly = false;
             activeTagFilters.clear();
             activeDateFilter = null;
             searchQuery = '';
