@@ -846,6 +846,27 @@
             border-radius: 6px;
             box-shadow: 0 0 0 4px #f8fafc;
         }
+        /* Long-note clamping: collapsed to a few lines with "Show more" */
+        .item-text.clamped, .reply-text.clamped {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 4;
+            line-clamp: 4;
+            overflow: hidden;
+        }
+        .reply-text.clamped { -webkit-line-clamp: 3; line-clamp: 3; }
+        .expand-link {
+            background: none;
+            border: none;
+            padding: 2px 0;
+            margin-top: 2px;
+            font-family: inherit;
+            font-size: 0.74rem;
+            font-weight: 600;
+            color: #4f46e5;
+            cursor: pointer;
+        }
+        .expand-link:hover { color: #4338ca; text-decoration: underline; }
         .item-text.done {
             text-decoration: line-through;
             color: #94a3b8;
@@ -1509,6 +1530,7 @@
                 <span class="tag-toggle-caret">▾</span>
             </button>
             <button type="button" class="fm-btn clear-all-btn hidden" id="clearFiltersBtn" title="Clear tag, date and search filters">✕ Clear filters</button>
+            <button type="button" class="fm-btn hidden" id="collapseAllBtn" title="Collapse or expand all sub-items (replies)">▼ Collapse all</button>
             <button type="button" class="fm-btn help-btn" id="helpBtn" aria-expanded="false" title="How to use">❓ Help</button>
         </div>
 
@@ -3008,6 +3030,8 @@
                 }
             });
             itemsList.innerHTML = html;
+            applyClamping();
+            updateCollapseAllBtn();
 
             if (editingItemId) {
                 const ta = itemsList.querySelector(`.edit-textarea[data-id="${editingItemId}"]:not([data-reply-edit])`);
@@ -3049,6 +3073,61 @@
             }
         }
 
+        // ---- Long-entry clamping (collapse to a few lines + Show more/less) ----
+        const expandedTexts = new Set(); // keys: itemId or itemId:replyId
+        function applyClamping() {
+            itemsList.querySelectorAll('.item-text, .reply-text').forEach((el) => {
+                const isReply = el.classList.contains('reply-text');
+                const key = isReply ? `${el.dataset.id}:${el.dataset.replyId}` : el.dataset.id;
+                el.classList.add('clamped');
+                const overflows = el.scrollHeight > el.clientHeight + 1;
+                if (!overflows) { el.classList.remove('clamped'); return; }
+                const expanded = expandedTexts.has(key);
+                if (expanded) el.classList.remove('clamped');
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'expand-link';
+                btn.dataset.id = el.dataset.id;
+                if (isReply) btn.dataset.replyId = el.dataset.replyId;
+                btn.dataset.action = isReply ? 'toggle-expand-reply' : 'toggle-expand';
+                btn.textContent = expanded ? 'Show less ▲' : '… Show more ▼';
+                el.insertAdjacentElement('afterend', btn);
+            });
+        }
+        // ---- Collapse / expand all sub-items (replies) at once ----
+        function itemsWithReplies() {
+            return itemsArray.filter(i => Array.isArray(i.replies) && i.replies.length);
+        }
+        function updateCollapseAllBtn() {
+            const btn = document.getElementById('collapseAllBtn');
+            if (!btn) return;
+            const list = itemsWithReplies();
+            btn.classList.toggle('hidden', list.length === 0);
+            const allCollapsed = list.length > 0 && list.every(i => collapsedItems.has(i.id));
+            btn.textContent = allCollapsed ? '▶ Expand all' : '▼ Collapse all';
+        }
+        function toggleAllReplies() {
+            const list = itemsWithReplies();
+            if (!list.length) return;
+            const allCollapsed = list.every(i => collapsedItems.has(i.id));
+            if (allCollapsed) {
+                list.forEach(i => collapsedItems.delete(i.id));
+            } else {
+                list.forEach(i => collapsedItems.add(i.id));
+                replyingToId = null;
+                editingReply = null;
+            }
+            saveCollapseState();
+            renderItems();
+        }
+        document.getElementById('collapseAllBtn').addEventListener('click', toggleAllReplies);
+
+        function toggleExpanded(key) {
+            if (expandedTexts.has(key)) expandedTexts.delete(key);
+            else expandedTexts.add(key);
+            renderItems();
+        }
+
         function escapeHtml(unsafe) {
             return String(unsafe)
                 .replace(/&/g, "&amp;")
@@ -3073,6 +3152,7 @@
                 if (action === 'toggle-reply') { await toggleReplyDone(itemId, replyId); return; }
                 if (action === 'edit-reply') { editingReply = { itemId, replyId }; replyingToId = null; renderItems(); return; }
                 if (action === 'delete-reply') { await deleteReply(itemId, replyId); return; }
+                if (action === 'toggle-expand-reply') { toggleExpanded(`${itemId}:${replyId}`); return; }
                 if (action === 'filter-tag') { toggleTagFilter(replyTarget.dataset.tag); return; }
                 if (replyTarget.classList.contains('reply-text')) {
                     editingReply = { itemId, replyId };
@@ -3112,6 +3192,7 @@
             if (action === 'cancel-tags') { tagEditingItemId = null; hideItemSuggestions(); renderItems(); return; }
             if (action === 'filter-tag') { toggleTagFilter(target.dataset.tag); return; }
             if (action === 'send-to-calendar') { openCalDateModal(itemId); return; }
+            if (action === 'toggle-expand') { toggleExpanded(itemId); return; }
 
             if (editingItemId === itemId && !target.classList.contains('item-check')) return;
 
