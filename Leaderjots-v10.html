@@ -846,6 +846,23 @@
             border-radius: 6px;
             box-shadow: 0 0 0 4px #f8fafc;
         }
+        /* Reminders / Snooze */
+        .item-meta .chip.remind-chip {
+            background: #fef3c7; color: #92400e; cursor: pointer; transition: background 0.15s;
+        }
+        .item-meta .chip.remind-chip:hover { background: #fde68a; }
+        .item-meta .chip.remind-chip.overdue { background: #fee2e2; color: #b91c1c; }
+        .item-actions button.remind-btn:hover { background: #fef3c7; color: #d97706; }
+        .item-actions button.remind-btn.active { color: #d97706; }
+        .remind-custom-row { display: flex; gap: 8px; margin-bottom: 8px; }
+        .remind-custom-row input[type="datetime-local"] {
+            flex: 1; min-width: 0; padding: 9px 10px; border-radius: 12px;
+            border: 1.5px solid #e2e8f0; font-family: inherit; font-size: 0.85rem; color: #1e293b;
+        }
+        .remind-custom-row .cal-date-opt-btn { width: auto; margin-bottom: 0; flex-shrink: 0; }
+        .cal-date-opt-btn.remind-danger { color: #b91c1c; }
+        .cal-date-opt-btn.remind-ok { background: #dcfce7; border-color: #bbf7d0; color: #166534; }
+
         /* Long-note clamping: collapsed to a few lines with "Show more" */
         .item-text.clamped, .reply-text.clamped {
             display: -webkit-box;
@@ -1598,6 +1615,15 @@
 
     <!-- Filter pull-down menu (shared by Tag / Date buttons) -->
     <div class="fm-menu hidden" id="filterMenu" role="listbox"></div>
+
+    <!-- Reminder / snooze modal -->
+    <div class="cal-date-modal-backdrop hidden" id="remindModalBackdrop">
+        <div class="cal-date-modal">
+            <div class="cal-date-modal-title" id="remindModalTitle">⏰ Remind me</div>
+            <div class="cal-date-modal-text" id="remindModalText"></div>
+            <div id="remindModalBody"></div>
+        </div>
+    </div>
 
     <!-- Calendar toast -->
     <div class="cal-toast" id="calToast"></div>
@@ -2399,6 +2425,7 @@
                             text: data.text || '',
                             done: data.done || false,
                             pinned: data.pinned || false,
+                            remindAt: data.remindAt || 0,
                             tags: Array.isArray(data.tags) ? data.tags : [],
                             createdAt: data.createdAt || 0,
                             updatedAt: data.updatedAt || 0,
@@ -2413,6 +2440,7 @@
                         });
                     });
                     itemsArray = newItems;
+                    setTimeout(checkDueReminders, 300);
                     renderItems();
                     if (tagPanelOpen) {
                         renderExistingTags();
@@ -3011,12 +3039,14 @@
                                     <span class="chip" title="${escapeHtml(fullTooltip)}">🕒 ${escapeHtml(createdLabel)} · ${escapeHtml(timeLabel)}</span>
                                     ${item.pinned ? `<span class="chip pin-chip" title="Pinned to top">📌 pinned</span>` : ''}
                                     ${wasEdited ? `<span class="chip edited" title="Last edited: ${escapeHtml(formatFullTooltip(item.updatedAt))}">✎ edited</span>` : ''}
+                                    ${(item.remindAt && !item.done) ? `<span class="chip remind-chip ${item.remindAt <= Date.now() ? 'overdue' : ''}" data-id="${item.id}" data-action="open-remind" title="Click to change or remove the reminder">⏰ ${escapeHtml(formatRemindLabel(item.remindAt))}</span>` : ''}
                                     ${itemTagChips}
                                     ${replyChipHtml}
                                     <div class="item-actions">
                                         <button class="tag-btn ${showTagEditor ? 'active' : ''}" data-id="${item.id}" data-action="open-tag-editor" aria-label="tags" title="Edit tags">🏷️</button>
                                         <button class="reply-btn ${showReplyBox ? 'active' : ''}" data-id="${item.id}" data-action="open-reply" aria-label="reply" title="Add a reply / sub-note">💬</button>
                                         <button class="pin-btn ${item.pinned ? 'pinned' : ''}" data-id="${item.id}" aria-label="pin" title="${item.pinned ? 'Unpin' : 'Pin to top'}">${item.pinned ? '📌' : '📍'}</button>
+                                        <button class="remind-btn ${item.remindAt ? 'active' : ''}" data-id="${item.id}" data-action="open-remind" aria-label="reminder" title="Remind me / snooze">⏰</button>
                                         <button class="cal-btn" data-id="${item.id}" data-action="send-to-calendar" aria-label="send to calendar" title="Send to Google Calendar (as a day event)">📅</button>
                                         <button class="edit-btn" data-id="${item.id}" aria-label="edit" title="Edit (or click text)">✎</button>
                                         <button class="del-btn" data-id="${item.id}" aria-label="delete" title="Delete">✕</button>
@@ -3072,6 +3102,163 @@
                 }
             }
         }
+
+        // ===================================================================
+        // Reminders / Snooze — each note can carry a remindAt timestamp
+        // (stored in Firestore with the note, so it syncs across devices).
+        // While the app is open, a due reminder pops up a modal (plus a
+        // browser notification if allowed) offering Snooze / Done / Dismiss.
+        // ===================================================================
+        const remindBackdrop = document.getElementById('remindModalBackdrop');
+        const remindTitleEl = document.getElementById('remindModalTitle');
+        const remindTextEl = document.getElementById('remindModalText');
+        const remindBodyEl = document.getElementById('remindModalBody');
+        let remindModalItemId = null;
+        let remindModalMode = null; // 'set' | 'due'
+        const notifiedReminders = new Set();
+        const REMIND_OPTIONS = [
+            ['m10', 'In 10 minutes'],
+            ['h1', 'In 1 hour'],
+            ['h3', 'In 3 hours'],
+            ['t9', 'Tomorrow 9:00'],
+        ];
+
+        function reminderPreview(item) {
+            return String(item.text || '').split('\n')[0].replace(/^[•◦\-\*]\s*/, '').trim() || '(untitled note)';
+        }
+        function formatRemindLabel(ts) {
+            return formatCreatedLabel(ts) + ' · ' + formatTimeLabel(ts);
+        }
+        function remindOptionTime(key) {
+            const now = Date.now();
+            if (key === 'm10') return now + 10 * 60 * 1000;
+            if (key === 'h1') return now + 60 * 60 * 1000;
+            if (key === 'h3') return now + 3 * 60 * 60 * 1000;
+            if (key === 't9') {
+                const d = new Date();
+                d.setDate(d.getDate() + 1);
+                d.setHours(9, 0, 0, 0);
+                return d.getTime();
+            }
+            return 0;
+        }
+        function toLocalInputValue(ts) {
+            const d = new Date(ts);
+            return `${ymd(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        }
+
+        async function setReminder(itemId, ts) {
+            const item = itemsArray.find(i => i.id === itemId);
+            if (!item) return;
+            item.remindAt = ts || 0;
+            renderItems();
+            try {
+                await itemsCollectionRef().doc(itemId).update({ remindAt: ts || 0 });
+            } catch (error) {
+                console.error('Error saving reminder:', error);
+                alert('Could not save the reminder. Check your connection.');
+            }
+        }
+
+        function openRemindModal(itemId, mode) {
+            const item = itemsArray.find(i => i.id === itemId);
+            if (!item) return;
+            remindModalItemId = itemId;
+            remindModalMode = mode;
+            const due = mode === 'due';
+            remindTitleEl.textContent = due ? '⏰ Reminder' : '⏰ Remind me';
+            let text = reminderPreview(item);
+            if (due && item.remindAt) text += '\n(due ' + formatRemindLabel(item.remindAt) + ')';
+            remindTextEl.textContent = text;
+            let html = REMIND_OPTIONS.map(([k, label]) =>
+                `<button type="button" class="cal-date-opt-btn" data-rm="${k}">${due ? 'Snooze: ' : ''}${label}</button>`
+            ).join('');
+            const base = (item.remindAt && !due) ? item.remindAt : Date.now() + 60 * 60 * 1000;
+            html += `<div class="remind-custom-row">
+                <input type="datetime-local" id="remindCustomInput" value="${toLocalInputValue(base)}">
+                <button type="button" class="cal-date-opt-btn" data-rm="custom">${due ? 'Snooze' : 'Set'}</button>
+            </div>`;
+            if (due) {
+                html += `<button type="button" class="cal-date-opt-btn remind-ok" data-rm="done">✓ Mark done</button>`;
+                html += `<button type="button" class="cal-date-opt-btn remind-danger" data-rm="clear">✕ Dismiss</button>`;
+            } else {
+                if (item.remindAt) html += `<button type="button" class="cal-date-opt-btn remind-danger" data-rm="clear">🗑 Remove reminder</button>`;
+                html += `<button type="button" class="cal-date-cancel-btn" data-rm="cancel">Cancel</button>`;
+            }
+            remindBodyEl.innerHTML = html;
+            remindBackdrop.classList.remove('hidden');
+        }
+        function closeRemindModal() {
+            remindBackdrop.classList.add('hidden');
+            remindModalItemId = null;
+            remindModalMode = null;
+        }
+        function applyReminderChoice(ts) {
+            const id = remindModalItemId;
+            if (!id) return;
+            closeRemindModal();
+            setReminder(id, ts);
+            showCalToast('⏰ Reminder set: ' + formatRemindLabel(ts));
+            try {
+                if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+            } catch (e) { /* ignore */ }
+            setTimeout(checkDueReminders, 400);
+        }
+        remindBodyEl.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-rm]');
+            if (!btn) return;
+            const k = btn.dataset.rm;
+            const id = remindModalItemId;
+            if (k === 'cancel') { closeRemindModal(); return; }
+            if (k === 'clear') { closeRemindModal(); if (id) setReminder(id, 0); setTimeout(checkDueReminders, 400); return; }
+            if (k === 'done') {
+                closeRemindModal();
+                if (id) { await setReminder(id, 0); await toggleItemDone(id); }
+                setTimeout(checkDueReminders, 400);
+                return;
+            }
+            if (k === 'custom') {
+                const input = document.getElementById('remindCustomInput');
+                const ts = input && input.value ? new Date(input.value).getTime() : NaN;
+                if (!Number.isFinite(ts) || ts <= Date.now()) { showCalToast('Pick a time in the future.', true); return; }
+                applyReminderChoice(ts);
+                return;
+            }
+            const ts = remindOptionTime(k);
+            if (ts) applyReminderChoice(ts);
+        });
+        remindBackdrop.addEventListener('click', (e) => {
+            // A due reminder must be answered; the picker can be dismissed.
+            if (e.target === remindBackdrop && remindModalMode === 'set') closeRemindModal();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && remindModalMode === 'set') closeRemindModal();
+        });
+
+        function checkDueReminders() {
+            if (!cloudUser) return;
+            if (!remindBackdrop.classList.contains('hidden')) return;
+            const now = Date.now();
+            const due = itemsArray
+                .filter(i => !i.done && i.remindAt && i.remindAt <= now)
+                .sort((a, b) => a.remindAt - b.remindAt);
+            if (!due.length) return;
+            const it = due[0];
+            const key = it.id + ':' + it.remindAt;
+            if (!notifiedReminders.has(key)) {
+                notifiedReminders.add(key);
+                try {
+                    if ('Notification' in window && Notification.permission === 'granted') {
+                        const appName = (document.querySelector('.app-header h1') || {}).textContent || 'Reminder';
+                        new Notification('⏰ ' + appName.trim(), { body: reminderPreview(it) });
+                    }
+                } catch (e) { /* ignore */ }
+            }
+            openRemindModal(it.id, 'due');
+        }
+        setInterval(checkDueReminders, 15000);
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDueReminders(); });
+        window.addEventListener('focus', checkDueReminders);
 
         // ---- Long-entry clamping (collapse to a few lines + Show more/less) ----
         const expandedTexts = new Set(); // keys: itemId or itemId:replyId
@@ -3192,6 +3379,7 @@
             if (action === 'cancel-tags') { tagEditingItemId = null; hideItemSuggestions(); renderItems(); return; }
             if (action === 'filter-tag') { toggleTagFilter(target.dataset.tag); return; }
             if (action === 'send-to-calendar') { openCalDateModal(itemId); return; }
+            if (action === 'open-remind') { openRemindModal(itemId, 'set'); return; }
             if (action === 'toggle-expand') { toggleExpanded(itemId); return; }
 
             if (editingItemId === itemId && !target.classList.contains('item-check')) return;
