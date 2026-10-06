@@ -1240,6 +1240,65 @@
         font-size: 1.2rem;
       }
     }
+
+    /* ---- Full clock view (timer only, fills the whole screen) ---- */
+    .clock-full-btn {
+      background: #ede7e1;
+      border: none;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+      color: #2b2825;
+      margin-left: 6px;
+    }
+    .clock-full-btn:hover { background: #d9d0c6; }
+    #clockFullView {
+      position: fixed;
+      inset: 0;
+      z-index: 400;
+      background: linear-gradient(145deg, #f5f0eb 0%, #e8e0d8 100%);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2vh;
+      padding: 2vh 2vw;
+    }
+    #clockFullView .fv-phase {
+      font-size: clamp(1rem, 3.2vmin, 2rem);
+      font-weight: 600;
+      color: #6d645b;
+    }
+    #clockFullStage {
+      width: 100%;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #clockFullStage .timer-display-wrapper { width: 100%; margin: 0; }
+    #clockFullStage .timer-display {
+      font-size: min(26vw, 42vh);
+      background: transparent;
+      box-shadow: none;
+      padding: 0;
+      border-radius: 0;
+    }
+    #clockFullStage .analog-container { margin: 0; }
+    #clockFullStage .overtime-banner { font-size: clamp(14px, 3vmin, 28px); }
+    .fv-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      opacity: 0.5;
+      transition: opacity 0.2s;
+    }
+    .fv-controls:hover, .fv-controls:focus-within { opacity: 1; }
   </style>
 </head>
 <body>
@@ -1262,6 +1321,7 @@
         <span class="title-icon">⏱️</span>
         <input type="text" class="editable-title-input" id="timerTitle" value="Timer" />
         <small>focus &amp; break sessions</small>
+        <button type="button" class="clock-full-btn" id="clockFullBtn" title="Full-screen clock (timer only)" aria-label="Full-screen clock">⛶</button>
       </div>
       <div class="timer-section">
         <div class="status-row status-row-top">
@@ -1430,6 +1490,17 @@
   </div>
   <div class="footer-copyright" style="text-align:center; font-size:0.65rem; color:#9b938a; margin-top:4px; grid-column:1 / -1;">
     Copyright &copy; 2026 Dr. Wen-Ming Yang. All Rights Reserved.
+  </div>
+</div>
+
+<div id="clockFullView" role="dialog" aria-label="Full-screen clock">
+  <div class="fv-phase" id="fvPhase"></div>
+  <div id="clockFullStage"><!-- timer display is moved here while open --></div>
+  <div class="fv-controls">
+    <button class="btn btn-primary" id="fvStartBtn">▶ Start</button>
+    <button class="btn btn-outline" id="fvPauseBtn">⏸ Pause</button>
+    <button class="btn btn-outline" id="fvViewBtn">🕐 Digital / Analog</button>
+    <button class="btn btn-outline" id="fvExitBtn">✕ Exit (Esc)</button>
   </div>
 </div>
 
@@ -1776,6 +1847,8 @@
       };
       phaseLabel.textContent = overtimeActive ? '✅ Overtime' : (phaseNames[currentPhase] || 'Focus');
       cycleCountSpan.textContent = `🍅 ${cycleCount}`;
+      const fvPhaseEl = document.getElementById('fvPhase');
+      if (fvPhaseEl) fvPhaseEl.textContent = `${phaseLabel.textContent}  ·  ${cycleCountSpan.textContent}`;
       updatePhaseIndicator();
 
       const sessionActive = isRunning || isPaused;
@@ -1804,7 +1877,7 @@
     }
 
     // ----- Analog clock -----
-    const ANALOG_SIZE = 240; // logical CSS pixel size — must match #analogCanvas width/height
+    let ANALOG_SIZE = 240; // logical CSS pixel size — must match #analogCanvas width/height (resized in full clock view)
 
     function drawAnalog(seconds) {
       try {
@@ -3620,6 +3693,77 @@
         });
       }
       if (gcalMergeBtn) gcalMergeBtn.addEventListener('click', () => consolidatePomodoroCalendars());
+
+      // --- Full clock view: moves the REAL timer display (digital readout /
+      // analog canvas / overtime banner) into a full-screen overlay and back,
+      // so everything keeps updating exactly as it does inline. (Relocated
+      // rather than position:fixed in place, because .app-card's
+      // backdrop-filter would otherwise trap a fixed child inside the card.)
+      const clockFullView = document.getElementById('clockFullView');
+      const clockFullStage = document.getElementById('clockFullStage');
+      const clockFullBtn = document.getElementById('clockFullBtn');
+      const timerWrapper = document.querySelector('.timer-display-wrapper');
+      const timerWrapperHome = timerWrapper.parentNode;
+      const timerWrapperNext = timerWrapper.nextSibling;
+      let clockFullOpen = false;
+
+      function sizeFullAnalog() {
+        if (!clockFullOpen) return;
+        const size = Math.max(200, Math.round(Math.min(window.innerWidth * 0.9, window.innerHeight * 0.68)));
+        ANALOG_SIZE = size;
+        analogCanvas.style.width = size + 'px';
+        analogCanvas.style.height = size + 'px';
+        if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+      }
+      function openClockFull() {
+        if (clockFullOpen) return;
+        clockFullOpen = true;
+        clockFullStage.appendChild(timerWrapper);
+        clockFullView.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+        updateDisplay();
+        sizeFullAnalog();
+        // Deliberately NOT calling requestFullscreen(): the clock fills the
+        // browser window only, so the taskbar / other windows stay visible.
+      }
+      function closeClockFull() {
+        if (!clockFullOpen) return;
+        clockFullOpen = false;
+        if (timerWrapperNext && timerWrapperNext.parentNode === timerWrapperHome) {
+          timerWrapperHome.insertBefore(timerWrapper, timerWrapperNext);
+        } else {
+          timerWrapperHome.appendChild(timerWrapper);
+        }
+        clockFullView.style.display = 'none';
+        document.body.style.overflow = '';
+        ANALOG_SIZE = 240;
+        analogCanvas.style.width = '';
+        analogCanvas.style.height = '';
+        if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) {} }
+        updateDisplay();
+        if (viewMode === 'analog') drawAnalog(getDisplaySeconds());
+      }
+      if (clockFullBtn) clockFullBtn.addEventListener('click', openClockFull);
+      document.getElementById('fvExitBtn').addEventListener('click', closeClockFull);
+      document.getElementById('fvStartBtn').addEventListener('click', startTimer);
+      document.getElementById('fvPauseBtn').addEventListener('click', pauseTimer);
+      document.getElementById('fvViewBtn').addEventListener('click', () => {
+        setViewMode(viewMode === 'digital' ? 'analog' : 'digital');
+        sizeFullAnalog();
+      });
+      document.addEventListener('fullscreenchange', () => {
+        // Leaving real fullscreen (Esc / browser UI) also leaves the clock view.
+        if (!document.fullscreenElement && clockFullOpen) closeClockFull();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (!clockFullOpen) return;
+        if (e.key === 'Escape') closeClockFull();
+        else if (e.key === ' ' && e.target === document.body) {
+          e.preventDefault();
+          if (isRunning && !isPaused) pauseTimer(); else startTimer();
+        }
+      });
+      window.addEventListener('resize', sizeFullAnalog);
 
       // Quick add buttons
       quickAddButtons.forEach(btn => {
