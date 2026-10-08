@@ -1265,6 +1265,10 @@ td.cell-full-height {
    per-row checkbox always exists in the DOM (added in renderNode) but
    stays hidden until body.select-mode-active is toggled on — avoids
    having to re-render every row just to show/hide it. */
+/* Drag-select across lines */
+body.drag-selecting, body.drag-selecting * { user-select: none !important; -webkit-user-select: none !important; cursor: default; }
+.outline-node-row.item-selected { background: rgba(66, 133, 244, 0.18); }
+
 .outline-select-checkbox {
     display: none;
     margin-right: 4px;
@@ -2427,6 +2431,104 @@ window.openPrintTablePicker = function () {
         window.printSingleTable(blocks[idx], layout);
     });
 };
+
+
+// ---- Drag-select across lines of a table (mouse drag → multi-select) ----
+// Each outline line is its own contenteditable field, and browsers won't
+// extend a native text selection from one editable field into another,
+// so dragging across lines never highlighted anything. This adds a
+// mouse-drag row selection: press in a line, drag onto another line, and
+// every line between is selected. It reuses the existing multi-select
+// (window.__bulkSelection + the floating Copy to / Move to / Copy Text /
+// Delete bar), and Ctrl/Cmd+C copies the selection as indented text.
+(function () {
+    var anchorRoot = null, anchorRow = null, startX = 0, startY = 0;
+    var dragging = false, madeByDrag = false;
+
+    function visibleRows(root) {
+        return Array.prototype.filter.call(root.querySelectorAll('.outline-node-row'), function (r) {
+            return r.getBoundingClientRect().height > 0;
+        });
+    }
+    function rowAtY(rows, y) {
+        var hit = rows[0];
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].getBoundingClientRect().top <= y) hit = rows[i]; else break;
+        }
+        return hit;
+    }
+    function setRowSelected(row, on) {
+        var cb = row.querySelector(':scope > .outline-select-checkbox');
+        if (cb) {
+            if (cb.checked !== on) { cb.checked = on; cb.dispatchEvent(new Event('change')); }
+        } else {
+            row.classList.toggle('item-selected', on);
+        }
+    }
+    function applyRange(root, a, b) {
+        var rows = visibleRows(root);
+        var i = rows.indexOf(a), j = rows.indexOf(b);
+        if (i < 0 || j < 0) return;
+        var lo = Math.min(i, j), hi = Math.max(i, j);
+        rows.forEach(function (r, k) { setRowSelected(r, k >= lo && k <= hi); });
+    }
+    function clearDragSelection() {
+        if (!madeByDrag) return;
+        madeByDrag = false;
+        if (window.clearBulkSelection) window.clearBulkSelection();
+    }
+    function onMove(e) {
+        if (!anchorRow) return;
+        var rows = visibleRows(anchorRoot);
+        if (!rows.length) return;
+        var cur = rowAtY(rows, e.clientY);
+        if (!dragging) {
+            if (cur === anchorRow) return;          // still inside one line → native text selection
+            dragging = true;
+            if (!document.body.classList.contains('select-mode-active') || madeByDrag) clearDragSelection();
+            madeByDrag = true;
+            document.body.classList.add('drag-selecting');
+            if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        }
+        var s = window.getSelection(); if (s) s.removeAllRanges();
+        applyRange(anchorRoot, anchorRow, cur);
+        if (e.clientY < 40) window.scrollBy(0, -18);
+        else if (e.clientY > window.innerHeight - 40) window.scrollBy(0, 18);
+    }
+    function onUp() {
+        document.removeEventListener('mousemove', onMove, true);
+        document.removeEventListener('mouseup', onUp, true);
+        document.body.classList.remove('drag-selecting');
+        anchorRow = null; dragging = false;
+    }
+    document.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
+        var root = e.target.closest && e.target.closest('.outline-root');
+        if (!root) return;
+        if (e.target.closest('input, button, a, select, .outline-bullet, .outline-select-checkbox, .outline-menu-inline')) return;
+        clearDragSelection();
+        var rows = visibleRows(root);
+        if (!rows.length) return;
+        var rowEl = e.target.closest('.outline-node-row');
+        anchorRoot = root;
+        anchorRow = rowEl && rows.indexOf(rowEl) >= 0 ? rowEl : rowAtY(rows, e.clientY);
+        startX = e.clientX; startY = e.clientY; dragging = false;
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', onUp, true);
+    }, true);
+    document.addEventListener('selectstart', function (e) {
+        if (document.body.classList.contains('drag-selecting')) e.preventDefault();
+    }, true);
+    document.addEventListener('keydown', function (e) {
+        if (!madeByDrag) return;
+        if (e.key === 'Escape') { clearDragSelection(); return; }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+            var s = window.getSelection();
+            if (s && !s.isCollapsed) return;          // a real text selection wins
+            if (window.bulkCopyToClipboard) { e.preventDefault(); window.bulkCopyToClipboard(); }
+        }
+    }, true);
+})();
 
 function printContent() {
     const pageTitle = document.getElementById('pageTitle').innerText.trim();
