@@ -1454,6 +1454,10 @@ body.select-mode-active .outline-select-checkbox {
    distinction as the "+ Single Table" / "Add Small" creation buttons,
    just applied after the fact to a table that already exists. */
 .table-size-toggle-btn { right: 54px; }
+.table-print-btn { position:absolute; top:-10px; right:81px; display:flex; align-items:center; justify-content:center; width:24px; height:20px; padding:0; margin:0; line-height:1; background:none; border:none; border-radius:5px; color:#9a9a9a; cursor:pointer; z-index:5; }
+.table-print-btn:hover { color:#444; background:rgba(0,0,0,0.06); }
+.table-print-btn svg { width:14px; height:14px; pointer-events:none; }
+
 
 .table-popped-out {
     width: 100% !important;
@@ -2039,6 +2043,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
             <button id="importButton" class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="importProjectFromFile(); document.getElementById('exportMenu').classList.remove('show');" title="Import a previously exported JSON file as a new project">Import project…</button>
             <button id="printButton" class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="printContent(); document.getElementById('exportMenu').classList.remove('show');">Print</button>
             <button id="viewButton" class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="quickView(); document.getElementById('exportMenu').classList.remove('show');" title="Open a clean read-only view of the whole document (works on desktop and mobile)">👁 Quick View</button>
+            <button class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="openPrintTablePicker(); document.getElementById('exportMenu').classList.remove('show');" title="Print one table only, with a clean layout">🖨 Print a table…</button>
         </div>
     </div>
     <span class="separator">|</span>
@@ -2245,6 +2250,132 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
         }
     }
 
+
+// ===== Print ONE table (clean layout) =====================================
+// Layout preference ('columns' keeps a table's own column layout, 'single'
+// stacks every cell full-width) is remembered per browser.
+window.getPrintLayout = function () {
+    try { return localStorage.getItem('pt_print_layout') === 'single' ? 'single' : 'columns'; } catch (e) { return 'columns'; }
+};
+window.setPrintLayout = function (v) {
+    try { localStorage.setItem('pt_print_layout', v === 'single' ? 'single' : 'columns'); } catch (e) {}
+};
+
+// Prepares a cloned cell for printing/quick view: drops the multi-select
+// checkboxes and copies the live checked state (cloneNode/innerHTML lose it).
+window.prepareCloneForOutput = function (srcCell, clone) {
+    clone.querySelectorAll('.outline-select-checkbox').forEach(function (x) { x.remove(); });
+    const live = srcCell.querySelectorAll('input[type="checkbox"]:not(.outline-select-checkbox)');
+    clone.querySelectorAll('input[type="checkbox"]').forEach(function (cb, i) {
+        if (live[i] && live[i].checked) cb.setAttribute('checked', '');
+        else cb.removeAttribute('checked');
+    });
+};
+
+window.printSingleTable = function (el, layoutOverride) {
+    const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
+    if (!table) return;
+    const layout = layoutOverride || window.getPrintLayout();
+    const rows = window.getCellTableRows(table);
+    const cols = layout === 'single' ? 1 : rows.reduce(function (m, r) { return Math.max(m, r.length); }, 1);
+    const esc = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+    const pageTitle = document.getElementById('pageTitle').innerText.trim();
+
+    let cellsHtml = '';
+    rows.forEach(function (rowTds) {
+        rowTds.forEach(function (td) {
+            const c = td.cloneNode(true);
+            c.querySelectorAll('.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, button')
+                .forEach(function (x) { x.remove(); });
+            c.querySelectorAll('[contenteditable]').forEach(function (x) { x.removeAttribute('contenteditable'); });
+            window.prepareCloneForOutput(td, c);
+            const titleEl = td.querySelector('.cell-title');
+            const title = titleEl ? titleEl.textContent : '';
+            const bodyEl = c.querySelector('.cell-scroll') || c.querySelector('.outline-root') || c;
+            cellsHtml += '<section class="cell"><h3>' + esc(title) + '</h3>' + bodyEl.innerHTML + '</section>';
+        });
+    });
+
+    const w = window.open('', '_blank');
+    if (!w) { alert('Please allow pop-ups for this page to print.'); return; }
+    w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + esc(pageTitle) + '</title><style>' +
+        '@page { margin: 14mm; }' +
+        'body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; color:#222; margin:0; }' +
+        'h1 { font-size: 16pt; margin: 0 0 12px; padding-bottom: 6px; border-bottom: 2px solid #333; }' +
+        '.grid { display: grid; grid-template-columns: repeat(' + cols + ', minmax(0, 1fr)); gap: 12px; align-items: start; }' +
+        '.cell { border: 1px solid #bbb; border-radius: 6px; padding: 10px 12px; }' +
+        '.cell h3 { margin: 0 0 8px; padding-bottom: 5px; font-size: 12pt; border-bottom: 1px solid #ddd; }' +
+        '.outline-root { padding: 0; }' +
+        '.outline-node-row { display:flex; align-items:flex-start; padding:1px 0; min-width:0; }' +
+        '.outline-bullet { flex:0 0 16px; width:16px; color:#777; text-align:center; }' +
+        '.outline-checkbox { margin:3px 4px 0 0; flex:0 0 auto; }' +
+        '.outline-text { flex:1; min-width:0; line-height:1.4; font-size:10.5pt; padding:0 3px; overflow-wrap:anywhere; word-break:break-word; }' +
+        '.outline-text.done { text-decoration:line-through; opacity:.55; }' +
+        '.outline-text.bold { font-weight:bold; }' +
+        '.outline-text a { color:#222; text-decoration:none; }' +
+        '.outline-children { margin-left:18px; } .outline-children.outline-top { margin-left:2px; }' +
+        'input[type=checkbox] { -webkit-appearance:checkbox; appearance:checkbox; width:12px; height:12px; }' +
+        '.outline-node { break-inside: avoid; }' +
+        '.foot { margin-top:10px; font-size:8pt; color:#999; text-align:right; }' +
+        '</style></head><body><h1>' + esc(pageTitle) + '</h1><div class="grid">' + cellsHtml +
+        '</div><div class="foot">Printed ' + esc(new Date().toLocaleString()) + '</div></body></html>');
+    w.document.close();
+    w.focus();
+    setTimeout(function () { w.print(); }, 250);
+};
+
+window.ensureTablePrintButton = function (el) {
+    if (!el || el.querySelector(':scope > .table-print-btn')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'table-print-btn';
+    btn.title = 'Print this table only';
+    btn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 6V2h8v4M4 12H2V6h12v6h-2M4 9h8v5H4z"/></svg>';
+    btn.addEventListener('click', function (e) { e.preventDefault(); window.printSingleTable(el); });
+    el.appendChild(btn);
+};
+
+// File menu -> "Print a table..." picker: choose which table and the layout.
+window.openPrintTablePicker = function () {
+    const old = document.getElementById('printTablePickerOverlay');
+    if (old) old.remove();
+    const blocks = Array.from(document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper'));
+    if (!blocks.length) { alert('There are no tables to print.'); return; }
+    const esc = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+    const labels = blocks.map(function (b, i) {
+        const t = b.tagName === 'TABLE' ? b : b.querySelector(':scope > table');
+        const titles = Array.from(t ? t.querySelectorAll('.cell-title') : []).map(function (x) { return x.textContent.trim() || '(untitled)'; });
+        return (i + 1) + '. ' + (titles.join(' · ') || '(table)');
+    });
+    const cur = window.getPrintLayout();
+    const ov = document.createElement('div');
+    ov.id = 'printTablePickerOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99998;display:flex;align-items:center;justify-content:center;';
+    ov.innerHTML =
+        '<div style="background:#fff;border-radius:10px;padding:18px 20px;width:360px;max-width:92vw;box-shadow:0 10px 40px rgba(0,0,0,.35);font-family:-apple-system,Segoe UI,Arial,sans-serif;color:#222;">' +
+        '<h3 style="margin:0 0 10px;font-size:15px;">🖨 Print a table</h3>' +
+        '<label style="font-size:12px;color:#666;">Table</label>' +
+        '<select id="ptpTable" style="width:100%;padding:5px;font-size:13px;margin:3px 0 12px;box-sizing:border-box;">' +
+        labels.map(function (l, i) { return '<option value="' + i + '">' + esc(l) + '</option>'; }).join('') + '</select>' +
+        '<div style="font-size:12px;color:#666;margin-bottom:4px;">Layout on paper</div>' +
+        '<label style="display:block;font-size:13px;margin:2px 0;"><input type="radio" name="ptpLayout" value="columns"' + (cur === 'columns' ? ' checked' : '') + '> Keep columns (as on screen)</label>' +
+        '<label style="display:block;font-size:13px;margin:2px 0 14px;"><input type="radio" name="ptpLayout" value="single"' + (cur === 'single' ? ' checked' : '') + '> Single column (each cell full width)</label>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+        '<button type="button" id="ptpCancel" style="background:#6c757d;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;">Cancel</button>' +
+        '<button type="button" id="ptpGo" style="background:#3E63DD;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;">Print</button></div></div>';
+    document.body.appendChild(ov);
+    const close = function () { ov.remove(); };
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    ov.querySelector('#ptpCancel').addEventListener('click', close);
+    ov.querySelector('#ptpGo').addEventListener('click', function () {
+        const idx = Number(ov.querySelector('#ptpTable').value);
+        const layout = ov.querySelector('input[name="ptpLayout"]:checked').value;
+        window.setPrintLayout(layout);
+        close();
+        window.printSingleTable(blocks[idx], layout);
+    });
+};
+
 function printContent() {
     const pageTitle = document.getElementById('pageTitle').innerText.trim();
     const tables = document.querySelectorAll('#tablesContainer table');
@@ -2338,6 +2469,7 @@ function printContent() {
             rowTds.forEach(cell => {
                 // Clone the cell to modify it without affecting the original
                 const cellClone = cell.cloneNode(true);
+                window.prepareCloneForOutput(cell, cellClone);
                 // Remove all buttons, the collapse/height toggles, and
                 // the per-item ☰ control icon from the cloned cell
                 // (also means a collapsed cell always prints with its
@@ -2462,6 +2594,7 @@ function quickView() {
         window.getCellTableRows(table).forEach(rowTds => {
             rowTds.forEach(cell => {
                 const cellClone = cell.cloneNode(true);
+                window.prepareCloneForOutput(cell, cellClone);
                 cellClone.querySelectorAll(
                     '.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, button'
                 ).forEach(el => el.remove());
@@ -2657,6 +2790,7 @@ function quickView() {
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTableDragHandle);
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTablePopoutButton);
         document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTableSizeToggleBtn);
+        document.querySelectorAll('#tablesContainer > table, #tablesContainer > .table-wrapper').forEach(window.ensureTablePrintButton);
         if (window.refreshCollapseAllLabel) window.refreshCollapseAllLabel();
     }
     document.addEventListener('DOMContentLoaded', function () {
@@ -2917,6 +3051,7 @@ function quickView() {
         window.ensureTableDragHandle(wrapper);
         window.ensureTablePopoutButton(wrapper);
         window.ensureTableSizeToggleBtn(wrapper);
+        window.ensureTablePrintButton(wrapper);
 
         // Scroll to the new table and drop the cursor into its first
         // cell, so you can start typing immediately instead of
@@ -6679,11 +6814,13 @@ function insertNewCheckboxLine(currentLine) {
                     if (window.ensureTableDragHandle) window.ensureTableDragHandle(wrapper);
                     if (window.ensureTablePopoutButton) window.ensureTablePopoutButton(wrapper);
                     if (window.ensureTableSizeToggleBtn) window.ensureTableSizeToggleBtn(wrapper);
+                    if (window.ensureTablePrintButton) window.ensureTablePrintButton(wrapper);
                     container.appendChild(wrapper);
                 } else {
                     if (window.ensureTableDragHandle) window.ensureTableDragHandle(table);
                     if (window.ensureTablePopoutButton) window.ensureTablePopoutButton(table);
                     if (window.ensureTableSizeToggleBtn) window.ensureTableSizeToggleBtn(table);
+                    if (window.ensureTablePrintButton) window.ensureTablePrintButton(table);
                     container.appendChild(table);
                 }
             });
