@@ -351,7 +351,7 @@
             white-space: nowrap;
         }
 
-        /* --- MODAL (shared by Summary & Week) --- */
+        /* --- MODAL --- */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -475,7 +475,7 @@
             font-weight: 600;
         }
 
-        /* --- TIME SPENT TAB --- */
+        /* --- TIME SPENT --- */
         .time-total {
             text-align: center;
             font-size: 1.05rem;
@@ -538,7 +538,7 @@
             cursor: help;
         }
 
-        /* --- WEEK VIEW --- */
+        /* --- WEEK --- */
         .week-nav {
             display: flex;
             justify-content: space-between;
@@ -647,7 +647,6 @@
         .week-block-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
         .week-block-duration { font-variant-numeric: tabular-nums; opacity: 0.9; flex: 0 0 auto; }
 
-        /* --- Time-axis mode --- */
         .week-grid.time-axis {
             grid-template-columns: 60px repeat(7, 1fr);
         }
@@ -672,7 +671,7 @@
         .week-col.time-scheduled {
             position: relative;
             min-height: 0;
-            height: 640px; /* 16 hours * 40px */
+            height: 640px;
             padding: 0;
             overflow: hidden;
         }
@@ -751,7 +750,7 @@
             padding: 30px;
         }
 
-        /* --- Block detail popover --- */
+        /* --- Block detail popover (now with delete buttons) --- */
         .block-detail-popover {
             position: fixed;
             z-index: 4000;
@@ -760,8 +759,8 @@
             border-radius: 8px;
             box-shadow: var(--shadow-lg);
             padding: 14px;
-            max-width: 300px;
-            max-height: 400px;
+            max-width: 320px;
+            max-height: 450px;
             overflow-y: auto;
         }
         .block-detail-popover h4 {
@@ -775,10 +774,47 @@
             padding: 6px 0;
             font-size: 0.8rem;
             border-bottom: 1px dashed #eee;
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
         }
         .block-detail-entry:last-child { border-bottom: none; }
+        .block-detail-entry-body { flex: 1; min-width: 0; }
         .block-detail-time { font-weight: 700; color: var(--accent); font-size: 0.75rem; margin-bottom: 2px; }
-        .block-detail-text { white-space: pre-wrap; color: var(--text-main); line-height: 1.4; }
+        .block-detail-text { white-space: pre-wrap; color: var(--text-main); line-height: 1.4; word-break: break-word; }
+        .block-detail-delete-btn {
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            font-size: 0.9rem;
+            padding: 2px 4px;
+            color: var(--text-muted);
+            border-radius: 4px;
+            flex: 0 0 auto;
+            opacity: 0.5;
+            transition: opacity 0.15s, color 0.15s, background 0.15s;
+        }
+        .block-detail-entry:hover .block-detail-delete-btn { opacity: 1; }
+        .block-detail-delete-btn:hover { color: var(--danger); background: #fef2f2; }
+
+        .block-detail-actions {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+        }
+        .block-detail-delete-all {
+            background: #fef2f2;
+            color: var(--danger);
+            border: 1px solid #fecaca;
+            font-size: 0.75rem;
+            padding: 5px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .block-detail-delete-all:hover { background: #fee2e2; border-color: #fca5a5; }
 
         .modal-footer {
             padding: 16px 24px;
@@ -898,7 +934,6 @@
         <div id="log-list"></div>
     </div>
 
-    <!-- Summary Modal -->
     <div class="modal-overlay" id="summary-modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -923,7 +958,6 @@
         </div>
     </div>
 
-    <!-- Week Modal -->
     <div class="modal-overlay" id="week-modal">
         <div class="modal-content wide">
             <div class="modal-header">
@@ -951,7 +985,6 @@
         </div>
     </div>
 
-    <!-- Firebase -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -968,8 +1001,8 @@
         let logs = [];
         let reminderInterval = null;
         let currentSummaryView = 'timeline';
-        let weekMode = 'stacked';           // 'stacked' | 'time'
-        let weekStartDate = null;           // Monday of the currently displayed week
+        let weekMode = 'stacked';
+        let weekStartDate = null;
 
         let cloudUser = null;
         let cloudSaveTimer = null;
@@ -979,28 +1012,15 @@
         const LOCAL_KEY_ANON = 'thepause_logs_anon';
         function localKeyForUser(uid) { return 'thepause_logs_' + uid; }
 
-        // Stable color per project — deterministic hash of project name
-        // → HSL hue. Special (paused) projects always get amber.
         const PROJECT_PALETTE = [
-            '#3b82f6', // blue
-            '#10b981', // green
-            '#8b5cf6', // purple
-            '#f97316', // orange
-            '#ec4899', // pink
-            '#06b6d4', // cyan
-            '#84cc16', // lime
-            '#f43f5e', // rose
-            '#6366f1', // indigo
-            '#14b8a6', // teal
-            '#a855f7', // violet
-            '#eab308'  // yellow
+            '#3b82f6', '#10b981', '#8b5cf6', '#f97316', '#ec4899', '#06b6d4',
+            '#84cc16', '#f43f5e', '#6366f1', '#14b8a6', '#a855f7', '#eab308'
         ];
-        const PAUSED_COLOR = '#f59e0b'; // amber
+        const PAUSED_COLOR = '#f59e0b';
 
         function projectColor(name) {
             if (!name) return PROJECT_PALETTE[0];
             if (isSpecialProject(name)) return PAUSED_COLOR;
-            // Simple deterministic hash
             let hash = 0;
             const s = String(name).toLowerCase();
             for (let i = 0; i < s.length; i++) {
@@ -1036,7 +1056,6 @@
             return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         }
 
-        // Returns 'YYYY-MM-DD' for the local date of a given ms timestamp
         function dateKey(ms) {
             const d = new Date(ms);
             const y = d.getFullYear();
@@ -1045,12 +1064,10 @@
             return y + '-' + m + '-' + day;
         }
 
-        // Same as dateKey but for today's date
         function todayKey() {
             return dateKey(Date.now());
         }
 
-        // Human-readable date relative to today
         function relativeDateLabel(ms) {
             const targetKey = dateKey(ms);
             const today = new Date();
@@ -1070,18 +1087,17 @@
             return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
         }
 
-        // Returns Monday 00:00 of the week containing the given date
         function getMondayOf(date) {
             const d = new Date(date);
             d.setHours(0, 0, 0, 0);
-            const day = d.getDay(); // 0=Sun
+            const day = d.getDay();
             const diff = (day === 0 ? -6 : 1) - day;
             d.setDate(d.getDate() + diff);
             return d;
         }
 
         // ============================================================
-        // 1. CLOCK + DATE
+        // CLOCK + DATE
         // ============================================================
         function updateClock() {
             const now = new Date();
@@ -1094,7 +1110,7 @@
         updateClock();
 
         // ============================================================
-        // 2. PROJECT FIELD + FIRST-RUN TIP
+        // PROJECT FIELD + FIRST-RUN TIP
         // ============================================================
         function getCurrentProject() {
             const val = document.getElementById('project-input').value.trim();
@@ -1125,7 +1141,7 @@
         }
 
         // ============================================================
-        // 3. RENDER LOGS (with day dividers)
+        // RENDER LOGS (with day dividers)
         // ============================================================
         function renderLogs() {
             const logList = document.getElementById('log-list');
@@ -1133,8 +1149,6 @@
 
             if (logs.length === 0) return;
 
-            // Group logs by calendar day, then render each day as a
-            // section with a divider header.
             const grouped = {};
             logs.forEach((log, originalIndex) => {
                 const ts = log.timestamp || null;
@@ -1143,7 +1157,6 @@
                 grouped[key].entries.push({ log: log, idx: originalIndex });
             });
 
-            // Sort day-keys newest first
             const dayKeys = Object.keys(grouped).sort((a, b) => {
                 if (a === 'undated') return 1;
                 if (b === 'undated') return -1;
@@ -1153,7 +1166,6 @@
             dayKeys.forEach(dayKey_ => {
                 const day = grouped[dayKey_];
 
-                // Divider header
                 const divider = document.createElement('div');
                 divider.className = 'day-divider';
                 divider.textContent = dayKey_ === 'undated'
@@ -1161,7 +1173,6 @@
                     : relativeDateLabel(day.ts);
                 logList.appendChild(divider);
 
-                // Then this day's entries
                 day.entries.forEach(({ log, idx }) => {
                     logList.appendChild(renderLogItem(log, idx));
                 });
@@ -1210,7 +1221,7 @@
         }
 
         // ============================================================
-        // 4. IN-LINE EDIT
+        // IN-LINE EDIT
         // ============================================================
         function enableInlineEdit(index) {
             const logItem = document.getElementById(`log-item-${index}`);
@@ -1239,7 +1250,7 @@
         }
 
         // ============================================================
-        // 5. DELETE
+        // DELETE
         // ============================================================
         function deleteLog(index) {
             if(confirm("Are you sure you want to delete this entry?")) {
@@ -1252,7 +1263,7 @@
         }
 
         // ============================================================
-        // 6. NEW LOG
+        // NEW LOG
         // ============================================================
         function loadPreset() {
             const textarea = document.getElementById('entry-text');
@@ -1306,7 +1317,7 @@
         });
 
         // ============================================================
-        // 6b. WRAP UP — inherits last real project's name
+        // WRAP UP
         // ============================================================
         window.wrapUpDay = function () {
             if (logs.length === 0) {
@@ -1314,8 +1325,6 @@
                 return;
             }
 
-            // Find the most recent entry that's NOT a wrap-up and NOT
-            // a break — that's the project we're closing out.
             let lastRealProject = null;
             for (let i = 0; i < logs.length; i++) {
                 const p = logs[i].project || DEFAULT_PROJECT;
@@ -1324,7 +1333,6 @@
                     break;
                 }
             }
-            // If everything so far was a break, just use "General".
             const projectName = lastRealProject || DEFAULT_PROJECT;
 
             const note = prompt(
@@ -1347,7 +1355,7 @@
         };
 
         // ============================================================
-        // 7. TIMER
+        // TIMER
         // ============================================================
         let timerInterval;
         let timerEndTime = null;
@@ -1397,7 +1405,7 @@
         }
 
         // ============================================================
-        // 8. SUMMARY MODAL
+        // SUMMARY MODAL
         // ============================================================
         function openSummary() {
             document.getElementById('summary-modal').classList.add('show');
@@ -1421,7 +1429,6 @@
             alert(viewName + '\n\n' + helpText);
         };
 
-        // ---- Duration math (used by Summary + Week) -----------------
         function computeTimeData() {
             const withTs = logs
                 .filter(l => typeof l.timestamp === 'number' && !isNaN(l.timestamp))
@@ -1441,11 +1448,6 @@
                 const project = cur.project || DEFAULT_PROJECT;
                 const durationMs = next ? (next.timestamp - cur.timestamp) : (nowMs - cur.timestamp);
 
-                // An entry explicitly marked as a wrap-up should not
-                // contribute its own duration to its project — it's just
-                // a marker. Skip it (its own gap gets absorbed by the
-                // previous entry's duration which is exactly what we
-                // want — that block ran until this marker was placed).
                 if (cur._isWrapUp) continue;
 
                 if (!byProject[project]) {
@@ -1643,7 +1645,7 @@
         }
 
         // ============================================================
-        // 9. WEEK VIEW
+        // WEEK VIEW
         // ============================================================
         window.openWeekView = function () {
             if (!weekStartDate) weekStartDate = getMondayOf(new Date());
@@ -1652,6 +1654,8 @@
         };
         window.closeWeekView = function () {
             document.getElementById('week-modal').classList.remove('show');
+            const pop = document.getElementById('block-detail-popover');
+            if (pop) pop.remove();
         };
         document.getElementById('week-modal').addEventListener('click', function (e) {
             if (e.target === this) closeWeekView();
@@ -1664,6 +1668,10 @@
             weekStartDate = new Date(weekStartDate);
             weekStartDate.setDate(weekStartDate.getDate() + delta * 7);
             renderWeekView();
+            // If a block popover is open, refresh it or close it — the
+            // underlying day may no longer be in view.
+            const pop = document.getElementById('block-detail-popover');
+            if (pop) pop.remove();
         };
 
         window.setWeekMode = function (mode) {
@@ -1675,12 +1683,11 @@
 
         window.showWeekHelp = function () {
             const helpText = weekMode === 'stacked'
-                ? 'Stacked view — each day shows its projects as blocks. Taller blocks = more time spent. Click any block to see that day\'s entries.'
-                : 'Time Axis view — each block is positioned at the actual time of day it happened, so you can see when in the day you worked on each project.';
+                ? 'Stacked view — each day shows its projects as blocks. Taller blocks = more time spent. Click any block to see that day\'s entries (and delete them if needed).'
+                : 'Time Axis view — each block is positioned at the actual time of day it happened, so you can see when in the day you worked on each project. Click any block to see entries.';
             alert('Week View\n\n' + helpText + '\n\nUse ← / → to move between weeks.');
         };
 
-        // Returns the sum of a project's duration for a given day.
         function computeDayProjectDurations(dayKey_) {
             const dayLogs = logs
                 .filter(l => typeof l.timestamp === 'number' && !isNaN(l.timestamp) && dateKey(l.timestamp) === dayKey_)
@@ -1697,10 +1704,6 @@
                 const cur = dayLogs[i];
                 const next = dayLogs[i + 1];
                 const project = cur.project || DEFAULT_PROJECT;
-                // If this is the last entry of the day: run until the
-                // next entry if there is one; otherwise until "now", but
-                // capped at the end of this calendar day so a very old
-                // last entry doesn't report days of ongoing time.
                 let endMs;
                 if (next) {
                     endMs = next.timestamp;
@@ -1724,16 +1727,13 @@
             const sunday = new Date(monday);
             sunday.setDate(monday.getDate() + 6);
 
-            // Week label
             const mLabel = monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
             const sLabel = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             document.getElementById('week-label').textContent = mLabel + ' – ' + sLabel;
 
-            // Prev/next limits — don't allow navigating to future weeks
             const thisMonday = getMondayOf(new Date());
             document.getElementById('week-next-btn').disabled = monday.getTime() >= thisMonday.getTime();
 
-            // Days of this week
             const days = [];
             for (let i = 0; i < 7; i++) {
                 const d = new Date(monday);
@@ -1743,7 +1743,6 @@
 
             const todayKey_ = todayKey();
 
-            // Gather per-day data
             const dayData = days.map(d => {
                 const dk = dateKey(d.getTime());
                 const projects = computeDayProjectDurations(dk);
@@ -1752,7 +1751,6 @@
                 return { date: d, key: dk, projects: projects, totalMs: totalMs, pausedMs: pausedMs };
             });
 
-            // Week summary
             const weekTotalMs = dayData.reduce((s, d) => s + d.totalMs, 0);
             const weekPausedMs = dayData.reduce((s, d) => s + d.pausedMs, 0);
             const allProjectsThisWeek = new Set();
@@ -1771,7 +1769,6 @@
                 `;
             }
 
-            // Build the grid
             const gridEl = document.getElementById('week-grid-container');
 
             if (weekMode === 'stacked') {
@@ -1789,18 +1786,14 @@
                     }
                     html += `</div>`;
 
-                    // Stacked blocks: sort by project duration desc
                     const projectEntries = Object.entries(day.projects).sort((a, b) => b[1].ms - a[1].ms);
                     if (projectEntries.length === 0) {
                         html += `<div style="flex:1; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:0.7rem;">—</div>`;
                     } else {
                         html += `<div class="week-blocks">`;
-                        // Total for proportional sizing (excluding paused from scaling the "work" area but including for context)
                         const totalForScale = projectEntries.reduce((s, [, v]) => s + v.ms, 0) || 1;
-                        // Each block gets a min height of 22px so short ones are clickable, but the total of all mins is bounded
                         projectEntries.forEach(([name, v]) => {
                             const color = projectColor(name);
-                            // Proportional: proportional to its share × a virtual height (say 140px of usable space)
                             const share = v.ms / totalForScale;
                             const height = Math.max(24, Math.round(share * 140));
                             const safeName = escapeHtml(name);
@@ -1816,23 +1809,19 @@
                 html += '</div>';
                 gridEl.innerHTML = html;
             } else {
-                // Time-axis mode: 09:00–24:00 (15 hours, 40px per hour = 600px + header ~40 = 640)
-                const startHour = 6;   // 6 AM
-                const endHour = 24;    // midnight
+                const startHour = 6;
+                const endHour = 24;
                 const hourHeight = 40;
-                const totalHours = endHour - startHour;
 
                 let html = '<div class="week-grid time-axis">';
 
-                // Left column: hour labels
                 html += '<div class="time-axis-col">';
-                html += '<div style="height: 0;"></div>'; // header spacer
+                html += '<div style="height: 0;"></div>';
                 for (let h = startHour; h <= endHour; h++) {
                     html += `<div class="time-axis-hour">${String(h).padStart(2, '0')}:00</div>`;
                 }
                 html += '</div>';
 
-                // 7 day columns
                 dayData.forEach(day => {
                     const isToday = day.key === todayKey_;
                     html += `<div class="week-col time-scheduled ${isToday ? 'today' : ''}">`;
@@ -1844,27 +1833,17 @@
                     }
                     html += `</div>`;
 
-                    // Hour gridlines + absolute-positioned blocks
                     for (let h = startHour; h < endHour; h++) {
                         html += `<div style="position:absolute; left:0; right:0; top:${(h - startHour) * hourHeight + 50}px; height:1px; background:#eef2f6;"></div>`;
                     }
 
-                    // Position each project's blocks. We only have one
-                    // block per project per day (aggregated), so we place
-                    // it at the project's earliest start time and give it
-                    // a height proportional to its total duration.
                     Object.entries(day.projects).forEach(([name, v]) => {
                         if (!v.timestamps || v.timestamps.length === 0) return;
                         const earliest = Math.min(...v.timestamps);
-                        const latest = Math.max(...v.timestamps);
                         const firstDate = new Date(earliest);
-                        const lastDate = new Date(latest);
 
-                        // Position: relative to startHour
                         const startOffsetHours = (firstDate.getHours() + firstDate.getMinutes() / 60) - startHour;
                         const topPx = Math.max(0, startOffsetHours * hourHeight) + 50;
-
-                        // Height: proportional to total duration (min 22px)
                         const heightPx = Math.max(22, (v.ms / (60 * 60 * 1000)) * hourHeight);
 
                         const color = projectColor(name);
@@ -1882,7 +1861,6 @@
                 gridEl.innerHTML = html;
             }
 
-            // Legend
             const allProjects = new Set();
             dayData.forEach(d => Object.keys(d.projects).forEach(p => allProjects.add(p)));
             if (allProjects.size > 0) {
@@ -1897,11 +1875,20 @@
             }
         }
 
-        // Click on a week block → popup with that day+project's entries
+        // ============================================================
+        // BLOCK DETAIL POPOVER (with delete)
+        // ============================================================
+        // Track which (dayKey, projectName) the open popover is showing,
+        // so deleting an entry can re-render the popover contents in
+        // place and can trigger a week-grid refresh.
+        let currentPopoverContext = null;
+
         window.openBlockDetail = function (e, dayKey_, projectName) {
             e.stopPropagation();
             const existing = document.getElementById('block-detail-popover');
             if (existing) existing.remove();
+
+            currentPopoverContext = { dayKey: dayKey_, projectName: projectName };
 
             const dayLogs = logs.filter(l => {
                 if (typeof l.timestamp !== 'number') return false;
@@ -1910,35 +1897,167 @@
                 return true;
             });
 
-            if (dayLogs.length === 0) return;
+            if (dayLogs.length === 0) {
+                currentPopoverContext = null;
+                return;
+            }
 
             const pop = document.createElement('div');
             pop.id = 'block-detail-popover';
             pop.className = 'block-detail-popover';
 
-            let html = `<h4>📁 ${escapeHtml(projectName)} · ${relativeDateLabel(new Date(dayKey_ + 'T12:00:00').getTime())}</h4>`;
-            // Newest first
-            dayLogs.sort((a, b) => b.timestamp - a.timestamp).forEach(log => {
+            // Newest first for reading
+            const sorted = dayLogs.slice().sort((a, b) => b.timestamp - a.timestamp);
+
+            const dateObj = new Date(dayKey_ + 'T12:00:00');
+            let html = `<h4>📁 ${escapeHtml(projectName)} · ${relativeDateLabel(dateObj.getTime())}</h4>`;
+
+            sorted.forEach(log => {
+                // Find this log's index in the main logs array so
+                // deleteByIndex can target it precisely.
+                const idx = logs.indexOf(log);
                 html += `<div class="block-detail-entry">`;
+                html += `<div class="block-detail-entry-body">`;
                 html += `<div class="block-detail-time">${log.time}</div>`;
                 html += `<div class="block-detail-text">${escapeHtml(log.text)}</div>`;
                 html += `</div>`;
+                html += `<button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button>`;
+                html += `</div>`;
             });
+
+            if (sorted.length > 1) {
+                html += `<div class="block-detail-actions">`;
+                html += `<button class="block-detail-delete-all" onclick="deleteAllInBlock(event)">🗑️ Delete all ${sorted.length} entries</button>`;
+                html += `</div>`;
+            }
+
             pop.innerHTML = html;
 
-            // Position near click
             let left = e.clientX + 10;
             let top = e.clientY + 10;
-            if (left + 320 > window.innerWidth) left = window.innerWidth - 330;
-            if (top + 300 > window.innerHeight) top = window.innerHeight - 310;
+            if (left + 340 > window.innerWidth) left = window.innerWidth - 350;
+            if (top + 400 > window.innerHeight) top = Math.max(10, window.innerHeight - 420);
             pop.style.left = left + 'px';
             pop.style.top = top + 'px';
 
             document.body.appendChild(pop);
         };
 
+        // Delete one entry from within the popover. Re-renders the
+        // popover in place (or closes it if it becomes empty) and
+        // re-renders the week grid so totals and block sizes update.
+        window.deleteEntryFromPopover = function (event, logIndex) {
+            event.stopPropagation();
+            if (logIndex < 0 || logIndex >= logs.length) return;
+            const log = logs[logIndex];
+            const preview = (log.text || '').split('\n')[0].slice(0, 50);
+            if (!confirm('Delete this entry?\n\n"' + preview + (preview.length < (log.text || '').length ? '…' : '') + '"\n\nThis cannot be undone.')) return;
+
+            logs.splice(logIndex, 1);
+            saveLocal();
+            renderLogs();
+            populateProjectSuggestions();
+            if (cloudUser) cloudSaveNow();
+
+            // Refresh popover contents (or close if empty) and week grid
+            refreshPopoverAfterDelete();
+        };
+
+        // Delete all entries in the currently-open popover's (day, project)
+        window.deleteAllInBlock = function (event) {
+            event.stopPropagation();
+            if (!currentPopoverContext) return;
+            const { dayKey, projectName } = currentPopoverContext;
+
+            // Count them first for the confirm prompt
+            const matching = logs.filter(l =>
+                typeof l.timestamp === 'number' &&
+                dateKey(l.timestamp) === dayKey &&
+                (l.project || DEFAULT_PROJECT) === projectName
+            );
+            if (matching.length === 0) return;
+
+            const dateObj = new Date(dayKey + 'T12:00:00');
+            const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            if (!confirm('Delete all ' + matching.length + ' entries for "' + projectName + '" on ' + dateLabel + '?\n\nThis cannot be undone.')) return;
+
+            // Remove from the main logs array. Iterate backwards to keep
+            // indices valid.
+            for (let i = logs.length - 1; i >= 0; i--) {
+                const l = logs[i];
+                if (typeof l.timestamp !== 'number') continue;
+                if (dateKey(l.timestamp) !== dayKey) continue;
+                if ((l.project || DEFAULT_PROJECT) !== projectName) continue;
+                logs.splice(i, 1);
+            }
+            saveLocal();
+            renderLogs();
+            populateProjectSuggestions();
+            if (cloudUser) cloudSaveNow();
+
+            // Close the popover (nothing left in it) and refresh week grid
+            const pop = document.getElementById('block-detail-popover');
+            if (pop) pop.remove();
+            currentPopoverContext = null;
+            if (document.getElementById('week-modal').classList.contains('show')) {
+                renderWeekView();
+            }
+        };
+
+        // Rebuild the popover's contents after a single deletion: if
+        // entries remain for this (day, project), reopen it in the same
+        // spot; otherwise close it. Also re-renders the week grid so
+        // block sizes and totals stay accurate.
+        function refreshPopoverAfterDelete() {
+            const pop = document.getElementById('block-detail-popover');
+            if (!pop) return;
+            const ctx = currentPopoverContext;
+            if (!ctx) { pop.remove(); return; }
+
+            const stillHere = logs.filter(l =>
+                typeof l.timestamp === 'number' &&
+                dateKey(l.timestamp) === ctx.dayKey &&
+                (l.project || DEFAULT_PROJECT) === ctx.projectName
+            );
+
+            // Update the week grid regardless
+            if (document.getElementById('week-modal').classList.contains('show')) {
+                renderWeekView();
+            }
+
+            if (stillHere.length === 0) {
+                pop.remove();
+                currentPopoverContext = null;
+                return;
+            }
+
+            // Rebuild the popover body in place (keeping its screen position)
+            const sorted = stillHere.slice().sort((a, b) => b.timestamp - a.timestamp);
+            const dateObj = new Date(ctx.dayKey + 'T12:00:00');
+            let html = `<h4>📁 ${escapeHtml(ctx.projectName)} · ${relativeDateLabel(dateObj.getTime())}</h4>`;
+
+            sorted.forEach(log => {
+                const idx = logs.indexOf(log);
+                html += `<div class="block-detail-entry">`;
+                html += `<div class="block-detail-entry-body">`;
+                html += `<div class="block-detail-time">${log.time}</div>`;
+                html += `<div class="block-detail-text">${escapeHtml(log.text)}</div>`;
+                html += `</div>`;
+                html += `<button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button>`;
+                html += `</div>`;
+            });
+
+            if (sorted.length > 1) {
+                html += `<div class="block-detail-actions">`;
+                html += `<button class="block-detail-delete-all" onclick="deleteAllInBlock(event)">🗑️ Delete all ${sorted.length} entries</button>`;
+                html += `</div>`;
+            }
+
+            pop.innerHTML = html;
+        }
+
         // ============================================================
-        // 10. REMINDERS
+        // REMINDERS
         // ============================================================
         function toggleReminderMenu() {
             document.getElementById('reminder-menu').classList.toggle('show');
@@ -1978,7 +2097,7 @@
         }
 
         // ============================================================
-        // 11. EXPORT & ANALOG
+        // EXPORT & ANALOG
         // ============================================================
         function exportMarkdown() {
             if (logs.length === 0) return alert("No logs to export.");
@@ -2016,7 +2135,7 @@
         }
 
         // ============================================================
-        // 12. LOCAL BACKUP
+        // LOCAL BACKUP
         // ============================================================
         function currentLocalKey() {
             return cloudUser ? localKeyForUser(cloudUser.uid) : LOCAL_KEY_ANON;
@@ -2034,7 +2153,7 @@
         }
 
         // ============================================================
-        // 13. CLOUD SYNC
+        // CLOUD SYNC
         // ============================================================
         const firebaseConfig = {
             apiKey: "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
@@ -2242,16 +2361,15 @@
         }
 
         // ============================================================
-        // 14. KEYBOARD SHORTCUTS
+        // KEYBOARD SHORTCUTS
         // ============================================================
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
                 const pop = document.getElementById('block-detail-popover');
-                if (pop) { pop.remove(); return; }
+                if (pop) { pop.remove(); currentPopoverContext = null; return; }
                 if (document.getElementById('week-modal').classList.contains('show')) { closeWeekView(); return; }
                 if (document.getElementById('summary-modal').classList.contains('show')) { closeSummary(); return; }
             }
-            // ← / → inside week modal navigates weeks
             if (document.getElementById('week-modal').classList.contains('show')) {
                 if (e.key === 'ArrowLeft') weekNavigate(-1);
                 if (e.key === 'ArrowRight') weekNavigate(1);
@@ -2259,7 +2377,7 @@
         });
 
         // ============================================================
-        // 15. BOOT
+        // BOOT
         // ============================================================
         window.addEventListener('DOMContentLoaded', function () {
             logs = loadLocal();
