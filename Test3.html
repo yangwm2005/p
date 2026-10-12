@@ -229,7 +229,6 @@
             color: var(--text-muted);
             border-color: var(--border);
         }
-        /* Chime toggle — now with a label so it's clearly discoverable */
         .chime-toggle {
             display: flex;
             align-items: center;
@@ -643,6 +642,75 @@
         .modal-header h2 { margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--text-main); }
         .close-btn { background: transparent; border: none; font-size: 1.2rem; cursor: pointer; color: var(--text-muted); padding: 4px; border-radius: 4px;}
         .close-btn:hover { background: #e5e7eb; color: var(--text-main); }
+
+        /* NEW: Day navigation bar */
+        .day-nav-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 10px 16px;
+            background: #f9fafb;
+            border-bottom: 1px solid var(--border);
+        }
+        .day-nav-btn {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex: 0 0 auto;
+        }
+        .day-nav-btn:hover {
+            background: #eff6ff;
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+        .day-nav-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+            background: var(--surface);
+            color: var(--text-muted);
+            border-color: var(--border);
+        }
+        .day-nav-center {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 1;
+            min-width: 0;
+        }
+        .day-nav-label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-main);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+        }
+        .day-nav-today-chip {
+            display: none;
+            margin-top: 2px;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--accent);
+            font-weight: 700;
+            background: var(--tag-bg);
+            padding: 1px 8px;
+            border-radius: 8px;
+        }
+        .day-nav-today-chip.show {
+            display: inline-block;
+        }
 
         .summary-toggle-group {
             display: flex;
@@ -1139,6 +1207,8 @@
             .week-col.time-scheduled { height: 640px; }
             .focus-dial { width: 110px; height: 110px; }
             .focus-dial .dial-center-label { font-size: 1.3rem; }
+            .day-nav-btn { padding: 5px 8px; font-size: 0.75rem; }
+            .day-nav-label { font-size: 0.8rem; }
         }
 
         @media print {
@@ -1152,7 +1222,7 @@
                 box-shadow: none; max-height: none; max-width: 100%; border-radius: 0; margin: 0; padding: 0;
             }
             .modal-body { overflow: visible; padding: 0; margin: 0; }
-            .modal-header, .modal-footer, .summary-toggle-group, .week-nav, .week-toggle-bar { display: none !important; }
+            .modal-header, .modal-footer, .summary-toggle-group, .week-nav, .week-toggle-bar, .day-nav-bar { display: none !important; }
             @page { margin: 1cm; }
         }
     </style>
@@ -1274,8 +1344,18 @@
     <div class="modal-overlay" id="summary-modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>📊 Today's Summary</h2>
+                <h2>📊 Summary</h2>
                 <button class="close-btn" onclick="closeSummary()">✕</button>
+            </div>
+
+            <!-- NEW: Day navigation bar -->
+            <div class="day-nav-bar">
+                <button class="day-nav-btn" id="day-prev-btn" onclick="summaryNavigateDay(-1)" title="Previous day (←)">← Prev</button>
+                <div class="day-nav-center">
+                    <div class="day-nav-label" id="day-nav-label">Today</div>
+                    <span class="day-nav-today-chip" id="day-nav-today-chip">Today</span>
+                </div>
+                <button class="day-nav-btn" id="day-next-btn" onclick="summaryNavigateDay(1)" title="Next day (→)">Next →</button>
             </div>
             
             <div class="summary-toggle-group">
@@ -1341,7 +1421,8 @@
 
         let logs = [];
         let reminderInterval = null;
-        let currentSummaryView = 'project';   // default: By Project
+        let currentSummaryView = 'project';
+        let summaryViewDate = null;     // Date object: the day currently being viewed in the Summary popup
         let weekMode = 'stacked';
         let weekStartDate = null;
 
@@ -1455,7 +1536,7 @@
         updateClock();
 
         // ============================================================
-        // ACCUMULATED TODAY TOTAL (one number)
+        // ACCUMULATED TODAY TOTAL
         // ============================================================
         function computeTodayAccumulated() {
             const withTs = logs
@@ -1499,7 +1580,7 @@
         }
 
         // ============================================================
-        // FOCUS DIAL
+        // FOCUS DIAL (unchanged)
         // ============================================================
         const DIAL_MIN_MINUTES = 1;
         const DIAL_MAX_MINUTES = 60;
@@ -1915,7 +1996,7 @@
         }
 
         // ============================================================
-        // PROJECT FIELD + FIRST-RUN TIP
+        // PROJECT FIELD
         // ============================================================
         function getCurrentProject() {
             const val = document.getElementById('project-input').value.trim();
@@ -1936,7 +2017,6 @@
             document.getElementById('first-run-tip').classList.add('hidden');
             try { localStorage.setItem('thepause_tip_dismissed', '1'); } catch (e) {}
         };
-
         function maybeShowFirstRunTip() {
             try {
                 if (localStorage.getItem('thepause_tip_dismissed') === '1') {
@@ -2188,11 +2268,19 @@
         }
 
         // ============================================================
-        // SUMMARY MODAL — scoped to TODAY
+        // SUMMARY MODAL — day-stepper, scoped per day
         // ============================================================
         function openSummary() {
+            // Always open on today
+            summaryViewDate = new Date();
+            summaryViewDate.setHours(0, 0, 0, 0);
             document.getElementById('summary-modal').classList.add('show');
             renderSummary();
+        }
+        function closeSummary() {
+            document.getElementById('summary-modal').classList.remove('show');
+            // Reset to today for next time
+            summaryViewDate = null;
         }
         function setSummaryView(view) {
             currentSummaryView = view;
@@ -2202,32 +2290,83 @@
             renderSummary();
         }
 
+        // --- NEW: day navigation ---
+        window.summaryNavigateDay = function (delta) {
+            if (!summaryViewDate) summaryViewDate = new Date();
+            const d = new Date(summaryViewDate);
+            d.setDate(d.getDate() + delta);
+            // Don't navigate into the future
+            const todayMid = new Date();
+            todayMid.setHours(0, 0, 0, 0);
+            if (d.getTime() > todayMid.getTime()) return;
+            summaryViewDate = d;
+            renderSummary();
+        };
+
+        function updateDayNavBar() {
+            const labelEl = document.getElementById('day-nav-label');
+            const chipEl = document.getElementById('day-nav-today-chip');
+            const nextBtn = document.getElementById('day-next-btn');
+            if (!labelEl || !summaryViewDate) return;
+
+            const vKey = dateKey(summaryViewDate.getTime());
+            const tKey = todayKey();
+
+            if (vKey === tKey) {
+                labelEl.textContent = todayLabel();
+                chipEl.classList.add('show');
+            } else {
+                labelEl.textContent = summaryViewDate.toLocaleDateString('en-US', {
+                    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+                });
+                chipEl.classList.remove('show');
+            }
+
+            // Disable next when on today
+            nextBtn.disabled = (vKey === tKey);
+        }
+
         window.showSummaryHelp = function () {
             const viewName = { timeline: 'Timeline', project: 'By Project', time: 'Time Spent' }[currentSummaryView];
             const helpText = {
-                timeline: 'Timeline — every entry from today, in order from earliest to latest.',
-                project: 'By Project — today\'s entries, grouped under each project name. The default view.',
-                time: 'Time Spent — how long you spent on each project today, estimated from the gaps between entries.'
+                timeline: 'Timeline — every entry from the selected day, in order from earliest to latest.',
+                project: 'By Project — the selected day\'s entries, grouped under each project name. The default view.',
+                time: 'Time Spent — how long you spent on each project on the selected day, estimated from the gaps between entries.'
             }[currentSummaryView];
-            alert(viewName + '\n\n' + helpText);
+            alert(viewName + '\n\n' + helpText + '\n\nUse ← / → (or the Prev / Next buttons) to move between days.');
         };
 
-        // Only today's logs
-        function getTodayLogs() {
-            const tk = todayKey();
-            return logs.filter(l => typeof l.timestamp === 'number' && dateKey(l.timestamp) === tk);
+        // Logs for the currently viewed day
+        function getViewedDayLogs() {
+            if (!summaryViewDate) {
+                summaryViewDate = new Date();
+                summaryViewDate.setHours(0, 0, 0, 0);
+            }
+            const vKey = dateKey(summaryViewDate.getTime());
+            return logs.filter(l => typeof l.timestamp === 'number' && dateKey(l.timestamp) === vKey);
         }
 
         function computeTimeData() {
-            const withTs = getTodayLogs().slice().sort((a, b) => a.timestamp - b.timestamp);
+            const withTs = getViewedDayLogs().slice().sort((a, b) => a.timestamp - b.timestamp);
             const byProject = {};
             const nowMs = Date.now();
+            const vKey = dateKey(summaryViewDate.getTime());
+            const isToday = (vKey === todayKey());
+
+            // For past days, cap the "last entry" duration at end of that day
+            const nextDayStart = new Date(summaryViewDate);
+            nextDayStart.setDate(nextDayStart.getDate() + 1);
+            const nextDayStartMs = nextDayStart.getTime();
+
             let totalMs = 0, pausedMs = 0;
             for (let i = 0; i < withTs.length; i++) {
                 const cur = withTs[i];
                 const next = withTs[i + 1];
                 const project = cur.project || DEFAULT_PROJECT;
-                const durationMs = next ? (next.timestamp - cur.timestamp) : (nowMs - cur.timestamp);
+                let endMs;
+                if (next) endMs = next.timestamp;
+                else endMs = isToday ? nowMs : Math.min(nowMs, nextDayStartMs);
+                const durationMs = Math.max(0, endMs - cur.timestamp);
                 if (cur._isWrapUp) continue;
                 if (!byProject[project]) byProject[project] = { ms: 0, entries: 0, hasWarning: false, paused: false };
                 byProject[project].entries += 1;
@@ -2244,35 +2383,42 @@
         }
 
         function summaryHeaderHtml() {
-            const today = getTodayLogs();
-            const projects = new Set(today.map(l => l.project || DEFAULT_PROJECT));
-            const n = today.length;
+            const dayLogs = getViewedDayLogs();
+            const projects = new Set(dayLogs.map(l => l.project || DEFAULT_PROJECT));
+            const n = dayLogs.length;
             const p = projects.size;
             let subhead = '';
             if (n === 0) {
-                subhead = 'No entries yet today';
+                subhead = 'No entries on this day';
             } else {
                 subhead = `${n} ${n === 1 ? 'entry' : 'entries'} · ${p} ${p === 1 ? 'project' : 'projects'}`;
             }
-            return `<h1>The Pause — Daily Reflection</h1>` +
-                   `<div class="summary-date">${todayLabel()}</div>` +
+            const isToday = dateKey(summaryViewDate.getTime()) === todayKey();
+            const headingText = isToday ? 'The Pause — Today's Reflection' : 'The Pause — Daily Reflection';
+            return `<h1>${headingText}</h1>` +
+                   `<div class="summary-date">${summaryViewDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>` +
                    `<div class="summary-subhead">${subhead}</div>`;
         }
 
         function renderSummaryEmptyState(html) {
-            const focusTarget = document.getElementById('entry-text');
+            const isToday = dateKey(summaryViewDate.getTime()) === todayKey();
             html += `<div class="summary-empty">`;
             html += `<span class="empty-icon">🌿</span>`;
-            html += `<div class="empty-title">Nothing logged today yet</div>`;
-            html += `<div class="empty-hint">Log an entry (or complete a Focus Block) and it'll show up here — grouped by project so you can see where your day went.</div>`;
+            if (isToday) {
+                html += `<div class="empty-title">Nothing logged today yet</div>`;
+                html += `<div class="empty-hint">Log an entry (or complete a Focus Block) and it'll show up here — grouped by project so you can see where your day went.</div>`;
+            } else {
+                html += `<div class="empty-title">No entries on this day</div>`;
+                html += `<div class="empty-hint">Use the ← Prev / Next → buttons above to move between days.</div>`;
+            }
             html += `</div>`;
             document.getElementById('summary-content').innerHTML = html;
         }
 
         function renderTimeSpentView(html) {
-            const today = getTodayLogs();
+            const dayLogs = getViewedDayLogs();
             html += summaryHeaderHtml();
-            if (today.length === 0) {
+            if (dayLogs.length === 0) {
                 renderSummaryEmptyState(html);
                 return;
             }
@@ -2282,8 +2428,11 @@
             const pausedProjects = entries.filter(([, v]) => v.paused && v.ms > 0).sort((a, b) => b[1].ms - a[1].ms);
             const totalForBars = data.totalMs + data.pausedMs || 1;
 
+            const isToday = dateKey(summaryViewDate.getTime()) === todayKey();
+            const labelSuffix = isToday ? 'today' : 'this day';
+
             html += `<div class="time-total">`;
-            if (data.totalMs > 0) html += `Focus time today: <strong>${formatDuration(data.totalMs)}</strong>`;
+            if (data.totalMs > 0) html += `Focus time ${labelSuffix}: <strong>${formatDuration(data.totalMs)}</strong>`;
             else html += `<strong>0m</strong> of focus time logged`;
             if (data.pausedMs > 0) html += `<div style="font-size: 0.8rem; color: #92400e; margin-top: 6px;">⏸️ ${formatDuration(data.pausedMs)} paused</div>`;
             html += `</div>`;
@@ -2326,16 +2475,23 @@
                 html += `</div>`;
             }
 
-            html += `<div class="time-note">ⓘ Durations are estimated from the gaps between your log entries. Each entry "owns" the time between it and the next one. The most recent entry runs until now.</div>`;
+            html += `<div class="time-note">ⓘ Durations are estimated from the gaps between your log entries. Each entry "owns" the time between it and the next one.${isToday ? ' The most recent entry runs until now.' : ''}</div>`;
             document.getElementById('summary-content').innerHTML = html;
         }
 
         function renderSummary() {
             const content = document.getElementById('summary-content');
             let html = '';
-            const today = getTodayLogs();
+            if (!summaryViewDate) {
+                summaryViewDate = new Date();
+                summaryViewDate.setHours(0, 0, 0, 0);
+            }
 
-            if (today.length === 0) {
+            updateDayNavBar();
+
+            const dayLogs = getViewedDayLogs();
+
+            if (dayLogs.length === 0) {
                 html += summaryHeaderHtml();
                 renderSummaryEmptyState(html);
                 return;
@@ -2349,26 +2505,24 @@
             html += summaryHeaderHtml();
 
             if (currentSummaryView === 'timeline') {
-                // Today's entries, newest first (like a reverse diary)
-                [...today].sort((a, b) => b.timestamp - a.timestamp).forEach(log => {
+                // Newest first (reverse diary within the day)
+                [...dayLogs].sort((a, b) => b.timestamp - a.timestamp).forEach(log => {
                     const project = escapeHtml(log.project || DEFAULT_PROJECT);
                     const safeText = escapeHtml(log.text);
                     html += `<div class="summary-entry"><div class="summary-entry-time">${log.time} · <span class="project-tag">${project}</span></div><div class="summary-entry-text">${safeText}</div></div>`;
                 });
             } else {
-                // By Project (default)
+                // By Project (default) — paused projects last
                 const grouped = {};
-                today.forEach(log => {
+                dayLogs.forEach(log => {
                     const p = log.project || DEFAULT_PROJECT;
                     if (!grouped[p]) grouped[p] = [];
                     grouped[p].push(log);
                 });
                 const sortedProjects = Object.keys(grouped).sort((a, b) => {
-                    // Paused projects go last
                     const aSpecial = isSpecialProject(a) ? 1 : 0;
                     const bSpecial = isSpecialProject(b) ? 1 : 0;
                     if (aSpecial !== bSpecial) return aSpecial - bSpecial;
-                    // Then by entry count (most active first)
                     return grouped[b].length - grouped[a].length;
                 });
                 sortedProjects.forEach(projectName => {
@@ -2376,7 +2530,7 @@
                     const safeProject = escapeHtml(projectName);
                     const pausedStyle = isSpecialProject(projectName) ? ' style="color: #92400e; border-bottom-color: #fbbf24;"' : '';
                     html += `<div class="summary-project-group"><div class="summary-project-header"${pausedStyle}><span>${isSpecialProject(projectName) ? '⏸️' : '📁'} ${safeProject}</span><span class="summary-project-count">${projectLogs.length} ${projectLogs.length === 1 ? 'entry' : 'entries'}</span></div>`;
-                    // Within a project, oldest → newest (chronological reading)
+                    // Within a project: chronological (oldest first)
                     [...projectLogs].sort((a, b) => a.timestamp - b.timestamp).forEach(log => {
                         const safeText = escapeHtml(log.text);
                         html += `<div class="summary-entry"><div class="summary-entry-time">${log.time}</div><div class="summary-entry-text">${safeText}</div></div>`;
@@ -2387,7 +2541,6 @@
             content.innerHTML = html;
         }
 
-        function closeSummary() { document.getElementById('summary-modal').classList.remove('show'); }
         document.getElementById('summary-modal').addEventListener('click', function(e) { if (e.target === this) closeSummary(); });
 
         function copySummary() {
@@ -2402,7 +2555,7 @@
         }
 
         // ============================================================
-        // WEEK VIEW
+        // WEEK VIEW (unchanged)
         // ============================================================
         window.openWeekView = function () {
             if (!weekStartDate) weekStartDate = getMondayOf(new Date());
@@ -2581,7 +2734,7 @@
         }
 
         // ============================================================
-        // BLOCK DETAIL POPOVER
+        // BLOCK DETAIL POPOVER (unchanged)
         // ============================================================
         let currentPopoverContext = null;
 
@@ -2631,6 +2784,8 @@
             updateTodayTotal();
             if (cloudUser) cloudSaveNow();
             refreshPopoverAfterDelete();
+            // Also refresh Summary if open
+            if (document.getElementById('summary-modal').classList.contains('show')) renderSummary();
         };
 
         window.deleteAllInBlock = function (event) {
@@ -2658,6 +2813,7 @@
             if (pop) pop.remove();
             currentPopoverContext = null;
             if (document.getElementById('week-modal').classList.contains('show')) renderWeekView();
+            if (document.getElementById('summary-modal').classList.contains('show')) renderSummary();
         };
 
         function refreshPopoverAfterDelete() {
@@ -2971,7 +3127,7 @@
         }
 
         // ============================================================
-        // KEYBOARD SHORTCUTS
+        // KEYBOARD SHORTCUTS (updated for Summary day-nav)
         // ============================================================
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
@@ -2983,6 +3139,15 @@
             if (document.getElementById('week-modal').classList.contains('show')) {
                 if (e.key === 'ArrowLeft') weekNavigate(-1);
                 if (e.key === 'ArrowRight') weekNavigate(1);
+            }
+            // Arrow keys inside Summary → navigate days
+            if (document.getElementById('summary-modal').classList.contains('show')) {
+                // Only trigger if not typing in an input
+                const tag = (e.target && e.target.tagName) || '';
+                if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+                    if (e.key === 'ArrowLeft') { e.preventDefault(); summaryNavigateDay(-1); }
+                    if (e.key === 'ArrowRight') { e.preventDefault(); summaryNavigateDay(1); }
+                }
             }
         });
 
