@@ -44,6 +44,22 @@
             min-height: 100vh;
         }
 
+        /* Error banner (only visible if the app fails to boot) */
+        #boot-error-banner {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            background: #dc2626;
+            color: white;
+            padding: 10px 16px;
+            font-size: 0.8rem;
+            font-family: monospace;
+            z-index: 99999;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        #boot-error-banner.show { display: block; }
+        #boot-error-banner strong { display: block; margin-bottom: 4px; }
+
         .top-bar {
             display: flex;
             justify-content: space-between;
@@ -643,7 +659,6 @@
         .close-btn { background: transparent; border: none; font-size: 1.2rem; cursor: pointer; color: var(--text-muted); padding: 4px; border-radius: 4px;}
         .close-btn:hover { background: #e5e7eb; color: var(--text-main); }
 
-        /* NEW: Day navigation bar */
         .day-nav-bar {
             display: flex;
             align-items: center;
@@ -1229,6 +1244,11 @@
 </head>
 <body>
 
+    <div id="boot-error-banner">
+        <strong>⚠️ The app failed to start</strong>
+        <span id="boot-error-message"></span>
+    </div>
+
     <div class="top-bar">
         <div class="brand">🌿 The Pause</div>
         <div class="top-actions">
@@ -1348,7 +1368,6 @@
                 <button class="close-btn" onclick="closeSummary()">✕</button>
             </div>
 
-            <!-- NEW: Day navigation bar -->
             <div class="day-nav-bar">
                 <button class="day-nav-btn" id="day-prev-btn" onclick="summaryNavigateDay(-1)" title="Previous day (←)">← Prev</button>
                 <div class="day-nav-center">
@@ -1411,1247 +1430,1308 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
     <script>
-        // ============================================================
-        // GLOBAL STATE
-        // ============================================================
-        const JOURNAL_PRESET = `1. Just did: \n2. Thinking: \n3. Next up: `;
-        const DEFAULT_PROJECT = "General";
-        const SPECIAL_PROJECT_KEYWORDS = ['break', 'lunch', 'paused', 'pause', 'wrap up', 'wrap-up', 'end of day'];
-        const LONG_GAP_THRESHOLD_MS = 2 * 60 * 60 * 1000;
-
-        let logs = [];
-        let reminderInterval = null;
-        let currentSummaryView = 'project';
-        let summaryViewDate = null;     // Date object: the day currently being viewed in the Summary popup
-        let weekMode = 'stacked';
-        let weekStartDate = null;
-
-        let cloudUser = null;
-        let cloudSaveTimer = null;
-        let cloudDb = null;
-        let cloudAuth = null;
-
-        const LOCAL_KEY_ANON = 'thepause_logs_anon';
-        function localKeyForUser(uid) { return 'thepause_logs_' + uid; }
-
-        const PROJECT_PALETTE = [
-            '#3b82f6', '#10b981', '#8b5cf6', '#f97316', '#ec4899', '#06b6d4',
-            '#84cc16', '#f43f5e', '#6366f1', '#14b8a6', '#a855f7', '#eab308'
-        ];
-        const PAUSED_COLOR = '#f59e0b';
-
-        function projectColor(name) {
-            if (!name) return PROJECT_PALETTE[0];
-            if (isSpecialProject(name)) return PAUSED_COLOR;
-            let hash = 0;
-            const s = String(name).toLowerCase();
-            for (let i = 0; i < s.length; i++) {
-                hash = ((hash << 5) - hash + s.charCodeAt(i)) | 0;
+    // ============================================================
+    // GLOBAL ERROR HANDLER — shows a banner if anything throws.
+    // ============================================================
+    (function () {
+        function showBootError(msg) {
+            const banner = document.getElementById('boot-error-banner');
+            const msgEl = document.getElementById('boot-error-message');
+            if (banner && msgEl) {
+                msgEl.textContent = msg;
+                banner.classList.add('show');
             }
-            return PROJECT_PALETTE[Math.abs(hash) % PROJECT_PALETTE.length];
+            console.error('[The Pause] Boot error:', msg);
         }
+        window.addEventListener('error', function (e) {
+            showBootError((e && e.message) ? e.message : 'Unknown error');
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+            showBootError('Unhandled promise rejection: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason)));
+        });
+    })();
 
-        // ============================================================
-        // HELPERS
-        // ============================================================
-        function isSpecialProject(name) {
-            if (!name) return false;
-            return SPECIAL_PROJECT_KEYWORDS.indexOf(String(name).trim().toLowerCase()) !== -1;
+    // ============================================================
+    // GLOBAL STATE
+    // ============================================================
+    const JOURNAL_PRESET = `1. Just did: \n2. Thinking: \n3. Next up: `;
+    const DEFAULT_PROJECT = "General";
+    const SPECIAL_PROJECT_KEYWORDS = ['break', 'lunch', 'paused', 'pause', 'wrap up', 'wrap-up', 'end of day'];
+    const LONG_GAP_THRESHOLD_MS = 2 * 60 * 60 * 1000;
+
+    let logs = [];
+    let reminderInterval = null;
+    let currentSummaryView = 'project';
+    let summaryViewDate = null;
+    let weekMode = 'stacked';
+    let weekStartDate = null;
+
+    let cloudUser = null;
+    let cloudSaveTimer = null;
+    let cloudDb = null;
+    let cloudAuth = null;
+
+    const LOCAL_KEY_ANON = 'thepause_logs_anon';
+    function localKeyForUser(uid) { return 'thepause_logs_' + uid; }
+
+    const PROJECT_PALETTE = [
+        '#3b82f6', '#10b981', '#8b5cf6', '#f97316', '#ec4899', '#06b6d4',
+        '#84cc16', '#f43f5e', '#6366f1', '#14b8a6', '#a855f7', '#eab308'
+    ];
+    const PAUSED_COLOR = '#f59e0b';
+
+    function projectColor(name) {
+        if (!name) return PROJECT_PALETTE[0];
+        if (isSpecialProject(name)) return PAUSED_COLOR;
+        let hash = 0;
+        const s = String(name).toLowerCase();
+        for (let i = 0; i < s.length; i++) {
+            hash = ((hash << 5) - hash + s.charCodeAt(i)) | 0;
         }
+        return PROJECT_PALETTE[Math.abs(hash) % PROJECT_PALETTE.length];
+    }
 
-        function formatDuration(ms) {
-            if (!ms || ms < 0) return '0m';
-            const totalMin = Math.round(ms / 60000);
-            if (totalMin < 1) return '<1m';
-            const h = Math.floor(totalMin / 60);
-            const m = totalMin % 60;
-            if (h === 0) return m + 'm';
-            if (m === 0) return h + 'h';
-            return h + 'h ' + m + 'm';
+    // ============================================================
+    // HELPERS
+    // ============================================================
+    function isSpecialProject(name) {
+        if (!name) return false;
+        return SPECIAL_PROJECT_KEYWORDS.indexOf(String(name).trim().toLowerCase()) !== -1;
+    }
+
+    function formatDuration(ms) {
+        if (!ms || ms < 0) return '0m';
+        const totalMin = Math.round(ms / 60000);
+        if (totalMin < 1) return '<1m';
+        const h = Math.floor(totalMin / 60);
+        const m = totalMin % 60;
+        if (h === 0) return m + 'm';
+        if (m === 0) return h + 'h';
+        return h + 'h ' + m + 'm';
+    }
+
+    function nowTimeString() {
+        return new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function dateKey(ms) {
+        const d = new Date(ms);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + day;
+    }
+
+    function todayKey() {
+        return dateKey(Date.now());
+    }
+
+    function todayLabel() {
+        return new Date().toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+        });
+    }
+
+    function relativeDateLabel(ms) {
+        const targetKey = dateKey(ms);
+        const today = new Date();
+        const todayKey_ = dateKey(today.getTime());
+        
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1);
+        const yesterdayKey = dateKey(yesterday.getTime());
+
+        const d = new Date(ms);
+        if (targetKey === todayKey_) {
+            return 'Today · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         }
-
-        function nowTimeString() {
-            return new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+        if (targetKey === yesterdayKey) {
+            return 'Yesterday · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         }
+        return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
 
-        function escapeHtml(s) {
-            return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    function getMondayOf(date) {
+        const d = new Date(date);
+        d.setHours(0, 0, 0, 0);
+        const day = d.getDay();
+        const diff = (day === 0 ? -6 : 1) - day;
+        d.setDate(d.getDate() + diff);
+        return d;
+    }
+
+    // ============================================================
+    // CLOCK + DATE
+    // ============================================================
+    function updateClock() {
+        const now = new Date();
+        document.getElementById('clock').textContent = now.toLocaleTimeString('en-US', { hour12: false });
+        document.getElementById('date-line').textContent = todayLabel();
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // ============================================================
+    // ACCUMULATED TODAY TOTAL
+    // ============================================================
+    function computeTodayAccumulated() {
+        const withTs = logs
+            .filter(l => typeof l.timestamp === 'number' && !isNaN(l.timestamp) && dateKey(l.timestamp) === todayKey())
+            .slice()
+            .sort((a, b) => a.timestamp - b.timestamp);
+        if (withTs.length === 0) return { totalMs: 0, focusMs: 0, pausedMs: 0, timedCount: 0 };
+        const nowMs = Date.now();
+        let totalMs = 0, focusMs = 0, pausedMs = 0;
+        for (let i = 0; i < withTs.length; i++) {
+            const cur = withTs[i];
+            const next = withTs[i + 1];
+            const project = cur.project || DEFAULT_PROJECT;
+            const durationMs = next ? (next.timestamp - cur.timestamp) : (nowMs - cur.timestamp);
+            if (cur._isWrapUp) continue;
+            totalMs += durationMs;
+            if (isSpecialProject(project)) pausedMs += durationMs;
+            else focusMs += durationMs;
         }
+        return { totalMs, focusMs, pausedMs, timedCount: withTs.length };
+    }
 
-        function dateKey(ms) {
-            const d = new Date(ms);
-            const y = d.getFullYear();
-            const m = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return y + '-' + m + '-' + day;
+    function updateTodayTotal() {
+        const el = document.getElementById('today-total');
+        const valEl = document.getElementById('today-total-value');
+        if (!el || !valEl) return;
+        const { totalMs, focusMs, pausedMs, timedCount } = computeTodayAccumulated();
+        if (timedCount === 0 || totalMs === 0) {
+            valEl.textContent = '0m';
+            el.classList.add('empty');
+            el.title = 'Accumulated time logged today. It grows as you log — includes both focus and paused time.';
+            return;
         }
+        el.classList.remove('empty');
+        valEl.textContent = formatDuration(totalMs);
+        let tip = 'Accumulated today: ' + formatDuration(totalMs) + '.';
+        tip += '\n· Focus: ' + formatDuration(focusMs);
+        if (pausedMs > 0) tip += '\n· Paused / Break: ' + formatDuration(pausedMs);
+        tip += '\n\nEstimated from the gaps between your log entries.';
+        el.title = tip;
+    }
 
-        function todayKey() {
-            return dateKey(Date.now());
+    // ============================================================
+    // FOCUS DIAL
+    // ============================================================
+    const DIAL_MIN_MINUTES = 1;
+    const DIAL_MAX_MINUTES = 60;
+    const DIAL_SNAP_FINE = 1;
+    const DIAL_SNAP_COARSE = 5;
+    const DIAL_RADIUS = 40;
+    const DIAL_CENTER = 50;
+    const DIAL_CIRCUMFERENCE = 2 * Math.PI * 42;
+    const FOCUS_STATE = {
+        minutes: 25,
+        snapStep: DIAL_SNAP_FINE,
+        soundOn: false,
+        running: false,
+        endAt: null,
+        intervalId: null,
+        startTs: null
+    };
+
+    function dialAngleToMinutes(angleDeg) {
+        let a = angleDeg % 360;
+        if (a < 0) a += 360;
+        return a / 6;
+    }
+
+    function snapMinutes(raw, step) {
+        let m = Math.round(raw / step) * step;
+        if (m === 0) m = 60;
+        if (m > 60) m = 60;
+        if (m < DIAL_MIN_MINUTES && m !== 0) m = DIAL_MIN_MINUTES;
+        return m;
+    }
+
+    function minutesToAngle(minutes) {
+        return (minutes % 60) * 6;
+    }
+
+    function updateStepButtons() {
+        const minusBtn = document.getElementById('dial-minus-btn');
+        const plusBtn = document.getElementById('dial-plus-btn');
+        if (!minusBtn || !plusBtn) return;
+        if (FOCUS_STATE.running) {
+            const msLeft = Math.max(0, FOCUS_STATE.endAt - Date.now());
+            const minLeft = msLeft / 60000;
+            minusBtn.disabled = minLeft <= 1.01;
+            plusBtn.disabled = false;
+        } else {
+            minusBtn.disabled = FOCUS_STATE.minutes <= DIAL_MIN_MINUTES;
+            plusBtn.disabled = FOCUS_STATE.minutes >= DIAL_MAX_MINUTES;
         }
+    }
 
-        function todayLabel() {
-            return new Date().toLocaleDateString('en-US', {
-                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-            });
-        }
+    function setProgressArc(fraction) {
+        const fill = document.getElementById('dial-progress-fill');
+        if (!fill) return;
+        const f = Math.max(0, Math.min(1, fraction));
+        const len = f * DIAL_CIRCUMFERENCE;
+        fill.setAttribute('stroke-dasharray', len + ' ' + DIAL_CIRCUMFERENCE);
+    }
 
-        function relativeDateLabel(ms) {
-            const targetKey = dateKey(ms);
-            const today = new Date();
-            const todayKey_ = dateKey(today.getTime());
-            
-            const yesterday = new Date(today);
-            yesterday.setDate(today.getDate() - 1);
-            const yesterdayKey = dateKey(yesterday.getTime());
+    function updateDialUI() {
+        const dial = document.getElementById('focus-dial');
+        const hand = document.getElementById('dial-hand');
+        const knob = document.getElementById('dial-knob');
+        const center = document.getElementById('dial-center-label');
+        const sub = document.getElementById('dial-center-sub');
+        if (!dial || !hand || !knob) return;
 
-            const d = new Date(ms);
-            if (targetKey === todayKey_) {
-                return 'Today · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-            }
-            if (targetKey === yesterdayKey) {
-                return 'Yesterday · ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-            }
-            return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        }
+        if (FOCUS_STATE.running) {
+            const msLeft = Math.max(0, FOCUS_STATE.endAt - Date.now());
+            const totalSec = Math.ceil(msLeft / 1000);
+            const mm = Math.floor(totalSec / 60);
+            const ss = totalSec % 60;
+            center.textContent = mm + ':' + String(ss).padStart(2, '0');
+            sub.textContent = 'remaining';
 
-        function getMondayOf(date) {
-            const d = new Date(date);
-            d.setHours(0, 0, 0, 0);
-            const day = d.getDay();
-            const diff = (day === 0 ? -6 : 1) - day;
-            d.setDate(d.getDate() + diff);
-            return d;
-        }
+            const totalMs = FOCUS_STATE.minutes * 60 * 1000;
+            const elapsedMs = totalMs - msLeft;
+            const fraction = Math.max(0, Math.min(1, elapsedMs / totalMs));
+            setProgressArc(fraction);
 
-        // ============================================================
-        // CLOCK + DATE
-        // ============================================================
-        function updateClock() {
-            const now = new Date();
-            document.getElementById('clock').textContent = now.toLocaleTimeString('en-US', { hour12: false });
-            document.getElementById('date-line').textContent = todayLabel();
-        }
-        setInterval(updateClock, 1000);
-        updateClock();
+            const remainingMinutes = (msLeft / 60000);
+            const angleDeg = minutesToAngle(remainingMinutes);
+            const rad = (angleDeg - 90) * Math.PI / 180;
+            const x = DIAL_CENTER + DIAL_RADIUS * Math.cos(rad);
+            const y = DIAL_CENTER + DIAL_RADIUS * Math.sin(rad);
+            hand.setAttribute('x2', x);
+            hand.setAttribute('y2', y);
+            knob.setAttribute('cx', x);
+            knob.setAttribute('cy', y);
+        } else {
+            const angleDeg = minutesToAngle(FOCUS_STATE.minutes);
+            const rad = (angleDeg - 90) * Math.PI / 180;
+            const x = DIAL_CENTER + DIAL_RADIUS * Math.cos(rad);
+            const y = DIAL_CENTER + DIAL_RADIUS * Math.sin(rad);
+            hand.setAttribute('x2', x);
+            hand.setAttribute('y2', y);
+            knob.setAttribute('cx', x);
+            knob.setAttribute('cy', y);
 
-        // ============================================================
-        // ACCUMULATED TODAY TOTAL
-        // ============================================================
-        function computeTodayAccumulated() {
-            const withTs = logs
-                .filter(l => typeof l.timestamp === 'number' && !isNaN(l.timestamp) && dateKey(l.timestamp) === todayKey())
-                .slice()
-                .sort((a, b) => a.timestamp - b.timestamp);
-            if (withTs.length === 0) return { totalMs: 0, focusMs: 0, pausedMs: 0, timedCount: 0 };
-            const nowMs = Date.now();
-            let totalMs = 0, focusMs = 0, pausedMs = 0;
-            for (let i = 0; i < withTs.length; i++) {
-                const cur = withTs[i];
-                const next = withTs[i + 1];
-                const project = cur.project || DEFAULT_PROJECT;
-                const durationMs = next ? (next.timestamp - cur.timestamp) : (nowMs - cur.timestamp);
-                if (cur._isWrapUp) continue;
-                totalMs += durationMs;
-                if (isSpecialProject(project)) pausedMs += durationMs;
-                else focusMs += durationMs;
-            }
-            return { totalMs, focusMs, pausedMs, timedCount: withTs.length };
-        }
+            const fraction = FOCUS_STATE.minutes / 60;
+            setProgressArc(fraction);
 
-        function updateTodayTotal() {
-            const el = document.getElementById('today-total');
-            const valEl = document.getElementById('today-total-value');
-            if (!el || !valEl) return;
-            const { totalMs, focusMs, pausedMs, timedCount } = computeTodayAccumulated();
-            if (timedCount === 0 || totalMs === 0) {
-                valEl.textContent = '0m';
-                el.classList.add('empty');
-                el.title = 'Accumulated time logged today. It grows as you log — includes both focus and paused time.';
-                return;
-            }
-            el.classList.remove('empty');
-            valEl.textContent = formatDuration(totalMs);
-            let tip = 'Accumulated today: ' + formatDuration(totalMs) + '.';
-            tip += '\n· Focus: ' + formatDuration(focusMs);
-            if (pausedMs > 0) tip += '\n· Paused / Break: ' + formatDuration(pausedMs);
-            tip += '\n\nEstimated from the gaps between your log entries.';
-            el.title = tip;
-        }
-
-        // ============================================================
-        // FOCUS DIAL (unchanged)
-        // ============================================================
-        const DIAL_MIN_MINUTES = 1;
-        const DIAL_MAX_MINUTES = 60;
-        const DIAL_SNAP_FINE = 1;
-        const DIAL_SNAP_COARSE = 5;
-        const DIAL_RADIUS = 40;
-        const DIAL_CENTER = 50;
-        const DIAL_CIRCUMFERENCE = 2 * Math.PI * 42;
-        const FOCUS_STATE = {
-            minutes: 25,
-            snapStep: DIAL_SNAP_FINE,
-            soundOn: false,
-            running: false,
-            endAt: null,
-            intervalId: null,
-            startTs: null
-        };
-
-        function dialAngleToMinutes(angleDeg) {
-            let a = angleDeg % 360;
-            if (a < 0) a += 360;
-            return a / 6;
-        }
-
-        function snapMinutes(raw, step) {
-            let m = Math.round(raw / step) * step;
-            if (m === 0) m = 60;
-            if (m > 60) m = 60;
-            if (m < DIAL_MIN_MINUTES && m !== 0) m = DIAL_MIN_MINUTES;
-            return m;
-        }
-
-        function minutesToAngle(minutes) {
-            return (minutes % 60) * 6;
-        }
-
-        function updateStepButtons() {
-            const minusBtn = document.getElementById('dial-minus-btn');
-            const plusBtn = document.getElementById('dial-plus-btn');
-            if (!minusBtn || !plusBtn) return;
-            if (FOCUS_STATE.running) {
-                const msLeft = Math.max(0, FOCUS_STATE.endAt - Date.now());
-                const minLeft = msLeft / 60000;
-                minusBtn.disabled = minLeft <= 1.01;
-                plusBtn.disabled = false;
+            if (dial.classList.contains('done')) {
+                center.textContent = 'Done';
+                sub.textContent = 'pause & log';
             } else {
-                minusBtn.disabled = FOCUS_STATE.minutes <= DIAL_MIN_MINUTES;
-                plusBtn.disabled = FOCUS_STATE.minutes >= DIAL_MAX_MINUTES;
+                center.textContent = FOCUS_STATE.minutes + 'm';
+                sub.textContent = 'set';
             }
         }
+        updateStepButtons();
+    }
 
-        function setProgressArc(fraction) {
-            const fill = document.getElementById('dial-progress-fill');
-            if (!fill) return;
-            const f = Math.max(0, Math.min(1, fraction));
-            const len = f * DIAL_CIRCUMFERENCE;
-            fill.setAttribute('stroke-dasharray', len + ' ' + DIAL_CIRCUMFERENCE);
+    (function drawTicks() {
+        const g = document.getElementById('dial-ticks');
+        if (!g) return;
+        for (let i = 0; i < 60; i++) {
+            const isMajor = (i % 5 === 0);
+            const angle = i * 6;
+            const rad = (angle - 90) * Math.PI / 180;
+            const outerR = 46;
+            const innerR = isMajor ? 40 : 43;
+            const x1 = DIAL_CENTER + innerR * Math.cos(rad);
+            const y1 = DIAL_CENTER + innerR * Math.sin(rad);
+            const x2 = DIAL_CENTER + outerR * Math.cos(rad);
+            const y2 = DIAL_CENTER + outerR * Math.sin(rad);
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', x1);
+            line.setAttribute('y1', y1);
+            line.setAttribute('x2', x2);
+            line.setAttribute('y2', y2);
+            line.setAttribute('class', 'dial-tick' + (isMajor ? ' major' : ''));
+            g.appendChild(line);
+        }
+    })();
+
+    (function initDialDrag() {
+        const svg = document.getElementById('focus-dial-svg');
+        if (!svg) return;
+        let dragging = false;
+
+        function pointToAngle(clientX, clientY) {
+            const rect = svg.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            const dx = clientX - cx;
+            const dy = clientY - cy;
+            let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+            angle = angle + 90;
+            if (angle < 0) angle += 360;
+            return angle;
         }
 
-        function updateDialUI() {
+        function applyAngle(angle) {
+            const rawMinutes = dialAngleToMinutes(angle);
+            const step = FOCUS_STATE.snapStep;
+            FOCUS_STATE.minutes = snapMinutes(rawMinutes, step);
             const dial = document.getElementById('focus-dial');
-            const hand = document.getElementById('dial-hand');
-            const knob = document.getElementById('dial-knob');
-            const center = document.getElementById('dial-center-label');
-            const sub = document.getElementById('dial-center-sub');
-
-            if (FOCUS_STATE.running) {
-                const msLeft = Math.max(0, FOCUS_STATE.endAt - Date.now());
-                const totalSec = Math.ceil(msLeft / 1000);
-                const mm = Math.floor(totalSec / 60);
-                const ss = totalSec % 60;
-                center.textContent = mm + ':' + String(ss).padStart(2, '0');
-                sub.textContent = 'remaining';
-
-                const totalMs = FOCUS_STATE.minutes * 60 * 1000;
-                const elapsedMs = totalMs - msLeft;
-                const fraction = Math.max(0, Math.min(1, elapsedMs / totalMs));
-                setProgressArc(fraction);
-
-                const remainingMinutes = (msLeft / 60000);
-                const angleDeg = minutesToAngle(remainingMinutes);
-                const rad = (angleDeg - 90) * Math.PI / 180;
-                const x = DIAL_CENTER + DIAL_RADIUS * Math.cos(rad);
-                const y = DIAL_CENTER + DIAL_RADIUS * Math.sin(rad);
-                hand.setAttribute('x2', x);
-                hand.setAttribute('y2', y);
-                knob.setAttribute('cx', x);
-                knob.setAttribute('cy', y);
-            } else {
-                const angleDeg = minutesToAngle(FOCUS_STATE.minutes);
-                const rad = (angleDeg - 90) * Math.PI / 180;
-                const x = DIAL_CENTER + DIAL_RADIUS * Math.cos(rad);
-                const y = DIAL_CENTER + DIAL_RADIUS * Math.sin(rad);
-                hand.setAttribute('x2', x);
-                hand.setAttribute('y2', y);
-                knob.setAttribute('cx', x);
-                knob.setAttribute('cy', y);
-
-                const fraction = FOCUS_STATE.minutes / 60;
-                setProgressArc(fraction);
-
-                if (dial.classList.contains('done')) {
-                    center.textContent = 'Done';
-                    sub.textContent = 'pause & log';
-                } else {
-                    center.textContent = FOCUS_STATE.minutes + 'm';
-                    sub.textContent = 'set';
-                }
-            }
-            updateStepButtons();
-        }
-
-        (function drawTicks() {
-            const g = document.getElementById('dial-ticks');
-            if (!g) return;
-            for (let i = 0; i < 60; i++) {
-                const isMajor = (i % 5 === 0);
-                const angle = i * 6;
-                const rad = (angle - 90) * Math.PI / 180;
-                const outerR = 46;
-                const innerR = isMajor ? 40 : 43;
-                const x1 = DIAL_CENTER + innerR * Math.cos(rad);
-                const y1 = DIAL_CENTER + innerR * Math.sin(rad);
-                const x2 = DIAL_CENTER + outerR * Math.cos(rad);
-                const y2 = DIAL_CENTER + outerR * Math.sin(rad);
-                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                line.setAttribute('x1', x1);
-                line.setAttribute('y1', y1);
-                line.setAttribute('x2', x2);
-                line.setAttribute('y2', y2);
-                line.setAttribute('class', 'dial-tick' + (isMajor ? ' major' : ''));
-                g.appendChild(line);
-            }
-        })();
-
-        (function initDialDrag() {
-            const dial = document.getElementById('focus-dial');
-            const svg = document.getElementById('focus-dial-svg');
-            let dragging = false;
-
-            function pointToAngle(clientX, clientY) {
-                const rect = svg.getBoundingClientRect();
-                const cx = rect.left + rect.width / 2;
-                const cy = rect.top + rect.height / 2;
-                const dx = clientX - cx;
-                const dy = clientY - cy;
-                let angle = Math.atan2(dy, dx) * 180 / Math.PI;
-                angle = angle + 90;
-                if (angle < 0) angle += 360;
-                return angle;
-            }
-
-            function applyAngle(angle) {
-                const rawMinutes = dialAngleToMinutes(angle);
-                const step = FOCUS_STATE.snapStep;
-                FOCUS_STATE.minutes = snapMinutes(rawMinutes, step);
-                dial.classList.remove('done');
-                updateDialUI();
-                try { localStorage.setItem('thepause_focus_minutes', String(FOCUS_STATE.minutes)); } catch (e) {}
-            }
-
-            function onDown(e) {
-                if (FOCUS_STATE.running) return;
-                dragging = true;
-                svg.style.cursor = 'grabbing';
-                const pt = e.touches ? e.touches[0] : e;
-                applyAngle(pointToAngle(pt.clientX, pt.clientY));
-                e.preventDefault();
-            }
-
-            function onMove(e) {
-                if (!dragging) return;
-                const pt = e.touches ? e.touches[0] : e;
-                applyAngle(pointToAngle(pt.clientX, pt.clientY));
-                e.preventDefault();
-            }
-
-            function onUp() {
-                dragging = false;
-                svg.style.cursor = '';
-            }
-
-            svg.addEventListener('mousedown', onDown);
-            svg.addEventListener('touchstart', onDown, { passive: false });
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('touchmove', onMove, { passive: false });
-            document.addEventListener('mouseup', onUp);
-            document.addEventListener('touchend', onUp);
-            document.addEventListener('touchcancel', onUp);
-
-            document.addEventListener('keydown', function (e) {
-                if (e.key === 'Shift') FOCUS_STATE.snapStep = DIAL_SNAP_COARSE;
-            });
-            document.addEventListener('keyup', function (e) {
-                if (e.key === 'Shift') FOCUS_STATE.snapStep = DIAL_SNAP_FINE;
-            });
-        })();
-
-        window.dialSetPreset = function (minutes) {
-            if (FOCUS_STATE.running) return;
-            FOCUS_STATE.minutes = Math.max(DIAL_MIN_MINUTES, Math.min(DIAL_MAX_MINUTES, minutes));
-            document.getElementById('focus-dial').classList.remove('done');
+            if (dial) dial.classList.remove('done');
             updateDialUI();
             try { localStorage.setItem('thepause_focus_minutes', String(FOCUS_STATE.minutes)); } catch (e) {}
-        };
+        }
 
-        window.dialStep = function (deltaMin, event) {
-            const fine = event && event.shiftKey;
-            const step = fine ? 1 : Math.abs(deltaMin);
-            const direction = deltaMin < 0 ? -1 : 1;
-            const change = step * direction;
-
-            if (FOCUS_STATE.running) {
-                const msLeftBefore = Math.max(0, FOCUS_STATE.endAt - Date.now());
-                const newMsLeft = msLeftBefore + change * 60 * 1000;
-                if (newMsLeft <= 0) {
-                    FOCUS_STATE.endAt = Date.now();
-                    updateDialUI();
-                    dialComplete();
-                    return;
-                }
-                FOCUS_STATE.endAt = Date.now() + newMsLeft;
-                const elapsedMs = FOCUS_STATE.minutes * 60 * 1000 - msLeftBefore;
-                const newTotalMinutes = Math.max(1, Math.round((elapsedMs + newMsLeft) / 60000));
-                FOCUS_STATE.minutes = newTotalMinutes;
-                updateDialUI();
-            } else {
-                FOCUS_STATE.minutes = Math.max(DIAL_MIN_MINUTES, Math.min(DIAL_MAX_MINUTES, FOCUS_STATE.minutes + change));
-                document.getElementById('focus-dial').classList.remove('done');
-                updateDialUI();
-                try { localStorage.setItem('thepause_focus_minutes', String(FOCUS_STATE.minutes)); } catch (e) {}
-            }
-        };
-
-        window.dialStart = function () {
+        function onDown(e) {
             if (FOCUS_STATE.running) return;
-            const dial = document.getElementById('focus-dial');
-            dial.classList.remove('done');
-            dial.classList.add('running');
-            FOCUS_STATE.running = true;
-            FOCUS_STATE.startTs = Date.now();
-            FOCUS_STATE.endAt = FOCUS_STATE.startTs + FOCUS_STATE.minutes * 60 * 1000;
+            dragging = true;
+            svg.style.cursor = 'grabbing';
+            const pt = e.touches ? e.touches[0] : e;
+            applyAngle(pointToAngle(pt.clientX, pt.clientY));
+            e.preventDefault();
+        }
 
-            document.getElementById('dial-start-btn').style.display = 'none';
-            let stopBtn = document.getElementById('dial-stop-btn');
-            if (!stopBtn) {
-                stopBtn = document.createElement('button');
-                stopBtn.id = 'dial-stop-btn';
-                stopBtn.className = 'dial-btn stop';
-                stopBtn.textContent = '⏹ Stop';
-                stopBtn.onclick = dialStop;
-                const controls = document.querySelector('.focus-dial-controls');
-                const plusBtn = document.getElementById('dial-plus-btn');
-                controls.insertBefore(stopBtn, plusBtn);
-            }
-            stopBtn.style.display = 'flex';
+        function onMove(e) {
+            if (!dragging) return;
+            const pt = e.touches ? e.touches[0] : e;
+            applyAngle(pointToAngle(pt.clientX, pt.clientY));
+            e.preventDefault();
+        }
 
-            if (FOCUS_STATE.intervalId) clearInterval(FOCUS_STATE.intervalId);
-            FOCUS_STATE.intervalId = setInterval(function () {
+        function onUp() {
+            dragging = false;
+            svg.style.cursor = '';
+        }
+
+        svg.addEventListener('mousedown', onDown);
+        svg.addEventListener('touchstart', onDown, { passive: false });
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('mouseup', onUp);
+        document.addEventListener('touchend', onUp);
+        document.addEventListener('touchcancel', onUp);
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Shift') FOCUS_STATE.snapStep = DIAL_SNAP_COARSE;
+        });
+        document.addEventListener('keyup', function (e) {
+            if (e.key === 'Shift') FOCUS_STATE.snapStep = DIAL_SNAP_FINE;
+        });
+    })();
+
+    window.dialSetPreset = function (minutes) {
+        if (FOCUS_STATE.running) return;
+        FOCUS_STATE.minutes = Math.max(DIAL_MIN_MINUTES, Math.min(DIAL_MAX_MINUTES, minutes));
+        const dial = document.getElementById('focus-dial');
+        if (dial) dial.classList.remove('done');
+        updateDialUI();
+        try { localStorage.setItem('thepause_focus_minutes', String(FOCUS_STATE.minutes)); } catch (e) {}
+    };
+
+    window.dialStep = function (deltaMin, event) {
+        const fine = event && event.shiftKey;
+        const step = fine ? 1 : Math.abs(deltaMin);
+        const direction = deltaMin < 0 ? -1 : 1;
+        const change = step * direction;
+
+        if (FOCUS_STATE.running) {
+            const msLeftBefore = Math.max(0, FOCUS_STATE.endAt - Date.now());
+            const newMsLeft = msLeftBefore + change * 60 * 1000;
+            if (newMsLeft <= 0) {
+                FOCUS_STATE.endAt = Date.now();
                 updateDialUI();
-                if (FOCUS_STATE.endAt && Date.now() >= FOCUS_STATE.endAt) {
-                    dialComplete();
-                }
-            }, 500);
+                dialComplete();
+                return;
+            }
+            FOCUS_STATE.endAt = Date.now() + newMsLeft;
+            const elapsedMs = FOCUS_STATE.minutes * 60 * 1000 - msLeftBefore;
+            const newTotalMinutes = Math.max(1, Math.round((elapsedMs + newMsLeft) / 60000));
+            FOCUS_STATE.minutes = newTotalMinutes;
             updateDialUI();
-        };
-
-        window.dialStop = function () {
-            if (!FOCUS_STATE.running) return;
-            const elapsedMs = Date.now() - (FOCUS_STATE.startTs || Date.now());
-            const elapsedMin = elapsedMs / 60000;
-            if (FOCUS_STATE.intervalId) {
-                clearInterval(FOCUS_STATE.intervalId);
-                FOCUS_STATE.intervalId = null;
-            }
+        } else {
+            FOCUS_STATE.minutes = Math.max(DIAL_MIN_MINUTES, Math.min(DIAL_MAX_MINUTES, FOCUS_STATE.minutes + change));
             const dial = document.getElementById('focus-dial');
-            dial.classList.remove('running');
-            FOCUS_STATE.running = false;
-            const plannedMin = FOCUS_STATE.minutes;
-            FOCUS_STATE.endAt = null;
-            FOCUS_STATE.startTs = null;
-
-            document.getElementById('dial-start-btn').style.display = '';
-            const stopBtn = document.getElementById('dial-stop-btn');
-            if (stopBtn) stopBtn.style.display = 'none';
-
-            if (elapsedMin >= 0.5) {
-                const preview = Math.round(elapsedMin) + 'm of ' + plannedMin + 'm';
-                if (!confirm('Stop the focus block?\n\nYou ran it for ' + preview + '.\n\nThis will NOT be logged as a session.')) {
-                    dialStart();
-                    return;
-                }
-            }
+            if (dial) dial.classList.remove('done');
             updateDialUI();
-        };
+            try { localStorage.setItem('thepause_focus_minutes', String(FOCUS_STATE.minutes)); } catch (e) {}
+        }
+    };
 
-        function dialComplete() {
-            const dial = document.getElementById('focus-dial');
-            if (FOCUS_STATE.intervalId) {
-                clearInterval(FOCUS_STATE.intervalId);
-                FOCUS_STATE.intervalId = null;
+    window.dialStart = function () {
+        if (FOCUS_STATE.running) return;
+        const dial = document.getElementById('focus-dial');
+        if (!dial) return;
+        dial.classList.remove('done');
+        dial.classList.add('running');
+        FOCUS_STATE.running = true;
+        FOCUS_STATE.startTs = Date.now();
+        FOCUS_STATE.endAt = FOCUS_STATE.startTs + FOCUS_STATE.minutes * 60 * 1000;
+
+        const startBtn = document.getElementById('dial-start-btn');
+        if (startBtn) startBtn.style.display = 'none';
+        let stopBtn = document.getElementById('dial-stop-btn');
+        if (!stopBtn) {
+            stopBtn = document.createElement('button');
+            stopBtn.id = 'dial-stop-btn';
+            stopBtn.className = 'dial-btn stop';
+            stopBtn.textContent = '⏹ Stop';
+            stopBtn.onclick = dialStop;
+            const controls = document.querySelector('.focus-dial-controls');
+            const plusBtn = document.getElementById('dial-plus-btn');
+            if (controls && plusBtn) controls.insertBefore(stopBtn, plusBtn);
+            else if (controls) controls.appendChild(stopBtn);
+        }
+        stopBtn.style.display = 'flex';
+
+        if (FOCUS_STATE.intervalId) clearInterval(FOCUS_STATE.intervalId);
+        FOCUS_STATE.intervalId = setInterval(function () {
+            updateDialUI();
+            if (FOCUS_STATE.endAt && Date.now() >= FOCUS_STATE.endAt) {
+                dialComplete();
             }
-            FOCUS_STATE.running = false;
+        }, 500);
+        updateDialUI();
+    };
+
+    window.dialStop = function () {
+        if (!FOCUS_STATE.running) return;
+        const elapsedMs = Date.now() - (FOCUS_STATE.startTs || Date.now());
+        const elapsedMin = elapsedMs / 60000;
+        if (FOCUS_STATE.intervalId) {
+            clearInterval(FOCUS_STATE.intervalId);
+            FOCUS_STATE.intervalId = null;
+        }
+        const dial = document.getElementById('focus-dial');
+        if (dial) dial.classList.remove('running');
+        FOCUS_STATE.running = false;
+        const plannedMin = FOCUS_STATE.minutes;
+        FOCUS_STATE.endAt = null;
+        FOCUS_STATE.startTs = null;
+
+        const startBtn = document.getElementById('dial-start-btn');
+        if (startBtn) startBtn.style.display = '';
+        const stopBtn = document.getElementById('dial-stop-btn');
+        if (stopBtn) stopBtn.style.display = 'none';
+
+        if (elapsedMin >= 0.5) {
+            const preview = Math.round(elapsedMin) + 'm of ' + plannedMin + 'm';
+            if (!confirm('Stop the focus block?\n\nYou ran it for ' + preview + '.\n\nThis will NOT be logged as a session.')) {
+                dialStart();
+                return;
+            }
+        }
+        updateDialUI();
+    };
+
+    function dialComplete() {
+        const dial = document.getElementById('focus-dial');
+        if (FOCUS_STATE.intervalId) {
+            clearInterval(FOCUS_STATE.intervalId);
+            FOCUS_STATE.intervalId = null;
+        }
+        FOCUS_STATE.running = false;
+        if (dial) {
             dial.classList.remove('running');
             dial.classList.add('done');
+        }
 
-            document.getElementById('dial-start-btn').style.display = '';
-            const stopBtn = document.getElementById('dial-stop-btn');
-            if (stopBtn) stopBtn.style.display = 'none';
+        const startBtn = document.getElementById('dial-start-btn');
+        if (startBtn) startBtn.style.display = '';
+        const stopBtn = document.getElementById('dial-stop-btn');
+        if (stopBtn) stopBtn.style.display = 'none';
 
-            const project = getCurrentProject();
-            const plannedMin = FOCUS_STATE.minutes;
-            logs.unshift({
-                time: nowTimeString(),
-                timestamp: Date.now(),
-                text: `Focus block complete — ${plannedMin} min on "${project}"`,
-                project: project,
-                _isFocusBlock: true
+        const project = getCurrentProject();
+        const plannedMin = FOCUS_STATE.minutes;
+        logs.unshift({
+            time: nowTimeString(),
+            timestamp: Date.now(),
+            text: `Focus block complete — ${plannedMin} min on "${project}"`,
+            project: project,
+            _isFocusBlock: true
+        });
+        saveLocal();
+        renderLogs();
+        populateProjectSuggestions();
+        updateTodayTotal();
+        if (cloudUser) cloudSaveNow();
+
+        if (FOCUS_STATE.soundOn) playSoftChime();
+
+        if ("Notification" in window && Notification.permission === "granted") {
+            new Notification("Focus block done", {
+                body: `Time to pause and log. ${plannedMin} min on "${project}".`
             });
-            saveLocal();
-            renderLogs();
-            populateProjectSuggestions();
-            updateTodayTotal();
-            if (cloudUser) cloudSaveNow();
-
-            if (FOCUS_STATE.soundOn) playSoftChime();
-
-            if ("Notification" in window && Notification.permission === "granted") {
-                new Notification("Focus block done", {
-                    body: `Time to pause and log. ${plannedMin} min on "${project}".`
-                });
-            }
-
-            const entry = document.getElementById('entry-text');
-            if (entry) {
-                entry.focus();
-                entry.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-
-            FOCUS_STATE.endAt = null;
-            FOCUS_STATE.startTs = null;
-            updateDialUI();
         }
 
-        function playSoftChime() {
-            try {
-                const Ctx = window.AudioContext || window.webkitAudioContext;
-                if (!Ctx) return;
-                const ctx = new Ctx();
-                const now = ctx.currentTime;
-                const notes = [
-                    { f: 660, t: 0.00, dur: 0.55, gain: 0.12 },
-                    { f: 880, t: 0.18, dur: 0.60, gain: 0.10 }
-                ];
-                notes.forEach(n => {
-                    const osc = ctx.createOscillator();
-                    const gainNode = ctx.createGain();
-                    osc.type = 'sine';
-                    osc.frequency.value = n.f;
-                    const osc2 = ctx.createOscillator();
-                    osc2.type = 'sine';
-                    osc2.frequency.value = n.f * 2.01;
-                    const gain2 = ctx.createGain();
-                    gain2.gain.value = n.gain * 0.35;
-
-                    gainNode.gain.setValueAtTime(0, now + n.t);
-                    gainNode.gain.linearRampToValueAtTime(n.gain, now + n.t + 0.02);
-                    gainNode.gain.exponentialRampToValueAtTime(0.0001, now + n.t + n.dur);
-
-                    gain2.gain.setValueAtTime(0, now + n.t);
-                    gain2.gain.linearRampToValueAtTime(n.gain * 0.35, now + n.t + 0.02);
-                    gain2.gain.exponentialRampToValueAtTime(0.0001, now + n.t + n.dur * 0.8);
-
-                    osc.connect(gainNode).connect(ctx.destination);
-                    osc2.connect(gain2).connect(ctx.destination);
-                    osc.start(now + n.t);
-                    osc.stop(now + n.t + n.dur + 0.05);
-                    osc2.start(now + n.t);
-                    osc2.stop(now + n.t + n.dur + 0.05);
-                });
-                setTimeout(() => { try { ctx.close(); } catch (e) {} }, 1500);
-            } catch (e) {
-                console.error('Chime failed:', e);
-            }
+        const entry = document.getElementById('entry-text');
+        if (entry) {
+            entry.focus();
+            entry.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
 
-        window.dialToggleSound = function () {
-            FOCUS_STATE.soundOn = !FOCUS_STATE.soundOn;
-            const btn = document.getElementById('dial-chime-toggle');
-            const icon = document.getElementById('dial-chime-icon');
-            icon.textContent = FOCUS_STATE.soundOn ? '🔔' : '🔕';
+        FOCUS_STATE.endAt = null;
+        FOCUS_STATE.startTs = null;
+        updateDialUI();
+    }
+
+    function playSoftChime() {
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+            const ctx = new Ctx();
+            const now = ctx.currentTime;
+            const notes = [
+                { f: 660, t: 0.00, dur: 0.55, gain: 0.12 },
+                { f: 880, t: 0.18, dur: 0.60, gain: 0.10 }
+            ];
+            notes.forEach(n => {
+                const osc = ctx.createOscillator();
+                const gainNode = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = n.f;
+                const osc2 = ctx.createOscillator();
+                osc2.type = 'sine';
+                osc2.frequency.value = n.f * 2.01;
+                const gain2 = ctx.createGain();
+                gain2.gain.value = n.gain * 0.35;
+
+                gainNode.gain.setValueAtTime(0, now + n.t);
+                gainNode.gain.linearRampToValueAtTime(n.gain, now + n.t + 0.02);
+                gainNode.gain.exponentialRampToValueAtTime(0.0001, now + n.t + n.dur);
+
+                gain2.gain.setValueAtTime(0, now + n.t);
+                gain2.gain.linearRampToValueAtTime(n.gain * 0.35, now + n.t + 0.02);
+                gain2.gain.exponentialRampToValueAtTime(0.0001, now + n.t + n.dur * 0.8);
+
+                osc.connect(gainNode).connect(ctx.destination);
+                osc2.connect(gain2).connect(ctx.destination);
+                osc.start(now + n.t);
+                osc.stop(now + n.t + n.dur + 0.05);
+                osc2.start(now + n.t);
+                osc2.stop(now + n.t + n.dur + 0.05);
+            });
+            setTimeout(() => { try { ctx.close(); } catch (e) {} }, 1500);
+        } catch (e) {
+            console.error('Chime failed:', e);
+        }
+    }
+
+    window.dialToggleSound = function () {
+        FOCUS_STATE.soundOn = !FOCUS_STATE.soundOn;
+        const btn = document.getElementById('dial-chime-toggle');
+        const icon = document.getElementById('dial-chime-icon');
+        if (icon) icon.textContent = FOCUS_STATE.soundOn ? '🔔' : '🔕';
+        if (btn) {
             btn.classList.toggle('on', FOCUS_STATE.soundOn);
             btn.title = FOCUS_STATE.soundOn ? 'Chime on finish: ON' : 'Chime on finish: OFF';
-            try { localStorage.setItem('thepause_focus_sound', FOCUS_STATE.soundOn ? '1' : '0'); } catch (e) {}
-            if (FOCUS_STATE.soundOn) playSoftChime();
-        };
+        }
+        try { localStorage.setItem('thepause_focus_sound', FOCUS_STATE.soundOn ? '1' : '0'); } catch (e) {}
+        if (FOCUS_STATE.soundOn) playSoftChime();
+    };
 
-        function initFocusDial() {
-            try {
-                const savedMin = parseInt(localStorage.getItem('thepause_focus_minutes'), 10);
-                if (savedMin && savedMin >= DIAL_MIN_MINUTES && savedMin <= DIAL_MAX_MINUTES) {
-                    FOCUS_STATE.minutes = savedMin;
-                }
-                FOCUS_STATE.soundOn = localStorage.getItem('thepause_focus_sound') === '1';
-            } catch (e) {}
-            const btn = document.getElementById('dial-chime-toggle');
-            const icon = document.getElementById('dial-chime-icon');
-            icon.textContent = FOCUS_STATE.soundOn ? '🔔' : '🔕';
+    function initFocusDial() {
+        try {
+            const savedMin = parseInt(localStorage.getItem('thepause_focus_minutes'), 10);
+            if (savedMin && savedMin >= DIAL_MIN_MINUTES && savedMin <= DIAL_MAX_MINUTES) {
+                FOCUS_STATE.minutes = savedMin;
+            }
+            FOCUS_STATE.soundOn = localStorage.getItem('thepause_focus_sound') === '1';
+        } catch (e) {}
+        const btn = document.getElementById('dial-chime-toggle');
+        const icon = document.getElementById('dial-chime-icon');
+        if (icon) icon.textContent = FOCUS_STATE.soundOn ? '🔔' : '🔕';
+        if (btn) {
             btn.classList.toggle('on', FOCUS_STATE.soundOn);
             btn.title = FOCUS_STATE.soundOn ? 'Chime on finish: ON' : 'Chime on finish: OFF';
-            updateDialUI();
-            updateTodayTotal();
         }
+        updateDialUI();
+        updateTodayTotal();
+    }
 
-        // ============================================================
-        // PROJECT FIELD
-        // ============================================================
-        function getCurrentProject() {
-            const val = document.getElementById('project-input').value.trim();
-            return val || DEFAULT_PROJECT;
-        }
-        function populateProjectSuggestions() {
-            const projects = [...new Set(logs.map(log => log.project).filter(Boolean))];
-            const datalist = document.getElementById('project-list');
-            datalist.innerHTML = '';
-            projects.forEach(p => {
-                const option = document.createElement('option');
-                option.value = p;
-                datalist.appendChild(option);
+    // ============================================================
+    // PROJECT FIELD
+    // ============================================================
+    function getCurrentProject() {
+        const el = document.getElementById('project-input');
+        const val = el ? el.value.trim() : '';
+        return val || DEFAULT_PROJECT;
+    }
+    function populateProjectSuggestions() {
+        const projects = [...new Set(logs.map(log => log.project).filter(Boolean))];
+        const datalist = document.getElementById('project-list');
+        if (!datalist) return;
+        datalist.innerHTML = '';
+        projects.forEach(p => {
+            const option = document.createElement('option');
+            option.value = p;
+            datalist.appendChild(option);
+        });
+    }
+
+    window.dismissFirstRunTip = function () {
+        const tip = document.getElementById('first-run-tip');
+        if (tip) tip.classList.add('hidden');
+        try { localStorage.setItem('thepause_tip_dismissed', '1'); } catch (e) {}
+    };
+    function maybeShowFirstRunTip() {
+        try {
+            if (localStorage.getItem('thepause_tip_dismissed') === '1') {
+                const tip = document.getElementById('first-run-tip');
+                if (tip) tip.classList.add('hidden');
+            }
+        } catch (e) {}
+    }
+
+    // ============================================================
+    // RENDER LOGS
+    // ============================================================
+    function renderLogs() {
+        const logList = document.getElementById('log-list');
+        if (!logList) return;
+        logList.innerHTML = '';
+        if (logs.length === 0) return;
+
+        const grouped = {};
+        logs.forEach((log, originalIndex) => {
+            const ts = log.timestamp || null;
+            const key = ts ? dateKey(ts) : 'undated';
+            if (!grouped[key]) grouped[key] = { key: key, ts: ts, entries: [] };
+            grouped[key].entries.push({ log: log, idx: originalIndex });
+        });
+
+        const dayKeys = Object.keys(grouped).sort((a, b) => {
+            if (a === 'undated') return 1;
+            if (b === 'undated') return -1;
+            return b.localeCompare(a);
+        });
+
+        dayKeys.forEach(dayKey_ => {
+            const day = grouped[dayKey_];
+            const divider = document.createElement('div');
+            divider.className = 'day-divider';
+            divider.textContent = dayKey_ === 'undated'
+                ? 'Undated entries'
+                : relativeDateLabel(day.ts);
+            logList.appendChild(divider);
+            day.entries.forEach(({ log, idx }) => {
+                logList.appendChild(renderLogItem(log, idx));
             });
-        }
+        });
+    }
 
-        window.dismissFirstRunTip = function () {
-            document.getElementById('first-run-tip').classList.add('hidden');
-            try { localStorage.setItem('thepause_tip_dismissed', '1'); } catch (e) {}
-        };
-        function maybeShowFirstRunTip() {
-            try {
-                if (localStorage.getItem('thepause_tip_dismissed') === '1') {
-                    document.getElementById('first-run-tip').classList.add('hidden');
-                }
-            } catch (e) {}
-        }
+    function renderLogItem(log, index) {
+        const logDiv = document.createElement('div');
+        logDiv.className = 'log-item';
+        logDiv.id = `log-item-${index}`;
 
-        // ============================================================
-        // RENDER LOGS
-        // ============================================================
-        function renderLogs() {
-            const logList = document.getElementById('log-list');
-            logList.innerHTML = '';
-            if (logs.length === 0) return;
+        const project = log.project || DEFAULT_PROJECT;
+        const safeProject = escapeHtml(project);
+        const safeText = escapeHtml(log.text).replace(/\n/g, "<br>");
+        const rawText = escapeHtml(log.text);
 
-            const grouped = {};
-            logs.forEach((log, originalIndex) => {
-                const ts = log.timestamp || null;
-                const key = ts ? dateKey(ts) : 'undated';
-                if (!grouped[key]) grouped[key] = { key: key, ts: ts, entries: [] };
-                grouped[key].entries.push({ log: log, idx: originalIndex });
-            });
+        if (isSpecialProject(project)) logDiv.classList.add('special-entry');
+        if (log._isFocusBlock) logDiv.classList.add('focus-session-entry');
 
-            const dayKeys = Object.keys(grouped).sort((a, b) => {
-                if (a === 'undated') return 1;
-                if (b === 'undated') return -1;
-                return b.localeCompare(a);
-            });
-
-            dayKeys.forEach(dayKey_ => {
-                const day = grouped[dayKey_];
-                const divider = document.createElement('div');
-                divider.className = 'day-divider';
-                divider.textContent = dayKey_ === 'undated'
-                    ? 'Undated entries'
-                    : relativeDateLabel(day.ts);
-                logList.appendChild(divider);
-                day.entries.forEach(({ log, idx }) => {
-                    logList.appendChild(renderLogItem(log, idx));
-                });
-            });
-        }
-
-        function renderLogItem(log, index) {
-            const logDiv = document.createElement('div');
-            logDiv.className = 'log-item';
-            logDiv.id = `log-item-${index}`;
-
-            const project = log.project || DEFAULT_PROJECT;
-            const safeProject = escapeHtml(project);
-            const safeText = escapeHtml(log.text).replace(/\n/g, "<br>");
-            const rawText = escapeHtml(log.text);
-
-            if (isSpecialProject(project)) logDiv.classList.add('special-entry');
-            if (log._isFocusBlock) logDiv.classList.add('focus-session-entry');
-
-            logDiv.innerHTML = `
-                <div class="log-header-row">
-                    <div class="log-meta">
-                        <span class="log-time">${log.time}</span>
-                        <span class="project-tag">${safeProject}</span>
-                    </div>
-                    <div class="log-actions">
-                        <button onclick="enableInlineEdit(${index})" title="Edit">✏️</button>
-                        <button onclick="deleteLog(${index})" title="Delete">🗑️</button>
-                    </div>
+        logDiv.innerHTML = `
+            <div class="log-header-row">
+                <div class="log-meta">
+                    <span class="log-time">${log.time}</span>
+                    <span class="project-tag">${safeProject}</span>
                 </div>
-                <div class="log-content">${safeText}</div>
-                <div class="log-edit-area">
-                    <div class="project-input-wrapper">
-                        <label>📁</label>
-                        <input type="text" id="edit-project-${index}" value="${safeProject}" list="project-list" spellcheck="false">
-                    </div>
-                    <textarea id="edit-textarea-${index}" spellcheck="false">${rawText}</textarea>
-                    <div class="log-edit-actions">
-                        <button class="btn-cancel" onclick="cancelInlineEdit(${index})">Cancel</button>
-                        <button class="btn-update" onclick="saveInlineEdit(${index})">Update</button>
-                    </div>
+                <div class="log-actions">
+                    <button onclick="enableInlineEdit(${index})" title="Edit">✏️</button>
+                    <button onclick="deleteLog(${index})" title="Delete">🗑️</button>
                 </div>
-            `;
-            return logDiv;
-        }
+            </div>
+            <div class="log-content">${safeText}</div>
+            <div class="log-edit-area">
+                <div class="project-input-wrapper">
+                    <label>📁</label>
+                    <input type="text" id="edit-project-${index}" value="${safeProject}" list="project-list" spellcheck="false">
+                </div>
+                <textarea id="edit-textarea-${index}" spellcheck="false">${rawText}</textarea>
+                <div class="log-edit-actions">
+                    <button class="btn-cancel" onclick="cancelInlineEdit(${index})">Cancel</button>
+                    <button class="btn-update" onclick="saveInlineEdit(${index})">Update</button>
+                </div>
+            </div>
+        `;
+        return logDiv;
+    }
 
-        function enableInlineEdit(index) {
-            document.getElementById(`log-item-${index}`).classList.add('editing');
-            const textarea = document.getElementById(`edit-textarea-${index}`);
+    function enableInlineEdit(index) {
+        const item = document.getElementById(`log-item-${index}`);
+        if (item) item.classList.add('editing');
+        const textarea = document.getElementById(`edit-textarea-${index}`);
+        if (textarea) {
             textarea.focus();
             textarea.setSelectionRange(textarea.value.length, textarea.value.length);
         }
-        function cancelInlineEdit(index) {
-            document.getElementById(`log-item-${index}`).classList.remove('editing');
-        }
-        function saveInlineEdit(index) {
-            const textarea = document.getElementById(`edit-textarea-${index}`);
-            const projectInput = document.getElementById(`edit-project-${index}`);
-            const newText = textarea.value;
-            const newProject = projectInput.value.trim() || DEFAULT_PROJECT;
-            if (!newText.trim()) { alert("Log cannot be empty."); return; }
-            logs[index].text = newText;
-            logs[index].project = newProject;
+    }
+    function cancelInlineEdit(index) {
+        const item = document.getElementById(`log-item-${index}`);
+        if (item) item.classList.remove('editing');
+    }
+    function saveInlineEdit(index) {
+        const textarea = document.getElementById(`edit-textarea-${index}`);
+        const projectInput = document.getElementById(`edit-project-${index}`);
+        if (!textarea || !projectInput) return;
+        const newText = textarea.value;
+        const newProject = projectInput.value.trim() || DEFAULT_PROJECT;
+        if (!newText.trim()) { alert("Log cannot be empty."); return; }
+        logs[index].text = newText;
+        logs[index].project = newProject;
+        saveLocal();
+        renderLogs();
+        populateProjectSuggestions();
+        updateTodayTotal();
+        scheduleCloudAutoSave();
+    }
+
+    function deleteLog(index) {
+        if(confirm("Are you sure you want to delete this entry?")) {
+            logs.splice(index, 1);
             saveLocal();
             renderLogs();
             populateProjectSuggestions();
             updateTodayTotal();
             scheduleCloudAutoSave();
         }
+    }
 
-        function deleteLog(index) {
-            if(confirm("Are you sure you want to delete this entry?")) {
-                logs.splice(index, 1);
-                saveLocal();
-                renderLogs();
-                populateProjectSuggestions();
-                updateTodayTotal();
-                scheduleCloudAutoSave();
-            }
+    // ============================================================
+    // NEW LOG
+    // ============================================================
+    function loadPreset() {
+        const textarea = document.getElementById('entry-text');
+        if (!textarea) return;
+        textarea.value = JOURNAL_PRESET;
+        const cursorPosition = JOURNAL_PRESET.indexOf('\n');
+        textarea.setSelectionRange(cursorPosition, cursorPosition);
+    }
+
+    function resetEntryUI() {
+        if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
         }
+        timerEndTime = null;
 
-        // ============================================================
-        // NEW LOG
-        // ============================================================
-        function loadPreset() {
-            const textarea = document.getElementById('entry-text');
-            textarea.value = JOURNAL_PRESET;
-            const cursorPosition = JOURNAL_PRESET.indexOf('\n');
-            textarea.setSelectionRange(cursorPosition, cursorPosition);
-        }
-
-        function resetEntryUI() {
-            if (timerInterval) {
-                clearInterval(timerInterval);
-                timerInterval = null;
-            }
-            timerEndTime = null;
-
-            const timerDisplay = document.getElementById('timer-display');
+        const timerDisplay = document.getElementById('timer-display');
+        if (timerDisplay) {
             timerDisplay.textContent = "Ready to write";
             timerDisplay.classList.remove('active');
             timerDisplay.style.color = "";
+        }
 
-            const startBtn = document.getElementById('start-btn');
+        const startBtn = document.getElementById('start-btn');
+        if (startBtn) {
             startBtn.disabled = false;
             startBtn.textContent = "Start 5-Min Timer";
-
-            document.getElementById('save-btn').style.display = "none";
-
-            const entryText = document.getElementById('entry-text');
-            entryText.style.borderColor = "var(--border)";
-            loadPreset();
         }
 
-        document.getElementById('save-btn').addEventListener('click', function() {
-            const text = document.getElementById('entry-text').value;
-            const project = getCurrentProject();
-            if (!text.trim() || text === JOURNAL_PRESET) { alert("Please fill out the journal before saving."); return; }
-            logs.unshift({
-                time: nowTimeString(),
-                timestamp: Date.now(),
-                text: text,
-                project: project
-            });
-            saveLocal();
-            renderLogs();
-            populateProjectSuggestions();
-            updateTodayTotal();
-            resetEntryUI();
-            if (cloudUser) cloudSaveNow();
+        const saveBtn = document.getElementById('save-btn');
+        if (saveBtn) saveBtn.style.display = "none";
+
+        const entryText = document.getElementById('entry-text');
+        if (entryText) entryText.style.borderColor = "var(--border)";
+        loadPreset();
+    }
+
+    function handleSaveLog() {
+        const entryEl = document.getElementById('entry-text');
+        if (!entryEl) return;
+        const text = entryEl.value;
+        const project = getCurrentProject();
+        if (!text.trim() || text === JOURNAL_PRESET) { alert("Please fill out the journal before saving."); return; }
+        logs.unshift({
+            time: nowTimeString(),
+            timestamp: Date.now(),
+            text: text,
+            project: project
         });
+        saveLocal();
+        renderLogs();
+        populateProjectSuggestions();
+        updateTodayTotal();
+        resetEntryUI();
+        if (cloudUser) cloudSaveNow();
+    }
 
-        window.wrapUpDay = function () {
-            if (logs.length === 0) {
-                alert("Nothing to wrap up yet — add at least one entry first.");
-                return;
-            }
-            let lastRealProject = null;
-            for (let i = 0; i < logs.length; i++) {
-                const p = logs[i].project || DEFAULT_PROJECT;
-                if (!isSpecialProject(p)) { lastRealProject = p; break; }
-            }
-            const projectName = lastRealProject || DEFAULT_PROJECT;
-            const note = prompt(
-                `Wrap up "${projectName}" for today?\n\nThis adds a closing entry so your time totals aren't left "ongoing". Add an optional note (leave blank for a plain marker):`,
-                "End of day"
-            );
-            if (note === null) return;
-            logs.unshift({
-                time: nowTimeString(),
-                timestamp: Date.now(),
-                text: note.trim() || "End of day",
-                project: projectName,
-                _isWrapUp: true
-            });
-            saveLocal();
-            renderLogs();
-            populateProjectSuggestions();
-            updateTodayTotal();
-            if (cloudUser) cloudSaveNow();
-        };
-
-        // ============================================================
-        // 5-MIN WRITING TIMER
-        // ============================================================
-        let timerInterval;
-        let timerEndTime = null;
-
-        document.getElementById('start-btn').addEventListener('click', function() {
-            const startBtn = this;
-            const saveBtn = document.getElementById('save-btn');
-            const timerDisplay = document.getElementById('timer-display');
-            const entryText = document.getElementById('entry-text');
-
-            startBtn.disabled = true;
-            startBtn.textContent = "Writing...";
-            saveBtn.style.display = "flex";
-            entryText.focus();
-
-            const now = Date.now();
-            timerEndTime = now + (300 * 1000);
-
-            if(timerInterval) clearInterval(timerInterval);
-            timerDisplay.classList.add('active');
-            timerDisplay.style.color = "";
-
-            updateTimerDisplay();
-            timerInterval = setInterval(updateTimerDisplay, 250);
+    window.wrapUpDay = function () {
+        if (logs.length === 0) {
+            alert("Nothing to wrap up yet — add at least one entry first.");
+            return;
+        }
+        let lastRealProject = null;
+        for (let i = 0; i < logs.length; i++) {
+            const p = logs[i].project || DEFAULT_PROJECT;
+            if (!isSpecialProject(p)) { lastRealProject = p; break; }
+        }
+        const projectName = lastRealProject || DEFAULT_PROJECT;
+        const note = prompt(
+            `Wrap up "${projectName}" for today?\n\nThis adds a closing entry so your time totals aren't left "ongoing". Add an optional note (leave blank for a plain marker):`,
+            "End of day"
+        );
+        if (note === null) return;
+        logs.unshift({
+            time: nowTimeString(),
+            timestamp: Date.now(),
+            text: note.trim() || "End of day",
+            project: projectName,
+            _isWrapUp: true
         });
+        saveLocal();
+        renderLogs();
+        populateProjectSuggestions();
+        updateTodayTotal();
+        if (cloudUser) cloudSaveNow();
+    };
 
-        function updateTimerDisplay() {
-            if (!timerEndTime) return;
-            const timerDisplay = document.getElementById('timer-display');
-            const entryText = document.getElementById('entry-text');
-            const msLeft = timerEndTime - Date.now();
+    // ============================================================
+    // 5-MIN WRITING TIMER
+    // ============================================================
+    let timerInterval;
+    let timerEndTime = null;
 
-            if (msLeft <= 0) {
-                clearInterval(timerInterval);
-                timerInterval = null;
-                timerEndTime = null;
-                timerDisplay.textContent = "Time's up! Stop and save.";
-                timerDisplay.style.color = "var(--danger)";
-                entryText.style.borderColor = "var(--danger)";
-                return;
-            }
+    function handleStartTimer() {
+        const startBtn = document.getElementById('start-btn');
+        const saveBtn = document.getElementById('save-btn');
+        const timerDisplay = document.getElementById('timer-display');
+        const entryText = document.getElementById('entry-text');
+        if (!startBtn || !saveBtn || !timerDisplay || !entryText) return;
 
-            const totalSecondsLeft = Math.ceil(msLeft / 1000);
-            const minutes = Math.floor(totalSecondsLeft / 60);
-            const seconds = totalSecondsLeft % 60;
-            timerDisplay.textContent = `Time left: ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+        startBtn.disabled = true;
+        startBtn.textContent = "Writing...";
+        saveBtn.style.display = "flex";
+        entryText.focus();
+
+        const now = Date.now();
+        timerEndTime = now + (300 * 1000);
+
+        if(timerInterval) clearInterval(timerInterval);
+        timerDisplay.classList.add('active');
+        timerDisplay.style.color = "";
+
+        updateTimerDisplay();
+        timerInterval = setInterval(updateTimerDisplay, 250);
+    }
+
+    function updateTimerDisplay() {
+        if (!timerEndTime) return;
+        const timerDisplay = document.getElementById('timer-display');
+        const entryText = document.getElementById('entry-text');
+        if (!timerDisplay || !entryText) return;
+        const msLeft = timerEndTime - Date.now();
+
+        if (msLeft <= 0) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+            timerEndTime = null;
+            timerDisplay.textContent = "Time's up! Stop and save.";
+            timerDisplay.style.color = "var(--danger)";
+            entryText.style.borderColor = "var(--danger)";
+            return;
         }
 
-        // ============================================================
-        // SUMMARY MODAL — day-stepper, scoped per day
-        // ============================================================
-        function openSummary() {
-            // Always open on today
+        const totalSecondsLeft = Math.ceil(msLeft / 1000);
+        const minutes = Math.floor(totalSecondsLeft / 60);
+        const seconds = totalSecondsLeft % 60;
+        timerDisplay.textContent = `Time left: ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+    }
+
+    // ============================================================
+    // SUMMARY MODAL
+    // ============================================================
+    function openSummary() {
+        summaryViewDate = new Date();
+        summaryViewDate.setHours(0, 0, 0, 0);
+        const modal = document.getElementById('summary-modal');
+        if (modal) modal.classList.add('show');
+        renderSummary();
+    }
+    function closeSummary() {
+        const modal = document.getElementById('summary-modal');
+        if (modal) modal.classList.remove('show');
+        summaryViewDate = null;
+    }
+    function setSummaryView(view) {
+        currentSummaryView = view;
+        const t = document.getElementById('view-timeline-btn');
+        const p = document.getElementById('view-project-btn');
+        const tm = document.getElementById('view-time-btn');
+        if (t) t.classList.toggle('active', view === 'timeline');
+        if (p) p.classList.toggle('active', view === 'project');
+        if (tm) tm.classList.toggle('active', view === 'time');
+        renderSummary();
+    }
+
+    window.summaryNavigateDay = function (delta) {
+        if (!summaryViewDate) {
             summaryViewDate = new Date();
             summaryViewDate.setHours(0, 0, 0, 0);
-            document.getElementById('summary-modal').classList.add('show');
-            renderSummary();
         }
-        function closeSummary() {
-            document.getElementById('summary-modal').classList.remove('show');
-            // Reset to today for next time
-            summaryViewDate = null;
+        const d = new Date(summaryViewDate);
+        d.setDate(d.getDate() + delta);
+        const todayMid = new Date();
+        todayMid.setHours(0, 0, 0, 0);
+        if (d.getTime() > todayMid.getTime()) return;
+        summaryViewDate = d;
+        renderSummary();
+    };
+
+    function updateDayNavBar() {
+        const labelEl = document.getElementById('day-nav-label');
+        const chipEl = document.getElementById('day-nav-today-chip');
+        const nextBtn = document.getElementById('day-next-btn');
+        if (!labelEl || !summaryViewDate) return;
+
+        const vKey = dateKey(summaryViewDate.getTime());
+        const tKey = todayKey();
+
+        if (vKey === tKey) {
+            labelEl.textContent = todayLabel();
+            if (chipEl) chipEl.classList.add('show');
+        } else {
+            labelEl.textContent = summaryViewDate.toLocaleDateString('en-US', {
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+            });
+            if (chipEl) chipEl.classList.remove('show');
         }
-        function setSummaryView(view) {
-            currentSummaryView = view;
-            document.getElementById('view-timeline-btn').classList.toggle('active', view === 'timeline');
-            document.getElementById('view-project-btn').classList.toggle('active', view === 'project');
-            document.getElementById('view-time-btn').classList.toggle('active', view === 'time');
-            renderSummary();
+
+        if (nextBtn) nextBtn.disabled = (vKey === tKey);
+    }
+
+    window.showSummaryHelp = function () {
+        const viewName = { timeline: 'Timeline', project: 'By Project', time: 'Time Spent' }[currentSummaryView];
+        const helpText = {
+            timeline: 'Timeline — every entry from the selected day, in order from earliest to latest.',
+            project: 'By Project — the selected day\'s entries, grouped under each project name. The default view.',
+            time: 'Time Spent — how long you spent on each project on the selected day, estimated from the gaps between entries.'
+        }[currentSummaryView];
+        alert(viewName + '\n\n' + helpText + '\n\nUse ← / → (or the Prev / Next buttons) to move between days.');
+    };
+
+    function getViewedDayLogs() {
+        if (!summaryViewDate) {
+            summaryViewDate = new Date();
+            summaryViewDate.setHours(0, 0, 0, 0);
         }
+        const vKey = dateKey(summaryViewDate.getTime());
+        return logs.filter(l => typeof l.timestamp === 'number' && dateKey(l.timestamp) === vKey);
+    }
 
-        // --- NEW: day navigation ---
-        window.summaryNavigateDay = function (delta) {
-            if (!summaryViewDate) summaryViewDate = new Date();
-            const d = new Date(summaryViewDate);
-            d.setDate(d.getDate() + delta);
-            // Don't navigate into the future
-            const todayMid = new Date();
-            todayMid.setHours(0, 0, 0, 0);
-            if (d.getTime() > todayMid.getTime()) return;
-            summaryViewDate = d;
-            renderSummary();
-        };
+    function computeTimeData() {
+        const withTs = getViewedDayLogs().slice().sort((a, b) => a.timestamp - b.timestamp);
+        const byProject = {};
+        const nowMs = Date.now();
+        const vKey = dateKey(summaryViewDate.getTime());
+        const isToday = (vKey === todayKey());
 
-        function updateDayNavBar() {
-            const labelEl = document.getElementById('day-nav-label');
-            const chipEl = document.getElementById('day-nav-today-chip');
-            const nextBtn = document.getElementById('day-next-btn');
-            if (!labelEl || !summaryViewDate) return;
+        const nextDayStart = new Date(summaryViewDate);
+        nextDayStart.setDate(nextDayStart.getDate() + 1);
+        const nextDayStartMs = nextDayStart.getTime();
 
-            const vKey = dateKey(summaryViewDate.getTime());
-            const tKey = todayKey();
-
-            if (vKey === tKey) {
-                labelEl.textContent = todayLabel();
-                chipEl.classList.add('show');
+        let totalMs = 0, pausedMs = 0;
+        for (let i = 0; i < withTs.length; i++) {
+            const cur = withTs[i];
+            const next = withTs[i + 1];
+            const project = cur.project || DEFAULT_PROJECT;
+            let endMs;
+            if (next) endMs = next.timestamp;
+            else endMs = isToday ? nowMs : Math.min(nowMs, nextDayStartMs);
+            const durationMs = Math.max(0, endMs - cur.timestamp);
+            if (cur._isWrapUp) continue;
+            if (!byProject[project]) byProject[project] = { ms: 0, entries: 0, hasWarning: false, paused: false };
+            byProject[project].entries += 1;
+            if (isSpecialProject(project)) {
+                byProject[project].paused = true;
+                pausedMs += durationMs;
             } else {
-                labelEl.textContent = summaryViewDate.toLocaleDateString('en-US', {
-                    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-                });
-                chipEl.classList.remove('show');
+                byProject[project].ms += durationMs;
+                totalMs += durationMs;
+                if (durationMs > LONG_GAP_THRESHOLD_MS) byProject[project].hasWarning = true;
             }
-
-            // Disable next when on today
-            nextBtn.disabled = (vKey === tKey);
         }
+        return { byProject, totalMs, pausedMs };
+    }
 
-        window.showSummaryHelp = function () {
-            const viewName = { timeline: 'Timeline', project: 'By Project', time: 'Time Spent' }[currentSummaryView];
-            const helpText = {
-                timeline: 'Timeline — every entry from the selected day, in order from earliest to latest.',
-                project: 'By Project — the selected day\'s entries, grouped under each project name. The default view.',
-                time: 'Time Spent — how long you spent on each project on the selected day, estimated from the gaps between entries.'
-            }[currentSummaryView];
-            alert(viewName + '\n\n' + helpText + '\n\nUse ← / → (or the Prev / Next buttons) to move between days.');
-        };
-
-        // Logs for the currently viewed day
-        function getViewedDayLogs() {
-            if (!summaryViewDate) {
-                summaryViewDate = new Date();
-                summaryViewDate.setHours(0, 0, 0, 0);
-            }
-            const vKey = dateKey(summaryViewDate.getTime());
-            return logs.filter(l => typeof l.timestamp === 'number' && dateKey(l.timestamp) === vKey);
+    function summaryHeaderHtml() {
+        const dayLogs = getViewedDayLogs();
+        const projects = new Set(dayLogs.map(l => l.project || DEFAULT_PROJECT));
+        const n = dayLogs.length;
+        const p = projects.size;
+        let subhead = '';
+        if (n === 0) {
+            subhead = 'No entries on this day';
+        } else {
+            subhead = `${n} ${n === 1 ? 'entry' : 'entries'} · ${p} ${p === 1 ? 'project' : 'projects'}`;
         }
+        const isToday = dateKey(summaryViewDate.getTime()) === todayKey();
+        const headingText = isToday ? 'The Pause — Today\'s Reflection' : 'The Pause — Daily Reflection';
+        return `<h1>${headingText}</h1>` +
+               `<div class="summary-date">${summaryViewDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>` +
+               `<div class="summary-subhead">${subhead}</div>`;
+    }
 
-        function computeTimeData() {
-            const withTs = getViewedDayLogs().slice().sort((a, b) => a.timestamp - b.timestamp);
-            const byProject = {};
-            const nowMs = Date.now();
-            const vKey = dateKey(summaryViewDate.getTime());
-            const isToday = (vKey === todayKey());
-
-            // For past days, cap the "last entry" duration at end of that day
-            const nextDayStart = new Date(summaryViewDate);
-            nextDayStart.setDate(nextDayStart.getDate() + 1);
-            const nextDayStartMs = nextDayStart.getTime();
-
-            let totalMs = 0, pausedMs = 0;
-            for (let i = 0; i < withTs.length; i++) {
-                const cur = withTs[i];
-                const next = withTs[i + 1];
-                const project = cur.project || DEFAULT_PROJECT;
-                let endMs;
-                if (next) endMs = next.timestamp;
-                else endMs = isToday ? nowMs : Math.min(nowMs, nextDayStartMs);
-                const durationMs = Math.max(0, endMs - cur.timestamp);
-                if (cur._isWrapUp) continue;
-                if (!byProject[project]) byProject[project] = { ms: 0, entries: 0, hasWarning: false, paused: false };
-                byProject[project].entries += 1;
-                if (isSpecialProject(project)) {
-                    byProject[project].paused = true;
-                    pausedMs += durationMs;
-                } else {
-                    byProject[project].ms += durationMs;
-                    totalMs += durationMs;
-                    if (durationMs > LONG_GAP_THRESHOLD_MS) byProject[project].hasWarning = true;
-                }
-            }
-            return { byProject, totalMs, pausedMs };
+    function renderSummaryEmptyState(html) {
+        const isToday = dateKey(summaryViewDate.getTime()) === todayKey();
+        html += `<div class="summary-empty">`;
+        html += `<span class="empty-icon">🌿</span>`;
+        if (isToday) {
+            html += `<div class="empty-title">Nothing logged today yet</div>`;
+            html += `<div class="empty-hint">Log an entry (or complete a Focus Block) and it'll show up here — grouped by project so you can see where your day went.</div>`;
+        } else {
+            html += `<div class="empty-title">No entries on this day</div>`;
+            html += `<div class="empty-hint">Use the ← Prev / Next → buttons above to move between days.</div>`;
         }
+        html += `</div>`;
+        const content = document.getElementById('summary-content');
+        if (content) content.innerHTML = html;
+    }
 
-        function summaryHeaderHtml() {
-            const dayLogs = getViewedDayLogs();
-            const projects = new Set(dayLogs.map(l => l.project || DEFAULT_PROJECT));
-            const n = dayLogs.length;
-            const p = projects.size;
-            let subhead = '';
-            if (n === 0) {
-                subhead = 'No entries on this day';
-            } else {
-                subhead = `${n} ${n === 1 ? 'entry' : 'entries'} · ${p} ${p === 1 ? 'project' : 'projects'}`;
-            }
-            const isToday = dateKey(summaryViewDate.getTime()) === todayKey();
-            const headingText = isToday ? 'The Pause — Today's Reflection' : 'The Pause — Daily Reflection';
-            return `<h1>${headingText}</h1>` +
-                   `<div class="summary-date">${summaryViewDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>` +
-                   `<div class="summary-subhead">${subhead}</div>`;
+    function renderTimeSpentView(html) {
+        const dayLogs = getViewedDayLogs();
+        html += summaryHeaderHtml();
+        if (dayLogs.length === 0) {
+            renderSummaryEmptyState(html);
+            return;
         }
+        const data = computeTimeData();
+        const entries = Object.entries(data.byProject);
+        const realProjects = entries.filter(([, v]) => !v.paused && v.ms > 0).sort((a, b) => b[1].ms - a[1].ms);
+        const pausedProjects = entries.filter(([, v]) => v.paused && v.ms > 0).sort((a, b) => b[1].ms - a[1].ms);
+        const totalForBars = data.totalMs + data.pausedMs || 1;
 
-        function renderSummaryEmptyState(html) {
-            const isToday = dateKey(summaryViewDate.getTime()) === todayKey();
-            html += `<div class="summary-empty">`;
-            html += `<span class="empty-icon">🌿</span>`;
-            if (isToday) {
-                html += `<div class="empty-title">Nothing logged today yet</div>`;
-                html += `<div class="empty-hint">Log an entry (or complete a Focus Block) and it'll show up here — grouped by project so you can see where your day went.</div>`;
-            } else {
-                html += `<div class="empty-title">No entries on this day</div>`;
-                html += `<div class="empty-hint">Use the ← Prev / Next → buttons above to move between days.</div>`;
-            }
-            html += `</div>`;
-            document.getElementById('summary-content').innerHTML = html;
-        }
+        const isToday = dateKey(summaryViewDate.getTime()) === todayKey();
+        const labelSuffix = isToday ? 'today' : 'this day';
 
-        function renderTimeSpentView(html) {
-            const dayLogs = getViewedDayLogs();
-            html += summaryHeaderHtml();
-            if (dayLogs.length === 0) {
-                renderSummaryEmptyState(html);
-                return;
-            }
-            const data = computeTimeData();
-            const entries = Object.entries(data.byProject);
-            const realProjects = entries.filter(([, v]) => !v.paused && v.ms > 0).sort((a, b) => b[1].ms - a[1].ms);
-            const pausedProjects = entries.filter(([, v]) => v.paused && v.ms > 0).sort((a, b) => b[1].ms - a[1].ms);
-            const totalForBars = data.totalMs + data.pausedMs || 1;
+        html += `<div class="time-total">`;
+        if (data.totalMs > 0) html += `Focus time ${labelSuffix}: <strong>${formatDuration(data.totalMs)}</strong>`;
+        else html += `<strong>0m</strong> of focus time logged`;
+        if (data.pausedMs > 0) html += `<div style="font-size: 0.8rem; color: #92400e; margin-top: 6px;">⏸️ ${formatDuration(data.pausedMs)} paused</div>`;
+        html += `</div>`;
 
-            const isToday = dateKey(summaryViewDate.getTime()) === todayKey();
-            const labelSuffix = isToday ? 'today' : 'this day';
+        realProjects.forEach(function ([name, v]) {
+            const pct = Math.round((v.ms / totalForBars) * 100);
+            const safeName = escapeHtml(name);
+            html += `
+                <div class="time-project">
+                    <div class="time-project-header">
+                        <span class="time-project-name">📁 ${safeName}</span>
+                        <span class="time-project-duration">
+                            ${formatDuration(v.ms)}
+                            <span class="pct">${pct}%</span>
+                            ${v.hasWarning ? '<span class="time-warning-icon" title="At least one gap over 2 hours was counted here — might include a break">⚠️</span>' : ''}
+                        </span>
+                    </div>
+                    <div class="time-bar-track"><div class="time-bar-fill" style="width: ${pct}%"></div></div>
+                    <div class="time-project-entry-count">${v.entries} ${v.entries === 1 ? 'entry' : 'entries'}</div>
+                </div>
+            `;
+        });
 
-            html += `<div class="time-total">`;
-            if (data.totalMs > 0) html += `Focus time ${labelSuffix}: <strong>${formatDuration(data.totalMs)}</strong>`;
-            else html += `<strong>0m</strong> of focus time logged`;
-            if (data.pausedMs > 0) html += `<div style="font-size: 0.8rem; color: #92400e; margin-top: 6px;">⏸️ ${formatDuration(data.pausedMs)} paused</div>`;
-            html += `</div>`;
-
-            realProjects.forEach(function ([name, v]) {
+        if (pausedProjects.length > 0) {
+            html += `<div style="margin-top: 28px; padding-top: 20px; border-top: 1px solid #eee;">`;
+            html += `<div style="font-size: 0.8rem; font-weight: 600; color: #92400e; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px;">⏸️ Paused / Break Time</div>`;
+            pausedProjects.forEach(function ([name, v]) {
                 const pct = Math.round((v.ms / totalForBars) * 100);
                 const safeName = escapeHtml(name);
                 html += `
                     <div class="time-project">
                         <div class="time-project-header">
-                            <span class="time-project-name">📁 ${safeName}</span>
-                            <span class="time-project-duration">
-                                ${formatDuration(v.ms)}
-                                <span class="pct">${pct}%</span>
-                                ${v.hasWarning ? '<span class="time-warning-icon" title="At least one gap over 2 hours was counted here — might include a break">⚠️</span>' : ''}
-                            </span>
+                            <span class="time-project-name" style="color:#92400e;">${safeName}</span>
+                            <span class="time-project-duration" style="color:#92400e;">${formatDuration(v.ms)}<span class="pct">${pct}%</span></span>
                         </div>
-                        <div class="time-bar-track"><div class="time-bar-fill" style="width: ${pct}%"></div></div>
-                        <div class="time-project-entry-count">${v.entries} ${v.entries === 1 ? 'entry' : 'entries'}</div>
+                        <div class="time-bar-track"><div class="time-bar-fill paused" style="width: ${pct}%"></div></div>
                     </div>
                 `;
             });
+            html += `</div>`;
+        }
 
-            if (pausedProjects.length > 0) {
-                html += `<div style="margin-top: 28px; padding-top: 20px; border-top: 1px solid #eee;">`;
-                html += `<div style="font-size: 0.8rem; font-weight: 600; color: #92400e; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px;">⏸️ Paused / Break Time</div>`;
-                pausedProjects.forEach(function ([name, v]) {
-                    const pct = Math.round((v.ms / totalForBars) * 100);
-                    const safeName = escapeHtml(name);
-                    html += `
-                        <div class="time-project">
-                            <div class="time-project-header">
-                                <span class="time-project-name" style="color:#92400e;">${safeName}</span>
-                                <span class="time-project-duration" style="color:#92400e;">${formatDuration(v.ms)}<span class="pct">${pct}%</span></span>
-                            </div>
-                            <div class="time-bar-track"><div class="time-bar-fill paused" style="width: ${pct}%"></div></div>
-                        </div>
-                    `;
+        html += `<div class="time-note">ⓘ Durations are estimated from the gaps between your log entries. Each entry "owns" the time between it and the next one.${isToday ? ' The most recent entry runs until now.' : ''}</div>`;
+        const content = document.getElementById('summary-content');
+        if (content) content.innerHTML = html;
+    }
+
+    function renderSummary() {
+        const content = document.getElementById('summary-content');
+        if (!content) return;
+        let html = '';
+        if (!summaryViewDate) {
+            summaryViewDate = new Date();
+            summaryViewDate.setHours(0, 0, 0, 0);
+        }
+
+        updateDayNavBar();
+
+        const dayLogs = getViewedDayLogs();
+
+        if (dayLogs.length === 0) {
+            html += summaryHeaderHtml();
+            renderSummaryEmptyState(html);
+            return;
+        }
+
+        if (currentSummaryView === 'time') {
+            renderTimeSpentView(html);
+            return;
+        }
+
+        html += summaryHeaderHtml();
+
+        if (currentSummaryView === 'timeline') {
+            [...dayLogs].sort((a, b) => b.timestamp - a.timestamp).forEach(log => {
+                const project = escapeHtml(log.project || DEFAULT_PROJECT);
+                const safeText = escapeHtml(log.text);
+                html += `<div class="summary-entry"><div class="summary-entry-time">${log.time} · <span class="project-tag">${project}</span></div><div class="summary-entry-text">${safeText}</div></div>`;
+            });
+        } else {
+            const grouped = {};
+            dayLogs.forEach(log => {
+                const p = log.project || DEFAULT_PROJECT;
+                if (!grouped[p]) grouped[p] = [];
+                grouped[p].push(log);
+            });
+            const sortedProjects = Object.keys(grouped).sort((a, b) => {
+                const aSpecial = isSpecialProject(a) ? 1 : 0;
+                const bSpecial = isSpecialProject(b) ? 1 : 0;
+                if (aSpecial !== bSpecial) return aSpecial - bSpecial;
+                return grouped[b].length - grouped[a].length;
+            });
+            sortedProjects.forEach(projectName => {
+                const projectLogs = grouped[projectName];
+                const safeProject = escapeHtml(projectName);
+                const pausedStyle = isSpecialProject(projectName) ? ' style="color: #92400e; border-bottom-color: #fbbf24;"' : '';
+                html += `<div class="summary-project-group"><div class="summary-project-header"${pausedStyle}><span>${isSpecialProject(projectName) ? '⏸️' : '📁'} ${safeProject}</span><span class="summary-project-count">${projectLogs.length} ${projectLogs.length === 1 ? 'entry' : 'entries'}</span></div>`;
+                [...projectLogs].sort((a, b) => a.timestamp - b.timestamp).forEach(log => {
+                    const safeText = escapeHtml(log.text);
+                    html += `<div class="summary-entry"><div class="summary-entry-time">${log.time}</div><div class="summary-entry-text">${safeText}</div></div>`;
                 });
                 html += `</div>`;
-            }
-
-            html += `<div class="time-note">ⓘ Durations are estimated from the gaps between your log entries. Each entry "owns" the time between it and the next one.${isToday ? ' The most recent entry runs until now.' : ''}</div>`;
-            document.getElementById('summary-content').innerHTML = html;
-        }
-
-        function renderSummary() {
-            const content = document.getElementById('summary-content');
-            let html = '';
-            if (!summaryViewDate) {
-                summaryViewDate = new Date();
-                summaryViewDate.setHours(0, 0, 0, 0);
-            }
-
-            updateDayNavBar();
-
-            const dayLogs = getViewedDayLogs();
-
-            if (dayLogs.length === 0) {
-                html += summaryHeaderHtml();
-                renderSummaryEmptyState(html);
-                return;
-            }
-
-            if (currentSummaryView === 'time') {
-                renderTimeSpentView(html);
-                return;
-            }
-
-            html += summaryHeaderHtml();
-
-            if (currentSummaryView === 'timeline') {
-                // Newest first (reverse diary within the day)
-                [...dayLogs].sort((a, b) => b.timestamp - a.timestamp).forEach(log => {
-                    const project = escapeHtml(log.project || DEFAULT_PROJECT);
-                    const safeText = escapeHtml(log.text);
-                    html += `<div class="summary-entry"><div class="summary-entry-time">${log.time} · <span class="project-tag">${project}</span></div><div class="summary-entry-text">${safeText}</div></div>`;
-                });
-            } else {
-                // By Project (default) — paused projects last
-                const grouped = {};
-                dayLogs.forEach(log => {
-                    const p = log.project || DEFAULT_PROJECT;
-                    if (!grouped[p]) grouped[p] = [];
-                    grouped[p].push(log);
-                });
-                const sortedProjects = Object.keys(grouped).sort((a, b) => {
-                    const aSpecial = isSpecialProject(a) ? 1 : 0;
-                    const bSpecial = isSpecialProject(b) ? 1 : 0;
-                    if (aSpecial !== bSpecial) return aSpecial - bSpecial;
-                    return grouped[b].length - grouped[a].length;
-                });
-                sortedProjects.forEach(projectName => {
-                    const projectLogs = grouped[projectName];
-                    const safeProject = escapeHtml(projectName);
-                    const pausedStyle = isSpecialProject(projectName) ? ' style="color: #92400e; border-bottom-color: #fbbf24;"' : '';
-                    html += `<div class="summary-project-group"><div class="summary-project-header"${pausedStyle}><span>${isSpecialProject(projectName) ? '⏸️' : '📁'} ${safeProject}</span><span class="summary-project-count">${projectLogs.length} ${projectLogs.length === 1 ? 'entry' : 'entries'}</span></div>`;
-                    // Within a project: chronological (oldest first)
-                    [...projectLogs].sort((a, b) => a.timestamp - b.timestamp).forEach(log => {
-                        const safeText = escapeHtml(log.text);
-                        html += `<div class="summary-entry"><div class="summary-entry-time">${log.time}</div><div class="summary-entry-text">${safeText}</div></div>`;
-                    });
-                    html += `</div>`;
-                });
-            }
-            content.innerHTML = html;
-        }
-
-        document.getElementById('summary-modal').addEventListener('click', function(e) { if (e.target === this) closeSummary(); });
-
-        function copySummary() {
-            const content = document.getElementById('summary-content');
-            const tempText = content.innerText;
-            navigator.clipboard.writeText(tempText).then(() => {
-                const btn = document.querySelector('.btn-copy');
-                const originalText = btn.textContent;
-                btn.textContent = "✅ Copied!";
-                setTimeout(() => { btn.textContent = originalText; }, 2000);
-            }).catch(err => alert("Failed to copy text: " + err));
-        }
-
-        // ============================================================
-        // WEEK VIEW (unchanged)
-        // ============================================================
-        window.openWeekView = function () {
-            if (!weekStartDate) weekStartDate = getMondayOf(new Date());
-            document.getElementById('week-modal').classList.add('show');
-            renderWeekView();
-        };
-        window.closeWeekView = function () {
-            document.getElementById('week-modal').classList.remove('show');
-            const pop = document.getElementById('block-detail-popover');
-            if (pop) pop.remove();
-        };
-        document.getElementById('week-modal').addEventListener('click', function (e) {
-            if (e.target === this) closeWeekView();
-            const pop = document.getElementById('block-detail-popover');
-            if (pop && !pop.contains(e.target)) pop.remove();
-        });
-
-        window.weekNavigate = function (delta) {
-            if (!weekStartDate) weekStartDate = getMondayOf(new Date());
-            weekStartDate = new Date(weekStartDate);
-            weekStartDate.setDate(weekStartDate.getDate() + delta * 7);
-            renderWeekView();
-            const pop = document.getElementById('block-detail-popover');
-            if (pop) pop.remove();
-        };
-
-        window.setWeekMode = function (mode) {
-            weekMode = mode;
-            document.getElementById('week-mode-stacked').classList.toggle('active', mode === 'stacked');
-            document.getElementById('week-mode-time').classList.toggle('active', mode === 'time');
-            renderWeekView();
-        };
-
-        window.showWeekHelp = function () {
-            const helpText = weekMode === 'stacked'
-                ? 'Stacked view — each day shows its projects as blocks. Taller blocks = more time spent. Click any block to see that day\'s entries (and delete them if needed).'
-                : 'Time Axis view — each block is positioned at the actual time of day it happened, so you can see when in the day you worked on each project. Click any block to see entries.';
-            alert('Week View\n\n' + helpText + '\n\nUse ← / → to move between weeks.');
-        };
-
-        function computeDayProjectDurations(dayKey_) {
-            const dayLogs = logs
-                .filter(l => typeof l.timestamp === 'number' && !isNaN(l.timestamp) && dateKey(l.timestamp) === dayKey_)
-                .sort((a, b) => a.timestamp - b.timestamp);
-            if (dayLogs.length === 0) return {};
-            const byProject = {};
-            const nowMs = Date.now();
-            const nextDayStart = new Date(dayKey_ + 'T00:00:00');
-            nextDayStart.setDate(nextDayStart.getDate() + 1);
-            const nextDayStartMs = nextDayStart.getTime();
-            for (let i = 0; i < dayLogs.length; i++) {
-                const cur = dayLogs[i];
-                const next = dayLogs[i + 1];
-                const project = cur.project || DEFAULT_PROJECT;
-                let endMs;
-                if (next) endMs = next.timestamp;
-                else endMs = Math.min(nowMs, nextDayStartMs);
-                const durationMs = Math.max(0, endMs - cur.timestamp);
-                if (cur._isWrapUp) continue;
-                if (!byProject[project]) byProject[project] = { ms: 0, entries: 0, paused: isSpecialProject(project), timestamps: [] };
-                byProject[project].ms += durationMs;
-                byProject[project].entries += 1;
-                byProject[project].timestamps.push(cur.timestamp);
-            }
-            return byProject;
-        }
-
-        function renderWeekView() {
-            if (!weekStartDate) weekStartDate = getMondayOf(new Date());
-            const monday = new Date(weekStartDate);
-            const sunday = new Date(monday);
-            sunday.setDate(monday.getDate() + 6);
-            const mLabel = monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-            const sLabel = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-            document.getElementById('week-label').textContent = mLabel + ' – ' + sLabel;
-            const thisMonday = getMondayOf(new Date());
-            document.getElementById('week-next-btn').disabled = monday.getTime() >= thisMonday.getTime();
-            const days = [];
-            for (let i = 0; i < 7; i++) {
-                const d = new Date(monday);
-                d.setDate(monday.getDate() + i);
-                days.push(d);
-            }
-            const todayKey_ = todayKey();
-            const dayData = days.map(d => {
-                const dk = dateKey(d.getTime());
-                const projects = computeDayProjectDurations(dk);
-                const totalMs = Object.values(projects).reduce((s, p) => s + (p.paused ? 0 : p.ms), 0);
-                const pausedMs = Object.values(projects).reduce((s, p) => s + (p.paused ? p.ms : 0), 0);
-                return { date: d, key: dk, projects: projects, totalMs: totalMs, pausedMs: pausedMs };
             });
-            const weekTotalMs = dayData.reduce((s, d) => s + d.totalMs, 0);
-            const weekPausedMs = dayData.reduce((s, d) => s + d.pausedMs, 0);
-            const allProjectsThisWeek = new Set();
-            dayData.forEach(d => Object.keys(d.projects).forEach(p => allProjectsThisWeek.add(p)));
-            const summaryEl = document.getElementById('week-summary');
+        }
+        content.innerHTML = html;
+    }
+
+    function copySummary() {
+        const content = document.getElementById('summary-content');
+        if (!content) return;
+        const tempText = content.innerText;
+        navigator.clipboard.writeText(tempText).then(() => {
+            const btn = document.querySelector('.btn-copy');
+            if (!btn) return;
+            const originalText = btn.textContent;
+            btn.textContent = "✅ Copied!";
+            setTimeout(() => { btn.textContent = originalText; }, 2000);
+        }).catch(err => alert("Failed to copy text: " + err));
+    }
+
+    // ============================================================
+    // WEEK VIEW
+    // ============================================================
+    window.openWeekView = function () {
+        if (!weekStartDate) weekStartDate = getMondayOf(new Date());
+        const modal = document.getElementById('week-modal');
+        if (modal) modal.classList.add('show');
+        renderWeekView();
+    };
+    window.closeWeekView = function () {
+        const modal = document.getElementById('week-modal');
+        if (modal) modal.classList.remove('show');
+        const pop = document.getElementById('block-detail-popover');
+        if (pop) pop.remove();
+    };
+
+    window.weekNavigate = function (delta) {
+        if (!weekStartDate) weekStartDate = getMondayOf(new Date());
+        weekStartDate = new Date(weekStartDate);
+        weekStartDate.setDate(weekStartDate.getDate() + delta * 7);
+        renderWeekView();
+        const pop = document.getElementById('block-detail-popover');
+        if (pop) pop.remove();
+    };
+
+    window.setWeekMode = function (mode) {
+        weekMode = mode;
+        const s = document.getElementById('week-mode-stacked');
+        const t = document.getElementById('week-mode-time');
+        if (s) s.classList.toggle('active', mode === 'stacked');
+        if (t) t.classList.toggle('active', mode === 'time');
+        renderWeekView();
+    };
+
+    window.showWeekHelp = function () {
+        const helpText = weekMode === 'stacked'
+            ? 'Stacked view — each day shows its projects as blocks. Taller blocks = more time spent. Click any block to see that day\'s entries (and delete them if needed).'
+            : 'Time Axis view — each block is positioned at the actual time of day it happened, so you can see when in the day you worked on each project. Click any block to see entries.';
+        alert('Week View\n\n' + helpText + '\n\nUse ← / → to move between weeks.');
+    };
+
+    function computeDayProjectDurations(dayKey_) {
+        const dayLogs = logs
+            .filter(l => typeof l.timestamp === 'number' && !isNaN(l.timestamp) && dateKey(l.timestamp) === dayKey_)
+            .sort((a, b) => a.timestamp - b.timestamp);
+        if (dayLogs.length === 0) return {};
+        const byProject = {};
+        const nowMs = Date.now();
+        const nextDayStart = new Date(dayKey_ + 'T00:00:00');
+        nextDayStart.setDate(nextDayStart.getDate() + 1);
+        const nextDayStartMs = nextDayStart.getTime();
+        for (let i = 0; i < dayLogs.length; i++) {
+            const cur = dayLogs[i];
+            const next = dayLogs[i + 1];
+            const project = cur.project || DEFAULT_PROJECT;
+            let endMs;
+            if (next) endMs = next.timestamp;
+            else endMs = Math.min(nowMs, nextDayStartMs);
+            const durationMs = Math.max(0, endMs - cur.timestamp);
+            if (cur._isWrapUp) continue;
+            if (!byProject[project]) byProject[project] = { ms: 0, entries: 0, paused: isSpecialProject(project), timestamps: [] };
+            byProject[project].ms += durationMs;
+            byProject[project].entries += 1;
+            byProject[project].timestamps.push(cur.timestamp);
+        }
+        return byProject;
+    }
+
+    function renderWeekView() {
+        if (!weekStartDate) weekStartDate = getMondayOf(new Date());
+        const monday = new Date(weekStartDate);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        const mLabel = monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const sLabel = sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const labelEl = document.getElementById('week-label');
+        if (labelEl) labelEl.textContent = mLabel + ' – ' + sLabel;
+
+        const thisMonday = getMondayOf(new Date());
+        const nextBtn = document.getElementById('week-next-btn');
+        if (nextBtn) nextBtn.disabled = monday.getTime() >= thisMonday.getTime();
+
+        const days = [];
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(monday);
+            d.setDate(monday.getDate() + i);
+            days.push(d);
+        }
+        const todayKey_ = todayKey();
+        const dayData = days.map(d => {
+            const dk = dateKey(d.getTime());
+            const projects = computeDayProjectDurations(dk);
+            const totalMs = Object.values(projects).reduce((s, p) => s + (p.paused ? 0 : p.ms), 0);
+            const pausedMs = Object.values(projects).reduce((s, p) => s + (p.paused ? p.ms : 0), 0);
+            return { date: d, key: dk, projects: projects, totalMs: totalMs, pausedMs: pausedMs };
+        });
+        const weekTotalMs = dayData.reduce((s, d) => s + d.totalMs, 0);
+        const weekPausedMs = dayData.reduce((s, d) => s + d.pausedMs, 0);
+        const allProjectsThisWeek = new Set();
+        dayData.forEach(d => Object.keys(d.projects).forEach(p => allProjectsThisWeek.add(p)));
+        const summaryEl = document.getElementById('week-summary');
+        if (summaryEl) {
             if (weekTotalMs === 0 && weekPausedMs === 0) summaryEl.innerHTML = '';
             else {
                 summaryEl.innerHTML = `
@@ -2662,499 +2742,548 @@
                     </div>
                 `;
             }
-            const gridEl = document.getElementById('week-grid-container');
-            if (weekMode === 'stacked') {
-                let html = '<div class="week-grid">';
-                dayData.forEach(day => {
-                    const isToday = day.key === todayKey_;
-                    html += `<div class="week-col ${isToday ? 'today' : ''}"><div class="week-col-header"><div class="week-col-day">${day.date.toLocaleDateString('en-US', { weekday: 'short' })}</div><div class="week-col-date">${day.date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</div>`;
-                    if (day.totalMs > 0) html += `<div class="week-col-total">${formatDuration(day.totalMs)}</div>`;
-                    else html += `<div class="week-col-total empty">—</div>`;
-                    html += `</div>`;
-                    const projectEntries = Object.entries(day.projects).sort((a, b) => b[1].ms - a[1].ms);
-                    if (projectEntries.length === 0) html += `<div style="flex:1; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:0.7rem;">—</div>`;
-                    else {
-                        html += `<div class="week-blocks">`;
-                        const totalForScale = projectEntries.reduce((s, [, v]) => s + v.ms, 0) || 1;
-                        projectEntries.forEach(([name, v]) => {
-                            const color = projectColor(name);
-                            const share = v.ms / totalForScale;
-                            const height = Math.max(24, Math.round(share * 140));
-                            const safeName = escapeHtml(name);
-                            const duration = formatDuration(v.ms);
-                            html += `<div class="week-block" style="background:${color}; height:${height}px;" onclick="openBlockDetail(event, '${day.key}', '${escapeHtml(name).replace(/'/g, '&#39;')}')" title="${safeName} · ${duration}"><div class="week-block-label"><span class="week-block-name">${safeName}</span><span class="week-block-duration">${duration}</span></div></div>`;
-                        });
-                        html += `</div>`;
-                    }
-                    html += `</div>`;
-                });
-                html += '</div>';
-                gridEl.innerHTML = html;
-            } else {
-                const startHour = 6, endHour = 24, hourHeight = 40;
-                let html = '<div class="week-grid time-axis">';
-                html += '<div class="time-axis-col"><div style="height: 0;"></div>';
-                for (let h = startHour; h <= endHour; h++) html += `<div class="time-axis-hour">${String(h).padStart(2, '0')}:00</div>`;
-                html += '</div>';
-                dayData.forEach(day => {
-                    const isToday = day.key === todayKey_;
-                    html += `<div class="week-col time-scheduled ${isToday ? 'today' : ''}"><div class="week-col-header"><div class="week-col-day">${day.date.toLocaleDateString('en-US', { weekday: 'short' })}</div><div class="week-col-date">${day.date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</div>`;
-                    if (day.totalMs > 0) html += `<div class="week-col-total">${formatDuration(day.totalMs)}</div>`;
-                    html += `</div>`;
-                    for (let h = startHour; h < endHour; h++) html += `<div style="position:absolute; left:0; right:0; top:${(h - startHour) * hourHeight + 50}px; height:1px; background:#eef2f6;"></div>`;
-                    Object.entries(day.projects).forEach(([name, v]) => {
-                        if (!v.timestamps || v.timestamps.length === 0) return;
-                        const earliest = Math.min(...v.timestamps);
-                        const firstDate = new Date(earliest);
-                        const startOffsetHours = (firstDate.getHours() + firstDate.getMinutes() / 60) - startHour;
-                        const topPx = Math.max(0, startOffsetHours * hourHeight) + 50;
-                        const heightPx = Math.max(22, (v.ms / (60 * 60 * 1000)) * hourHeight);
+        }
+        const gridEl = document.getElementById('week-grid-container');
+        if (!gridEl) return;
+        if (weekMode === 'stacked') {
+            let html = '<div class="week-grid">';
+            dayData.forEach(day => {
+                const isToday = day.key === todayKey_;
+                html += `<div class="week-col ${isToday ? 'today' : ''}"><div class="week-col-header"><div class="week-col-day">${day.date.toLocaleDateString('en-US', { weekday: 'short' })}</div><div class="week-col-date">${day.date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</div>`;
+                if (day.totalMs > 0) html += `<div class="week-col-total">${formatDuration(day.totalMs)}</div>`;
+                else html += `<div class="week-col-total empty">—</div>`;
+                html += `</div>`;
+                const projectEntries = Object.entries(day.projects).sort((a, b) => b[1].ms - a[1].ms);
+                if (projectEntries.length === 0) html += `<div style="flex:1; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:0.7rem;">—</div>`;
+                else {
+                    html += `<div class="week-blocks">`;
+                    const totalForScale = projectEntries.reduce((s, [, v]) => s + v.ms, 0) || 1;
+                    projectEntries.forEach(([name, v]) => {
                         const color = projectColor(name);
+                        const share = v.ms / totalForScale;
+                        const height = Math.max(24, Math.round(share * 140));
                         const safeName = escapeHtml(name);
                         const duration = formatDuration(v.ms);
-                        html += `<div class="week-block-absolute" style="top:${topPx}px; height:${heightPx}px; background:${color};" onclick="openBlockDetail(event, '${day.key}', '${escapeHtml(name).replace(/'/g, '&#39;')}')" title="${safeName} · ${duration}"><span class="week-block-name">${safeName} ${duration}</span></div>`;
+                        html += `<div class="week-block" style="background:${color}; height:${height}px;" onclick="openBlockDetail(event, '${day.key}', '${escapeHtml(name).replace(/'/g, '&#39;')}')" title="${safeName} · ${duration}"><div class="week-block-label"><span class="week-block-name">${safeName}</span><span class="week-block-duration">${duration}</span></div></div>`;
                     });
                     html += `</div>`;
-                });
-                html += '</div>';
-                gridEl.innerHTML = html;
-            }
-            const allProjects = new Set();
-            dayData.forEach(d => Object.keys(d.projects).forEach(p => allProjects.add(p)));
-            if (allProjects.size > 0) {
-                let legendHtml = '';
-                Array.from(allProjects).sort().forEach(name => {
+                }
+                html += `</div>`;
+            });
+            html += '</div>';
+            gridEl.innerHTML = html;
+        } else {
+            const startHour = 6, endHour = 24, hourHeight = 40;
+            let html = '<div class="week-grid time-axis">';
+            html += '<div class="time-axis-col"><div style="height: 0;"></div>';
+            for (let h = startHour; h <= endHour; h++) html += `<div class="time-axis-hour">${String(h).padStart(2, '0')}:00</div>`;
+            html += '</div>';
+            dayData.forEach(day => {
+                const isToday = day.key === todayKey_;
+                html += `<div class="week-col time-scheduled ${isToday ? 'today' : ''}"><div class="week-col-header"><div class="week-col-day">${day.date.toLocaleDateString('en-US', { weekday: 'short' })}</div><div class="week-col-date">${day.date.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}</div>`;
+                if (day.totalMs > 0) html += `<div class="week-col-total">${formatDuration(day.totalMs)}</div>`;
+                html += `</div>`;
+                for (let h = startHour; h < endHour; h++) html += `<div style="position:absolute; left:0; right:0; top:${(h - startHour) * hourHeight + 50}px; height:1px; background:#eef2f6;"></div>`;
+                Object.entries(day.projects).forEach(([name, v]) => {
+                    if (!v.timestamps || v.timestamps.length === 0) return;
+                    const earliest = Math.min(...v.timestamps);
+                    const firstDate = new Date(earliest);
+                    const startOffsetHours = (firstDate.getHours() + firstDate.getMinutes() / 60) - startHour;
+                    const topPx = Math.max(0, startOffsetHours * hourHeight) + 50;
+                    const heightPx = Math.max(22, (v.ms / (60 * 60 * 1000)) * hourHeight);
                     const color = projectColor(name);
-                    legendHtml += `<div class="week-legend-item"><span class="week-legend-swatch" style="background:${color};"></span>${escapeHtml(name)}</div>`;
+                    const safeName = escapeHtml(name);
+                    const duration = formatDuration(v.ms);
+                    html += `<div class="week-block-absolute" style="top:${topPx}px; height:${heightPx}px; background:${color};" onclick="openBlockDetail(event, '${day.key}', '${escapeHtml(name).replace(/'/g, '&#39;')}')" title="${safeName} · ${duration}"><span class="week-block-name">${safeName} ${duration}</span></div>`;
                 });
-                document.getElementById('week-legend').innerHTML = legendHtml;
-            } else {
-                document.getElementById('week-legend').innerHTML = '<div class="week-empty-msg" style="padding: 0; width: 100%;">No entries this week yet.</div>';
-            }
-        }
-
-        // ============================================================
-        // BLOCK DETAIL POPOVER (unchanged)
-        // ============================================================
-        let currentPopoverContext = null;
-
-        window.openBlockDetail = function (e, dayKey_, projectName) {
-            e.stopPropagation();
-            const existing = document.getElementById('block-detail-popover');
-            if (existing) existing.remove();
-            currentPopoverContext = { dayKey: dayKey_, projectName: projectName };
-            const dayLogs = logs.filter(l => {
-                if (typeof l.timestamp !== 'number') return false;
-                if (dateKey(l.timestamp) !== dayKey_) return false;
-                if ((l.project || DEFAULT_PROJECT) !== projectName) return false;
-                return true;
+                html += `</div>`;
             });
-            if (dayLogs.length === 0) { currentPopoverContext = null; return; }
-            const pop = document.createElement('div');
-            pop.id = 'block-detail-popover';
-            pop.className = 'block-detail-popover';
-            const sorted = dayLogs.slice().sort((a, b) => b.timestamp - a.timestamp);
-            const dateObj = new Date(dayKey_ + 'T12:00:00');
-            let html = `<h4>📁 ${escapeHtml(projectName)} · ${relativeDateLabel(dateObj.getTime())}</h4>`;
-            sorted.forEach(log => {
-                const idx = logs.indexOf(log);
-                html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${escapeHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
-            });
-            if (sorted.length > 1) html += `<div class="block-detail-actions"><button class="block-detail-delete-all" onclick="deleteAllInBlock(event)">🗑️ Delete all ${sorted.length} entries</button></div>`;
-            pop.innerHTML = html;
-            let left = e.clientX + 10;
-            let top = e.clientY + 10;
-            if (left + 340 > window.innerWidth) left = window.innerWidth - 350;
-            if (top + 400 > window.innerHeight) top = Math.max(10, window.innerHeight - 420);
-            pop.style.left = left + 'px';
-            pop.style.top = top + 'px';
-            document.body.appendChild(pop);
-        };
-
-        window.deleteEntryFromPopover = function (event, logIndex) {
-            event.stopPropagation();
-            if (logIndex < 0 || logIndex >= logs.length) return;
-            const log = logs[logIndex];
-            const preview = (log.text || '').split('\n')[0].slice(0, 50);
-            if (!confirm('Delete this entry?\n\n"' + preview + (preview.length < (log.text || '').length ? '…' : '') + '"\n\nThis cannot be undone.')) return;
-            logs.splice(logIndex, 1);
-            saveLocal();
-            renderLogs();
-            populateProjectSuggestions();
-            updateTodayTotal();
-            if (cloudUser) cloudSaveNow();
-            refreshPopoverAfterDelete();
-            // Also refresh Summary if open
-            if (document.getElementById('summary-modal').classList.contains('show')) renderSummary();
-        };
-
-        window.deleteAllInBlock = function (event) {
-            event.stopPropagation();
-            if (!currentPopoverContext) return;
-            const { dayKey, projectName } = currentPopoverContext;
-            const matching = logs.filter(l => typeof l.timestamp === 'number' && dateKey(l.timestamp) === dayKey && (l.project || DEFAULT_PROJECT) === projectName);
-            if (matching.length === 0) return;
-            const dateObj = new Date(dayKey + 'T12:00:00');
-            const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-            if (!confirm('Delete all ' + matching.length + ' entries for "' + projectName + '" on ' + dateLabel + '?\n\nThis cannot be undone.')) return;
-            for (let i = logs.length - 1; i >= 0; i--) {
-                const l = logs[i];
-                if (typeof l.timestamp !== 'number') continue;
-                if (dateKey(l.timestamp) !== dayKey) continue;
-                if ((l.project || DEFAULT_PROJECT) !== projectName) continue;
-                logs.splice(i, 1);
-            }
-            saveLocal();
-            renderLogs();
-            populateProjectSuggestions();
-            updateTodayTotal();
-            if (cloudUser) cloudSaveNow();
-            const pop = document.getElementById('block-detail-popover');
-            if (pop) pop.remove();
-            currentPopoverContext = null;
-            if (document.getElementById('week-modal').classList.contains('show')) renderWeekView();
-            if (document.getElementById('summary-modal').classList.contains('show')) renderSummary();
-        };
-
-        function refreshPopoverAfterDelete() {
-            const pop = document.getElementById('block-detail-popover');
-            if (!pop) return;
-            const ctx = currentPopoverContext;
-            if (!ctx) { pop.remove(); return; }
-            const stillHere = logs.filter(l => typeof l.timestamp === 'number' && dateKey(l.timestamp) === ctx.dayKey && (l.project || DEFAULT_PROJECT) === ctx.projectName);
-            if (document.getElementById('week-modal').classList.contains('show')) renderWeekView();
-            if (stillHere.length === 0) { pop.remove(); currentPopoverContext = null; return; }
-            const sorted = stillHere.slice().sort((a, b) => b.timestamp - a.timestamp);
-            const dateObj = new Date(ctx.dayKey + 'T12:00:00');
-            let html = `<h4>📁 ${escapeHtml(ctx.projectName)} · ${relativeDateLabel(dateObj.getTime())}</h4>`;
-            sorted.forEach(log => {
-                const idx = logs.indexOf(log);
-                html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${escapeHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
-            });
-            if (sorted.length > 1) html += `<div class="block-detail-actions"><button class="block-detail-delete-all" onclick="deleteAllInBlock(event)">🗑️ Delete all ${sorted.length} entries</button></div>`;
-            pop.innerHTML = html;
+            html += '</div>';
+            gridEl.innerHTML = html;
         }
-
-        // ============================================================
-        // REMINDERS
-        // ============================================================
-        function toggleReminderMenu() {
-            document.getElementById('reminder-menu').classList.toggle('show');
-            document.getElementById('cloud-menu').classList.remove('show');
+        const legendEl = document.getElementById('week-legend');
+        if (!legendEl) return;
+        const allProjects = new Set();
+        dayData.forEach(d => Object.keys(d.projects).forEach(p => allProjects.add(p)));
+        if (allProjects.size > 0) {
+            let legendHtml = '';
+            Array.from(allProjects).sort().forEach(name => {
+                const color = projectColor(name);
+                legendHtml += `<div class="week-legend-item"><span class="week-legend-swatch" style="background:${color};"></span>${escapeHtml(name)}</div>`;
+            });
+            legendEl.innerHTML = legendHtml;
+        } else {
+            legendEl.innerHTML = '<div class="week-empty-msg" style="padding: 0; width: 100%;">No entries this week yet.</div>';
         }
-        document.addEventListener('click', function(event) {
-            const menu = document.getElementById('reminder-menu');
-            const btn = document.getElementById('remind-btn');
-            if (!btn.contains(event.target) && !menu.contains(event.target)) menu.classList.remove('show');
+    }
+
+    // ============================================================
+    // BLOCK DETAIL POPOVER
+    // ============================================================
+    let currentPopoverContext = null;
+
+    window.openBlockDetail = function (e, dayKey_, projectName) {
+        e.stopPropagation();
+        const existing = document.getElementById('block-detail-popover');
+        if (existing) existing.remove();
+        currentPopoverContext = { dayKey: dayKey_, projectName: projectName };
+        const dayLogs = logs.filter(l => {
+            if (typeof l.timestamp !== 'number') return false;
+            if (dateKey(l.timestamp) !== dayKey_) return false;
+            if ((l.project || DEFAULT_PROJECT) !== projectName) return false;
+            return true;
         });
-        function setReminder(minutes) {
-            const btn = document.getElementById('remind-btn');
-            document.getElementById('reminder-menu').classList.remove('show');
-            if (!("Notification" in window)) { alert("This browser does not support desktop notifications."); return; }
-            if (Notification.permission !== "granted") {
-                Notification.requestPermission().then(function (permission) {
-                    if (permission === "granted") startReminderInterval(minutes, btn);
-                });
-            } else { startReminderInterval(minutes, btn); }
+        if (dayLogs.length === 0) { currentPopoverContext = null; return; }
+        const pop = document.createElement('div');
+        pop.id = 'block-detail-popover';
+        pop.className = 'block-detail-popover';
+        const sorted = dayLogs.slice().sort((a, b) => b.timestamp - a.timestamp);
+        const dateObj = new Date(dayKey_ + 'T12:00:00');
+        let html = `<h4>📁 ${escapeHtml(projectName)} · ${relativeDateLabel(dateObj.getTime())}</h4>`;
+        sorted.forEach(log => {
+            const idx = logs.indexOf(log);
+            html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${escapeHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
+        });
+        if (sorted.length > 1) html += `<div class="block-detail-actions"><button class="block-detail-delete-all" onclick="deleteAllInBlock(event)">🗑️ Delete all ${sorted.length} entries</button></div>`;
+        pop.innerHTML = html;
+        let left = e.clientX + 10;
+        let top = e.clientY + 10;
+        if (left + 340 > window.innerWidth) left = window.innerWidth - 350;
+        if (top + 400 > window.innerHeight) top = Math.max(10, window.innerHeight - 420);
+        pop.style.left = left + 'px';
+        pop.style.top = top + 'px';
+        document.body.appendChild(pop);
+    };
+
+    window.deleteEntryFromPopover = function (event, logIndex) {
+        event.stopPropagation();
+        if (logIndex < 0 || logIndex >= logs.length) return;
+        const log = logs[logIndex];
+        const preview = (log.text || '').split('\n')[0].slice(0, 50);
+        if (!confirm('Delete this entry?\n\n"' + preview + (preview.length < (log.text || '').length ? '…' : '') + '"\n\nThis cannot be undone.')) return;
+        logs.splice(logIndex, 1);
+        saveLocal();
+        renderLogs();
+        populateProjectSuggestions();
+        updateTodayTotal();
+        if (cloudUser) cloudSaveNow();
+        refreshPopoverAfterDelete();
+        const sumModal = document.getElementById('summary-modal');
+        if (sumModal && sumModal.classList.contains('show')) renderSummary();
+    };
+
+    window.deleteAllInBlock = function (event) {
+        event.stopPropagation();
+        if (!currentPopoverContext) return;
+        const { dayKey, projectName } = currentPopoverContext;
+        const matching = logs.filter(l => typeof l.timestamp === 'number' && dateKey(l.timestamp) === dayKey && (l.project || DEFAULT_PROJECT) === projectName);
+        if (matching.length === 0) return;
+        const dateObj = new Date(dayKey + 'T12:00:00');
+        const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        if (!confirm('Delete all ' + matching.length + ' entries for "' + projectName + '" on ' + dateLabel + '?\n\nThis cannot be undone.')) return;
+        for (let i = logs.length - 1; i >= 0; i--) {
+            const l = logs[i];
+            if (typeof l.timestamp !== 'number') continue;
+            if (dateKey(l.timestamp) !== dayKey) continue;
+            if ((l.project || DEFAULT_PROJECT) !== projectName) continue;
+            logs.splice(i, 1);
         }
-        function startReminderInterval(minutes, btn) {
-            if (reminderInterval) clearInterval(reminderInterval);
-            const ms = minutes * 60 * 1000;
+        saveLocal();
+        renderLogs();
+        populateProjectSuggestions();
+        updateTodayTotal();
+        if (cloudUser) cloudSaveNow();
+        const pop = document.getElementById('block-detail-popover');
+        if (pop) pop.remove();
+        currentPopoverContext = null;
+        const weekModal = document.getElementById('week-modal');
+        if (weekModal && weekModal.classList.contains('show')) renderWeekView();
+        const sumModal = document.getElementById('summary-modal');
+        if (sumModal && sumModal.classList.contains('show')) renderSummary();
+    };
+
+    function refreshPopoverAfterDelete() {
+        const pop = document.getElementById('block-detail-popover');
+        if (!pop) return;
+        const ctx = currentPopoverContext;
+        if (!ctx) { pop.remove(); return; }
+        const stillHere = logs.filter(l => typeof l.timestamp === 'number' && dateKey(l.timestamp) === ctx.dayKey && (l.project || DEFAULT_PROJECT) === ctx.projectName);
+        const weekModal = document.getElementById('week-modal');
+        if (weekModal && weekModal.classList.contains('show')) renderWeekView();
+        if (stillHere.length === 0) { pop.remove(); currentPopoverContext = null; return; }
+        const sorted = stillHere.slice().sort((a, b) => b.timestamp - a.timestamp);
+        const dateObj = new Date(ctx.dayKey + 'T12:00:00');
+        let html = `<h4>📁 ${escapeHtml(ctx.projectName)} · ${relativeDateLabel(dateObj.getTime())}</h4>`;
+        sorted.forEach(log => {
+            const idx = logs.indexOf(log);
+            html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${escapeHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
+        });
+        if (sorted.length > 1) html += `<div class="block-detail-actions"><button class="block-detail-delete-all" onclick="deleteAllInBlock(event)">🗑️ Delete all ${sorted.length} entries</button></div>`;
+        pop.innerHTML = html;
+    }
+
+    // ============================================================
+    // REMINDERS
+    // ============================================================
+    function toggleReminderMenu() {
+        const m = document.getElementById('reminder-menu');
+        const c = document.getElementById('cloud-menu');
+        if (m) m.classList.toggle('show');
+        if (c) c.classList.remove('show');
+    }
+    document.addEventListener('click', function(event) {
+        const menu = document.getElementById('reminder-menu');
+        const btn = document.getElementById('remind-btn');
+        if (!menu || !btn) return;
+        if (!btn.contains(event.target) && !menu.contains(event.target)) menu.classList.remove('show');
+    });
+    function setReminder(minutes) {
+        const btn = document.getElementById('remind-btn');
+        const menu = document.getElementById('reminder-menu');
+        if (menu) menu.classList.remove('show');
+        if (!("Notification" in window)) { alert("This browser does not support desktop notifications."); return; }
+        if (Notification.permission !== "granted") {
+            Notification.requestPermission().then(function (permission) {
+                if (permission === "granted") startReminderInterval(minutes, btn);
+            });
+        } else { startReminderInterval(minutes, btn); }
+    }
+    function startReminderInterval(minutes, btn) {
+        if (reminderInterval) clearInterval(reminderInterval);
+        const ms = minutes * 60 * 1000;
+        if (btn) {
             btn.textContent = `🔔 Active (${minutes}m)`;
             btn.classList.add('reminder-active');
-            new Notification("The Pause", { body: `Reminders set for every ${minutes} minutes.` });
-            reminderInterval = setInterval(() => {
-                new Notification("Time to pause?", { body: "Pause. What did you just do? What's next?" });
-            }, ms);
         }
-        function stopReminders() {
-            if (reminderInterval) clearInterval(reminderInterval);
-            const btn = document.getElementById('remind-btn');
+        new Notification("The Pause", { body: `Reminders set for every ${minutes} minutes.` });
+        reminderInterval = setInterval(() => {
+            new Notification("Time to pause?", { body: "Pause. What did you just do? What's next?" });
+        }, ms);
+    }
+    function stopReminders() {
+        if (reminderInterval) clearInterval(reminderInterval);
+        const btn = document.getElementById('remind-btn');
+        if (btn) {
             btn.textContent = "🔔 Remind";
             btn.classList.remove('reminder-active');
-            document.getElementById('reminder-menu').classList.remove('show');
         }
+        const menu = document.getElementById('reminder-menu');
+        if (menu) menu.classList.remove('show');
+    }
 
-        // ============================================================
-        // EXPORT & ANALOG
-        // ============================================================
-        function exportMarkdown() {
-            if (logs.length === 0) return alert("No logs to export.");
-            let mdContent = "# The Pause — Daily Log\n\n";
-            let currentProject = null;
-            [...logs].reverse().forEach(log => {
-                const project = log.project || DEFAULT_PROJECT;
-                if (project !== currentProject) { mdContent += `## 📁 ${project}\n\n`; currentProject = project; }
-                mdContent += `### ${log.time}\n${log.text}\n\n---\n`;
-            });
-            const blob = new Blob([mdContent], { type: 'text/markdown' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `the-pause-log-${new Date().toISOString().slice(0,10)}.md`;
-            a.click();
-            URL.revokeObjectURL(url);
-        }
+    // ============================================================
+    // EXPORT & ANALOG
+    // ============================================================
+    function exportMarkdown() {
+        if (logs.length === 0) return alert("No logs to export.");
+        let mdContent = "# The Pause — Daily Log\n\n";
+        let currentProject = null;
+        [...logs].reverse().forEach(log => {
+            const project = log.project || DEFAULT_PROJECT;
+            if (project !== currentProject) { mdContent += `## 📁 ${project}\n\n`; currentProject = project; }
+            mdContent += `### ${log.time}\n${log.text}\n\n---\n`;
+        });
+        const blob = new Blob([mdContent], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `the-pause-log-${new Date().toISOString().slice(0,10)}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
 
-        function toggleAnalog() {
-            const body = document.body;
-            const btn = document.getElementById('analog-toggle');
-            if (body.style.backgroundColor === 'rgb(232, 228, 219)') {
-                body.style.backgroundColor = 'var(--bg-color)';
+    function toggleAnalog() {
+        const body = document.body;
+        const btn = document.getElementById('analog-toggle');
+        if (body.style.backgroundColor === 'rgb(232, 228, 219)') {
+            body.style.backgroundColor = 'var(--bg-color)';
+            if (btn) {
                 btn.classList.remove('active');
                 btn.textContent = "📄 Analog";
-            } else {
-                body.style.backgroundColor = '#e8e4db';
+            }
+        } else {
+            body.style.backgroundColor = '#e8e4db';
+            if (btn) {
                 btn.classList.add('active');
                 btn.textContent = "💻 Digital";
             }
         }
+    }
 
-        // ============================================================
-        // LOCAL BACKUP
-        // ============================================================
-        function currentLocalKey() { return cloudUser ? localKeyForUser(cloudUser.uid) : LOCAL_KEY_ANON; }
-        function saveLocal() {
-            try { localStorage.setItem(currentLocalKey(), JSON.stringify(logs)); }
-            catch (e) { console.error('Local save failed:', e); }
-        }
-        function loadLocal() {
-            try {
-                const raw = localStorage.getItem(currentLocalKey());
-                return raw ? JSON.parse(raw) : [];
-            } catch (e) { return []; }
-        }
+    // ============================================================
+    // LOCAL BACKUP
+    // ============================================================
+    function currentLocalKey() { return cloudUser ? localKeyForUser(cloudUser.uid) : LOCAL_KEY_ANON; }
+    function saveLocal() {
+        try { localStorage.setItem(currentLocalKey(), JSON.stringify(logs)); }
+        catch (e) { console.error('Local save failed:', e); }
+    }
+    function loadLocal() {
+        try {
+            const raw = localStorage.getItem(currentLocalKey());
+            return raw ? JSON.parse(raw) : [];
+        } catch (e) { return []; }
+    }
 
-        // ============================================================
-        // CLOUD SYNC
-        // ============================================================
-        const firebaseConfig = {
-            apiKey: "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
-            authDomain: "qtodo-syn.firebaseapp.com",
-            projectId: "qtodo-syn",
-            messagingSenderId: "663058774385",
-            appId: "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
-        };
+    // ============================================================
+    // CLOUD SYNC
+    // ============================================================
+    const firebaseConfig = {
+        apiKey: "AIzaSyCn-INjtwiFoS66VXAADfVLLAqmjJOyksc",
+        authDomain: "qtodo-syn.firebaseapp.com",
+        projectId: "qtodo-syn",
+        messagingSenderId: "663058774385",
+        appId: "1:663058774385:web:a2972f2eb032c8cc4d5ed0"
+    };
 
-        let cloudApp = null;
+    let cloudApp = null;
 
-        function pauseDocRef() {
-            return cloudDb.collection('users').doc(cloudUser.uid).collection('pauseData').doc('logs');
-        }
+    function pauseDocRef() {
+        return cloudDb.collection('users').doc(cloudUser.uid).collection('pauseData').doc('logs');
+    }
 
-        function setCloudStatus(text) {
+    function setCloudStatus(text) {
+        const el = document.getElementById('cloudStatusLabel');
+        if (el) el.textContent = text;
+    }
+    function flashCloudStatus(text, ms) {
+        setCloudStatus(text);
+        setTimeout(function () {
             const el = document.getElementById('cloudStatusLabel');
-            if (el) el.textContent = text;
-        }
-        function flashCloudStatus(text, ms) {
-            setCloudStatus(text);
-            setTimeout(function () {
-                if (document.getElementById('cloudStatusLabel').textContent === text) setCloudStatus('');
-            }, ms || 4000);
-        }
+            if (el && el.textContent === text) setCloudStatus('');
+        }, ms || 4000);
+    }
 
-        function initCloud() {
-            try {
-                cloudApp = firebase.initializeApp(firebaseConfig, 'thepause');
-                cloudAuth = cloudApp.auth();
-                cloudDb = cloudApp.firestore();
-            } catch (err) {
-                console.error('Firebase init failed:', err);
-                setCloudStatus('Cloud unavailable');
-                return;
-            }
-            cloudAuth.onAuthStateChanged(function(user) {
-                cloudUser = user;
-                updateAuthUI();
-                if (user) loadFromCloud({ silent: true });
-                else {
-                    logs = loadLocal();
-                    renderLogs();
-                    populateProjectSuggestions();
-                    updateTodayTotal();
-                }
-            });
-            cloudAuth.getRedirectResult().catch(function(err) { console.error('Redirect sign-in failed:', err); });
+    function initCloud() {
+        try {
+            cloudApp = firebase.initializeApp(firebaseConfig, 'thepause');
+            cloudAuth = cloudApp.auth();
+            cloudDb = cloudApp.firestore();
+        } catch (err) {
+            console.error('Firebase init failed:', err);
+            setCloudStatus('Cloud unavailable');
+            return;
         }
-
-        function updateAuthUI() {
-            const signInBtn = document.getElementById('cloudSignInBtn');
-            const signedInArea = document.getElementById('cloudSignedInArea');
-            const userLabel = document.getElementById('cloudUserLabel');
-            if (cloudUser) {
-                signInBtn.style.display = 'none';
-                signedInArea.style.display = 'inline-flex';
-                userLabel.textContent = cloudUser.displayName || cloudUser.email || 'Signed in';
-            } else {
-                signInBtn.style.display = '';
-                signedInArea.style.display = 'none';
-            }
-        }
-
-        window.cloudSignIn = function () {
-            const provider = new firebase.auth.GoogleAuthProvider();
-            setCloudStatus('Signing in…');
-            cloudAuth.signInWithPopup(provider).catch(function (err) {
-                console.error('Popup sign-in failed, trying redirect:', err);
-                setCloudStatus('Retrying…');
-                cloudAuth.signInWithRedirect(provider).catch(function (err2) {
-                    console.error('Redirect sign-in also failed:', err2);
-                    setCloudStatus('Sign-in failed');
-                });
-            });
-        };
-
-        window.cloudSignOut = function () {
-            document.getElementById('cloud-menu').classList.remove('show');
-            cloudAuth.signOut().then(function() {
-                setCloudStatus('');
+        cloudAuth.onAuthStateChanged(function(user) {
+            cloudUser = user;
+            updateAuthUI();
+            if (user) loadFromCloud({ silent: true });
+            else {
                 logs = loadLocal();
                 renderLogs();
                 populateProjectSuggestions();
                 updateTodayTotal();
-            });
-        };
-
-        window.toggleCloudMenu = function () {
-            document.getElementById('cloud-menu').classList.toggle('show');
-            document.getElementById('reminder-menu').classList.remove('show');
-        };
-        document.addEventListener('click', function(event) {
-            const menu = document.getElementById('cloud-menu');
-            const btn = document.getElementById('cloudMenuBtn');
-            if (!menu || !btn) return;
-            if (!btn.contains(event.target) && !menu.contains(event.target)) menu.classList.remove('show');
+            }
         });
+        cloudAuth.getRedirectResult().catch(function(err) { console.error('Redirect sign-in failed:', err); });
+    }
 
-        function cloudSaveNow() {
-            if (!cloudUser) return Promise.resolve();
-            return pauseDocRef().set({
+    function updateAuthUI() {
+        const signInBtn = document.getElementById('cloudSignInBtn');
+        const signedInArea = document.getElementById('cloudSignedInArea');
+        const userLabel = document.getElementById('cloudUserLabel');
+        if (cloudUser) {
+            if (signInBtn) signInBtn.style.display = 'none';
+            if (signedInArea) signedInArea.style.display = 'inline-flex';
+            if (userLabel) userLabel.textContent = cloudUser.displayName || cloudUser.email || 'Signed in';
+        } else {
+            if (signInBtn) signInBtn.style.display = '';
+            if (signedInArea) signedInArea.style.display = 'none';
+        }
+    }
+
+    window.cloudSignIn = function () {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        setCloudStatus('Signing in…');
+        cloudAuth.signInWithPopup(provider).catch(function (err) {
+            console.error('Popup sign-in failed, trying redirect:', err);
+            setCloudStatus('Retrying…');
+            cloudAuth.signInWithRedirect(provider).catch(function (err2) {
+                console.error('Redirect sign-in also failed:', err2);
+                setCloudStatus('Sign-in failed');
+            });
+        });
+    };
+
+    window.cloudSignOut = function () {
+        const menu = document.getElementById('cloud-menu');
+        if (menu) menu.classList.remove('show');
+        cloudAuth.signOut().then(function() {
+            setCloudStatus('');
+            logs = loadLocal();
+            renderLogs();
+            populateProjectSuggestions();
+            updateTodayTotal();
+        });
+    };
+
+    window.toggleCloudMenu = function () {
+        const m = document.getElementById('cloud-menu');
+        const r = document.getElementById('reminder-menu');
+        if (m) m.classList.toggle('show');
+        if (r) r.classList.remove('show');
+    };
+    document.addEventListener('click', function(event) {
+        const menu = document.getElementById('cloud-menu');
+        const btn = document.getElementById('cloudMenuBtn');
+        if (!menu || !btn) return;
+        if (!btn.contains(event.target) && !menu.contains(event.target)) menu.classList.remove('show');
+    });
+
+    function cloudSaveNow() {
+        if (!cloudUser) return Promise.resolve();
+        return pauseDocRef().set({
+            logsJson: JSON.stringify(logs),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true }).then(function () {
+            flashCloudStatus('☁ Saved ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+        }).catch(function (err) {
+            console.error('Cloud save failed:', err);
+            flashCloudStatus('☁ Save failed');
+        });
+    }
+
+    window.cloudSave = function () {
+        if (!cloudUser) return;
+        const menu = document.getElementById('cloud-menu');
+        if (menu) menu.classList.remove('show');
+        setCloudStatus('Saving…');
+        cloudSaveNow();
+    };
+
+    function loadFromCloud(opts) {
+        opts = opts || {};
+        if (!cloudUser) return;
+        if (!opts.silent) setCloudStatus('Loading…');
+        else setCloudStatus('Syncing…');
+        pauseDocRef().get().then(function (doc) {
+            if (doc.exists && doc.data().logsJson) {
+                try {
+                    const cloudLogs = JSON.parse(doc.data().logsJson);
+                    if (Array.isArray(cloudLogs)) {
+                        logs = cloudLogs;
+                        saveLocal();
+                        renderLogs();
+                        populateProjectSuggestions();
+                        updateTodayTotal();
+                        flashCloudStatus('☁ Synced ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+                        return;
+                    }
+                } catch (e) { console.error('Bad cloud data:', e); }
+            }
+            setCloudStatus('Uploading local data…');
+            pauseDocRef().set({
                 logsJson: JSON.stringify(logs),
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             }, { merge: true }).then(function () {
-                flashCloudStatus('☁ Saved ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
-            }).catch(function (err) {
-                console.error('Cloud save failed:', err);
-                flashCloudStatus('☁ Save failed');
-            });
-        }
-
-        window.cloudSave = function () {
-            if (!cloudUser) return;
-            document.getElementById('cloud-menu').classList.remove('show');
-            setCloudStatus('Saving…');
-            cloudSaveNow();
-        };
-
-        function loadFromCloud(opts) {
-            opts = opts || {};
-            if (!cloudUser) return;
-            if (!opts.silent) setCloudStatus('Loading…');
-            else setCloudStatus('Syncing…');
-            pauseDocRef().get().then(function (doc) {
-                if (doc.exists && doc.data().logsJson) {
-                    try {
-                        const cloudLogs = JSON.parse(doc.data().logsJson);
-                        if (Array.isArray(cloudLogs)) {
-                            logs = cloudLogs;
-                            saveLocal();
-                            renderLogs();
-                            populateProjectSuggestions();
-                            updateTodayTotal();
-                            flashCloudStatus('☁ Synced ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
-                            return;
-                        }
-                    } catch (e) { console.error('Bad cloud data:', e); }
-                }
-                setCloudStatus('Uploading local data…');
-                pauseDocRef().set({
-                    logsJson: JSON.stringify(logs),
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                }, { merge: true }).then(function () {
-                    flashCloudStatus('☁ Synced ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
-                });
-            }).catch(function (err) {
-                console.error('Cloud load failed:', err);
-                setCloudStatus('Load failed');
-            });
-        }
-
-        window.cloudLoad = function () {
-            if (!cloudUser) return;
-            document.getElementById('cloud-menu').classList.remove('show');
-            if (!confirm('Reload from cloud? This will replace what\'s on screen with the cloud version.')) return;
-            loadFromCloud({ silent: false });
-        };
-
-        window.syncNow = function () {
-            if (!cloudUser) return;
-            document.getElementById('cloud-menu').classList.remove('show');
-            setCloudStatus('Syncing…');
-            pauseDocRef().get().then(function (doc) {
-                if (doc.exists && doc.data().logsJson) {
-                    try {
-                        const cloudLogs = JSON.parse(doc.data().logsJson);
-                        if (Array.isArray(cloudLogs) && cloudLogs.length >= logs.length) {
-                            logs = cloudLogs;
-                            saveLocal();
-                            renderLogs();
-                            populateProjectSuggestions();
-                            updateTodayTotal();
-                        }
-                    } catch (e) { /* fall through */ }
-                }
-                return pauseDocRef().set({
-                    logsJson: JSON.stringify(logs),
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                }, { merge: true });
-            }).then(function () {
                 flashCloudStatus('☁ Synced ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
-            }).catch(function (err) {
-                console.error('Sync failed:', err);
-                setCloudStatus('Sync failed');
             });
-        };
-
-        function scheduleCloudAutoSave() {
-            if (!cloudUser) return;
-            clearTimeout(cloudSaveTimer);
-            cloudSaveTimer = setTimeout(function () {
-                pauseDocRef().set({
-                    logsJson: JSON.stringify(logs),
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                }, { merge: true }).catch(function (err) { console.error('Auto-save failed:', err); });
-            }, 3000);
-        }
-
-        // ============================================================
-        // KEYBOARD SHORTCUTS (updated for Summary day-nav)
-        // ============================================================
-        document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') {
-                const pop = document.getElementById('block-detail-popover');
-                if (pop) { pop.remove(); currentPopoverContext = null; return; }
-                if (document.getElementById('week-modal').classList.contains('show')) { closeWeekView(); return; }
-                if (document.getElementById('summary-modal').classList.contains('show')) { closeSummary(); return; }
-            }
-            if (document.getElementById('week-modal').classList.contains('show')) {
-                if (e.key === 'ArrowLeft') weekNavigate(-1);
-                if (e.key === 'ArrowRight') weekNavigate(1);
-            }
-            // Arrow keys inside Summary → navigate days
-            if (document.getElementById('summary-modal').classList.contains('show')) {
-                // Only trigger if not typing in an input
-                const tag = (e.target && e.target.tagName) || '';
-                if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
-                    if (e.key === 'ArrowLeft') { e.preventDefault(); summaryNavigateDay(-1); }
-                    if (e.key === 'ArrowRight') { e.preventDefault(); summaryNavigateDay(1); }
-                }
-            }
+        }).catch(function (err) {
+            console.error('Cloud load failed:', err);
+            setCloudStatus('Load failed');
         });
+    }
 
-        // ============================================================
-        // BOOT
-        // ============================================================
-        window.addEventListener('DOMContentLoaded', function () {
+    window.cloudLoad = function () {
+        if (!cloudUser) return;
+        const menu = document.getElementById('cloud-menu');
+        if (menu) menu.classList.remove('show');
+        if (!confirm('Reload from cloud? This will replace what\'s on screen with the cloud version.')) return;
+        loadFromCloud({ silent: false });
+    };
+
+    window.syncNow = function () {
+        if (!cloudUser) return;
+        const menu = document.getElementById('cloud-menu');
+        if (menu) menu.classList.remove('show');
+        setCloudStatus('Syncing…');
+        pauseDocRef().get().then(function (doc) {
+            if (doc.exists && doc.data().logsJson) {
+                try {
+                    const cloudLogs = JSON.parse(doc.data().logsJson);
+                    if (Array.isArray(cloudLogs) && cloudLogs.length >= logs.length) {
+                        logs = cloudLogs;
+                        saveLocal();
+                        renderLogs();
+                        populateProjectSuggestions();
+                        updateTodayTotal();
+                    }
+                } catch (e) { /* fall through */ }
+            }
+            return pauseDocRef().set({
+                logsJson: JSON.stringify(logs),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        }).then(function () {
+            flashCloudStatus('☁ Synced ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+        }).catch(function (err) {
+            console.error('Sync failed:', err);
+            setCloudStatus('Sync failed');
+        });
+    };
+
+    function scheduleCloudAutoSave() {
+        if (!cloudUser) return;
+        clearTimeout(cloudSaveTimer);
+        cloudSaveTimer = setTimeout(function () {
+            pauseDocRef().set({
+                logsJson: JSON.stringify(logs),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true }).catch(function (err) { console.error('Auto-save failed:', err); });
+        }, 3000);
+    }
+
+    // ============================================================
+    // KEYBOARD SHORTCUTS
+    // ============================================================
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            const pop = document.getElementById('block-detail-popover');
+            if (pop) { pop.remove(); currentPopoverContext = null; return; }
+            const wk = document.getElementById('week-modal');
+            if (wk && wk.classList.contains('show')) { closeWeekView(); return; }
+            const sm = document.getElementById('summary-modal');
+            if (sm && sm.classList.contains('show')) { closeSummary(); return; }
+        }
+        const wk2 = document.getElementById('week-modal');
+        if (wk2 && wk2.classList.contains('show')) {
+            if (e.key === 'ArrowLeft') weekNavigate(-1);
+            if (e.key === 'ArrowRight') weekNavigate(1);
+        }
+        const sm2 = document.getElementById('summary-modal');
+        if (sm2 && sm2.classList.contains('show')) {
+            const tag = (e.target && e.target.tagName) || '';
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+                if (e.key === 'ArrowLeft') { e.preventDefault(); summaryNavigateDay(-1); }
+                if (e.key === 'ArrowRight') { e.preventDefault(); summaryNavigateDay(1); }
+            }
+        }
+    });
+
+    // ============================================================
+    // BOOT — attach click handlers and initialize
+    // ============================================================
+    function boot() {
+        try {
+            // Wire up buttons programmatically (belt and braces — inline
+            // onclick attributes still work, but explicit listeners are
+            // more robust if something in the DOM ever shifts).
+            const saveBtn = document.getElementById('save-btn');
+            if (saveBtn) saveBtn.addEventListener('click', handleSaveLog);
+
+            const startBtn = document.getElementById('start-btn');
+            if (startBtn) startBtn.addEventListener('click', handleStartTimer);
+
+            const sumModal = document.getElementById('summary-modal');
+            if (sumModal) sumModal.addEventListener('click', function (e) { if (e.target === this) closeSummary(); });
+
+            const weekModal = document.getElementById('week-modal');
+            if (weekModal) weekModal.addEventListener('click', function (e) {
+                if (e.target === this) closeWeekView();
+                const pop = document.getElementById('block-detail-popover');
+                if (pop && !pop.contains(e.target)) pop.remove();
+            });
+
             logs = loadLocal();
             renderLogs();
             populateProjectSuggestions();
@@ -3164,9 +3293,28 @@
             weekStartDate = getMondayOf(new Date());
             initCloud();
             setInterval(updateTodayTotal, 30000);
-        });
 
-        window.addEventListener('beforeunload', function () { saveLocal(); });
+            console.log('[The Pause] Booted successfully.');
+        } catch (err) {
+            console.error('[The Pause] Boot failed:', err);
+            const banner = document.getElementById('boot-error-banner');
+            const msgEl = document.getElementById('boot-error-message');
+            if (banner && msgEl) {
+                msgEl.textContent = err.message || String(err);
+                banner.classList.add('show');
+            }
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        // DOM already loaded by the time this script runs (which can
+        // happen if the browser parses fast) — boot immediately.
+        boot();
+    }
+
+    window.addEventListener('beforeunload', function () { saveLocal(); });
     </script>
 </body>
 </html>
