@@ -2529,7 +2529,7 @@
             html += `
                 <div class="time-project">
                     <div class="time-project-header">
-                        <span class="time-project-name">📁 ${safeName}</span>
+                        <span class="time-project-name">📁 ${safeName} <button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(name)}" title="Send this project to Google Calendar"></button></span>
                         <span class="time-project-duration">
                             ${formatDuration(v.ms)}
                             <span class="pct">${pct}%</span>
@@ -2551,7 +2551,7 @@
                 html += `
                     <div class="time-project">
                         <div class="time-project-header">
-                            <span class="time-project-name" style="color:#92400e;">${safeName}</span>
+                            <span class="time-project-name" style="color:#92400e;">${safeName} <button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(name)}" title="Send this to Google Calendar"></button></span>
                             <span class="time-project-duration" style="color:#92400e;">${formatDuration(v.ms)}<span class="pct">${pct}%</span></span>
                         </div>
                         <div class="time-bar-track"><div class="time-bar-fill paused" style="width: ${pct}%"></div></div>
@@ -2615,7 +2615,7 @@
                 const projectLogs = grouped[projectName];
                 const safeProject = escapeHtml(projectName);
                 const pausedStyle = isSpecialProject(projectName) ? ' style="color: #92400e; border-bottom-color: #fbbf24;"' : '';
-                html += `<div class="summary-project-group"><div class="summary-project-header"${pausedStyle}><span>${isSpecialProject(projectName) ? '⏸️' : '📁'} ${safeProject}</span><span class="summary-project-count">${projectLogs.length} ${projectLogs.length === 1 ? 'entry' : 'entries'}</span></div>`;
+                html += `<div class="summary-project-group"><div class="summary-project-header"${pausedStyle}><span>${isSpecialProject(projectName) ? '⏸️' : '📁'} ${safeProject} <button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(projectName)}" title="Send this project to Google Calendar"></button></span><span class="summary-project-count">${projectLogs.length} ${projectLogs.length === 1 ? 'entry' : 'entries'}</span></div>`;
                 [...projectLogs].sort((a, b) => a.timestamp - b.timestamp).forEach(log => {
                     const safeText = escapeHtml(log.text);
                     html += `<div class="summary-entry"><div class="summary-entry-time">${log.time}</div><div class="summary-entry-text">${safeText}</div></div>`;
@@ -3631,6 +3631,133 @@
     document.getElementById('calDatePickBtn').addEventListener('click', function () {
         const v = calDatePickInput.value; closeCalDateModal(); if (v) sendCalAllDay(v);
     });
+    </script>
+
+    <div class="cal-modal-backdrop hidden" id="calProjModalBackdrop">
+        <div class="cal-modal">
+            <div class="cal-modal-title">📅 Send project to Calendar</div>
+            <div class="cal-modal-text" id="calProjModalNote"></div>
+            <button type="button" class="cal-opt-btn" id="calProjBlocksBtn">🕐 One timed event per work block (shows when &amp; how long)</button>
+            <button type="button" class="cal-opt-btn" id="calProjDayBtn">🗓️ One whole-day event with the total time</button>
+            <button type="button" class="cal-cancel-btn" id="calProjCancelBtn">Cancel</button>
+        </div>
+    </div>
+    <style>
+    .proj-cal-btn { display: inline-flex; padding: 0 5px; margin-left: 4px; background: transparent; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 0.8rem; line-height: 1.5; vertical-align: middle; }
+    .proj-cal-btn::before { content: '📅'; }
+    .proj-cal-btn:hover { background: #ecfdf5; border-color: var(--success); }
+    @media print { .proj-cal-btn { display: none !important; } }
+    </style>
+    <script>
+    // ---- Single-project → Google Calendar (uses the helpers above) ----
+    let calProjectName = null;
+
+    // Work blocks for one project on the viewed day. An entry "owns" the time until the next
+    // entry (any project) — same rule as the Time Spent view. Consecutive entries of the same
+    // project merge into one block; the wrap-up marker ends a block but is not itself counted.
+    function computeProjectBlocks(project) {
+        const dayLogs = getViewedDayLogs().slice().sort(function (a, b) { return a.timestamp - b.timestamp; });
+        const nowMs = Date.now();
+        const isToday = dateKey(summaryViewDate.getTime()) === todayKey();
+        const nextDay = new Date(summaryViewDate); nextDay.setDate(nextDay.getDate() + 1);
+        const capMs = isToday ? nowMs : Math.min(nowMs, nextDay.getTime());
+        const blocks = [];
+        let cur = null;
+        for (let i = 0; i < dayLogs.length; i++) {
+            const log = dayLogs[i], next = dayLogs[i + 1];
+            const proj = log.project || DEFAULT_PROJECT;
+            const endMs = next ? next.timestamp : capMs;
+            if (log._isWrapUp || proj !== project) { cur = null; continue; }
+            if (cur && Math.abs(cur.endMs - log.timestamp) < 1000) {
+                cur.endMs = Math.max(endMs, log.timestamp);
+                cur.logs.push(log);
+            } else {
+                cur = { startMs: log.timestamp, endMs: Math.max(endMs, log.timestamp), logs: [log] };
+                blocks.push(cur);
+            }
+        }
+        return blocks;
+    }
+
+    function projectEntriesText(logs) {
+        const out = [];
+        logs.forEach(function (log) {
+            const lines = String(log.text || '').split('\n');
+            out.push('  ' + log.time + '  ' + lines[0]);
+            lines.slice(1).forEach(function (l) { if (l.trim()) out.push('        ' + l); });
+        });
+        return out.join('\n');
+    }
+
+    function sendProjectBlocks() {
+        const project = calProjectName;
+        const blocks = computeProjectBlocks(project).filter(function (b) { return b.endMs - b.startMs >= 60000; });
+        if (!blocks.length) { showCalToast('No timed work found for this project (needs at least 1 minute).', true); return; }
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const dayStr = summaryViewDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+        const total = blocks.reduce(function (s, b) { return s + (b.endMs - b.startMs); }, 0);
+        const pausedTag = isSpecialProject(project);
+        blocks.forEach(function (b, i) {
+            const start = new Date(b.startMs); start.setSeconds(0, 0);
+            const ms = b.endMs - b.startMs;
+            sendCalEvent({
+                summary: (pausedTag ? '⏸️ ' : CAL_TITLE_ICON) + project + ' · ' + formatDuration(ms),
+                description: project + ' — ' + dayStr + '\nBlock ' + (i + 1) + ' of ' + blocks.length +
+                    ' · ' + formatDuration(ms) + ' (project total today: ' + formatDuration(total) + ')\n\n' + projectEntriesText(b.logs),
+                start: { dateTime: start.toISOString(), timeZone: tz },
+                end: { dateTime: new Date(b.endMs).toISOString(), timeZone: tz }
+            });
+        });
+    }
+
+    function sendProjectWholeDay() {
+        const project = calProjectName;
+        const blocks = computeProjectBlocks(project);
+        if (!blocks.length) { showCalToast('No entries for this project on this day.', true); return; }
+        const total = blocks.reduce(function (s, b) { return s + (b.endMs - b.startMs); }, 0);
+        const dayStr = summaryViewDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+        const lines = [project + ' — ' + dayStr, 'Total time: ' + formatDuration(total) + ' across ' + blocks.length + (blocks.length === 1 ? ' block' : ' blocks'), ''];
+        blocks.forEach(function (b) {
+            const f = function (ms) { return new Date(ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }); };
+            lines.push(f(b.startMs) + '–' + f(b.endMs) + '  (' + formatDuration(b.endMs - b.startMs) + ')');
+            lines.push(projectEntriesText(b.logs));
+        });
+        const dateStr = ymd(summaryViewDate);
+        const next = new Date(dateStr + 'T00:00:00'); next.setDate(next.getDate() + 1);
+        sendCalEvent({
+            summary: (isSpecialProject(project) ? '⏸️ ' : CAL_TITLE_ICON) + project + ' · ' + formatDuration(total),
+            description: lines.join('\n'),
+            start: { date: dateStr }, end: { date: ymd(next) }
+        });
+    }
+
+    async function openProjectCalModal(project) {
+        if (!cloudUser) { showCalToast('Please ☁ Sign in first, then click 📅.', true); return; }
+        if (!gcalTokenIsFresh()) {
+            if (!initGisTokenClient()) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+            const ok = await ensureCalendarConnected();
+            if (!ok) { showCalToast('⚠️ Calendar not connected — finish the Google popup, then click 📅 again', true); return; }
+        }
+        calProjectName = project;
+        const blocks = computeProjectBlocks(project);
+        const total = blocks.reduce(function (s, b) { return s + (b.endMs - b.startMs); }, 0);
+        document.getElementById('calProjModalNote').textContent =
+            '📁 ' + project + ' — ' + summaryViewDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) +
+            '\n' + blocks.length + (blocks.length === 1 ? ' block' : ' blocks') + ' · ' + formatDuration(total);
+        document.getElementById('calProjModalBackdrop').classList.remove('hidden');
+    }
+    function closeProjectCalModal() { document.getElementById('calProjModalBackdrop').classList.add('hidden'); }
+
+    document.getElementById('summary-content').addEventListener('click', function (e) {
+        const btn = e.target.closest && e.target.closest('.proj-cal-btn');
+        if (!btn) return;
+        e.stopPropagation();
+        openProjectCalModal(decodeURIComponent(btn.getAttribute('data-project')));
+    });
+    document.getElementById('calProjCancelBtn').addEventListener('click', closeProjectCalModal);
+    document.getElementById('calProjModalBackdrop').addEventListener('click', function (e) { if (e.target === this) closeProjectCalModal(); });
+    document.getElementById('calProjBlocksBtn').addEventListener('click', function () { closeProjectCalModal(); sendProjectBlocks(); });
+    document.getElementById('calProjDayBtn').addEventListener('click', function () { closeProjectCalModal(); sendProjectWholeDay(); });
     </script>
 </body>
 </html>
