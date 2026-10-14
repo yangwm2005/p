@@ -1395,6 +1395,7 @@
             <div class="modal-footer">
                 <button class="btn-copy" onclick="copySummary()">📋 Copy to Clipboard</button>
                 <button class="btn-print" onclick="window.print()">🖨️ Print / Save PDF</button>
+                <button class="btn-cal" id="summary-cal-btn" onclick="openCalEventTypeModal()" title="Send this day's By Project summary to Google Calendar">📅 Calendar</button>
             </div>
         </div>
     </div>
@@ -1433,6 +1434,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 
     <script>
     // ============================================================
@@ -3317,6 +3319,318 @@
     }
 
     window.addEventListener('beforeunload', function () { saveLocal(); });
+    </script>
+
+    <div class="cal-toast" id="calToast"></div>
+
+    <div class="cal-modal-backdrop hidden" id="calTypeModalBackdrop">
+        <div class="cal-modal">
+            <div class="cal-modal-title">📅 Send to Calendar</div>
+            <div class="cal-modal-text" id="calTypeModalNoteText"></div>
+            <button type="button" class="cal-opt-btn" id="calTypeAllDayBtn">🗓️ Whole-day event</button>
+            <button type="button" class="cal-opt-btn" id="calTypeTimedBtn">🕐 Timed event (first entry → last entry)</button>
+            <button type="button" class="cal-cancel-btn" id="calTypeCancelBtn">Cancel</button>
+        </div>
+    </div>
+
+    <div class="cal-modal-backdrop hidden" id="calDateModalBackdrop">
+        <div class="cal-modal">
+            <div class="cal-modal-title">🗓️ Which day?</div>
+            <button type="button" class="cal-opt-btn" id="calDateViewedBtn">Summary day</button>
+            <button type="button" class="cal-opt-btn" id="calDateTodayBtn">Today</button>
+            <div class="cal-date-pick-row">
+                <input type="date" id="calDatePickInput">
+                <button type="button" class="cal-opt-btn" id="calDatePickBtn">Use date</button>
+            </div>
+            <button type="button" class="cal-cancel-btn" id="calDateBackBtn">← Back</button>
+        </div>
+    </div>
+
+    <style>
+    .btn-cal { background: var(--success); color: white; }
+    .btn-cal:hover { background: #059669; }
+    .cal-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(8px); background: #1e293b; color: #f8fafc; padding: 0.55rem 1.1rem; border-radius: 999px; font-size: 0.82rem; box-shadow: 0 10px 30px rgba(0,0,0,0.25); z-index: 3100; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none; max-width: 90vw; text-align: center; }
+    .cal-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .cal-toast.error { background: #b91c1c; }
+    .cal-modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: flex; align-items: center; justify-content: center; z-index: 3200; padding: 16px; }
+    .cal-modal-backdrop.hidden { display: none; }
+    .cal-modal { background: #fff; border-radius: 16px; padding: 22px 22px 18px; max-width: 360px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,0.25); }
+    .cal-modal-title { font-weight: 600; font-size: 1.05rem; color: #1e293b; margin-bottom: 6px; }
+    .cal-modal-text { font-size: 0.85rem; color: #64748b; margin-bottom: 16px; max-height: 90px; overflow-y: auto; white-space: pre-wrap; line-height: 1.4; }
+    .cal-opt-btn { display: block; width: 100%; text-align: left; background: #f1f5f9; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 10px 14px; font-size: 0.9rem; font-family: inherit; color: #1e293b; cursor: pointer; margin-bottom: 8px; justify-content: flex-start; }
+    .cal-opt-btn:hover { background: #e2e8f0; border-color: #cbd5e1; }
+    .cal-date-pick-row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .cal-date-pick-row input[type="date"] { flex: 1; min-width: 0; padding: 9px 10px; border-radius: 12px; border: 1.5px solid #e2e8f0; font-family: inherit; font-size: 0.88rem; }
+    .cal-date-pick-row .cal-opt-btn { width: auto; margin-bottom: 0; flex-shrink: 0; }
+    .cal-cancel-btn { display: block; width: 100%; text-align: center; background: none; border: none; padding: 8px; font-size: 0.85rem; color: #94a3b8; cursor: pointer; margin-top: 4px; }
+    .cal-cancel-btn:hover { color: #475569; background: none; }
+    @media print { .cal-toast, .cal-modal-backdrop { display: none !important; } }
+    </style>
+
+    <script>
+    // ============================================================
+    // GOOGLE CALENDAR — send the viewed day's "By Project" summary
+    // to a dedicated "The Pause" calendar as ONE event.
+    // Same OAuth client / pattern as Selfchat-v25. If this file is
+    // hosted on a new origin, add it to the OAuth client's
+    // "Authorized JavaScript origins" in Google Cloud Console.
+    // ============================================================
+    const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar';
+    const GCAL_CALENDAR_NAME = 'The Pause';
+    const GCAL_CLIENT_ID = '663058774385-0209ekni5vchpbf9mr3rkofd369hrhr3.apps.googleusercontent.com';
+    const CAL_TITLE_ICON = '🌿 ';
+    let gcalAccessToken = null, gcalTokenObtainedAt = 0, gcalCalendarId = null;
+    let gcalCreatingCalendar = null, gcalCalendarIdVerifiedAt = 0;
+    let gisTokenClient = null, calendarReconnectPromise = null, silentReconnectResolvers = [];
+    let pendingCalEvent = null, pendingCalEventAt = 0;
+
+    const calToast = document.getElementById('calToast');
+    const calTypeModalBackdrop = document.getElementById('calTypeModalBackdrop');
+    const calTypeModalNoteText = document.getElementById('calTypeModalNoteText');
+    const calDateModalBackdrop = document.getElementById('calDateModalBackdrop');
+    const calDatePickInput = document.getElementById('calDatePickInput');
+
+    function pad2(n) { return String(n).padStart(2, '0'); }
+    function ymd(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+    function gcalTokenIsFresh() { return !!gcalAccessToken && (Date.now() - gcalTokenObtainedAt) < 50 * 60 * 1000; }
+    function showCalToast(message, isError) {
+        calToast.textContent = message;
+        calToast.classList.toggle('error', !!isError);
+        calToast.classList.add('show');
+        clearTimeout(showCalToast._t);
+        showCalToast._t = setTimeout(function () { calToast.classList.remove('show'); }, 3000);
+    }
+
+    function initGisTokenClient() {
+        if (gisTokenClient) return gisTokenClient;
+        if (!window.google || !google.accounts || !google.accounts.oauth2) return null;
+        gisTokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: GCAL_CLIENT_ID,
+            scope: GCAL_SCOPE,
+            callback: function (resp) {
+                const resolvers = silentReconnectResolvers.splice(0);
+                if (resp && resp.access_token) {
+                    gcalAccessToken = resp.access_token;
+                    gcalTokenObtainedAt = Date.now();
+                    resolvers.forEach(function (fn) { fn(true); });
+                    if (pendingCalEvent && (Date.now() - pendingCalEventAt) < 5 * 60 * 1000) {
+                        const ev = pendingCalEvent; pendingCalEvent = null; sendCalEvent(ev);
+                    } else { pendingCalEvent = null; }
+                } else {
+                    resolvers.forEach(function (fn) { fn(false); });
+                    if (resolvers.length === 0) showCalToast('⚠️ Calendar connection failed', true);
+                }
+            },
+            error_callback: function (err) {
+                const resolvers = silentReconnectResolvers.splice(0);
+                resolvers.forEach(function (fn) { fn(false); });
+                if (err && err.type === 'popup_failed_to_open') { showCalToast('⚠️ Popup blocked — allow popups, then click 📅 Calendar again', true); return; }
+                if (err && err.type === 'popup_closed') return;
+                console.warn('GIS token error:', err);
+                if (resolvers.length === 0) showCalToast('⚠️ Calendar connection failed', true);
+            }
+        });
+        return gisTokenClient;
+    }
+
+    function ensureCalendarConnected() {
+        if (gcalTokenIsFresh()) return Promise.resolve(true);
+        if (!cloudUser) return Promise.resolve(false);
+        if (calendarReconnectPromise) return calendarReconnectPromise;
+        const client = initGisTokenClient();
+        if (!client) return Promise.resolve(false);
+        calendarReconnectPromise = new Promise(function (resolve) {
+            let settled = false;
+            const finish = function (ok) { if (settled) return; settled = true; calendarReconnectPromise = null; resolve(ok); };
+            silentReconnectResolvers.push(finish);
+            showCalToast('🔑 Connecting to Google Calendar…');
+            setTimeout(function () { finish(gcalTokenIsFresh()); }, 90000);
+            try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
+        });
+        return calendarReconnectPromise;
+    }
+
+    async function gcalFetch(path, options) {
+        if (!gcalTokenIsFresh()) return null;
+        let res;
+        try {
+            res = await fetch('https://www.googleapis.com/calendar/v3/' + path, Object.assign({
+                headers: Object.assign({ 'Authorization': 'Bearer ' + gcalAccessToken, 'Content-Type': 'application/json' }, (options && options.headers) || {})
+            }, options || {}));
+        } catch (e) { console.warn('Calendar request failed:', e); return null; }
+        if (res.status === 401) { gcalAccessToken = null; return null; }
+        return res;
+    }
+
+    async function findExistingPauseCalendarId() {
+        const res = await gcalFetch('users/me/calendarList?maxResults=250');
+        if (!res || !res.ok) return null;
+        const list = await res.json();
+        const matches = ((list && list.items) || []).filter(function (c) {
+            return (c.summaryOverride || c.summary) === GCAL_CALENDAR_NAME && c.accessRole === 'owner';
+        });
+        if (!matches.length) return null;
+        matches.sort(function (a, b) { return a.id.localeCompare(b.id); });
+        return matches[0].id;
+    }
+    async function calendarStillExists(id) {
+        if (!id) return false;
+        const res = await gcalFetch('calendars/' + encodeURIComponent(id));
+        return !!(res && res.ok);
+    }
+    function pauseCalSettingsRef() {
+        if (!cloudUser || !cloudDb) return null;
+        return cloudDb.collection('users').doc(cloudUser.uid).collection('pauseData').doc('calendar');
+    }
+    async function ensurePauseCalendarId() {
+        if (gcalCalendarId) {
+            if (Date.now() - gcalCalendarIdVerifiedAt < 5 * 60 * 1000) return gcalCalendarId;
+            if (await calendarStillExists(gcalCalendarId)) { gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId; }
+            gcalCalendarId = null;
+        }
+        if (gcalCreatingCalendar) return gcalCreatingCalendar;
+        gcalCreatingCalendar = (async function () {
+            try {
+                const ref = pauseCalSettingsRef();
+                if (ref) {
+                    try {
+                        const doc = await ref.get();
+                        const savedId = doc.exists && doc.data().calendarId;
+                        if (savedId && await calendarStillExists(savedId)) {
+                            gcalCalendarId = savedId; gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId;
+                        }
+                    } catch (e) { console.warn('Calendar settings read failed:', e); }
+                }
+                const foundId = await findExistingPauseCalendarId();
+                if (foundId) {
+                    gcalCalendarId = foundId; gcalCalendarIdVerifiedAt = Date.now();
+                    if (ref) ref.set({ calendarId: foundId }, { merge: true }).catch(function () {});
+                    return gcalCalendarId;
+                }
+                const res = await gcalFetch('calendars', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        summary: GCAL_CALENDAR_NAME,
+                        description: 'Auto-created by The Pause app to hold daily project summaries sent from it.',
+                        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                    })
+                });
+                if (!res || !res.ok) return null;
+                const created = await res.json();
+                gcalCalendarId = created.id; gcalCalendarIdVerifiedAt = Date.now();
+                if (ref) ref.set({ calendarId: created.id }, { merge: true }).catch(function () {});
+                return gcalCalendarId;
+            } finally { gcalCreatingCalendar = null; }
+        })();
+        return gcalCreatingCalendar;
+    }
+
+    // ---- Build the "By Project" text for the day shown in the Summary ----
+    function buildCalDescriptionText() {
+        const dayLogs = getViewedDayLogs();
+        const grouped = {};
+        dayLogs.forEach(function (log) {
+            const p = log.project || DEFAULT_PROJECT;
+            (grouped[p] = grouped[p] || []).push(log);
+        });
+        const td = computeTimeData();
+        const names = Object.keys(grouped).sort(function (a, b) {
+            const as = isSpecialProject(a) ? 1 : 0, bs = isSpecialProject(b) ? 1 : 0;
+            if (as !== bs) return as - bs;
+            return grouped[b].length - grouped[a].length;
+        });
+        const out = [];
+        out.push('The Pause — ' + summaryViewDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
+        if (td.totalMs > 0) out.push('Focus time: ' + formatDuration(td.totalMs) + (td.pausedMs > 0 ? ' · Paused: ' + formatDuration(td.pausedMs) : ''));
+        out.push('');
+        names.forEach(function (name) {
+            const entries = grouped[name].slice().sort(function (a, b) { return a.timestamp - b.timestamp; });
+            const info = td.byProject[name];
+            const dur = info && info.ms > 0 ? ' · ' + formatDuration(info.ms) : '';
+            out.push((isSpecialProject(name) ? '⏸️ ' : '📁 ') + name + ' (' + entries.length + (entries.length === 1 ? ' entry' : ' entries') + dur + ')');
+            entries.forEach(function (log) {
+                const lines = String(log.text || '').split('\n');
+                out.push('  ' + log.time + '  ' + lines[0]);
+                lines.slice(1).forEach(function (l) { if (l.trim()) out.push('        ' + l); });
+            });
+            out.push('');
+        });
+        while (out.length && out[out.length - 1] === '') out.pop();
+        return out.join('\n');
+    }
+
+    async function sendCalEvent(eventBody) {
+        if (!cloudUser) { showCalToast('Please ☁ Sign in first, then click 📅 Calendar.', true); return; }
+        showCalToast('📤 Sending to Calendar…');
+        const connected = await ensureCalendarConnected();
+        if (!connected) {
+            pendingCalEvent = eventBody; pendingCalEventAt = Date.now();
+            showCalToast('⚠️ Not connected yet — finish the Google popup (it will then send automatically)', true);
+            return;
+        }
+        const calendarId = await ensurePauseCalendarId();
+        if (!calendarId) { showCalToast('⚠️ Calendar sync failed', true); return; }
+        try {
+            const res = await gcalFetch('calendars/' + encodeURIComponent(calendarId) + '/events', { method: 'POST', body: JSON.stringify(eventBody) });
+            if (res && res.ok) showCalToast('✅ Added to Calendar'); else showCalToast('⚠️ Calendar sync failed', true);
+        } catch (e) { console.warn('Send to calendar failed:', e); showCalToast('⚠️ Calendar sync failed', true); }
+    }
+
+    function calEventTitle() {
+        return CAL_TITLE_ICON + 'The Pause — ' + summaryViewDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+    function sendCalAllDay(dateStr) {
+        const next = new Date(dateStr + 'T00:00:00');
+        next.setDate(next.getDate() + 1);
+        sendCalEvent({ summary: calEventTitle(), description: buildCalDescriptionText(), start: { date: dateStr }, end: { date: ymd(next) } });
+    }
+    function sendCalTimed() {
+        const dayLogs = getViewedDayLogs().slice().sort(function (a, b) { return a.timestamp - b.timestamp; });
+        if (!dayLogs.length) { showCalToast('No entries on this day to send.', true); return; }
+        const start = new Date(dayLogs[0].timestamp); start.setSeconds(0, 0);
+        let endMs = dayLogs[dayLogs.length - 1].timestamp;
+        if (endMs - start.getTime() < 5 * 60000) endMs = start.getTime() + 30 * 60000;
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        sendCalEvent({
+            summary: calEventTitle(),
+            description: buildCalDescriptionText(),
+            start: { dateTime: start.toISOString(), timeZone: tz },
+            end: { dateTime: new Date(endMs).toISOString(), timeZone: tz }
+        });
+    }
+
+    async function openCalEventTypeModal() {
+        if (!cloudUser) { showCalToast('Please ☁ Sign in first, then click 📅 Calendar.', true); return; }
+        if (getViewedDayLogs().length === 0) { showCalToast('No entries on this day to send.', true); return; }
+        if (!gcalTokenIsFresh()) {
+            if (!initGisTokenClient()) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+            const ok = await ensureCalendarConnected();
+            if (!ok) { showCalToast('⚠️ Calendar not connected — finish the Google popup, then click 📅 Calendar again', true); return; }
+        }
+        calTypeModalNoteText.textContent = summaryViewDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + ' — By Project summary';
+        calTypeModalBackdrop.classList.remove('hidden');
+    }
+    window.openCalEventTypeModal = openCalEventTypeModal;
+    function closeCalEventTypeModal() { calTypeModalBackdrop.classList.add('hidden'); }
+    function closeCalDateModal() { calDateModalBackdrop.classList.add('hidden'); }
+
+    document.getElementById('calTypeCancelBtn').addEventListener('click', closeCalEventTypeModal);
+    calTypeModalBackdrop.addEventListener('click', function (e) { if (e.target === calTypeModalBackdrop) closeCalEventTypeModal(); });
+    calDateModalBackdrop.addEventListener('click', function (e) { if (e.target === calDateModalBackdrop) closeCalDateModal(); });
+    document.getElementById('calTypeTimedBtn').addEventListener('click', function () { closeCalEventTypeModal(); sendCalTimed(); });
+    document.getElementById('calTypeAllDayBtn').addEventListener('click', function () {
+        closeCalEventTypeModal();
+        document.getElementById('calDateViewedBtn').textContent = 'Summary day (' + ymd(summaryViewDate) + ')';
+        document.getElementById('calDateTodayBtn').textContent = 'Today (' + ymd(new Date()) + ')';
+        calDatePickInput.value = ymd(summaryViewDate);
+        calDateModalBackdrop.classList.remove('hidden');
+    });
+    document.getElementById('calDateBackBtn').addEventListener('click', function () { closeCalDateModal(); calTypeModalBackdrop.classList.remove('hidden'); });
+    document.getElementById('calDateViewedBtn').addEventListener('click', function () { closeCalDateModal(); sendCalAllDay(ymd(summaryViewDate)); });
+    document.getElementById('calDateTodayBtn').addEventListener('click', function () { closeCalDateModal(); sendCalAllDay(ymd(new Date())); });
+    document.getElementById('calDatePickBtn').addEventListener('click', function () {
+        const v = calDatePickInput.value; closeCalDateModal(); if (v) sendCalAllDay(v);
+    });
     </script>
 </body>
 </html>
