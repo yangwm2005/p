@@ -1318,6 +1318,7 @@
                     <span class="chime-icon" id="dial-chime-icon">🔕</span>
                     <span class="chime-label">Chime</span>
                 </button>
+                <button class="dial-btn step" id="dial-discard-btn" style="display:none" onclick="sessionDiscard()" title="Discard this timing (nothing is logged)">✕ Discard</button>
             </div>
             <div class="dial-presets">
                 <button class="dial-preset-btn" onclick="dialSetPreset(5)">5m</button>
@@ -1387,6 +1388,7 @@
                 <button class="summary-toggle-btn active" id="view-project-btn" onclick="setSummaryView('project')">📁 By Project</button>
                 <button class="summary-toggle-btn" id="view-time-btn" onclick="setSummaryView('time')">⏱️ Time Spent</button>
                 <button class="help-btn" id="summary-help-btn" onclick="showSummaryHelp()" title="What does this view do?">?</button>
+                <select class="time-mode-select" onchange="setTimeMode(this.value)" title="How durations are counted"><option value="session">⏱ Timer sessions</option><option value="before">⏪ Time before log</option><option value="after">⏩ Time after log</option></select>
             </div>
 
             <div class="modal-body">
@@ -1416,6 +1418,7 @@
                     <button id="week-mode-stacked" class="active" onclick="setWeekMode('stacked')">📊 Stacked</button>
                     <button id="week-mode-time" onclick="setWeekMode('time')">🕐 Time Axis</button>
                     <button class="help-btn" style="flex: 0 0 auto; width: 30px;" onclick="showWeekHelp()" title="What does this view do?">?</button>
+                    <select class="time-mode-select" onchange="setTimeMode(this.value)" title="How durations are counted"><option value="session">⏱ Timer sessions</option><option value="before">⏪ Time before log</option><option value="after">⏩ Time after log</option></select>
                 </div>
                 <div id="week-summary"></div>
                 <div id="week-grid-container"></div>
@@ -1587,24 +1590,155 @@
     // ============================================================
     // ACCUMULATED TODAY TOTAL
     // ============================================================
+    // ============================================================
+    // TIMER SESSION: starts when the dial's Start is pressed and keeps counting
+    // (also after the dial finishes) until Save Log is pressed.
+    // ============================================================
+    const SESSION = { startTs: null, ticker: null };
+    const SESSION_KEY = 'thepause_session_start';
+
+    function loadSession() {
+        try {
+            const v = parseInt(localStorage.getItem(SESSION_KEY), 10);
+            if (v && v <= Date.now() && Date.now() - v < 24 * 3600 * 1000) SESSION.startTs = v;
+        } catch (e) {}
+    }
+    function persistSession() {
+        try {
+            if (SESSION.startTs) localStorage.setItem(SESSION_KEY, String(SESSION.startTs));
+            else localStorage.removeItem(SESSION_KEY);
+        } catch (e) {}
+    }
+    function formatClock(ms) {
+        const t = Math.max(0, Math.floor(ms / 1000));
+        const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+        return h > 0 ? h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0')
+                     : m + ':' + String(sec).padStart(2, '0');
+    }
+    function hhmm(ts) {
+        return new Date(ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+    }
+    // "09:10–09:55 · ⏱ 45m" for entries saved from a timer session, else just the saved time
+    function entryTimeLabel(log) {
+        if (typeof log.startTs === 'number' && typeof log.timestamp === 'number' && log.timestamp - log.startTs >= 60000) {
+            return hhmm(log.startTs) + '–' + log.time + ' · ⏱ ' + formatDuration(log.timestamp - log.startTs);
+        }
+        return log.time;
+    }
+    function ensureSessionTicker() {
+        if (SESSION.ticker) return;
+        SESSION.ticker = setInterval(function () {
+            if (!SESSION.startTs) { clearInterval(SESSION.ticker); SESSION.ticker = null; return; }
+            updateSessionUI();
+        }, 1000);
+    }
+    function sessionBeginIfNeeded() {
+        if (!SESSION.startTs) { SESSION.startTs = Date.now(); persistSession(); }
+        ensureSessionTicker();
+        updateSessionUI();
+    }
+    function sessionClear() {
+        SESSION.startTs = null;
+        persistSession();
+        if (SESSION.ticker) { clearInterval(SESSION.ticker); SESSION.ticker = null; }
+        const dial = document.getElementById('focus-dial');
+        if (dial && !FOCUS_STATE.running) dial.classList.remove('done');
+        updateSessionUI();
+        const td = document.getElementById('timer-display');
+        if (td && !timerInterval && td.textContent.indexOf('Timing') === 0) {
+            td.textContent = 'Ready to write';
+            td.classList.remove('active');
+        }
+    }
+    window.sessionDiscard = function () {
+        if (!SESSION.startTs) return;
+        if (!confirm('Discard this timing?\n\nIt has been running for ' + formatClock(Date.now() - SESSION.startTs) + '. Nothing is logged.')) return;
+        sessionClear();
+    };
+    function updateSessionUI() {
+        const saveBtn = document.getElementById('save-btn');
+        if (SESSION.startTs && saveBtn) saveBtn.style.display = 'flex';
+        const disc = document.getElementById('dial-discard-btn');
+        if (disc) disc.style.display = (SESSION.startTs && !FOCUS_STATE.running) ? '' : 'none';
+        const td = document.getElementById('timer-display');
+        if (SESSION.startTs && td && !timerInterval && td.style.color === '') {
+            td.textContent = 'Timing ' + formatClock(Date.now() - SESSION.startTs) + ' since start — press Save Log to record';
+            td.classList.add('active');
+        }
+        updateDialUI();
+    }
+
+    // ============================================================
+    // TIME COUNTING MODE
+    //  'before' (default): an entry is written AFTER the work ("Just did…"), so it owns the
+    //                      time since the previous entry of the same day.
+    //  'after'  (legacy):  an entry owns the time until the next entry.
+    // ============================================================
+    let TIME_MODE = 'session';
+    try { const m = localStorage.getItem('thepause_time_mode_v2'); if (m === 'session' || m === 'before' || m === 'after') TIME_MODE = m; } catch (e) {}
+
+    // sortedLogs: one day's logs, oldest first. Returns contiguous segments {log, startMs, endMs}.
+    function timeSegments(sortedLogs, capMs) {
+        const segs = [];
+        for (let i = 0; i < sortedLogs.length; i++) {
+            const cur = sortedLogs[i], prev = sortedLogs[i - 1], next = sortedLogs[i + 1];
+            let startMs, endMs;
+            if (TIME_MODE === 'session') {
+                // Timer sessions: time runs from pressing Start on the dial until Save Log.
+                // Entries saved without a timer have no duration (breaks are never counted).
+                startMs = cur.timestamp;
+                if (typeof cur.startTs === 'number' && cur.startTs <= cur.timestamp) {
+                    startMs = Math.max(cur.startTs, prev ? prev.timestamp : 0);
+                }
+                endMs = cur.timestamp;
+            } else if (TIME_MODE === 'before') {
+                startMs = prev ? prev.timestamp : cur.timestamp;   // first entry of the day: nothing before it
+                endMs = cur.timestamp;
+            } else {
+                if (cur._isWrapUp) continue;
+                startMs = cur.timestamp;
+                endMs = next ? next.timestamp : capMs;
+            }
+            segs.push({ log: cur, startMs: startMs, endMs: Math.max(endMs, startMs) });
+        }
+        return segs;
+    }
+
+    window.setTimeMode = function (mode) {
+        if (mode !== 'session' && mode !== 'before' && mode !== 'after') return;
+        TIME_MODE = mode;
+        try { localStorage.setItem('thepause_time_mode_v2', mode); } catch (e) {}
+        syncTimeModeUI();
+        updateTodayTotal();
+        const sm = document.getElementById('summary-modal');
+        if (sm && sm.classList.contains('show')) renderSummary();
+        const wm = document.getElementById('week-modal');
+        if (wm && wm.classList.contains('show')) renderWeekView();
+    };
+    function syncTimeModeUI() {
+        document.querySelectorAll('.time-mode-select').forEach(function (el) { el.value = TIME_MODE; });
+    }
+    function timeModeNote() {
+        if (TIME_MODE === 'session') return 'Timer sessions: time runs from pressing Start on the Focus Block dial until you press Save Log (it keeps counting after the dial finishes). Entries saved without starting the timer have no duration, and breaks are never counted.';
+        return TIME_MODE === 'before'
+            ? 'Each entry counts the time since your previous entry (what you "just did"). The first entry of a day has no earlier entry, so it has no duration.'
+            : 'Each entry counts the time until your next entry. The most recent entry runs until now (today) or the end of that day.';
+    }
+
     function computeTodayAccumulated() {
         const withTs = logs
             .filter(l => typeof l.timestamp === 'number' && !isNaN(l.timestamp) && dateKey(l.timestamp) === todayKey())
             .slice()
             .sort((a, b) => a.timestamp - b.timestamp);
         if (withTs.length === 0) return { totalMs: 0, focusMs: 0, pausedMs: 0, timedCount: 0 };
-        const nowMs = Date.now();
         let totalMs = 0, focusMs = 0, pausedMs = 0;
-        for (let i = 0; i < withTs.length; i++) {
-            const cur = withTs[i];
-            const next = withTs[i + 1];
-            const project = cur.project || DEFAULT_PROJECT;
-            const durationMs = next ? (next.timestamp - cur.timestamp) : (nowMs - cur.timestamp);
-            if (cur._isWrapUp) continue;
+        timeSegments(withTs, Date.now()).forEach(function (seg) {
+            const project = seg.log.project || DEFAULT_PROJECT;
+            const durationMs = seg.endMs - seg.startMs;
             totalMs += durationMs;
             if (isSpecialProject(project)) pausedMs += durationMs;
             else focusMs += durationMs;
-        }
+        });
         return { totalMs, focusMs, pausedMs, timedCount: withTs.length };
     }
 
@@ -1624,7 +1758,7 @@
         let tip = 'Accumulated today: ' + formatDuration(totalMs) + '.';
         tip += '\n· Focus: ' + formatDuration(focusMs);
         if (pausedMs > 0) tip += '\n· Paused / Break: ' + formatDuration(pausedMs);
-        tip += '\n\nEstimated from the gaps between your log entries.';
+        tip += '\n\n' + timeModeNote();
         el.title = tip;
     }
 
@@ -1732,7 +1866,12 @@
             const fraction = FOCUS_STATE.minutes / 60;
             setProgressArc(fraction);
 
-            if (dial.classList.contains('done')) {
+            if (SESSION.startTs) {
+                dial.classList.add('done');
+                setProgressArc(1);
+                center.textContent = formatClock(Date.now() - SESSION.startTs);
+                sub.textContent = 'timing · save log';
+            } else if (dial.classList.contains('done')) {
                 center.textContent = 'Done';
                 sub.textContent = 'pause & log';
             } else {
@@ -1901,7 +2040,7 @@
                 dialComplete();
             }
         }, 500);
-        updateDialUI();
+        sessionBeginIfNeeded();
     };
 
     window.dialStop = function () {
@@ -1926,11 +2065,12 @@
 
         if (elapsedMin >= 0.5) {
             const preview = Math.round(elapsedMin) + 'm of ' + plannedMin + 'm';
-            if (!confirm('Stop the focus block?\n\nYou ran it for ' + preview + '.\n\nThis will NOT be logged as a session.')) {
+            if (!confirm('Stop the focus block?\n\nYou ran it for ' + preview + '.\n\nThe timing will be discarded and nothing will be logged.')) {
                 dialStart();
                 return;
             }
         }
+        sessionClear();
         updateDialUI();
     };
 
@@ -1953,24 +2093,13 @@
 
         const project = getCurrentProject();
         const plannedMin = FOCUS_STATE.minutes;
-        logs.unshift({
-            time: nowTimeString(),
-            timestamp: Date.now(),
-            text: `Focus block complete — ${plannedMin} min on "${project}"`,
-            project: project,
-            _isFocusBlock: true
-        });
-        saveLocal();
-        renderLogs();
-        populateProjectSuggestions();
-        updateTodayTotal();
-        if (cloudUser) cloudSaveNow();
+        // No automatic log entry: the timing keeps counting until you press Save Log.
 
         if (FOCUS_STATE.soundOn) playSoftChime();
 
         if ("Notification" in window && Notification.permission === "granted") {
             new Notification("Focus block done", {
-                body: `Time to pause and log. ${plannedMin} min on "${project}".`
+                body: `Time to pause and log. ${plannedMin} min on "${project}". Timing continues until you press Save Log.`
             });
         }
 
@@ -1982,7 +2111,7 @@
 
         FOCUS_STATE.endAt = null;
         FOCUS_STATE.startTs = null;
-        updateDialUI();
+        updateSessionUI();
     }
 
     function playSoftChime() {
@@ -2146,7 +2275,7 @@
         logDiv.innerHTML = `
             <div class="log-header-row">
                 <div class="log-meta">
-                    <span class="log-time">${log.time}</span>
+                    <span class="log-time">${entryTimeLabel(log)}</span>
                     <span class="project-tag">${safeProject}</span>
                 </div>
                 <div class="log-actions">
@@ -2259,8 +2388,10 @@
             time: nowTimeString(),
             timestamp: Date.now(),
             text: text,
-            project: project
+            project: project,
+            startTs: SESSION.startTs || undefined
         });
+        sessionClear();
         saveLocal();
         renderLogs();
         populateProjectSuggestions();
@@ -2418,7 +2549,7 @@
         const helpText = {
             timeline: 'Timeline — every entry from the selected day, in order from earliest to latest.',
             project: 'By Project — the selected day\'s entries, grouped under each project name. The default view.',
-            time: 'Time Spent — how long you spent on each project on the selected day, estimated from the gaps between entries.'
+            time: 'Time Spent — how long you spent on each project on the selected day, estimated from the gaps between entries. ' + timeModeNote()
         }[currentSummaryView];
         alert(viewName + '\n\n' + helpText + '\n\nUse ← / → (or the Prev / Next buttons) to move between days.');
     };
@@ -2441,20 +2572,14 @@
 
         const nextDayStart = new Date(summaryViewDate);
         nextDayStart.setDate(nextDayStart.getDate() + 1);
-        const nextDayStartMs = nextDayStart.getTime();
+        const capMs = isToday ? nowMs : Math.min(nowMs, nextDayStart.getTime());
 
         let totalMs = 0, pausedMs = 0;
-        for (let i = 0; i < withTs.length; i++) {
-            const cur = withTs[i];
-            const next = withTs[i + 1];
-            const project = cur.project || DEFAULT_PROJECT;
-            let endMs;
-            if (next) endMs = next.timestamp;
-            else endMs = isToday ? nowMs : Math.min(nowMs, nextDayStartMs);
-            const durationMs = Math.max(0, endMs - cur.timestamp);
-            if (cur._isWrapUp) continue;
+        timeSegments(withTs, capMs).forEach(function (seg) {
+            const project = seg.log.project || DEFAULT_PROJECT;
+            const durationMs = Math.max(0, seg.endMs - seg.startMs);
             if (!byProject[project]) byProject[project] = { ms: 0, entries: 0, hasWarning: false, paused: false };
-            byProject[project].entries += 1;
+            if (!seg.log._isWrapUp) byProject[project].entries += 1;
             if (isSpecialProject(project)) {
                 byProject[project].paused = true;
                 pausedMs += durationMs;
@@ -2463,7 +2588,7 @@
                 totalMs += durationMs;
                 if (durationMs > LONG_GAP_THRESHOLD_MS) byProject[project].hasWarning = true;
             }
-        }
+        });
         return { byProject, totalMs, pausedMs };
     }
 
@@ -2561,7 +2686,7 @@
             html += `</div>`;
         }
 
-        html += `<div class="time-note">ⓘ Durations are estimated from the gaps between your log entries. Each entry "owns" the time between it and the next one.${isToday ? ' The most recent entry runs until now.' : ''}</div>`;
+        html += `<div class="time-note">ⓘ Durations are estimated from the gaps between your log entries. ${timeModeNote()}</div>`;
         const content = document.getElementById('summary-content');
         if (content) content.innerHTML = html;
     }
@@ -2596,7 +2721,7 @@
             [...dayLogs].sort((a, b) => b.timestamp - a.timestamp).forEach(log => {
                 const project = escapeHtml(log.project || DEFAULT_PROJECT);
                 const safeText = escapeHtml(log.text);
-                html += `<div class="summary-entry"><div class="summary-entry-time">${log.time} · <span class="project-tag">${project}</span></div><div class="summary-entry-text">${safeText}</div></div>`;
+                html += `<div class="summary-entry"><div class="summary-entry-time">${entryTimeLabel(log)} · <span class="project-tag">${project}</span></div><div class="summary-entry-text">${safeText}</div></div>`;
             });
         } else {
             const grouped = {};
@@ -2618,7 +2743,7 @@
                 html += `<div class="summary-project-group"><div class="summary-project-header"${pausedStyle}><span>${isSpecialProject(projectName) ? '⏸️' : '📁'} ${safeProject} <button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(projectName)}" title="Send this project to Google Calendar"></button></span><span class="summary-project-count">${projectLogs.length} ${projectLogs.length === 1 ? 'entry' : 'entries'}</span></div>`;
                 [...projectLogs].sort((a, b) => a.timestamp - b.timestamp).forEach(log => {
                     const safeText = escapeHtml(log.text);
-                    html += `<div class="summary-entry"><div class="summary-entry-time">${log.time}</div><div class="summary-entry-text">${safeText}</div></div>`;
+                    html += `<div class="summary-entry"><div class="summary-entry-time">${entryTimeLabel(log)}</div><div class="summary-entry-text">${safeText}</div></div>`;
                 });
                 html += `</div>`;
             });
@@ -2686,24 +2811,16 @@
             .sort((a, b) => a.timestamp - b.timestamp);
         if (dayLogs.length === 0) return {};
         const byProject = {};
-        const nowMs = Date.now();
         const nextDayStart = new Date(dayKey_ + 'T00:00:00');
         nextDayStart.setDate(nextDayStart.getDate() + 1);
-        const nextDayStartMs = nextDayStart.getTime();
-        for (let i = 0; i < dayLogs.length; i++) {
-            const cur = dayLogs[i];
-            const next = dayLogs[i + 1];
-            const project = cur.project || DEFAULT_PROJECT;
-            let endMs;
-            if (next) endMs = next.timestamp;
-            else endMs = Math.min(nowMs, nextDayStartMs);
-            const durationMs = Math.max(0, endMs - cur.timestamp);
-            if (cur._isWrapUp) continue;
+        const capMs = Math.min(Date.now(), nextDayStart.getTime());
+        timeSegments(dayLogs, capMs).forEach(function (seg) {
+            const project = seg.log.project || DEFAULT_PROJECT;
             if (!byProject[project]) byProject[project] = { ms: 0, entries: 0, paused: isSpecialProject(project), timestamps: [] };
-            byProject[project].ms += durationMs;
-            byProject[project].entries += 1;
-            byProject[project].timestamps.push(cur.timestamp);
-        }
+            byProject[project].ms += Math.max(0, seg.endMs - seg.startMs);
+            if (!seg.log._isWrapUp) byProject[project].entries += 1;
+            byProject[project].timestamps.push(seg.startMs);   // earliest start positions the block on the time axis
+        });
         return byProject;
     }
 
@@ -3296,6 +3413,8 @@
             loadPreset();
             maybeShowFirstRunTip();
             initFocusDial();
+            loadSession();
+            if (SESSION.startTs) { ensureSessionTicker(); updateSessionUI(); }
             weekStartDate = getMondayOf(new Date());
             initCloud();
             setInterval(updateTodayTotal, 30000);
@@ -3550,7 +3669,7 @@
             out.push((isSpecialProject(name) ? '⏸️ ' : '📁 ') + name + ' (' + entries.length + (entries.length === 1 ? ' entry' : ' entries') + dur + ')');
             entries.forEach(function (log) {
                 const lines = String(log.text || '').split('\n');
-                out.push('  ' + log.time + '  ' + lines[0]);
+                out.push('  ' + entryTimeLabel(log) + '  ' + lines[0]);
                 lines.slice(1).forEach(function (l) { if (l.trim()) out.push('        ' + l); });
             });
             out.push('');
@@ -3647,14 +3766,20 @@
     .proj-cal-btn::before { content: '📅'; }
     .proj-cal-btn:hover { background: #ecfdf5; border-color: var(--success); }
     @media print { .proj-cal-btn { display: none !important; } }
+    .time-mode-select { flex: 0 0 auto; font-size: 0.72rem; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-muted); cursor: pointer; font-family: inherit; }
+    .time-mode-select:hover { border-color: var(--accent); color: var(--accent); }
+    @media print { .time-mode-select { display: none !important; } }
     </style>
+
+    <script>
+    syncTimeModeUI(); updateTodayTotal();
+    </script>
     <script>
     // ---- Single-project → Google Calendar (uses the helpers above) ----
     let calProjectName = null;
 
-    // Work blocks for one project on the viewed day. An entry "owns" the time until the next
-    // entry (any project) — same rule as the Time Spent view. Consecutive entries of the same
-    // project merge into one block; the wrap-up marker ends a block but is not itself counted.
+    // Work blocks for one project on the viewed day, using the active counting mode
+    // (see timeSegments). Contiguous segments of the same project merge into one block.
     function computeProjectBlocks(project) {
         const dayLogs = getViewedDayLogs().slice().sort(function (a, b) { return a.timestamp - b.timestamp; });
         const nowMs = Date.now();
@@ -3663,19 +3788,18 @@
         const capMs = isToday ? nowMs : Math.min(nowMs, nextDay.getTime());
         const blocks = [];
         let cur = null;
-        for (let i = 0; i < dayLogs.length; i++) {
-            const log = dayLogs[i], next = dayLogs[i + 1];
-            const proj = log.project || DEFAULT_PROJECT;
-            const endMs = next ? next.timestamp : capMs;
-            if (log._isWrapUp || proj !== project) { cur = null; continue; }
-            if (cur && Math.abs(cur.endMs - log.timestamp) < 1000) {
-                cur.endMs = Math.max(endMs, log.timestamp);
-                cur.logs.push(log);
+        timeSegments(dayLogs, capMs).forEach(function (seg) {
+            const proj = seg.log.project || DEFAULT_PROJECT;
+            if (TIME_MODE === 'session' && seg.endMs === seg.startMs) return;   // entry saved without a timer
+            if (proj !== project) { cur = null; return; }
+            if (cur && Math.abs(cur.endMs - seg.startMs) < 1000) {
+                cur.endMs = Math.max(cur.endMs, seg.endMs);
+                if (!seg.log._isWrapUp) cur.logs.push(seg.log);
             } else {
-                cur = { startMs: log.timestamp, endMs: Math.max(endMs, log.timestamp), logs: [log] };
+                cur = { startMs: seg.startMs, endMs: seg.endMs, logs: seg.log._isWrapUp ? [] : [seg.log] };
                 blocks.push(cur);
             }
-        }
+        });
         return blocks;
     }
 
@@ -3683,7 +3807,7 @@
         const out = [];
         logs.forEach(function (log) {
             const lines = String(log.text || '').split('\n');
-            out.push('  ' + log.time + '  ' + lines[0]);
+            out.push('  ' + entryTimeLabel(log) + '  ' + lines[0]);
             lines.slice(1).forEach(function (l) { if (l.trim()) out.push('        ' + l); });
         });
         return out.join('\n');
