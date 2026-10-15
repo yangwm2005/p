@@ -1908,6 +1908,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
 }
 .outline-node-menu button:hover { background: #444; }
 .outline-node-menu button.active { background: #444; color: #7fd0ff; }
+.outline-node-menu-label { color: #7fd0ff; font-size: 12px; padding: 4px 8px 6px; border-bottom: 1px solid rgba(255,255,255,0.15); margin-bottom: 3px; }
 .outline-node-menu-divider {
     height: 1px;
     background: rgba(255, 255, 255, 0.15);
@@ -5295,6 +5296,75 @@ function insertNewCheckboxLine(currentLine) {
         const outlineTextColorPopover = createColorPopover();
         const outlineBgColorPopover = createColorPopover();
 
+
+        // --- Multi-item menu: when 2+ lines are selected (drag-select or
+        // Select mode) and the ☰ menu is opened on one of them, every
+        // action in the black menu applies to ALL selected lines of that
+        // table. Returns the selected node objects (document order), or
+        // just [n] when the menu line isn't part of a multi-selection.
+        function menuTargetsFor(rootId, nodeId) {
+            const st = roots[rootId];
+            const found = st && findNodeAndParent(st.tree, nodeId);
+            if (!found) return [];
+            const sel = window.__bulkSelection;
+            const prefix = rootId + '::';
+            if (!sel || sel.size < 2 || !sel.has(prefix + nodeId)) return [found.node];
+            const flat = [];
+            (function walk(arr) { arr.forEach(function (x) { flat.push(x); walk(x.children); }); })(st.tree);
+            const out = flat.filter(function (x) { return sel.has(prefix + x.id); });
+            return out.length > 1 ? out : [found.node];
+        }
+        // Selected nodes whose ancestors aren't also selected (their
+        // subtrees travel with them when indenting/outdenting).
+        function topLevelTargets(rootId, targets) {
+            const ids = new Set(targets.map(function (t) { return t.id; }));
+            return targets.filter(function (t) {
+                const f = findNodeAndParent(roots[rootId].tree, t.id);
+                let p = f && f.parent;
+                while (p) { if (ids.has(p.id)) return false; const pf = findNodeAndParent(roots[rootId].tree, p.id); p = pf && pf.parent; }
+                return true;
+            });
+        }
+        function indentMany(rootId, targets) {
+            const tops = topLevelTargets(rootId, targets);
+            // group consecutive siblings; each group goes under the
+            // sibling just before the group
+            let i = 0, moved = false;
+            while (i < tops.length) {
+                const f = findNodeAndParent(roots[rootId].tree, tops[i].id);
+                if (!f) { i++; continue; }
+                const group = [tops[i]];
+                let j = i + 1;
+                while (j < tops.length) {
+                    const fj = findNodeAndParent(roots[rootId].tree, tops[j].id);
+                    if (fj && fj.parentArr === f.parentArr && fj.index === f.index + group.length) { group.push(tops[j]); j++; } else break;
+                }
+                if (f.index > 0) {
+                    const prev = f.parentArr[f.index - 1];
+                    f.parentArr.splice(f.index, group.length);
+                    group.forEach(function (g) { prev.children.push(g); });
+                    prev.collapsed = false;
+                    moved = true;
+                }
+                i = j;
+            }
+            if (moved) renderRoot(rootId, { focusId: targets[0].id, cursorPos: 'keep' });
+        }
+        function outdentMany(rootId, targets) {
+            const tops = topLevelTargets(rootId, targets).slice().reverse();
+            let moved = false;
+            tops.forEach(function (t) {
+                const f = findNodeAndParent(roots[rootId].tree, t.id);
+                if (!f || !f.parent) return;
+                const g = findNodeAndParent(roots[rootId].tree, f.parent.id);
+                if (!g) return;
+                f.parentArr.splice(f.index, 1);
+                g.parentArr.splice(g.index + 1, 0, t);
+                moved = true;
+            });
+            if (moved) renderRoot(rootId, { focusId: targets[0].id, cursorPos: 'keep' });
+        }
+
         function ensureMenu() {
             if (menuEl) return menuEl;
             menuEl = document.createElement('div');
@@ -5373,18 +5443,26 @@ function insertNewCheckboxLine(currentLine) {
             if (!found) return;
             const n = found.node;
             menuEl.innerHTML = '';
+            const targets = menuTargetsFor(menuRootId, menuTargetId);
+            const multi = targets.length > 1;
+            if (multi) {
+                const lab = document.createElement('div');
+                lab.className = 'outline-node-menu-label';
+                lab.textContent = targets.length + ' items selected — actions apply to all';
+                menuEl.appendChild(lab);
+            }
             menuButton(n.checkbox ? '☑ Remove checkbox' : '☑ Add checkbox', function () {
-                n.checkbox = !n.checkbox;
+                const v = !n.checkbox; targets.forEach(function (t) { t.checkbox = v; });
                 renderRoot(menuRootId, { focusId: n.id, cursorPos: 'keep' });
                 renderMenu();
             }, n.checkbox);
             menuButton(n.done ? '✓ Mark as not complete' : '✓ Mark as complete', function () {
-                n.done = !n.done;
+                const v = !n.done; targets.forEach(function (t) { t.done = v; });
                 renderRoot(menuRootId, { focusId: n.id, cursorPos: 'keep' });
                 renderMenu();
             }, n.done);
             menuButton(n.bold ? 'B Remove bold' : 'B Bold', function () {
-                n.bold = !n.bold;
+                const v = !n.bold; targets.forEach(function (t) { t.bold = v; });
                 renderRoot(menuRootId, { focusId: n.id, cursorPos: 'keep' });
                 renderMenu();
             }, n.bold);
@@ -5401,18 +5479,18 @@ function insertNewCheckboxLine(currentLine) {
             divider2.className = 'outline-node-menu-divider';
             menuEl.appendChild(divider2);
             menuButton('Sub (Tab)', function () {
-                indentNode(menuRootId, n.id);
+                if (multi) indentMany(menuRootId, targets); else indentNode(menuRootId, n.id);
                 closeMenu();
             });
             menuButton('Outdent (Shift+Tab)', function () {
-                outdentNode(menuRootId, n.id);
+                if (multi) outdentMany(menuRootId, targets); else outdentNode(menuRootId, n.id);
                 closeMenu();
             });
             const divider3 = document.createElement('div');
             divider3.className = 'outline-node-menu-divider';
             menuEl.appendChild(divider3);
-            menuButton('✕ Delete item', function () {
-                deleteNode(menuRootId, n.id);
+            menuButton(multi ? '✕ Delete ' + targets.length + ' items' : '✕ Delete item', function () {
+                if (multi && window.bulkDeleteSelected) window.bulkDeleteSelected(); else deleteNode(menuRootId, n.id);
                 closeMenu();
             });
         }
@@ -5470,7 +5548,7 @@ function insertNewCheckboxLine(currentLine) {
             const st = roots[rootId];
             const found = findNodeAndParent(st.tree, nodeId);
             if (!found) return;
-            found.node.textColor = color || null;
+            menuTargetsFor(rootId, nodeId).forEach(function (t) { t.textColor = color || null; });
             renderRoot(rootId, { focusId: nodeId, cursorPos: 'keep' });
         }
 
@@ -5478,7 +5556,7 @@ function insertNewCheckboxLine(currentLine) {
             const st = roots[rootId];
             const found = findNodeAndParent(st.tree, nodeId);
             if (!found) return;
-            found.node.bgColor = color || null;
+            menuTargetsFor(rootId, nodeId).forEach(function (t) { t.bgColor = color || null; });
             renderRoot(rootId, { focusId: nodeId, cursorPos: 'keep' });
         }
 
@@ -6012,6 +6090,9 @@ function insertNewCheckboxLine(currentLine) {
                 row.classList.toggle('item-selected', selectCb.checked);
                 if (window.updateBulkActionBar) window.updateBulkActionBar();
             });
+            if (window.__bulkSelection && window.__bulkSelection.has(rootId + '::' + n.id)) {
+                selectCb.checked = true; row.classList.add('item-selected');
+            }
             row.appendChild(selectCb);
 
             const bullet = document.createElement('span');
