@@ -2279,6 +2279,8 @@
                     <span class="project-tag">${safeProject}</span>
                 </div>
                 <div class="log-actions">
+                    <button onclick="copyLogEntry(${index})" title="Copy text">📋</button>
+                    <button onclick="openEntryCalModal(${index})" title="Send to Google Calendar">📅</button>
                     <button onclick="enableInlineEdit(${index})" title="Edit">✏️</button>
                     <button onclick="deleteLog(${index})" title="Delete">🗑️</button>
                 </div>
@@ -2654,7 +2656,7 @@
             html += `
                 <div class="time-project">
                     <div class="time-project-header">
-                        <span class="time-project-name">📁 ${safeName} <button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(name)}" title="Send this project to Google Calendar"></button></span>
+                        <span class="time-project-name">📁 ${safeName} <button type="button" class="proj-copy-btn" data-project="${encodeURIComponent(name)}" title="Copy this project's text"></button><button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(name)}" title="Send this project to Google Calendar"></button></span>
                         <span class="time-project-duration">
                             ${formatDuration(v.ms)}
                             <span class="pct">${pct}%</span>
@@ -2676,7 +2678,7 @@
                 html += `
                     <div class="time-project">
                         <div class="time-project-header">
-                            <span class="time-project-name" style="color:#92400e;">${safeName} <button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(name)}" title="Send this to Google Calendar"></button></span>
+                            <span class="time-project-name" style="color:#92400e;">${safeName} <button type="button" class="proj-copy-btn" data-project="${encodeURIComponent(name)}" title="Copy this project's text"></button><button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(name)}" title="Send this to Google Calendar"></button></span>
                             <span class="time-project-duration" style="color:#92400e;">${formatDuration(v.ms)}<span class="pct">${pct}%</span></span>
                         </div>
                         <div class="time-bar-track"><div class="time-bar-fill paused" style="width: ${pct}%"></div></div>
@@ -2740,7 +2742,7 @@
                 const projectLogs = grouped[projectName];
                 const safeProject = escapeHtml(projectName);
                 const pausedStyle = isSpecialProject(projectName) ? ' style="color: #92400e; border-bottom-color: #fbbf24;"' : '';
-                html += `<div class="summary-project-group"><div class="summary-project-header"${pausedStyle}><span>${isSpecialProject(projectName) ? '⏸️' : '📁'} ${safeProject} <button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(projectName)}" title="Send this project to Google Calendar"></button></span><span class="summary-project-count">${projectLogs.length} ${projectLogs.length === 1 ? 'entry' : 'entries'}</span></div>`;
+                html += `<div class="summary-project-group"><div class="summary-project-header"${pausedStyle}><span>${isSpecialProject(projectName) ? '⏸️' : '📁'} ${safeProject} <button type="button" class="proj-copy-btn" data-project="${encodeURIComponent(projectName)}" title="Copy this project's text"></button><button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(projectName)}" title="Send this project to Google Calendar"></button></span><span class="summary-project-count">${projectLogs.length} ${projectLogs.length === 1 ? 'entry' : 'entries'}</span></div>`;
                 [...projectLogs].sort((a, b) => a.timestamp - b.timestamp).forEach(log => {
                     const safeText = escapeHtml(log.text);
                     html += `<div class="summary-entry"><div class="summary-entry-time">${entryTimeLabel(log)}</div><div class="summary-entry-text">${safeText}</div></div>`;
@@ -3882,6 +3884,134 @@
     document.getElementById('calProjModalBackdrop').addEventListener('click', function (e) { if (e.target === this) closeProjectCalModal(); });
     document.getElementById('calProjBlocksBtn').addEventListener('click', function () { closeProjectCalModal(); sendProjectBlocks(); });
     document.getElementById('calProjDayBtn').addEventListener('click', function () { closeProjectCalModal(); sendProjectWholeDay(); });
+    </script>
+
+    <div class="cal-modal-backdrop hidden" id="calEntryModalBackdrop">
+        <div class="cal-modal">
+            <div class="cal-modal-title">📅 Send entry to Calendar</div>
+            <div class="cal-modal-text" id="calEntryModalNote"></div>
+            <button type="button" class="cal-opt-btn" id="calEntryTimedBtn"></button>
+            <button type="button" class="cal-opt-btn" id="calEntryDayBtn">🗓️ Whole-day event</button>
+            <button type="button" class="cal-cancel-btn" id="calEntryCancelBtn">Cancel</button>
+        </div>
+    </div>
+    <style>
+    .proj-copy-btn { display: inline-flex; padding: 0 5px; margin-left: 4px; background: transparent; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 0.8rem; line-height: 1.5; vertical-align: middle; }
+    .proj-copy-btn::before { content: '📋'; }
+    .proj-copy-btn:hover { background: #eff6ff; border-color: var(--accent); }
+    @media print { .proj-copy-btn { display: none !important; } }
+    </style>
+    <script>
+    // ---- Copy text + Calendar for projects (Summary) and single log entries ----
+    async function copyTextToClipboard(text) {
+        try {
+            if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return; }
+        } catch (e) { /* fall through to the legacy path */ }
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+        document.body.appendChild(ta);
+        ta.select(); ta.setSelectionRange(0, text.length);
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta);
+        if (!ok) throw new Error('Copy is not allowed here');
+    }
+    function copyWithToast(text) {
+        copyTextToClipboard(text).then(function () { showCalToast('✅ Copied'); })
+            .catch(function (err) { showCalToast('⚠️ Copy failed: ' + err.message, true); });
+    }
+
+    // ---- a whole project, for the day shown in Summary ----
+    function projectShareText(project) {
+        const dayLogs = getViewedDayLogs().slice().sort(function (a, b) { return a.timestamp - b.timestamp; })
+            .filter(function (l) { return (l.project || DEFAULT_PROJECT) === project && !l._isWrapUp; });
+        const info = computeTimeData().byProject[project];
+        const dayStr = summaryViewDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const head = [(isSpecialProject(project) ? '⏸️ ' : '📁 ') + project + ' — ' + dayStr];
+        const bits = [];
+        if (info && info.ms > 0) bits.push('Total time: ' + formatDuration(info.ms));
+        bits.push(dayLogs.length + (dayLogs.length === 1 ? ' entry' : ' entries'));
+        head.push(bits.join(' · '), '');
+        return head.join('\n') + '\n' + projectEntriesText(dayLogs);
+    }
+    document.getElementById('summary-content').addEventListener('click', function (e) {
+        const btn = e.target.closest && e.target.closest('.proj-copy-btn');
+        if (!btn) return;
+        e.stopPropagation();
+        copyWithToast(projectShareText(decodeURIComponent(btn.getAttribute('data-project'))));
+    });
+
+    // ---- a single log entry (main log list) ----
+    function entryDateStr(log) {
+        return new Date(log.timestamp).toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+    }
+    function entryShareText(log) {
+        const project = log.project || DEFAULT_PROJECT;
+        const when = (typeof log.timestamp === 'number' && !isNaN(log.timestamp)) ? ' — ' + entryDateStr(log) : '';
+        return (isSpecialProject(project) ? '⏸️ ' : '📁 ') + project + when + '\n' + entryTimeLabel(log) + '\n\n' + String(log.text || '');
+    }
+    window.copyLogEntry = function (index) {
+        const log = logs[index];
+        if (!log) return;
+        copyWithToast(entryShareText(log));
+    };
+
+    let calEntryIndex = null;
+    function entryTimeRange(log) {
+        if (typeof log.startTs === 'number' && log.timestamp - log.startTs >= 60000) {
+            return { start: log.startTs, end: log.timestamp, timer: true };
+        }
+        return { start: log.timestamp, end: log.timestamp + 30 * 60000, timer: false };   // no timer: 30 min from the saved time
+    }
+    window.openEntryCalModal = async function (index) {
+        const log = logs[index];
+        if (!log) return;
+        if (typeof log.timestamp !== 'number' || isNaN(log.timestamp)) { showCalToast('This entry has no date, so it cannot be sent.', true); return; }
+        if (!cloudUser) { showCalToast('Please ☁ Sign in first, then click 📅.', true); return; }
+        if (!gcalTokenIsFresh()) {
+            if (!initGisTokenClient()) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+            const ok = await ensureCalendarConnected();
+            if (!ok) { showCalToast('⚠️ Calendar not connected — finish the Google popup, then click 📅 again', true); return; }
+        }
+        calEntryIndex = index;
+        const r = entryTimeRange(log);
+        const f = function (ms) { return new Date(ms).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }); };
+        document.getElementById('calEntryModalNote').textContent =
+            '📁 ' + (log.project || DEFAULT_PROJECT) + ' — ' + entryDateStr(log) + '\n' + String(log.text || '').split('\n')[0].slice(0, 80);
+        document.getElementById('calEntryTimedBtn').textContent = r.timer
+            ? '🕐 Timed event ' + f(r.start) + '–' + f(r.end) + ' (' + formatDuration(r.end - r.start) + ')'
+            : '🕐 Timed event at ' + f(r.start) + ' (30 min — no timer was used)';
+        document.getElementById('calEntryModalBackdrop').classList.remove('hidden');
+    };
+    function closeEntryCalModal() { document.getElementById('calEntryModalBackdrop').classList.add('hidden'); }
+    function entryEventBase(log) {
+        const project = log.project || DEFAULT_PROJECT;
+        const r = entryTimeRange(log);
+        return {
+            summary: (isSpecialProject(project) ? '⏸️ ' : CAL_TITLE_ICON) + project + (r.timer ? ' · ' + formatDuration(r.end - r.start) : ''),
+            description: project + ' — ' + entryDateStr(log) + '\n' + entryTimeLabel(log) + '\n\n' + String(log.text || '')
+        };
+    }
+    function sendEntryTimed() {
+        const log = logs[calEntryIndex]; if (!log) return;
+        const r = entryTimeRange(log), tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const start = new Date(r.start); start.setSeconds(0, 0);
+        sendCalEvent(Object.assign(entryEventBase(log), {
+            start: { dateTime: start.toISOString(), timeZone: tz },
+            end: { dateTime: new Date(r.end).toISOString(), timeZone: tz }
+        }));
+    }
+    function sendEntryWholeDay() {
+        const log = logs[calEntryIndex]; if (!log) return;
+        const dateStr = ymd(new Date(log.timestamp));
+        const next = new Date(dateStr + 'T00:00:00'); next.setDate(next.getDate() + 1);
+        sendCalEvent(Object.assign(entryEventBase(log), { start: { date: dateStr }, end: { date: ymd(next) } }));
+    }
+    document.getElementById('calEntryCancelBtn').addEventListener('click', closeEntryCalModal);
+    document.getElementById('calEntryModalBackdrop').addEventListener('click', function (e) { if (e.target === this) closeEntryCalModal(); });
+    document.getElementById('calEntryTimedBtn').addEventListener('click', function () { closeEntryCalModal(); sendEntryTimed(); });
+    document.getElementById('calEntryDayBtn').addEventListener('click', function () { closeEntryCalModal(); sendEntryWholeDay(); });
     </script>
 </body>
 </html>
