@@ -557,6 +557,9 @@
             margin-top: 6px;
         }
         .log-edit-area .project-input-wrapper { margin-bottom: 6px; padding: 4px 8px;}
+        .log-edit-time-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; padding: 4px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem; color: var(--text-muted); }
+        .log-edit-time-row input[type="time"] { border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-family: inherit; font-size: 0.85rem; background: #fff; color: var(--text-main); }
+        .log-edit-time-hint { margin-left: auto; font-size: 0.72rem; opacity: 0.7; }
         .log-edit-area textarea {
             height: 90px;
             margin-bottom: 6px;
@@ -1618,6 +1621,19 @@
     function hhmm(ts) {
         return new Date(ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
     }
+    function hm24(ts) {
+        const d = new Date(ts);
+        return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    }
+    // keeps the log list newest-first after a timestamp edit (undated entries stay where they are)
+    function resortDatedLogs() {
+        const slots = [], items = [];
+        logs.forEach(function (l, i) {
+            if (typeof l.timestamp === 'number' && !isNaN(l.timestamp)) { slots.push(i); items.push(l); }
+        });
+        items.sort(function (a, b) { return b.timestamp - a.timestamp; });
+        slots.forEach(function (slot, k) { logs[slot] = items[k]; });
+    }
     // "09:10–09:55 · ⏱ 45m" for entries saved from a timer session, else just the saved time
     function entryTimeLabel(log) {
         if (typeof log.startTs === 'number' && typeof log.timestamp === 'number' && log.timestamp - log.startTs >= 60000) {
@@ -2269,6 +2285,18 @@
         const safeText = escapeHtml(log.text).replace(/\n/g, "<br>");
         const rawText = escapeHtml(log.text);
 
+        const hasTs = typeof log.timestamp === 'number' && !isNaN(log.timestamp);
+        const endVal = hasTs ? hm24(log.timestamp) : '';
+        const startVal = (hasTs && typeof log.startTs === 'number') ? hm24(log.startTs) : '';
+        const timeRowHtml = hasTs ? `
+                <div class="log-edit-time-row">
+                    <label>🕐</label>
+                    <input type="time" id="edit-start-${index}" value="${startVal}" title="Start time (leave empty for no timer)">
+                    <span>–</span>
+                    <input type="time" id="edit-end-${index}" value="${endVal}" title="End time (when the log was saved)">
+                    <span class="log-edit-time-hint">start – end</span>
+                </div>` : '';
+
         if (isSpecialProject(project)) logDiv.classList.add('special-entry');
         if (log._isFocusBlock) logDiv.classList.add('focus-session-entry');
 
@@ -2291,6 +2319,7 @@
                     <label>📁</label>
                     <input type="text" id="edit-project-${index}" value="${safeProject}" list="project-list" spellcheck="false">
                 </div>
+                ${timeRowHtml}
                 <textarea id="edit-textarea-${index}" spellcheck="false">${rawText}</textarea>
                 <div class="log-edit-actions">
                     <button class="btn-cancel" onclick="cancelInlineEdit(${index})">Cancel</button>
@@ -2321,8 +2350,46 @@
         const newText = textarea.value;
         const newProject = projectInput.value.trim() || DEFAULT_PROJECT;
         if (!newText.trim()) { alert("Log cannot be empty."); return; }
-        logs[index].text = newText;
-        logs[index].project = newProject;
+
+        // ---- optional time edit (start – end), keeping the entry's date ----
+        const log = logs[index];
+        const startEl = document.getElementById(`edit-start-${index}`);
+        const endEl = document.getElementById(`edit-end-${index}`);
+        let timeChanged = false;
+        if (startEl && endEl && typeof log.timestamp === 'number') {
+            const origEnd = hm24(log.timestamp);
+            const origStart = typeof log.startTs === 'number' ? hm24(log.startTs) : '';
+            if (!endEl.value) { alert('End time cannot be empty.'); return; }
+            const base = new Date(log.timestamp);
+            const at = function (str) { const parts = str.split(':'); const d = new Date(base); d.setHours(+parts[0], +parts[1], 0, 0); return d.getTime(); };
+            const newEnd = endEl.value === origEnd ? log.timestamp : at(endEl.value);
+            let newStart;
+            if (!startEl.value) newStart = undefined;
+            else if (startEl.value === origStart) newStart = log.startTs;
+            else newStart = at(startEl.value);
+            if (newStart !== undefined && newStart >= newEnd) { alert('The start time must be earlier than the end time.'); return; }
+            timeChanged = (newEnd !== log.timestamp) || (newStart !== log.startTs);
+            if (timeChanged && newStart !== undefined) {
+                // Time Spent counts overlapping time only once — warn if this start reaches into the previous entry
+                const dk = dateKey(newEnd);
+                let prevTs = null;
+                logs.forEach(function (l, i) {
+                    if (i === index || typeof l.timestamp !== 'number' || dateKey(l.timestamp) !== dk) return;
+                    if (l.timestamp < newEnd && (prevTs === null || l.timestamp > prevTs)) prevTs = l.timestamp;
+                });
+                if (prevTs !== null && newStart < prevTs &&
+                    !confirm('This start (' + hm24(newStart) + ') is earlier than your previous entry (' + hm24(prevTs) + ').\n\nTime Spent counts overlapping time only once, so it will be counted from ' + hm24(prevTs) + '.\n\nSave anyway?')) return;
+            }
+            if (timeChanged) {
+                log.timestamp = newEnd;
+                log.time = hhmm(newEnd);
+                if (newStart === undefined) delete log.startTs; else log.startTs = newStart;
+            }
+        }
+
+        log.text = newText;
+        log.project = newProject;
+        if (timeChanged) resortDatedLogs();
         saveLocal();
         renderLogs();
         populateProjectSuggestions();
