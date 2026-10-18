@@ -709,6 +709,12 @@
             color: #c33;
         }
 
+        #searchOptions { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 12px; color: #555; }
+        #searchOptions select { font-size: 12px; padding: 2px 4px; border: 1px solid #ddd; border-radius: 4px; }
+        #searchOptions label { display: flex; align-items: center; gap: 3px; cursor: pointer; white-space: nowrap; }
+        .search-project-head { font-size: 12px; font-weight: bold; color: #333; background: #f3f3f3; padding: 4px 6px; margin-top: 6px; border-radius: 4px; }
+        .search-filtered-out { display: none !important; }
+        .outline-node-row.search-hit { background: #fff8c5; border-radius: 4px; }
         .search-result-row {
             padding: 6px 6px;
             margin: 2px 0;
@@ -1985,7 +1991,11 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
         📁 <h3>Files</h3>
     </div>
     <div id="fileSidebarSearchBar">
-        <input id="contentSearchInput" type="text" placeholder="🔍 Search this project…">
+        <input id="contentSearchInput" type="text" placeholder="🔍 Search…">
+        <div id="searchOptions">
+            <select id="searchScope" title="Where to search"><option value="project">This project</option><option value="all">All projects</option></select>
+            <label title="Hide lines and tables that don't match, on the page itself"><input type="checkbox" id="searchFilterPage"> Filter page</label>
+        </div>
     </div>
     <div id="fileSidebarSortBar">
         <select id="projectSortSelect" onchange="window.setProjectSortMode(this.value)" title="Sort projects by">
@@ -8221,16 +8231,14 @@ function insertNewCheckboxLine(currentLine) {
             const input = document.getElementById('contentSearchInput');
             const resultsEl = document.getElementById('contentSearchResults');
             const listEl = document.getElementById('projectsListSide');
+            const scopeSel = document.getElementById('searchScope');
+            const filterCb = document.getElementById('searchFilterPage');
             if (!input || !resultsEl || !listEl) return;
+            let searchToken = 0, debounceT = null;
 
             function escapeHtml(s) {
                 return s.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; });
             }
-
-            // Wraps the matched substring in <mark>, preserving the rest
-            // of the line's actual text (a full line/paragraph, not a
-            // truncated snippet — outline lines are single-line by
-            // design, so "full text of the line" is the natural unit).
             function highlight(text, query) {
                 const escaped = escapeHtml(text);
                 const idx = escaped.toLowerCase().indexOf(query.toLowerCase());
@@ -8238,6 +8246,7 @@ function insertNewCheckboxLine(currentLine) {
                 return escaped.slice(0, idx) + '<mark>' + escaped.slice(idx, idx + query.length) + '</mark>' + escaped.slice(idx + query.length);
             }
 
+            // Matches in the project that is open right now (live DOM/tree).
             function collectMatches(query) {
                 const q = query.trim().toLowerCase();
                 const matches = [];
@@ -8260,46 +8269,178 @@ function insertNewCheckboxLine(currentLine) {
                 return matches;
             }
 
+            // Matches inside a saved (not open) project's parsed JSON.
+            function matchesInData(data, q) {
+                const out = [];
+                (data.tables || []).forEach(function (table) {
+                    (table.rows || []).forEach(function (row) {
+                        row.forEach(function (cell) {
+                            (function walk(nodes) {
+                                (nodes || []).forEach(function (n) {
+                                    if (n.text && n.text.toLowerCase().indexOf(q) !== -1) {
+                                        out.push({ nodeId: n.id, tableName: cell.title || '(untitled table)', text: n.text });
+                                    }
+                                    if (n.children && n.children.length) walk(n.children);
+                                });
+                            })(cell.tree);
+                        });
+                    });
+                });
+                return out;
+            }
+            function loadProjectJson(projectId) {
+                const cached = currentUser ? readLocalProject(currentUser.uid, projectId) : null;
+                if (cached && cached.json) {
+                    try { return Promise.resolve(JSON.parse(cached.json)); } catch (e) { /* fall through to cloud */ }
+                }
+                return projectsCollection().doc(projectId).get().then(function (doc) {
+                    const d = doc.data();
+                    return d && d.json ? JSON.parse(d.json) : { tables: [] };
+                });
+            }
+            function collectAllProjects(query) {
+                const q = query.trim().toLowerCase();
+                const list = (projectsCache || []).slice();
+                return Promise.all(list.map(function (p) {
+                    if (p.id === currentProjectId) {
+                        return Promise.resolve({ id: p.id, name: p.name, matches: collectMatches(query) });
+                    }
+                    return loadProjectJson(p.id).then(function (data) {
+                        return { id: p.id, name: p.name, matches: matchesInData(data, q) };
+                    }).catch(function () { return { id: p.id, name: p.name, matches: [] }; });
+                })).then(function (groups) { return groups.filter(function (g) { return g.matches.length; }); });
+            }
+
+            function goTo(projectId, nodeId) {
+                function reveal() {
+                    const row = document.querySelector('.outline-node-row[data-node-id="' + nodeId + '"]');
+                    if (!row || !window.revealAndScrollToNode) return false;
+                    window.revealAndScrollToNode(row.dataset.rootId, nodeId);
+                    return true;
+                }
+                if (projectId === currentProjectId) { reveal(); return; }
+                window.switchProjectFromMenu(projectId);
+                let tries = 0;
+                const t = setInterval(function () {
+                    if ((currentProjectId === projectId && reveal()) || ++tries > 80) clearInterval(t);
+                }, 250);
+            }
+
+            function addResultRow(parent, label, text, query, onClick) {
+                const row = document.createElement('div');
+                row.className = 'search-result-row';
+                const tableLabel = document.createElement('div');
+                tableLabel.className = 'search-result-table';
+                tableLabel.textContent = label;
+                const t = document.createElement('div');
+                t.className = 'search-result-text';
+                t.innerHTML = highlight(text, query);
+                row.appendChild(tableLabel);
+                row.appendChild(t);
+                row.addEventListener('click', onClick);
+                parent.appendChild(row);
+            }
+            function emptyMsg(query) {
+                const empty = document.createElement('div');
+                empty.className = 'search-no-results';
+                empty.textContent = 'No matches for "' + query + '"';
+                resultsEl.appendChild(empty);
+            }
+
             function renderResults(query) {
-                const matches = collectMatches(query);
+                const token = ++searchToken;
+                query = query.trim();
                 resultsEl.innerHTML = '';
-                if (matches.length === 0) {
-                    const empty = document.createElement('div');
-                    empty.className = 'search-no-results';
-                    empty.textContent = 'No matches for "' + query.trim() + '"';
-                    resultsEl.appendChild(empty);
+                if (scopeSel && scopeSel.value === 'all') {
+                    const loading = document.createElement('div');
+                    loading.className = 'search-no-results';
+                    loading.textContent = 'Searching all projects…';
+                    resultsEl.appendChild(loading);
+                    collectAllProjects(query).then(function (groups) {
+                        if (token !== searchToken) return;
+                        resultsEl.innerHTML = '';
+                        if (!groups.length) { emptyMsg(query); return; }
+                        groups.forEach(function (g) {
+                            const head = document.createElement('div');
+                            head.className = 'search-project-head';
+                            head.textContent = '📁 ' + g.name + ' (' + g.matches.length + ')';
+                            resultsEl.appendChild(head);
+                            g.matches.forEach(function (m) {
+                                addResultRow(resultsEl, m.tableName, m.text, query, function () { goTo(g.id, m.nodeId); });
+                            });
+                        });
+                    });
                     return;
                 }
+                const matches = collectMatches(query);
+                if (!matches.length) { emptyMsg(query); return; }
                 matches.forEach(function (m) {
-                    const row = document.createElement('div');
-                    row.className = 'search-result-row';
-                    const tableLabel = document.createElement('div');
-                    tableLabel.className = 'search-result-table';
-                    tableLabel.textContent = m.tableName;
-                    const text = document.createElement('div');
-                    text.className = 'search-result-text';
-                    text.innerHTML = highlight(m.text, query.trim());
-                    row.appendChild(tableLabel);
-                    row.appendChild(text);
-                    row.addEventListener('click', function () {
+                    addResultRow(resultsEl, m.tableName, m.text, query, function () {
                         if (window.revealAndScrollToNode) window.revealAndScrollToNode(m.rootId, m.nodeId);
                     });
-                    resultsEl.appendChild(row);
                 });
             }
 
-            input.addEventListener('input', function () {
+            // "Filter page": hide every line / table of the open project
+            // that doesn't match (keeping the parents of matches, and the
+            // children of matching lines), temporarily expanding collapsed
+            // branches that hold a match.
+            function clearFilter() {
+                document.querySelectorAll('.search-filtered-out').forEach(function (el) { el.classList.remove('search-filtered-out'); });
+                document.querySelectorAll('.search-hit').forEach(function (el) { el.classList.remove('search-hit'); });
+                document.querySelectorAll('[data-search-reveal]').forEach(function (el) { el.style.display = 'none'; delete el.dataset.searchReveal; });
+            }
+            function applyFilter(q) {
+                clearFilter();
+                q = q.trim().toLowerCase();
+                if (!q) return;
+                document.querySelectorAll('#tablesContainer td').forEach(function (td) {
+                    let any = false;
+                    td.querySelectorAll('.outline-node-row').forEach(function (r) {
+                        const t = r.querySelector('.outline-text');
+                        if (t && t.textContent.toLowerCase().indexOf(q) !== -1) { r.classList.add('search-hit'); any = true; }
+                    });
+                    const titleEl = td.querySelector('.cell-title');
+                    const titleHit = titleEl && titleEl.textContent.toLowerCase().indexOf(q) !== -1;
+                    if (!any && !titleHit) { td.classList.add('search-filtered-out'); return; }
+                    if (!any) return; // only the table title matched — keep its lines visible
+                    td.querySelectorAll('.outline-node').forEach(function (nd) {
+                        const own = nd.querySelector(':scope > .outline-node-row');
+                        if ((own && own.classList.contains('search-hit')) || nd.querySelector('.search-hit')) return;
+                        let anc = nd.parentElement && nd.parentElement.closest('.outline-node');
+                        while (anc) {
+                            const ar = anc.querySelector(':scope > .outline-node-row');
+                            if (ar && ar.classList.contains('search-hit')) return; // child of a matching line
+                            anc = anc.parentElement && anc.parentElement.closest('.outline-node');
+                        }
+                        nd.classList.add('search-filtered-out');
+                    });
+                    td.querySelectorAll('.outline-children').forEach(function (w) {
+                        if (w.style.display === 'none' && w.querySelector('.search-hit')) {
+                            w.style.display = ''; w.dataset.searchReveal = '1';
+                        }
+                    });
+                });
+            }
+
+            function refresh() {
                 const q = input.value.trim();
+                if (filterCb) filterCb.disabled = !!(scopeSel && scopeSel.value === 'all');
                 if (!q) {
                     resultsEl.style.display = 'none';
                     resultsEl.innerHTML = '';
                     listEl.style.display = '';
+                    clearFilter();
                     return;
                 }
                 listEl.style.display = 'none';
                 resultsEl.style.display = '';
                 renderResults(q);
-            });
+                if (filterCb && filterCb.checked && !(scopeSel && scopeSel.value === 'all')) applyFilter(q); else clearFilter();
+            }
+            input.addEventListener('input', function () { clearTimeout(debounceT); debounceT = setTimeout(refresh, 150); });
+            if (scopeSel) scopeSel.addEventListener('change', refresh);
+            if (filterCb) filterCb.addEventListener('change', refresh);
         })();
 
         // --- Multi-select: Copy/Move/Delete across outline items ------
