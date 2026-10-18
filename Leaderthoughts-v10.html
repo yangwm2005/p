@@ -2058,7 +2058,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
             <button id="importButton" class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="importProjectFromFile(); document.getElementById('exportMenu').classList.remove('show');" title="Import a previously exported JSON file as a new project">Import project…</button>
             <button id="printButton" class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="printContent(); document.getElementById('exportMenu').classList.remove('show');">Print</button>
             <button id="viewButton" class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="quickView(); document.getElementById('exportMenu').classList.remove('show');" title="Open a clean read-only view of the whole document (works on desktop and mobile)">👁 Quick View</button>
-            <button class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="openPrintTablePicker(); document.getElementById('exportMenu').classList.remove('show');" title="Print one table only, with a clean layout">🖨 Print a table…</button>
+            <button class="gray" style="width:100%; text-align:left; font-size:12px; margin-top:4px;" onclick="openPrintTablePicker(); document.getElementById('exportMenu').classList.remove('show');" title="Print one table only, with a clean layout">🖨 Print tables…</button>
         </div>
     </div>
     <span class="separator">|</span>
@@ -2287,29 +2287,35 @@ window.prepareCloneForOutput = function (srcCell, clone) {
     });
 };
 
-window.printSingleTable = function (el, layoutOverride) {
-    const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
-    if (!table) return;
-    const layout = layoutOverride || window.getPrintLayout();
-    const rows = window.getCellTableRows(table);
-    const cols = layout === 'single' ? 1 : rows.reduce(function (m, r) { return Math.max(m, r.length); }, 1);
+window.printTables = function (blocks, opts) {
+    opts = opts || {};
+    const layout = opts.layout || window.getPrintLayout();
+    const pageBreaks = !!opts.pageBreaks;
     const esc = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
     const pageTitle = document.getElementById('pageTitle').innerText.trim();
-
-    let cellsHtml = '';
-    rows.forEach(function (rowTds) {
-        rowTds.forEach(function (td) {
-            const c = td.cloneNode(true);
-            c.querySelectorAll('.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, button')
-                .forEach(function (x) { x.remove(); });
-            c.querySelectorAll('[contenteditable]').forEach(function (x) { x.removeAttribute('contenteditable'); });
-            window.prepareCloneForOutput(td, c);
-            const titleEl = td.querySelector('.cell-title');
-            const title = titleEl ? titleEl.textContent : '';
-            const bodyEl = c.querySelector('.cell-scroll') || c.querySelector('.outline-root') || c;
-            cellsHtml += '<section class="cell"><h3>' + esc(title) + '</h3>' + bodyEl.innerHTML + '</section>';
+    let body = '';
+    blocks.forEach(function (el, bi) {
+        const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
+        if (!table) return;
+        const rows = window.getCellTableRows(table);
+        const cols = layout === 'single' ? 1 : rows.reduce(function (m, r) { return Math.max(m, r.length); }, 1);
+        let cellsHtml = '';
+        rows.forEach(function (rowTds) {
+            rowTds.forEach(function (td) {
+                const c = td.cloneNode(true);
+                c.querySelectorAll('.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, button')
+                    .forEach(function (x) { x.remove(); });
+                c.querySelectorAll('[contenteditable]').forEach(function (x) { x.removeAttribute('contenteditable'); });
+                window.prepareCloneForOutput(td, c);
+                const titleEl = td.querySelector('.cell-title');
+                const title = titleEl ? titleEl.textContent : '';
+                const bodyEl = c.querySelector('.cell-scroll') || c.querySelector('.outline-root') || c;
+                cellsHtml += '<section class="cell"><h3>' + esc(title) + '</h3>' + bodyEl.innerHTML + '</section>';
+            });
         });
+        body += '<div class="tbl' + (pageBreaks && bi > 0 ? ' newpage' : '') + '"><div class="grid" style="grid-template-columns: repeat(' + cols + ', minmax(0, 1fr));">' + cellsHtml + '</div></div>';
     });
+    if (!body) return;
 
     const w = window.open('', '_blank');
     if (!w) { alert('Please allow pop-ups for this page to print.'); return; }
@@ -2317,8 +2323,10 @@ window.printSingleTable = function (el, layoutOverride) {
         '@page { margin: 14mm; }' +
         'body { font-family: -apple-system, "Segoe UI", Arial, sans-serif; color:#222; margin:0; }' +
         'h1 { font-size: 16pt; margin: 0 0 12px; padding-bottom: 6px; border-bottom: 2px solid #333; }' +
-        '.grid { display: grid; grid-template-columns: repeat(' + cols + ', minmax(0, 1fr)); gap: 12px; align-items: start; }' +
-        '.cell { border: 1px solid #bbb; border-radius: 6px; padding: 10px 12px; }' +
+        '.tbl { margin-bottom: 16px; }' +
+        '.tbl.newpage { break-before: page; page-break-before: always; }' +
+        '.grid { display: grid; gap: 12px; align-items: start; }' +
+        '.cell { border: 1px solid #bbb; border-radius: 6px; padding: 10px 12px; break-inside: avoid-page; }' +
         '.cell h3 { margin: 0 0 8px; padding-bottom: 5px; font-size: 12pt; border-bottom: 1px solid #ddd; }' +
         '.outline-root { padding: 0; }' +
         '.outline-node-row { display:flex; align-items:flex-start; padding:1px 0; min-width:0; }' +
@@ -2332,11 +2340,14 @@ window.printSingleTable = function (el, layoutOverride) {
         'input[type=checkbox] { -webkit-appearance:checkbox; appearance:checkbox; width:12px; height:12px; }' +
         '.outline-node { break-inside: avoid; }' +
         '.foot { margin-top:10px; font-size:8pt; color:#999; text-align:right; }' +
-        '</style></head><body><h1>' + esc(pageTitle) + '</h1><div class="grid">' + cellsHtml +
-        '</div><div class="foot">Printed ' + esc(new Date().toLocaleString()) + '</div></body></html>');
+        '</style></head><body><h1>' + esc(pageTitle) + '</h1>' + body +
+        '<div class="foot">Printed ' + esc(new Date().toLocaleString()) + '</div></body></html>');
     w.document.close();
     w.focus();
     setTimeout(function () { w.print(); }, 250);
+};
+window.printSingleTable = function (el, layoutOverride) {
+    window.printTables([el], { layout: layoutOverride });
 };
 
 window.ensureTablePrintButton = function (el) {
@@ -2350,7 +2361,9 @@ window.ensureTablePrintButton = function (el) {
     el.appendChild(btn);
 };
 
-// File menu -> "Print a table..." picker: choose which table and the layout.
+// File menu -> "Print tables..." picker: tick the tables to print (in
+// on-screen order), choose the paper layout and whether each table starts
+// on its own page.
 window.openPrintTablePicker = function () {
     const old = document.getElementById('printTablePickerOverlay');
     if (old) old.remove();
@@ -2363,31 +2376,42 @@ window.openPrintTablePicker = function () {
         return (i + 1) + '. ' + (titles.join(' · ') || '(table)');
     });
     const cur = window.getPrintLayout();
+    let pbPref = false;
+    try { pbPref = localStorage.getItem('pt_print_pagebreaks') === '1'; } catch (e) {}
     const ov = document.createElement('div');
     ov.id = 'printTablePickerOverlay';
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99998;display:flex;align-items:center;justify-content:center;';
     ov.innerHTML =
-        '<div style="background:#fff;border-radius:10px;padding:18px 20px;width:360px;max-width:92vw;box-shadow:0 10px 40px rgba(0,0,0,.35);font-family:-apple-system,Segoe UI,Arial,sans-serif;color:#222;">' +
-        '<h3 style="margin:0 0 10px;font-size:15px;">🖨 Print a table</h3>' +
-        '<label style="font-size:12px;color:#666;">Table</label>' +
-        '<select id="ptpTable" style="width:100%;padding:5px;font-size:13px;margin:3px 0 12px;box-sizing:border-box;">' +
-        labels.map(function (l, i) { return '<option value="' + i + '">' + esc(l) + '</option>'; }).join('') + '</select>' +
+        '<div style="background:#fff;border-radius:10px;padding:18px 20px;width:400px;max-width:92vw;box-shadow:0 10px 40px rgba(0,0,0,.35);font-family:-apple-system,Segoe UI,Arial,sans-serif;color:#222;">' +
+        '<h3 style="margin:0 0 8px;font-size:15px;">🖨 Print tables</h3>' +
+        '<div style="display:flex;align-items:center;gap:10px;font-size:12px;color:#666;margin-bottom:4px;">Tables to print' +
+        '<a href="#" id="ptpAll" style="margin-left:auto;color:#3E63DD;">All</a><a href="#" id="ptpNone" style="color:#3E63DD;">None</a></div>' +
+        '<div id="ptpList" style="max-height:220px;overflow:auto;border:1px solid #ddd;border-radius:6px;padding:4px 8px;margin-bottom:12px;">' +
+        labels.map(function (l, i) { return '<label style="display:block;font-size:13px;padding:3px 0;cursor:pointer;"><input type="checkbox" class="ptpChk" value="' + i + '"> ' + esc(l) + '</label>'; }).join('') + '</div>' +
         '<div style="font-size:12px;color:#666;margin-bottom:4px;">Layout on paper</div>' +
         '<label style="display:block;font-size:13px;margin:2px 0;"><input type="radio" name="ptpLayout" value="columns"' + (cur === 'columns' ? ' checked' : '') + '> Keep columns (as on screen)</label>' +
-        '<label style="display:block;font-size:13px;margin:2px 0 14px;"><input type="radio" name="ptpLayout" value="single"' + (cur === 'single' ? ' checked' : '') + '> Single column (each cell full width)</label>' +
+        '<label style="display:block;font-size:13px;margin:2px 0 8px;"><input type="radio" name="ptpLayout" value="single"' + (cur === 'single' ? ' checked' : '') + '> Single column (each cell full width)</label>' +
+        '<label style="display:block;font-size:13px;margin:2px 0 14px;"><input type="checkbox" id="ptpBreaks"' + (pbPref ? ' checked' : '') + '> Start each table on a new page</label>' +
         '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
         '<button type="button" id="ptpCancel" style="background:#6c757d;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;">Cancel</button>' +
         '<button type="button" id="ptpGo" style="background:#3E63DD;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;">Print</button></div></div>';
     document.body.appendChild(ov);
+    const chks = Array.from(ov.querySelectorAll('.ptpChk'));
+    chks.forEach(function (c) { c.checked = true; });
     const close = function () { ov.remove(); };
     ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    ov.querySelector('#ptpAll').addEventListener('click', function (e) { e.preventDefault(); chks.forEach(function (c) { c.checked = true; }); });
+    ov.querySelector('#ptpNone').addEventListener('click', function (e) { e.preventDefault(); chks.forEach(function (c) { c.checked = false; }); });
     ov.querySelector('#ptpCancel').addEventListener('click', close);
     ov.querySelector('#ptpGo').addEventListener('click', function () {
-        const idx = Number(ov.querySelector('#ptpTable').value);
+        const picked = chks.filter(function (c) { return c.checked; }).map(function (c) { return blocks[Number(c.value)]; });
+        if (!picked.length) { alert('Tick at least one table.'); return; }
         const layout = ov.querySelector('input[name="ptpLayout"]:checked').value;
+        const pageBreaks = ov.querySelector('#ptpBreaks').checked;
         window.setPrintLayout(layout);
+        try { localStorage.setItem('pt_print_pagebreaks', pageBreaks ? '1' : '0'); } catch (e) {}
         close();
-        window.printSingleTable(blocks[idx], layout);
+        window.printTables(picked, { layout: layout, pageBreaks: pageBreaks });
     });
 };
 
