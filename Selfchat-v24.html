@@ -874,10 +874,9 @@
 <button id="fabThreadToggle" title="Toggle all threads open / closed">💬</button>
     <div>
         <footer>
-            Copyright © 2026 Dr. Wen-Ming Yang 20261016: v24 Allrighhts reserved. 
-<!--        20261017:  💬 Fixed — sending a subitem reply now scrolls the new row into view, so it's visible immediately instead of only after scrolling or typing the next one.<br>
+            Copyright © 2026 Dr. Wen-Ming Yang 20260907: v25: 💬 Fixed — sending a subitem reply now scrolls the new row into view, so it's visible immediately instead of only after scrolling or typing the next one.<br>
             20260730: v24: 📥 Paste now restores an item's subitems (thread replies) along with it — works for both the app clipboard (Copy → Paste in-app) and the system clipboard (pasting the copied text, including into another window/instance).<br>
-            20260626: v24t: 📄 Save .txt button added to View modal footer next to 🖨️ Print — exports current view mode as a named .txt file.<br>
+<!--        20260626: v24t: 📄 Save .txt button added to View modal footer next to 🖨️ Print — exports current view mode as a named .txt file.<br>
             20260622: v25s: Simplified view modal bar — removed redundant Copy button, keeping only 📄 Save .txt.<br>
             20260615: v25i: 4 view modes — ¶ Plain, ¶• Thread Bullets, • Msg Bullets, •• Full Bullets; shared _pvRenderParagraph for screen+print; no vertical lines in any mode.
             20260615: v25h: Beautiful print view — Plain/Bullets tabs in modal; 🖨️ Print button opens styled print window with title, date, clean typography; threads shown as indented replies; Save as PDF via browser print.<br>
@@ -2139,6 +2138,17 @@
         });
     }
 
+    // ── Escape text for HTML views (thread replies may be multi-line) ──
+    function _escHtml(t) {
+        return String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+    // ── Push a (possibly multi-line) thread reply as separate text lines ──
+    function _threadTxt(lines, first, cont, text, ts) {
+        var parts = String(text == null ? '' : text).replace(/\r/g, '').split('\n');
+        parts.forEach(function(p, i) { lines.push((i === 0 ? first : cont) + p); });
+        if (ts) lines[lines.length - 1] += '  @' + ts;
+    }
+
     // ── Thread helper: extract replies from a message div ──
     function getThreadLines(div, style) {
         // style: 'html' returns <div> elements, 'txt' returns plain text lines
@@ -2149,7 +2159,7 @@
             replies.forEach(function(row) {
                 var rt = row.querySelector('.thread-reply-text');
                 var rts = row.querySelector('.thread-reply-ts');
-                if (rt) html += '<div class="thread-line"><span>' + rt.textContent + '</span>' + (rts ? ' <small>' + rts.textContent + '</small>' : '') + '</div>';
+                if (rt) html += '<div class="thread-line"><span style="white-space:pre-wrap;min-width:0;">' + _escHtml(rt.textContent) + '</span>' + (rts ? ' <small>' + rts.textContent + '</small>' : '') + '</div>';
             });
             return html;
         } else {
@@ -2157,7 +2167,7 @@
             replies.forEach(function(row) {
                 var rt = row.querySelector('.thread-reply-text');
                 var rts = row.querySelector('.thread-reply-ts');
-                if (rt) lines.push('    ↳ ' + rt.textContent + (rts ? '  @' + rts.textContent : ''));
+                if (rt) _threadTxt(lines, '    ↳ ', '      ', rt.textContent, rts ? rts.textContent : '');
             });
             return lines;
         }
@@ -2240,7 +2250,7 @@ function openChatInNewWindow() {
 
         let messageContent = textSpan.innerHTML;
         let threadHtml = getThreadLines(div, 'html');
-        return `<p class="${classAttr.trim()}">• ${messageContent} <small>(${timestamp.textContent})</small>${threadHtml ? '<div class="msg-threads">' + threadHtml + '</div>' : ''}</p>`;
+        return `<div class="msg ${classAttr.trim()}">• ${messageContent} <small>(${timestamp.textContent})</small>${threadHtml ? '<div class="msg-threads">' + threadHtml + '</div>' : ''}</div>`;
     }).join("");
 
     if (!messages) {
@@ -2261,10 +2271,10 @@ function openChatInNewWindow() {
                 body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
                 h2 { text-align: center; }
                 .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 0 6px rgba(0,0,0,0.1); }
-                p { background: #e6e6e6; padding: 8px; border-radius: 5px; margin: 5px 0; }
-                p.highlighted-yellow { background: yellow; }
-                p.highlighted-orange { background: orange; }
-                p.subchat { margin-left: 10px; border-left: 2px solid #007bff; padding-left: 6px; }
+                .msg { background: #e6e6e6; padding: 8px; border-radius: 5px; margin: 5px 0; }
+                .msg.highlighted-yellow { background: yellow; }
+                .msg.highlighted-orange { background: orange; }
+                .msg.subchat { margin-left: 10px; border-left: 2px solid #007bff; padding-left: 6px; }
                 small { color: #555; font-size: 12px; }
                 .msg-threads { margin-top: 3px; padding-left: 12px; border-left: 2px solid #3b5bdb; }
                 .thread-line { font-size: 0.88em; color: #444; padding: 1px 0; }
@@ -2297,7 +2307,7 @@ function openChatInNewWindow() {
 
             let messageContent = textSpan.innerHTML;
             let threadHtml2 = getThreadLines(div, 'html');
-            return `<p${classAttr}>${messageContent} <small>(${timestamp.textContent})</small>${threadHtml2 ? '<div class="msg-threads">' + threadHtml2 + '</div>' : ''}</p>`;
+            return `<div${classAttr ? classAttr.replace('class="', 'class="msg ') : ' class="msg"'}>${messageContent} <small>(${timestamp.textContent})</small>${threadHtml2 ? '<div class="msg-threads">' + threadHtml2 + '</div>' : ''}</div>`;
         }).join("");
 
         if (messages === "") {
@@ -2322,10 +2332,10 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
                     body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
                     h2 { text-align: center; color: #333; }
                     .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); }
-                    p { font-size: 14px; color: #333; background: #e6e6e6; padding: 8px; border-radius: 5px; margin: 5px 0; }
-                    p.highlighted-yellow { background: yellow; }
-                    p.highlighted-orange { background: orange; }
-                    p.subchat { margin-left: 10px; border-left: 2px solid #007bff; padding-left: 6px; }
+                    .msg { font-size: 14px; color: #333; background: #e6e6e6; padding: 8px; border-radius: 5px; margin: 5px 0; }
+                    .msg.highlighted-yellow { background: yellow; }
+                    .msg.highlighted-orange { background: orange; }
+                    .msg.subchat { margin-left: 10px; border-left: 2px solid #007bff; padding-left: 6px; }
                     small { color: #555; font-size: 12px; }
                     .checkbox-wrapper { display: inline-flex; align-items: center; margin-right: 5px; }
                     .checkbox-wrapper input[type="checkbox"] { margin: 0 5px 0 0; cursor: pointer; }
@@ -2606,7 +2616,7 @@ function openChatInNewWindow7() {
         if (replyRows.length) {
             let replyItems = Array.from(replyRows).map(row => {
                 let rt = row.querySelector('.thread-reply-text');
-                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? rt.textContent : ''}</span></div>`;
+                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? _escHtml(rt.textContent) : ''}</span></div>`;
             }).join('');
             threadHtml = `<div class="thread-panel"><div class="thread-panel-inner">${replyItems}</div></div>`;
         }
@@ -2637,7 +2647,7 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
 .thread-panel { padding: 0 9px 6px 28px; }
 .thread-panel-inner { border-left: 2px solid #c7d2fe; padding-left: 8px; display: flex; flex-direction: column; gap: 2px; }
 .thread-reply-row { display: flex; align-items: center; gap: 4px; padding: 3px 6px; background: #fff; border-radius: 6px; border: 1px solid #e0e7ff; }
-.thread-reply-text { flex: 1; font-size: 13px; color: #334155; line-height: 1.35; word-break: break-word; }
+.thread-reply-text { flex: 1; font-size: 13px; color: #334155; line-height: 1.35; word-break: break-word; white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -2678,7 +2688,7 @@ function openChatInNewWindow6() {
             let replyItems = Array.from(replyRows).map(row => {
                 let rt = row.querySelector('.thread-reply-text');
                 let rts = row.querySelector('.thread-reply-ts');
-                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? rt.textContent : ''}</span><span class="thread-reply-ts">${rts ? rts.textContent : ''}</span></div>`;
+                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? _escHtml(rt.textContent) : ''}</span><span class="thread-reply-ts">${rts ? rts.textContent : ''}</span></div>`;
             }).join('');
             threadHtml = `<div class="thread-panel"><div class="thread-panel-inner">${replyItems}</div></div>`;
         }
@@ -2714,7 +2724,7 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
 .thread-panel { padding: 0 9px 6px 28px; }
 .thread-panel-inner { border-left: 2px solid #c7d2fe; padding-left: 8px; display: flex; flex-direction: column; gap: 2px; }
 .thread-reply-row { display: flex; align-items: center; gap: 4px; padding: 3px 6px; background: #fff; border-radius: 6px; border: 1px solid #e0e7ff; }
-.thread-reply-text { flex: 1; font-size: 13px; color: #334155; line-height: 1.35; word-break: break-word; }
+.thread-reply-text { flex: 1; font-size: 13px; color: #334155; line-height: 1.35; word-break: break-word; white-space: pre-wrap; }
 .thread-reply-ts { font-size: .78em; color: #94a3b8; white-space: nowrap; flex-shrink: 0; }
 </style>
 </head>
