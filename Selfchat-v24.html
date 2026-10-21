@@ -282,6 +282,8 @@
             font-size: 15px;
             white-space: pre-wrap;
         }
+        /* keep line breaks typed with Enter while editing a reply */
+        .thread-reply-text, .sub-reply-text { white-space: pre-wrap; }
         .thread-reply-ts {
             font-size: 0.78em;
             color: #94a3b8;
@@ -1238,17 +1240,6 @@
                 event.preventDefault();
                 toggleMessageSelection(userMessage);
             }
-        });
-
-        userMessage.addEventListener("dblclick", function (event) {
-            // Ignore clicks on action btn, action menu, and thread panel
-            if (event.target === actionBtn) return;
-            if (actionMenu.contains(event.target)) return;
-            if (event.target.closest && event.target.closest('.thread-panel')) return;
-            if (event.target.closest && event.target.closest('.thread-toggle-btn')) return;
-            shiftToSubchat(userMessage);
-            updateSubchatToggles();
-            event.preventDefault();
         });
 
         userMessage.addEventListener("click", function (event) {
@@ -3341,6 +3332,32 @@ document.addEventListener("DOMContentLoaded", function() {
     // ── Save when an existing message is edited in-place (contentEditable, debounced) ──
     document.getElementById('chatBox').addEventListener('input', function() {
         autosaveTick();
+    });
+
+    // ── Enter inside an edited thread reply / sub-reply = new line inside the same note ──
+    // (default contentEditable behaviour splits the reply row into a half-styled block)
+    document.getElementById('chatBox').addEventListener('keydown', function(e) {
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+        var sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return;
+        var n = sel.anchorNode;
+        var el = n && (n.nodeType === 1 ? n : n.parentElement);
+        var t = el && el.closest ? el.closest('.thread-reply-text, .sub-reply-text') : null;
+        if (!t) return;
+        e.preventDefault();
+        var r = sel.getRangeAt(0);
+        r.deleteContents();
+        var nl = document.createTextNode('\n');
+        r.insertNode(nl);
+        // newline at the very end: add an invisible <br> placeholder (ignored by textContent) so the caret can sit on the new empty line
+        var nx = nl.nextSibling;
+        while (nx && nx.nodeType === 3 && nx.data === '') { var rm = nx; nx = nx.nextSibling; rm.parentNode.removeChild(rm); }
+        if (!nx) nl.parentNode.appendChild(document.createElement('br'));
+        r.setStartAfter(nl);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+        t.dispatchEvent(new Event('input', { bubbles: true })); // trigger autosave
     });
 
     // Update saveChatAsFile to reuse the same file like autosave
