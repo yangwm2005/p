@@ -3334,7 +3334,7 @@ document.addEventListener("DOMContentLoaded", function() {
         autosaveTick();
     });
 
-    // ── Enter inside an edited thread reply / sub-reply = new line inside the same note ──
+    // ── Enter inside an edited thread reply / sub-reply = new bulleted line inside the same note ──
     // (default contentEditable behaviour splits the reply row into a half-styled block)
     document.getElementById('chatBox').addEventListener('keydown', function(e) {
         if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
@@ -3347,13 +3347,20 @@ document.addEventListener("DOMContentLoaded", function() {
         e.preventDefault();
         var r = sel.getRangeAt(0);
         r.deleteContents();
-        var nl = document.createTextNode('\n');
-        r.insertNode(nl);
-        // newline at the very end: add an invisible <br> placeholder (ignored by textContent) so the caret can sit on the new empty line
-        var nx = nl.nextSibling;
-        while (nx && nx.nodeType === 3 && nx.data === '') { var rm = nx; nx = nx.nextSibling; rm.parentNode.removeChild(rm); }
-        if (!nx) nl.parentNode.appendChild(document.createElement('br'));
-        r.setStartAfter(nl);
+        // caret offset inside the note's plain text
+        var pre = document.createRange();
+        pre.selectNodeContents(t);
+        pre.setEnd(r.startContainer, r.startOffset);
+        var pos = pre.toString().length;
+        var txt = t.textContent;
+        var BUL = '\u2022 ';
+        // every line of the note carries a bullet: add one to the first line if it has none
+        if (txt.indexOf('\u2022') !== 0) { txt = BUL + txt; pos += BUL.length; }
+        txt = txt.slice(0, pos) + '\n' + BUL + txt.slice(pos);
+        pos += 1 + BUL.length;
+        t.textContent = txt;
+        r = document.createRange();
+        r.setStart(t.firstChild, pos);
         r.collapse(true);
         sel.removeAllRanges();
         sel.addRange(r);
