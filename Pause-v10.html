@@ -410,9 +410,22 @@
             flex: 0 0 auto;
         }
 
+        .template-switch-row { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+        .template-switch-btn {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 3px 10px;
+            font-size: 0.72rem;
+            font-weight: 500;
+        }
+        .template-switch-btn:hover { background: var(--tag-bg); color: var(--accent); border-color: var(--accent); }
+        .template-switch-btn.active { background: #fef3c7; color: #92400e; border-color: #fbbf24; }
+
         textarea {
             width: 100%;
-            height: 120px; 
+            height: 120px;
             padding: 12px;
             font-family: inherit;
             font-size: 0.95rem;
@@ -557,9 +570,6 @@
             margin-top: 6px;
         }
         .log-edit-area .project-input-wrapper { margin-bottom: 6px; padding: 4px 8px;}
-        .log-edit-time-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; padding: 4px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem; color: var(--text-muted); }
-        .log-edit-time-row input[type="time"] { border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-family: inherit; font-size: 0.85rem; background: #fff; color: var(--text-main); }
-        .log-edit-time-hint { margin-left: auto; font-size: 0.72rem; opacity: 0.7; }
         .log-edit-area textarea {
             height: 90px;
             margin-bottom: 6px;
@@ -1352,6 +1362,9 @@
             <datalist id="project-list"></datalist>
         </div>
 
+        <div class="template-switch-row">
+            <button type="button" id="template-switch-btn" class="template-switch-btn" onclick="toggleReflectionTemplate()" title="Replace the template with the daily reflection questions">🌙 Daily reflection template</button>
+        </div>
         <textarea id="entry-text" spellcheck="false"></textarea>
         <div class="button-group">
             <button id="start-btn">Start 5-Min Timer</button>
@@ -1468,6 +1481,9 @@
     // GLOBAL STATE
     // ============================================================
     const JOURNAL_PRESET = `1. Just did: \n2. Thinking: \n3. Next up: `;
+    const REFLECTION_PRESET = `1. What I have achieved/done today?\n\n2. What things most touch me?\n\n3. What I have learned most from today events\n`;
+    const REFLECTION_PROJECT = "Daily Reflection";
+    let reflectionMode = false;
     const DEFAULT_PROJECT = "General";
     const SPECIAL_PROJECT_KEYWORDS = ['break', 'lunch', 'paused', 'pause', 'wrap up', 'wrap-up', 'end of day'];
     const LONG_GAP_THRESHOLD_MS = 2 * 60 * 60 * 1000;
@@ -1620,19 +1636,6 @@
     }
     function hhmm(ts) {
         return new Date(ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
-    }
-    function hm24(ts) {
-        const d = new Date(ts);
-        return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-    }
-    // keeps the log list newest-first after a timestamp edit (undated entries stay where they are)
-    function resortDatedLogs() {
-        const slots = [], items = [];
-        logs.forEach(function (l, i) {
-            if (typeof l.timestamp === 'number' && !isNaN(l.timestamp)) { slots.push(i); items.push(l); }
-        });
-        items.sort(function (a, b) { return b.timestamp - a.timestamp; });
-        slots.forEach(function (slot, k) { logs[slot] = items[k]; });
     }
     // "09:10–09:55 · ⏱ 45m" for entries saved from a timer session, else just the saved time
     function entryTimeLabel(log) {
@@ -2285,18 +2288,6 @@
         const safeText = escapeHtml(log.text).replace(/\n/g, "<br>");
         const rawText = escapeHtml(log.text);
 
-        const hasTs = typeof log.timestamp === 'number' && !isNaN(log.timestamp);
-        const endVal = hasTs ? hm24(log.timestamp) : '';
-        const startVal = (hasTs && typeof log.startTs === 'number') ? hm24(log.startTs) : '';
-        const timeRowHtml = hasTs ? `
-                <div class="log-edit-time-row">
-                    <label>🕐</label>
-                    <input type="time" id="edit-start-${index}" value="${startVal}" title="Start time (leave empty for no timer)">
-                    <span>–</span>
-                    <input type="time" id="edit-end-${index}" value="${endVal}" title="End time (when the log was saved)">
-                    <span class="log-edit-time-hint">start – end</span>
-                </div>` : '';
-
         if (isSpecialProject(project)) logDiv.classList.add('special-entry');
         if (log._isFocusBlock) logDiv.classList.add('focus-session-entry');
 
@@ -2319,7 +2310,6 @@
                     <label>📁</label>
                     <input type="text" id="edit-project-${index}" value="${safeProject}" list="project-list" spellcheck="false">
                 </div>
-                ${timeRowHtml}
                 <textarea id="edit-textarea-${index}" spellcheck="false">${rawText}</textarea>
                 <div class="log-edit-actions">
                     <button class="btn-cancel" onclick="cancelInlineEdit(${index})">Cancel</button>
@@ -2350,46 +2340,8 @@
         const newText = textarea.value;
         const newProject = projectInput.value.trim() || DEFAULT_PROJECT;
         if (!newText.trim()) { alert("Log cannot be empty."); return; }
-
-        // ---- optional time edit (start – end), keeping the entry's date ----
-        const log = logs[index];
-        const startEl = document.getElementById(`edit-start-${index}`);
-        const endEl = document.getElementById(`edit-end-${index}`);
-        let timeChanged = false;
-        if (startEl && endEl && typeof log.timestamp === 'number') {
-            const origEnd = hm24(log.timestamp);
-            const origStart = typeof log.startTs === 'number' ? hm24(log.startTs) : '';
-            if (!endEl.value) { alert('End time cannot be empty.'); return; }
-            const base = new Date(log.timestamp);
-            const at = function (str) { const parts = str.split(':'); const d = new Date(base); d.setHours(+parts[0], +parts[1], 0, 0); return d.getTime(); };
-            const newEnd = endEl.value === origEnd ? log.timestamp : at(endEl.value);
-            let newStart;
-            if (!startEl.value) newStart = undefined;
-            else if (startEl.value === origStart) newStart = log.startTs;
-            else newStart = at(startEl.value);
-            if (newStart !== undefined && newStart >= newEnd) { alert('The start time must be earlier than the end time.'); return; }
-            timeChanged = (newEnd !== log.timestamp) || (newStart !== log.startTs);
-            if (timeChanged && newStart !== undefined) {
-                // Time Spent counts overlapping time only once — warn if this start reaches into the previous entry
-                const dk = dateKey(newEnd);
-                let prevTs = null;
-                logs.forEach(function (l, i) {
-                    if (i === index || typeof l.timestamp !== 'number' || dateKey(l.timestamp) !== dk) return;
-                    if (l.timestamp < newEnd && (prevTs === null || l.timestamp > prevTs)) prevTs = l.timestamp;
-                });
-                if (prevTs !== null && newStart < prevTs &&
-                    !confirm('This start (' + hm24(newStart) + ') is earlier than your previous entry (' + hm24(prevTs) + ').\n\nTime Spent counts overlapping time only once, so it will be counted from ' + hm24(prevTs) + '.\n\nSave anyway?')) return;
-            }
-            if (timeChanged) {
-                log.timestamp = newEnd;
-                log.time = hhmm(newEnd);
-                if (newStart === undefined) delete log.startTs; else log.startTs = newStart;
-            }
-        }
-
-        log.text = newText;
-        log.project = newProject;
-        if (timeChanged) resortDatedLogs();
+        logs[index].text = newText;
+        logs[index].project = newProject;
         saveLocal();
         renderLogs();
         populateProjectSuggestions();
@@ -2417,7 +2369,43 @@
         textarea.value = JOURNAL_PRESET;
         const cursorPosition = JOURNAL_PRESET.indexOf('\n');
         textarea.setSelectionRange(cursorPosition, cursorPosition);
+        reflectionMode = false;
+        syncTemplateSwitchBtn();
     }
+
+    function syncTemplateSwitchBtn() {
+        const btn = document.getElementById('template-switch-btn');
+        if (!btn) return;
+        btn.classList.toggle('active', reflectionMode);
+        btn.textContent = reflectionMode ? '↩ Back to quick template' : '🌙 Daily reflection template';
+        btn.title = reflectionMode
+            ? 'Replace the reflection questions with the Just did / Thinking / Next up template'
+            : 'Replace the template with the daily reflection questions';
+    }
+
+    // Swap the textarea between the quick template and the daily-reflection template.
+    window.toggleReflectionTemplate = function () {
+        const textarea = document.getElementById('entry-text');
+        if (!textarea) return;
+        const current = textarea.value;
+        const isUntouched = !current.trim() || current === JOURNAL_PRESET || current === REFLECTION_PRESET;
+        if (!isUntouched && !confirm('Replace what you have written with the ' + (reflectionMode ? 'quick' : 'daily reflection') + ' template?\n\nYour current text will be lost.')) return;
+
+        if (reflectionMode) {
+            loadPreset();   // back to quick template (also clears reflectionMode)
+            const pe = document.getElementById('project-input');
+            if (pe && pe.value.trim() === REFLECTION_PROJECT) pe.value = '';
+        } else {
+            textarea.value = REFLECTION_PRESET;
+            reflectionMode = true;
+            const projectEl = document.getElementById('project-input');
+            if (projectEl) projectEl.value = REFLECTION_PROJECT;
+            const pos = REFLECTION_PRESET.indexOf('\n');
+            textarea.setSelectionRange(pos + 1, pos + 1);
+            syncTemplateSwitchBtn();
+        }
+        textarea.focus();
+    };
 
     function resetEntryUI() {
         if (timerInterval) {
@@ -2452,7 +2440,7 @@
         if (!entryEl) return;
         const text = entryEl.value;
         const project = getCurrentProject();
-        if (!text.trim() || text === JOURNAL_PRESET) { alert("Please fill out the journal before saving."); return; }
+        if (!text.trim() || text === JOURNAL_PRESET || text === REFLECTION_PRESET) { alert("Please fill out the journal before saving."); return; }
         logs.unshift({
             time: nowTimeString(),
             timestamp: Date.now(),
@@ -2460,12 +2448,14 @@
             project: project,
             startTs: SESSION.startTs || undefined
         });
+        const wasReflection = reflectionMode;
         sessionClear();
         saveLocal();
         renderLogs();
         populateProjectSuggestions();
         updateTodayTotal();
         resetEntryUI();
+        if (wasReflection) { const pe = document.getElementById('project-input'); if (pe && pe.value.trim() === REFLECTION_PROJECT) pe.value = ''; }
         if (cloudUser) cloudSaveNow();
     }
 
