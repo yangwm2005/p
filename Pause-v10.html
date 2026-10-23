@@ -1480,8 +1480,9 @@
     // ============================================================
     // GLOBAL STATE
     // ============================================================
-    const JOURNAL_PRESET = `1. Just did: \n2. Thinking: \n3. Next up: `;
-    const REFLECTION_PRESET = `1. What I have achieved/done today?\n\n2. What things most touch me?\n\n3. What I have learned most from today events\n`;
+    const BULLET = '• ';
+    const JOURNAL_PRESET = `1. Just did: \n• \n2. Thinking: \n• \n3. Next up: \n• `;
+    const REFLECTION_PRESET = `1. What I have achieved/done today?\n• \n2. What things most touch me?\n• \n3. What I have learned most from today events\n• `;
     const REFLECTION_PROJECT = "Daily Reflection";
     let reflectionMode = false;
     const DEFAULT_PROJECT = "General";
@@ -2367,7 +2368,7 @@
         const textarea = document.getElementById('entry-text');
         if (!textarea) return;
         textarea.value = JOURNAL_PRESET;
-        const cursorPosition = JOURNAL_PRESET.indexOf('\n');
+        const cursorPosition = JOURNAL_PRESET.indexOf(BULLET) + BULLET.length;
         textarea.setSelectionRange(cursorPosition, cursorPosition);
         reflectionMode = false;
         syncTemplateSwitchBtn();
@@ -2400,12 +2401,34 @@
             reflectionMode = true;
             const projectEl = document.getElementById('project-input');
             if (projectEl) projectEl.value = REFLECTION_PROJECT;
-            const pos = REFLECTION_PRESET.indexOf('\n');
-            textarea.setSelectionRange(pos + 1, pos + 1);
+            const pos = REFLECTION_PRESET.indexOf(BULLET) + BULLET.length;
+            textarea.setSelectionRange(pos, pos);
             syncTemplateSwitchBtn();
         }
         textarea.focus();
     };
+
+    // Enter on a bullet line starts a new bullet; Enter on an empty bullet ends the list.
+    document.addEventListener('keydown', function (e) {
+        const ta = e.target;
+        if (!ta || ta.id !== 'entry-text') return;
+        if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+        if (ta.selectionStart !== ta.selectionEnd) return;
+        const pos = ta.selectionStart;
+        const lineStart = ta.value.lastIndexOf('\n', pos - 1) + 1;
+        const before = ta.value.slice(lineStart, pos);
+        const m = before.match(/^([ \t]*)• (.*)$/);
+        if (!m) return;
+        e.preventDefault();
+        if (m[2].trim() === '') {
+            // empty bullet: remove it and leave a plain line
+            ta.setSelectionRange(lineStart, pos);
+            if (!document.execCommand('insertText', false, '')) ta.setRangeText('', lineStart, pos, 'end');
+        } else {
+            const ins = '\n' + m[1] + BULLET;
+            if (!document.execCommand('insertText', false, ins)) ta.setRangeText(ins, pos, pos, 'end');
+        }
+    });
 
     function resetEntryUI() {
         if (timerInterval) {
@@ -2441,10 +2464,11 @@
         const text = entryEl.value;
         const project = getCurrentProject();
         if (!text.trim() || text === JOURNAL_PRESET || text === REFLECTION_PRESET) { alert("Please fill out the journal before saving."); return; }
+        const cleanText = text.replace(/^[ \t]*•[ \t]*(\r?\n|$)/gm, '').replace(/\s+$/, '');
         logs.unshift({
             time: nowTimeString(),
             timestamp: Date.now(),
-            text: text,
+            text: cleanText,
             project: project,
             startTs: SESSION.startTs || undefined
         });
