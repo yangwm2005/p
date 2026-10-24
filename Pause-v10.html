@@ -589,6 +589,10 @@
         .btn-update { background: var(--accent); color: white; }
         .btn-update:hover { background: var(--accent-hover); }
 
+        .edit-time-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 6px; font-size: 0.78rem; color: var(--text-muted); }
+        .edit-time-row label { display: flex; align-items: center; gap: 4px; }
+        .edit-time-row input { width: auto; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.82rem; background: var(--bg, #fff); color: inherit; }
+        .edit-time-row input.edit-dur { width: 64px; }
         .log-item.editing .log-content { display: none; }
         .log-item.editing .log-header-row { display: none; }
         .log-item.editing .log-edit-area { display: block; }
@@ -2311,6 +2315,11 @@
                     <label>📁</label>
                     <input type="text" id="edit-project-${index}" value="${safeProject}" list="project-list" spellcheck="false">
                 </div>
+                <div class="edit-time-row">
+                    <label>▶ Start <input type="time" id="edit-start-${index}" value="${editStartVal(log)}" oninput="syncEditTimes(${index}, 'start')"></label>
+                    <label>■ End <input type="time" id="edit-end-${index}" value="${editEndVal(log)}" oninput="syncEditTimes(${index}, 'end')"></label>
+                    <label>⏱ Duration <input type="number" class="edit-dur" min="0" step="1" id="edit-dur-${index}" value="${editDurVal(log)}" placeholder="none" oninput="syncEditTimes(${index}, 'dur')"> min</label>
+                </div>
                 <textarea id="edit-textarea-${index}" spellcheck="false">${rawText}</textarea>
                 <div class="log-edit-actions">
                     <button class="btn-cancel" onclick="cancelInlineEdit(${index})">Cancel</button>
@@ -2320,6 +2329,35 @@
         `;
         return logDiv;
     }
+
+    // ---- time / duration editing for a log entry ----
+    function hmPad(ts) { const d = new Date(ts); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+    function editEndVal(log) { return typeof log.timestamp === 'number' ? hmPad(log.timestamp) : ''; }
+    function editStartVal(log) { return (typeof log.startTs === 'number' && typeof log.timestamp === 'number' && log.startTs <= log.timestamp) ? hmPad(log.startTs) : ''; }
+    function editDurVal(log) { return (typeof log.startTs === 'number' && typeof log.timestamp === 'number' && log.startTs <= log.timestamp) ? String(Math.round((log.timestamp - log.startTs) / 60000)) : ''; }
+    function hmToMin(v) { const m = /^(\d{1,2}):(\d{2})$/.exec(v || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; }
+    function minToHm(n) { n = ((n % 1440) + 1440) % 1440; return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0'); }
+
+    // Keep Start / End / Duration consistent while the user types.
+    window.syncEditTimes = function (index, source) {
+        const st = document.getElementById('edit-start-' + index);
+        const en = document.getElementById('edit-end-' + index);
+        const du = document.getElementById('edit-dur-' + index);
+        if (!st || !en || !du) return;
+        const sMin = hmToMin(st.value), eMin = hmToMin(en.value);
+        if (source === 'dur') {
+            const d = parseInt(du.value, 10);
+            if (eMin !== null && !isNaN(d) && d >= 0) st.value = minToHm(eMin - d);
+            else if (du.value === '') st.value = '';
+        } else if (source === 'start') {
+            if (st.value === '') du.value = '';
+            else if (sMin !== null && eMin !== null) du.value = String(eMin >= sMin ? eMin - sMin : eMin + 1440 - sMin);
+        } else { // end changed: keep the duration, move the start
+            const d = parseInt(du.value, 10);
+            if (eMin !== null && !isNaN(d) && d >= 0) st.value = minToHm(eMin - d);
+            else if (sMin !== null && eMin !== null) du.value = String(eMin >= sMin ? eMin - sMin : eMin + 1440 - sMin);
+        }
+    };
 
     function enableInlineEdit(index) {
         const item = document.getElementById(`log-item-${index}`);
@@ -2341,8 +2379,36 @@
         const newText = textarea.value;
         const newProject = projectInput.value.trim() || DEFAULT_PROJECT;
         if (!newText.trim()) { alert("Log cannot be empty."); return; }
-        logs[index].text = newText;
-        logs[index].project = newProject;
+        const lg = logs[index];
+        // --- time / duration ---
+        const enEl = document.getElementById('edit-end-' + index);
+        const duEl = document.getElementById('edit-dur-' + index);
+        const stEl = document.getElementById('edit-start-' + index);
+        let timesChanged = false;
+        if (enEl && duEl && stEl && typeof lg.timestamp === 'number') {
+            const origEnd = editEndVal(lg), origDur = editDurVal(lg);
+            let newEnd = lg.timestamp;
+            if (enEl.value && enEl.value !== origEnd) {
+                const em = hmToMin(enEl.value);
+                if (em === null) { alert("Please enter a valid end time."); return; }
+                const d = new Date(lg.timestamp);
+                d.setHours(Math.floor(em / 60), em % 60, 0, 0);
+                newEnd = d.getTime();
+            }
+            if (newEnd !== lg.timestamp) { lg.timestamp = newEnd; lg.time = hmPad(newEnd); timesChanged = true; }
+            if (duEl.value.trim() === '') {
+                if (lg.startTs !== undefined) { delete lg.startTs; timesChanged = true; }
+            } else {
+                const dm = parseInt(duEl.value, 10);
+                if (isNaN(dm) || dm < 0) { alert("Duration must be a number of minutes (0 or more)."); return; }
+                if (String(dm) !== origDur || newEnd !== (typeof lg.timestamp === 'number' ? lg.timestamp : newEnd) || timesChanged) {
+                    lg.startTs = lg.timestamp - dm * 60000; timesChanged = true;
+                }
+            }
+            if (timesChanged) logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        }
+        lg.text = newText;
+        lg.project = newProject;
         saveLocal();
         renderLogs();
         populateProjectSuggestions();
