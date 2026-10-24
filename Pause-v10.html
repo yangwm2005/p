@@ -1331,9 +1331,13 @@
                 <button class="dial-btn step" id="dial-minus-btn" onclick="dialStep(-5, event)" title="−5 min (hold Shift for −1)">−5</button>
                 <button class="dial-btn" id="dial-start-btn" onclick="dialStart()">▶ Start</button>
                 <button class="dial-btn step" id="dial-plus-btn" onclick="dialStep(5, event)" title="+5 min (hold Shift for +1)">+5</button>
-                <button class="chime-toggle" id="dial-chime-toggle" onclick="dialToggleSound()" title="Toggle chime on finish">
+                <button class="chime-toggle" id="dial-chime-toggle" onclick="dialToggleSound()" title="Warning alarm when time is up">
                     <span class="chime-icon" id="dial-chime-icon">🔕</span>
-                    <span class="chime-label">Chime</span>
+                    <span class="chime-label">Alarm</span>
+                </button>
+                <button class="chime-toggle" id="dial-tick-toggle" onclick="dialToggleTick()" title="Tick every second while the timer runs: OFF">
+                    <span class="chime-icon" id="dial-tick-icon">🔇</span>
+                    <span class="chime-label">Tick</span>
                 </button>
                 <button class="dial-btn step" id="dial-discard-btn" style="display:none" onclick="sessionDiscard()" title="Discard this timing (nothing is logged)">✕ Discard</button>
             </div>
@@ -1800,6 +1804,8 @@
         minutes: 25,
         snapStep: DIAL_SNAP_FINE,
         soundOn: false,
+        tickOn: false,
+        lastTickSec: null,
         running: false,
         endAt: null,
         intervalId: null,
@@ -2040,6 +2046,8 @@
         FOCUS_STATE.running = true;
         FOCUS_STATE.startTs = Date.now();
         FOCUS_STATE.endAt = FOCUS_STATE.startTs + FOCUS_STATE.minutes * 60 * 1000;
+        FOCUS_STATE.lastTickSec = null;
+        if (FOCUS_STATE.soundOn || FOCUS_STATE.tickOn) getAudio();   // unlock audio from this click
 
         const startBtn = document.getElementById('dial-start-btn');
         if (startBtn) startBtn.style.display = 'none';
@@ -2060,10 +2068,11 @@
         if (FOCUS_STATE.intervalId) clearInterval(FOCUS_STATE.intervalId);
         FOCUS_STATE.intervalId = setInterval(function () {
             updateDialUI();
+            tickIfNeeded(FOCUS_STATE.endAt);
             if (FOCUS_STATE.endAt && Date.now() >= FOCUS_STATE.endAt) {
                 dialComplete();
             }
-        }, 500);
+        }, 250);
         sessionBeginIfNeeded();
     };
 
@@ -2119,7 +2128,7 @@
         const plannedMin = FOCUS_STATE.minutes;
         // No automatic log entry: the timing keeps counting until you press Save Log.
 
-        if (FOCUS_STATE.soundOn) playSoftChime();
+        if (FOCUS_STATE.soundOn) playWarning();
 
         if ("Notification" in window && Notification.permission === "granted") {
             new Notification("Focus block done", {
@@ -2136,6 +2145,59 @@
         FOCUS_STATE.endAt = null;
         FOCUS_STATE.startTs = null;
         updateSessionUI();
+    }
+
+    // ---- Shared audio engine: tick + warning alarm ----
+    // One AudioContext is created/resumed from a user click (Start), so the alarm can still
+    // sound later even if the tab is in the background.
+    let AUDIO_CTX = null;
+    function getAudio() {
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return null;
+            if (!AUDIO_CTX) AUDIO_CTX = new Ctx();
+            if (AUDIO_CTX.state === 'suspended') AUDIO_CTX.resume();
+            return AUDIO_CTX;
+        } catch (e) { return null; }
+    }
+    function beepAt(ctx, when, freq, dur, gain, type) {
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = type || 'sine';
+        osc.frequency.value = freq;
+        g.gain.setValueAtTime(0.0001, when);
+        g.gain.exponentialRampToValueAtTime(gain, when + 0.008);
+        g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+        osc.connect(g).connect(ctx.destination);
+        osc.start(when);
+        osc.stop(when + dur + 0.03);
+    }
+    // Soft wooden "tick"; the last 10 seconds get a higher, slightly louder tick.
+    function playTick(secsLeft) {
+        const ctx = getAudio();
+        if (!ctx) return;
+        const urgent = secsLeft !== undefined && secsLeft <= 10;
+        beepAt(ctx, ctx.currentTime, urgent ? 1500 : 1000, 0.045, urgent ? 0.09 : 0.05, 'square');
+    }
+    // Warning alarm: three bursts of three beeps (~3 s).
+    function playWarning() {
+        const ctx = getAudio();
+        if (!ctx) return;
+        const t0 = ctx.currentTime + 0.02;
+        for (let burst = 0; burst < 3; burst++) {
+            for (let i = 0; i < 3; i++) {
+                const t = t0 + burst * 1.0 + i * 0.22;
+                beepAt(ctx, t, i === 2 ? 1175 : 880, 0.16, 0.16, 'triangle');
+            }
+        }
+    }
+    function tickIfNeeded(endAt) {
+        if (!FOCUS_STATE.tickOn || !endAt) return;
+        const secsLeft = Math.ceil((endAt - Date.now()) / 1000);
+        if (secsLeft > 0 && secsLeft !== FOCUS_STATE.lastTickSec) {
+            FOCUS_STATE.lastTickSec = secsLeft;
+            playTick(secsLeft);
+        }
     }
 
     function playSoftChime() {
@@ -2187,10 +2249,26 @@
         if (icon) icon.textContent = FOCUS_STATE.soundOn ? '🔔' : '🔕';
         if (btn) {
             btn.classList.toggle('on', FOCUS_STATE.soundOn);
-            btn.title = FOCUS_STATE.soundOn ? 'Chime on finish: ON' : 'Chime on finish: OFF';
+            btn.title = FOCUS_STATE.soundOn ? 'Warning alarm when time is up: ON' : 'Warning alarm when time is up: OFF';
         }
         try { localStorage.setItem('thepause_focus_sound', FOCUS_STATE.soundOn ? '1' : '0'); } catch (e) {}
-        if (FOCUS_STATE.soundOn) playSoftChime();
+        if (FOCUS_STATE.soundOn) playWarning();   // preview the alarm once
+    };
+
+    function syncTickToggle() {
+        const btn = document.getElementById('dial-tick-toggle');
+        const icon = document.getElementById('dial-tick-icon');
+        if (icon) icon.textContent = FOCUS_STATE.tickOn ? '🔊' : '🔇';
+        if (btn) {
+            btn.classList.toggle('on', FOCUS_STATE.tickOn);
+            btn.title = 'Tick every second while the timer runs: ' + (FOCUS_STATE.tickOn ? 'ON' : 'OFF');
+        }
+    }
+    window.dialToggleTick = function () {
+        FOCUS_STATE.tickOn = !FOCUS_STATE.tickOn;
+        syncTickToggle();
+        try { localStorage.setItem('thepause_focus_tick', FOCUS_STATE.tickOn ? '1' : '0'); } catch (e) {}
+        if (FOCUS_STATE.tickOn) playTick();   // preview
     };
 
     function initFocusDial() {
@@ -2200,13 +2278,15 @@
                 FOCUS_STATE.minutes = savedMin;
             }
             FOCUS_STATE.soundOn = localStorage.getItem('thepause_focus_sound') === '1';
+            FOCUS_STATE.tickOn = localStorage.getItem('thepause_focus_tick') === '1';
         } catch (e) {}
+        syncTickToggle();
         const btn = document.getElementById('dial-chime-toggle');
         const icon = document.getElementById('dial-chime-icon');
         if (icon) icon.textContent = FOCUS_STATE.soundOn ? '🔔' : '🔕';
         if (btn) {
             btn.classList.toggle('on', FOCUS_STATE.soundOn);
-            btn.title = FOCUS_STATE.soundOn ? 'Chime on finish: ON' : 'Chime on finish: OFF';
+            btn.title = FOCUS_STATE.soundOn ? 'Warning alarm when time is up: ON' : 'Warning alarm when time is up: OFF';
         }
         updateDialUI();
         updateTodayTotal();
@@ -2599,6 +2679,8 @@
 
         const now = Date.now();
         timerEndTime = now + (300 * 1000);
+        FOCUS_STATE.lastTickSec = null;
+        if (FOCUS_STATE.soundOn || FOCUS_STATE.tickOn) getAudio();
 
         if(timerInterval) clearInterval(timerInterval);
         timerDisplay.classList.add('active');
@@ -2614,8 +2696,10 @@
         const entryText = document.getElementById('entry-text');
         if (!timerDisplay || !entryText) return;
         const msLeft = timerEndTime - Date.now();
+        tickIfNeeded(timerEndTime);
 
         if (msLeft <= 0) {
+            if (FOCUS_STATE.soundOn) playWarning();
             clearInterval(timerInterval);
             timerInterval = null;
             timerEndTime = null;
