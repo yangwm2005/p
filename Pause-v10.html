@@ -1489,8 +1489,9 @@
     // GLOBAL STATE
     // ============================================================
     const BULLET = '• ';
-    const JOURNAL_PRESET = `1. Just did: \n• \n2. Thinking: \n• \n3. Next up: \n• `;
-    const REFLECTION_PRESET = `1. What I have achieved/done today?\n• \n2. What things most touch me?\n• \n3. What I have learned most from today events\n• `;
+    const BULLET_BASE = '   ';   // top-level bullets sit under the text of "1. "
+    const JOURNAL_PRESET = `1. Just did: \n${BULLET_BASE}• \n2. Thinking: \n${BULLET_BASE}• \n3. Next up: \n${BULLET_BASE}• `;
+    const REFLECTION_PRESET = `1. What I have achieved/done today?\n${BULLET_BASE}• \n2. What things most touch me?\n${BULLET_BASE}• \n3. What I have learned most from today events\n${BULLET_BASE}• `;
     const REFLECTION_PROJECT = "Daily Reflection";
     let reflectionMode = false;
     const DEFAULT_PROJECT = "General";
@@ -2554,25 +2555,110 @@
         textarea.focus();
     };
 
-    // Enter on a bullet line starts a new bullet; Enter on an empty bullet ends the list.
+    // ============================================================
+    // OUTLINE EDITING (entry box + edit panel)
+    //  Numbered items ("4. Topic") are the top level; bullets nest underneath them.
+    //  Tab / Shift+Tab   demote / promote the line(s): 4. Topic  <->  • bullet  <->  ◦ sub-bullet ...
+    //  Enter             on a numbered item: first bullet under it; on a bullet: new bullet, same level
+    //                    on an EMPTY bullet: promote it (top-level bullet -> next number "N. ")
+    //                    on an EMPTY numbered item: remove the number
+    //  Backspace         on an empty bullet: promote it (top-level bullet is simply removed)
+    // ============================================================
+    const OUTLINE_GLYPHS = ['•', '◦', '▪'];
+    const OUTLINE_INDENT = '   ';   // 3 spaces per nested level
+    const OUTLINE_MAX_LEVEL = 5;
+    // Returns {kind:'num'|'bul', level, rest, preLen} or null. Numbered items are level -1.
+    function outlineParse(line) {
+        let m = /^( *)([•◦▪]) ?(.*)$/.exec(line);
+        if (m) return { kind: 'bul', level: Math.max(0, Math.floor((m[1].length - BULLET_BASE.length) / OUTLINE_INDENT.length)), rest: m[3], preLen: line.length - m[3].length };
+        m = /^(\d+)\. ?(.*)$/.exec(line);
+        if (m) return { kind: 'num', level: -1, num: parseInt(m[1], 10), rest: m[2], preLen: line.length - m[2].length };
+        return null;
+    }
+    function outlinePrefix(level, num) {
+        if (level < 0) return num + '. ';
+        return BULLET_BASE + OUTLINE_INDENT.repeat(level) + OUTLINE_GLYPHS[level % OUTLINE_GLYPHS.length] + ' ';
+    }
+    // next number = last numbered item above `idx` + 1 (or 1)
+    function outlineNextNumber(text, idx) {
+        const lines = text.slice(0, idx).split('\n');
+        for (let k = lines.length - 1; k >= 0; k--) {
+            const m = /^(\d+)\./.exec(lines[k]);
+            if (m) return parseInt(m[1], 10) + 1;
+        }
+        return 1;
+    }
+    function outlineReplace(ta, from, to, text) {
+        ta.setSelectionRange(from, to);
+        if (!document.execCommand('insertText', false, text)) ta.setRangeText(text, from, to, 'end');
+    }
+    function isOutlineBox(el) {
+        return el && el.tagName === 'TEXTAREA' && (el.id === 'entry-text' || (el.id || '').indexOf('edit-textarea-') === 0);
+    }
     document.addEventListener('keydown', function (e) {
         const ta = e.target;
-        if (!ta || ta.id !== 'entry-text') return;
-        if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
-        if (ta.selectionStart !== ta.selectionEnd) return;
-        const pos = ta.selectionStart;
-        const lineStart = ta.value.lastIndexOf('\n', pos - 1) + 1;
-        const before = ta.value.slice(lineStart, pos);
-        const m = before.match(/^([ \t]*)• (.*)$/);
-        if (!m) return;
-        e.preventDefault();
-        if (m[2].trim() === '') {
-            // empty bullet: remove it and leave a plain line
-            ta.setSelectionRange(lineStart, pos);
-            if (!document.execCommand('insertText', false, '')) ta.setRangeText('', lineStart, pos, 'end');
-        } else {
-            const ins = '\n' + m[1] + BULLET;
-            if (!document.execCommand('insertText', false, ins)) ta.setRangeText(ins, pos, pos, 'end');
+        if (!isOutlineBox(ta) || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+        const v = ta.value, selS = ta.selectionStart, selE = ta.selectionEnd;
+        const lineStart = v.lastIndexOf('\n', selS - 1) + 1;
+
+        // ---- Tab / Shift+Tab ----
+        if (e.key === 'Tab') {
+            let endIdx = v.indexOf('\n', selE > selS ? selE - 1 : selE);
+            if (endIdx === -1) endIdx = v.length;
+            const block = v.slice(lineStart, endIdx).split('\n');
+            const parsed = block.map(outlineParse);
+            if (!parsed.some(Boolean)) return;                   // plain text: normal Tab focus behaviour
+            e.preventDefault();
+            const delta = e.shiftKey ? -1 : 1;
+            let counter = outlineNextNumber(v, lineStart);
+            const out = block.map(function (line, k) {
+                const o = parsed[k];
+                if (!o) return line;
+                const nl = Math.max(-1, Math.min(OUTLINE_MAX_LEVEL, o.level + delta));
+                if (nl < 0) { const n = (o.kind === 'num') ? o.num : counter; counter = n + 1; return outlinePrefix(-1, n) + o.rest; }
+                if (o.kind === 'num') counter = o.num + 1;
+                return outlinePrefix(nl) + o.rest;
+            });
+            const joined = out.join('\n');
+            outlineReplace(ta, lineStart, endIdx, joined);
+            if (selS === selE) {
+                const o0 = parsed[0];
+                const col = selS - lineStart;
+                let c = lineStart + col;
+                if (o0) {
+                    const newPre = out[0].length - o0.rest.length;
+                    c = lineStart + Math.min(out[0].length, Math.max(newPre, col + (newPre - o0.preLen)));
+                }
+                ta.setSelectionRange(c, c);
+            } else {
+                ta.setSelectionRange(lineStart, lineStart + joined.length);
+            }
+            return;
+        }
+
+        if (selS !== selE || e.shiftKey) return;
+        const before = v.slice(lineStart, selS);
+        const o = outlineParse(before);
+        if (!o) return;
+
+        // ---- Enter ----
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (o.rest.trim() === '') {
+                if (o.kind === 'num') outlineReplace(ta, lineStart, selS, '');                       // end numbering
+                else if (o.level > 0) outlineReplace(ta, lineStart, selS, outlinePrefix(o.level - 1)); // outdent
+                else outlineReplace(ta, lineStart, selS, outlinePrefix(-1, outlineNextNumber(v, lineStart))); // next "N. "
+            } else if (o.kind === 'num') {
+                outlineReplace(ta, selS, selS, '\n' + outlinePrefix(0));                              // first bullet under it
+            } else {
+                outlineReplace(ta, selS, selS, '\n' + outlinePrefix(o.level));
+            }
+            return;
+        }
+        // ---- Backspace on an empty bullet ----
+        if (e.key === 'Backspace' && o.kind === 'bul' && o.rest === '' && before.endsWith(' ')) {
+            e.preventDefault();
+            outlineReplace(ta, lineStart, selS, o.level > 0 ? outlinePrefix(o.level - 1) : '');
         }
     });
 
@@ -2610,7 +2696,7 @@
         const text = entryEl.value;
         const project = getCurrentProject();
         if (!text.trim() || text === JOURNAL_PRESET || text === REFLECTION_PRESET) { alert("Please fill out the journal before saving."); return; }
-        const cleanText = text.replace(/^[ \t]*•[ \t]*(\r?\n|$)/gm, '').replace(/\s+$/, '');
+        const cleanText = text.replace(/^([ \t]*[•◦▪]|\d+\.)[ \t]*(\r?\n|$)/gm, '').replace(/\s+$/, '');
         logs.unshift({
             time: nowTimeString(),
             timestamp: Date.now(),
