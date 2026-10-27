@@ -467,6 +467,20 @@
         button:disabled { opacity: 0.5; cursor: not-allowed; }
 
         .log-section { width: 100%; }
+        .log-search { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+        .log-search-box { position: relative; flex: 1; }
+        .log-search-box input {
+            width: 100%; box-sizing: border-box; padding: 7px 30px 7px 30px;
+            border: 1px solid var(--border); border-radius: 8px; font-size: 0.88rem;
+            background: var(--bg, #fff); color: inherit;
+        }
+        .log-search-box input:focus { outline: none; border-color: var(--accent); }
+        .log-search-box .ls-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); font-size: 0.85rem; opacity: 0.6; pointer-events: none; }
+        .log-search-box .ls-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: none; background: transparent; border: none; cursor: pointer; color: var(--text-muted); font-size: 0.9rem; padding: 2px 6px; }
+        .log-search-box.has-text .ls-clear { display: block; }
+        .log-search-count { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
+        .log-no-match { text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 18px 0; }
+        mark.search-hit { background: #fde68a; color: inherit; border-radius: 2px; padding: 0 1px; }
         .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;}
         .log-header h3 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0; font-weight: 600;}
         .log-header-actions { display: flex; gap: 6px; }
@@ -1387,6 +1401,14 @@
                 <button class="wrapup-btn" onclick="wrapUpDay()" title="Insert a final entry that closes off the day's last block">🛑 Wrap up</button>
                 <button class="export-btn" onclick="exportMarkdown()">Export .md</button>
             </div>
+        </div>
+        <div class="log-search">
+            <div class="log-search-box" id="log-search-box">
+                <span class="ls-icon">🔍</span>
+                <input type="search" id="log-search-input" placeholder="Search entries and projects… (words are combined)" spellcheck="false" autocomplete="off" oninput="setLogFilter(this.value)" onkeydown="if(event.key==='Escape'){clearLogFilter();}">
+                <button type="button" class="ls-clear" onclick="clearLogFilter()" title="Clear search">✕</button>
+            </div>
+            <span class="log-search-count" id="log-search-count"></span>
         </div>
         <div id="log-list"></div>
     </div>
@@ -2330,19 +2352,69 @@
     // ============================================================
     // RENDER LOGS
     // ============================================================
+    let LOG_FILTER = '';
+    function logFilterTerms() { return LOG_FILTER.toLowerCase().split(/\s+/).filter(Boolean); }
+    function logMatches(log, terms) {
+        if (!terms.length) return true;
+        const hay = ((log.project || DEFAULT_PROJECT) + '\n' + (log.text || '') + '\n' + entryTimeLabel(log) + '\n' +
+                     (typeof log.timestamp === 'number' ? dateKey(log.timestamp) : '')).toLowerCase();
+        return terms.every(t => hay.indexOf(t) !== -1);
+    }
+    // Escape `raw` for HTML, wrapping every search-term hit in <mark>.
+    function highlightHtml(raw, terms) {
+        if (!terms.length) return escapeHtml(raw);
+        const low = raw.toLowerCase();
+        const mark = new Array(raw.length).fill(false);
+        terms.forEach(function (t) {
+            let i = low.indexOf(t);
+            while (i !== -1) { for (let k = i; k < i + t.length; k++) mark[k] = true; i = low.indexOf(t, i + t.length); }
+        });
+        let out = '', k = 0;
+        while (k < raw.length) {
+            let j = k;
+            while (j < raw.length && mark[j] === mark[k]) j++;
+            const seg = escapeHtml(raw.slice(k, j));
+            out += mark[k] ? '<mark class="search-hit">' + seg + '</mark>' : seg;
+            k = j;
+        }
+        return out;
+    }
+    window.setLogFilter = function (v) {
+        LOG_FILTER = (v || '').trim();
+        const box = document.getElementById('log-search-box');
+        if (box) box.classList.toggle('has-text', (v || '').length > 0);
+        renderLogs();
+    };
+    window.clearLogFilter = function () {
+        const inp = document.getElementById('log-search-input');
+        if (inp) inp.value = '';
+        setLogFilter('');
+    };
+
     function renderLogs() {
         const logList = document.getElementById('log-list');
         if (!logList) return;
         logList.innerHTML = '';
-        if (logs.length === 0) return;
+        const countEl = document.getElementById('log-search-count');
+        const terms = logFilterTerms();
+        if (logs.length === 0) { if (countEl) countEl.textContent = ''; return; }
 
         const grouped = {};
+        let shown = 0;
         logs.forEach((log, originalIndex) => {
+            if (!logMatches(log, terms)) return;
+            shown++;
             const ts = log.timestamp || null;
             const key = ts ? dateKey(ts) : 'undated';
             if (!grouped[key]) grouped[key] = { key: key, ts: ts, entries: [] };
             grouped[key].entries.push({ log: log, idx: originalIndex });
         });
+
+        if (countEl) countEl.textContent = terms.length ? shown + ' of ' + logs.length : '';
+        if (terms.length && shown === 0) {
+            logList.innerHTML = '<div class="log-no-match">No entries match “' + escapeHtml(LOG_FILTER) + '”.</div>';
+            return;
+        }
 
         const dayKeys = Object.keys(grouped).sort((a, b) => {
             if (a === 'undated') return 1;
@@ -2371,7 +2443,8 @@
 
         const project = log.project || DEFAULT_PROJECT;
         const safeProject = escapeHtml(project);
-        const safeText = escapeHtml(log.text).replace(/\n/g, "<br>");
+        const hlTerms = logFilterTerms();
+        const safeText = highlightHtml(log.text, hlTerms).replace(/\n/g, "<br>");
         const rawText = escapeHtml(log.text);
 
         if (isSpecialProject(project)) logDiv.classList.add('special-entry');
@@ -2381,7 +2454,7 @@
             <div class="log-header-row">
                 <div class="log-meta">
                     <span class="log-time">${entryTimeLabel(log)}</span>
-                    <span class="project-tag">${safeProject}</span>
+                    <span class="project-tag">${highlightHtml(project, hlTerms)}</span>
                 </div>
                 <div class="log-actions">
                     <button onclick="copyLogEntry(${index})" title="Copy text">📋</button>
