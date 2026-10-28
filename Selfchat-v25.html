@@ -1154,7 +1154,7 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
                     let tsm = rest.match(/\s{2}@(.{4,8})$/);
                     let replyTs = tsm ? tsm[1].replace(/\r$/, '') : '';
                     let replyText = tsm ? rest.slice(0, rest.length - tsm[0].length).trim() : rest.trim();
-                    if (replyText) pendingReplies.push({ text: replyText, ts: replyTs, subreplies: [] });
+                    if (replyText) pendingReplies.push({ text: scDecReply(replyText), ts: replyTs, subreplies: [] });
                     return;
                 }
                 const match = line.match(/(  •|•) (\[H\]\s)?(.*?) \((\d+:\d+ [APM]{2})\)/);
@@ -1603,16 +1603,16 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
                 let span = cb.parentElement;
                 span.outerHTML = replacement;
             });
-            let lines = [`${prefix} ${highlightMarker}${clonedSpan.textContent} (${timestamp.textContent})`];
+            let lines = [`${prefix} ${highlightMarker}${clonedSpan.textContent} (${timestamp ? timestamp.textContent : ''})`];
             msg.querySelectorAll('.thread-reply-row').forEach(row => {
                 let rt = row.querySelector('.thread-reply-text');
                 let rts = row.querySelector('.thread-reply-ts');
                 if (rt) {
-                    lines.push("  ↳ " + rt.textContent + (rts && rts.textContent ? "  @" + rts.textContent : ""));
+                    lines.push("  ↳ " + scEncReply(rt.textContent) + (rts && rts.textContent ? "  @" + rts.textContent : ""));
                     row.querySelectorAll('.sub-reply-row').forEach(sr => {
                         let st = sr.querySelector('.sub-reply-text');
                         let sts = sr.querySelector('.sub-reply-ts');
-                        if (st) lines.push("    ↳↳ " + st.textContent + (sts && sts.textContent ? "  @" + sts.textContent : ""));
+                        if (st) lines.push("    ↳↳ " + scEncReply(st.textContent) + (sts && sts.textContent ? "  @" + sts.textContent : ""));
                     });
                 }
             });
@@ -1840,12 +1840,12 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
                         while (j < lines.length) {
                             const replyMatch = lines[j].match(/^ {2}↳ (.*?)(?:  @(\d+:\d+ [APM]{2}))?$/);
                             if (!replyMatch) break;
-                            const reply = { text: replyMatch[1], ts: replyMatch[2] || '', subreplies: [] };
+                            const reply = { text: scDecReply(replyMatch[1]), ts: replyMatch[2] || '', subreplies: [] };
                             j++;
                             while (j < lines.length) {
                                 const subMatch = lines[j].match(/^ {4}↳↳ (.*?)(?:  @(\d+:\d+ [APM]{2}))?$/);
                                 if (!subMatch) break;
-                                reply.subreplies.push({ text: subMatch[1], ts: subMatch[2] || '' });
+                                reply.subreplies.push({ text: scDecReply(subMatch[1]), ts: subMatch[2] || '' });
                                 j++;
                             }
                             replies.push(reply);
@@ -1900,7 +1900,7 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
             div.querySelectorAll('.thread-reply-row').forEach(row => {
                 let rt = row.querySelector('.thread-reply-text');
                 let rts = row.querySelector('.thread-reply-ts');
-                if (rt) lines.push("  \u21b3 " + rt.textContent + "  @" + (rts ? rts.textContent : ''));
+                if (rt) lines.push("  \u21b3 " + scEncReply(rt.textContent) + "  @" + (rts ? rts.textContent : ''));
             });
         });
         if (lines.length === 0) { alert("No chat history to save."); return; }
@@ -1975,6 +1975,26 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
     // ── Paragraph / bullet view state ─────────────────────
     let _paragraphViewMode = 'plain'; // 'plain' | 'bullets'
 
+    // ── Outline (bullets + tabs, multi-line replies): shared helpers ──────────────
+    // In saved .txt / clipboard text a reply is ONE line, so line breaks inside it are written as ⏎ and restored on load.
+    function scEncReply(t) { return String(t == null ? '' : t).replace(/\r/g, '').replace(/\n/g, '\u23CE'); }
+    function scDecReply(t) { return String(t == null ? '' : t).replace(/\u23CE/g, '\n'); }
+    // For printed / copied views: drop the reply's own leading bullet when the view adds one itself (avoids "• • item")
+    function _pvStripBullet(t) { return String(t == null ? '' : t).replace(/^[•◦▪]\s+/, ''); }
+    function _pvHtml(t, stripFirst) {
+        t = String(t == null ? '' : t);
+        if (stripFirst) t = _pvStripBullet(t);
+        return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    // Push a (possibly multi-line, indented) reply as text lines: first line gets `first`, continuation lines are padded to line up under it
+    function _pvPushText(out, base, first, text, stripFirst) {
+        var lines = String(text == null ? '' : text).split('\n');
+        if (stripFirst) lines[0] = _pvStripBullet(lines[0]);
+        out.push(base + first + lines[0]);
+        var pad = new Array(first.length + 1).join(' ');
+        for (var i = 1; i < lines.length; i++) out.push(base + pad + lines[i]);
+    }
+
     function copyParagraphView() {
         var paragraphs = buildParagraphData();
         var chatTitle  = document.getElementById('chatTitle').textContent.trim();
@@ -1990,10 +2010,10 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
             p.replies.forEach(function(r) {
                 var rText = (typeof r === 'string') ? r : r.text;
                 var rSubs = (typeof r === 'object' && r.subreplies) ? r.subreplies : [];
-                out.push((p.isSubchat ? '        ' : '    ') + (thrBullet ? '• ' : '') + rText);
+                _pvPushText(out, (p.isSubchat ? '        ' : '    '), (thrBullet ? '• ' : ''), rText, thrBullet);
                 rSubs.forEach(function(sr) {
                     var srText = (typeof sr === 'string') ? sr : sr.text;
-                    out.push((p.isSubchat ? '          ' : '      ') + (thrBullet ? '↳ ' : '↳ ') + srText);
+                    _pvPushText(out, (p.isSubchat ? '          ' : '      '), '↳ ', srText, true);
                 });
             });
             if (!p.isSubchat) out.push('');
@@ -2022,10 +2042,10 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
             p.replies.forEach(function(r) {
                 var rText = (typeof r === 'string') ? r : r.text;
                 var rSubs = (typeof r === 'object' && r.subreplies) ? r.subreplies : [];
-                out.push((p.isSubchat ? '        ' : '    ') + (thrBullet ? '• ' : '') + rText);
+                _pvPushText(out, (p.isSubchat ? '        ' : '    '), (thrBullet ? '• ' : ''), rText, thrBullet);
                 rSubs.forEach(function(sr) {
                     var srText = (typeof sr === 'string') ? sr : sr.text;
-                    out.push((p.isSubchat ? '          ' : '      ') + (thrBullet ? '↳ ' : '↳ ') + srText);
+                    _pvPushText(out, (p.isSubchat ? '          ' : '      '), '↳ ', srText, true);
                 });
             });
             if (!p.isSubchat) out.push('');
@@ -2090,12 +2110,12 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
                     var rSubs = (typeof r === 'object' && r.subreplies) ? r.subreplies : [];
                     html += '<li style="display:flex;gap:7px;align-items:baseline;color:#546e7a;font-size:0.91em;margin:3px 0;">' +
                         '<span style="color:#9fa8da;flex-shrink:0;">•</span>' +
-                        '<span>' + safe(rText) + '</span></li>';
+                        '<span style="white-space:pre-wrap;tab-size:1.6em;min-width:0;">' + _pvHtml(rText, true) + '</span></li>';
                     rSubs.forEach(function(sr) {
                         var srText = (typeof sr === 'string') ? sr : sr.text;
                         html += '<li style="display:flex;gap:7px;align-items:baseline;color:#78909c;font-size:0.84em;margin:2px 0 2px 18px;">' +
                             '<span style="color:#c5cae9;flex-shrink:0;">↳</span>' +
-                            '<span>' + safe(srText) + '</span></li>';
+                            '<span style="white-space:pre-wrap;tab-size:1.6em;min-width:0;">' + _pvHtml(srText, true) + '</span></li>';
                     });
                 });
                 html += '</ul>';
@@ -2103,10 +2123,10 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
                 p.replies.forEach(function(r) {
                     var rText = (typeof r === 'string') ? r : r.text;
                     var rSubs = (typeof r === 'object' && r.subreplies) ? r.subreplies : [];
-                    html += '<p style="margin:2px 0 2px ' + ri + ';color:#607d8b;font-size:0.91em;font-style:italic;">' + safe(rText) + '</p>';
+                    html += '<p style="margin:2px 0 2px ' + ri + ';color:#607d8b;font-size:0.91em;font-style:italic;white-space:pre-wrap;tab-size:1.6em;">' + _pvHtml(rText, false) + '</p>';
                     rSubs.forEach(function(sr) {
                         var srText = (typeof sr === 'string') ? sr : sr.text;
-                        html += '<p style="margin:1px 0 1px ' + sri + ';color:#90a4ae;font-size:0.84em;font-style:italic;">↳ ' + safe(srText) + '</p>';
+                        html += '<p style="margin:1px 0 1px ' + sri + ';color:#90a4ae;font-size:0.84em;font-style:italic;white-space:pre-wrap;tab-size:1.6em;">↳ ' + _pvHtml(srText, true) + '</p>';
                     });
                 });
                 html += '<div style="height:4px;"></div>';
@@ -2154,7 +2174,8 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
         document.getElementById('paragraph-view-modal').style.display = 'block';
     }
 
-    function printParagraphView() {
+    function printParagraphView() { _runWithPopupFallback(_printParagraphViewImpl); }
+    function _printParagraphViewImpl() {
         var chatTitle = document.getElementById('chatTitle').textContent.trim() || 'Chat View';
         var paragraphs = buildParagraphData();
         var mode      = _paragraphViewMode;
@@ -2356,7 +2377,7 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
                     var subTxt = subTsm ? subRest.slice(0, subRest.length - subTsm[0].length).trim() : subRest.trim();
                     if (subTxt) {
                         if (!last.subreplies) last.subreplies = [];
-                        last.subreplies.push({ text: subTxt, ts: subTs });
+                        last.subreplies.push({ text: scDecReply(subTxt), ts: subTs });
                     }
                 }
                 return;
@@ -2367,7 +2388,7 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
                 var tsm   = rest.match(/\s{2}@(.{1,12})$/);
                 var replyTs   = tsm ? tsm[1].replace(/\r$/, '') : '';
                 var replyText = tsm ? rest.slice(0, rest.length - tsm[0].length).trim() : rest.trim();
-                if (replyText) pendingReplies.push({ text: replyText, ts: replyTs });
+                if (replyText) pendingReplies.push({ text: scDecReply(replyText), ts: replyTs });
                 return;
             }
             // Message line — flexible: accepts both timestamped and plain lines
@@ -2448,7 +2469,7 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
             });
             let messageText = clonedSpan.textContent;
 
-            return `${prefix} ${highlightMarker}${messageText} (${timestamp.textContent})`;
+            return `${prefix} ${highlightMarker}${messageText} (${timestamp ? timestamp.textContent : ''})`;
         });
 
         if (messages.length === 0) {
@@ -2553,10 +2574,10 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
                 lines.push(version === 'v7' ? tl.replace(/\s+@.+$/, '') : tl);
             });
         });
-        let escaped = JSON.stringify(lines.join('\n'));
-        let titleEscaped = JSON.stringify(chatTitle || 'chat');
+        let escaped = JSON.stringify(lines.join('\n')).replace(/</g, '\\u003c');
+        let titleEscaped = JSON.stringify(chatTitle || 'chat').replace(/</g, '\\u003c');
         return '<div id="copy-bar" style="position:sticky;top:0;z-index:999;background:rgba(255,255,255,0.95);padding:6px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #ddd;backdrop-filter:blur(4px);">'
-            + '<span style="font-weight:600;color:#333;flex:1;">' + chatTitle + '</span>'
+            + '<span style="font-weight:600;color:#333;flex:1;">' + _escHtml(chatTitle) + '</span>'
             + '<button id="txt-btn" onclick="doTxt()" style="background:#1565c0;color:white;border:none;border-radius:6px;padding:5px 14px;cursor:pointer;font-size:0.9rem;">\uD83D\uDCC4 Save .txt</button>'
             + '</div>'
             + '<script>var _text = ' + escaped + '; var _title = ' + titleEscaped + ';'
@@ -2596,7 +2617,7 @@ function openChatInNewWindow() {
 
         let messageContent = textSpan.innerHTML;
         let threadHtml = getThreadLines(div, 'html');
-        return `<div class="msg ${classAttr.trim()}">• ${messageContent} <small>(${timestamp.textContent})</small>${threadHtml ? '<div class="msg-threads">' + threadHtml + '</div>' : ''}</div>`;
+        return `<div class="msg ${classAttr.trim()}">• ${messageContent} <small>(${timestamp ? timestamp.textContent : ''})</small>${threadHtml ? '<div class="msg-threads">' + threadHtml + '</div>' : ''}</div>`;
     }).join("");
 
     if (!messages) {
@@ -2611,7 +2632,7 @@ function openChatInNewWindow() {
         <!DOCTYPE html>
         <html>
         <head>
-            <title>${chatTitle}</title>
+            <title>${_escHtml(chatTitle)}</title>
             <meta charset="UTF-8">
             <style>
                 body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
@@ -2631,7 +2652,7 @@ function openChatInNewWindow() {
         </head>
         <body>
             ${copyBar1}
-            <h2>${chatTitle}</h2>
+            <h2>${_escHtml(chatTitle)}</h2>
             <div class="chat-box">${messages}</div>
         </body>
         </html>
@@ -2655,7 +2676,7 @@ function openChatInNewWindow() {
 
             let messageContent = textSpan.innerHTML;
             let threadHtml2 = getThreadLines(div, 'html');
-            return `<div${classAttr ? classAttr.replace('class="', 'class="msg ') : ' class="msg"'}>${messageContent} <small>(${timestamp.textContent})</small>${threadHtml2 ? '<div class="msg-threads">' + threadHtml2 + '</div>' : ''}</div>`;
+            return `<div${classAttr ? classAttr.replace('class="', 'class="msg ') : ' class="msg"'}>${messageContent} <small>(${timestamp ? timestamp.textContent : ''})</small>${threadHtml2 ? '<div class="msg-threads">' + threadHtml2 + '</div>' : ''}</div>`;
         }).join("");
 
         if (messages === "") {
@@ -2675,7 +2696,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>${chatTitle}</title>
+                <title>${_escHtml(chatTitle)}</title>
                 <style>
                     body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
                     h2 { text-align: center; color: #333; }
@@ -2696,7 +2717,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
             </head>
             <body>
                 ${copyBar2}
-                <h2>${chatTitle}</h2>
+                <h2>${_escHtml(chatTitle)}</h2>
                 <div class="chat-box">${messages}</div>
             </body>
             </html>
@@ -2723,7 +2744,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
             let messageText = clonedSpan.textContent;
 
             let threadTxt3 = getThreadLines(div, 'txt');
-            return `${prefix} ${highlightMarker}${messageText} (${timestamp.textContent})` + (threadTxt3.length ? '\n' + threadTxt3.join('\n') : '');
+            return `${prefix} ${highlightMarker}${messageText} (${timestamp ? timestamp.textContent : ''})` + (threadTxt3.length ? '\n' + threadTxt3.join('\n') : '');
         }).join("\n");
 
         if (messages === "") {
@@ -2743,7 +2764,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>${chatTitle}</title>
+                <title>${_escHtml(chatTitle)}</title>
                 <style>
                     body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
                     h2 { text-align: center; color: #333; }
@@ -2752,7 +2773,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
             </head>
             <body>
                 ${copyBar3}
-                <h2>${chatTitle}</h2>
+                <h2>${_escHtml(chatTitle)}</h2>
                 <div class="chat-box">${messages}</div>
             </body>
             </html>
@@ -2773,7 +2794,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
             let messageText = clonedSpan.innerHTML;
 
             let threadTxt4 = getThreadLines(div, 'txt');
-            return `${prefix} ${highlightMarker}${messageText} (${timestamp.textContent})` + (threadTxt4.length ? '\n' + threadTxt4.join('\n') : '');
+            return `${prefix} ${highlightMarker}${messageText} (${timestamp ? timestamp.textContent : ''})` + (threadTxt4.length ? '\n' + threadTxt4.join('\n') : '');
         }).join("\n");
 
         if (messages === "") {
@@ -2793,7 +2814,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>${chatTitle}</title>
+                <title>${_escHtml(chatTitle)}</title>
                 <style>
                     body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
                     h2 { text-align: center; color: #333; }
@@ -2804,7 +2825,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
             </head>
             <body>
                 ${copyBar4}
-                <h2>${chatTitle}</h2>
+                <h2>${_escHtml(chatTitle)}</h2>
                 <div class="chat-box">${messages}</div>
             </body>
             </html>
@@ -2833,7 +2854,7 @@ function openChatInNewWindow5() {
 
         let messageContent = textSpan.innerHTML;
         let threadHtml5 = getThreadLines(div, 'html');
-        return `<div class="user-msg${classAttr}"><div class="msg-row"><span class="msg-text">${messageContent}</span><span class="timestamp">${timestamp.textContent}</span></div>${threadHtml5 ? '<div class="msg-threads">' + threadHtml5 + '</div>' : ''}</div>`;
+        return `<div class="user-msg${classAttr}"><div class="msg-row"><span class="msg-text">${messageContent}</span><span class="timestamp">${timestamp ? timestamp.textContent : ''}</span></div>${threadHtml5 ? '<div class="msg-threads">' + threadHtml5 + '</div>' : ''}</div>`;
     }).join("");
 
     if (!messages) {
@@ -2847,7 +2868,7 @@ function openChatInNewWindow5() {
         <!DOCTYPE html>
         <html>
         <head>
-            <title>${chatTitle}</title>
+            <title>${_escHtml(chatTitle)}</title>
             <meta charset="UTF-8">
             <style>
                 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -2935,7 +2956,7 @@ function openChatInNewWindow5() {
         <body>
             ${viewCopyBarHtml('v5')}
             <div class="chat-container">
-                <div class="chat-header">${chatTitle}</div>
+                <div class="chat-header">${_escHtml(chatTitle)}</div>
                 <div class="chat-body">${messages}</div>
             </div>
         </body>
@@ -2986,7 +3007,7 @@ function openChatInNewWindow7() {
     newWindow.document.write(`<!DOCTYPE html>
 <html>
 <head>
-<title>${chatTitle}</title>
+<title>${_escHtml(chatTitle)}</title>
 <meta charset="UTF-8">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -3009,7 +3030,7 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
 </head>
 <body>
 ${viewCopyBarHtml('v7')}
-<h1>${chatTitle}</h1>
+<h1>${_escHtml(chatTitle)}</h1>
 <div class="chat-body">${messages}</div>
 </body>
 </html>`);
@@ -3064,7 +3085,7 @@ function openChatInNewWindow6() {
     newWindow.document.write(`<!DOCTYPE html>
 <html>
 <head>
-<title>${chatTitle}</title>
+<title>${_escHtml(chatTitle)}</title>
 <meta charset="UTF-8">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -3093,16 +3114,82 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
 </head>
 <body>
 ${viewCopyBarHtml('v6')}
-<h1>${chatTitle}</h1>
+<h1>${_escHtml(chatTitle)}</h1>
 <div class="chat-body">${messages}</div>
 </body>
 </html>`);
     newWindow.document.close();
 }
 
+    // Run code that opens a window with window.open + document.write (the V1–V7 views, Print).
+    // If the browser blocks the pop-up (window.open returns null — common in Safari for dropdown/change events),
+    // the generated page is shown inside this page instead, so the view always appears.
+    function _runWithPopupFallback(fn) {
+        const _opened = [], _realOpen = window.open;
+        let _fake = null;
+        window.open = function() {
+            let w = null;
+            try { w = _realOpen.apply(window, arguments); } catch (e) { w = null; }
+            if (w) { _opened.push(w); return w; }
+            _fake = { html: '', document: { write: function(h) { _fake.html += h; }, writeln: function(h) { _fake.html += h + '\n'; }, open: function() {}, close: function() {} }, focus: function() {}, close: function() {} };
+            return _fake;
+        };
+        try {
+            fn();
+            if (_fake && _fake.html) _showViewOverlay(_fake.html);
+        } catch (err) {
+            console.error('View window error:', err);
+            _opened.forEach(function(w) { try { w.close(); } catch (e) {} });   // no silent blank window
+            alert('Could not build the view: ' + (err && err.message ? err.message : err));
+        } finally {
+            window.open = _realOpen;
+        }
+    }
+
+    function _showViewOverlay(html) {
+        const old = document.getElementById('view-overlay'); if (old) old.remove();
+        const ov = document.createElement('div');
+        ov.id = 'view-overlay';
+        ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:100000;background:rgba(15,23,42,.55);display:flex;flex-direction:column;padding:2vh 2vw;box-sizing:border-box;';
+        const bar = document.createElement('div');
+        bar.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;align-items:center;padding-bottom:6px;color:#fff;font:13px Arial,sans-serif;';
+        const note = document.createElement('span');
+        note.textContent = 'Pop-ups are blocked, so the view is shown here.';
+        note.style.cssText = 'margin-right:auto;opacity:.85;';
+        function mkBtn(label, bg) {
+            const b = document.createElement('button');
+            b.textContent = label;
+            b.style.cssText = 'border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:13px;color:#fff;background:' + bg + ';';
+            return b;
+        }
+        const tabBtn = mkBtn('↗ Open in new tab', '#5c6bc0');
+        tabBtn.onclick = function() {
+            const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+            const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener';
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(function() { URL.revokeObjectURL(url); }, 60000);
+        };
+        const closeBtn = mkBtn('✕ Close', '#455a64');
+        function close() { ov.remove(); document.removeEventListener('keydown', onKey, true); }
+        function onKey(e) { if (e.key === 'Escape') close(); }
+        closeBtn.onclick = close;
+        document.addEventListener('keydown', onKey, true);
+        bar.appendChild(note); bar.appendChild(tabBtn); bar.appendChild(closeBtn);
+        const fr = document.createElement('iframe');
+        fr.style.cssText = 'flex:1;border:0;width:100%;background:#fff;border-radius:8px;';
+        fr.srcdoc = html;
+        ov.appendChild(bar); ov.appendChild(fr);
+        document.body.appendChild(ov);
+    }
+
     function handleViewChange() {
         const viewSelect = document.getElementById('viewVersion');
         const selectedValue = viewSelect.value;
+        _runWithPopupFallback(function() { _openViewWindow(selectedValue); });
+        viewSelect.selectedIndex = 0;
+    }
+
+    function _openViewWindow(selectedValue) {
         
         if (selectedValue === 'v1') {
             openChatInNewWindow();
@@ -3119,8 +3206,6 @@ ${viewCopyBarHtml('v6')}
     	} else if (selectedValue === 'v7') {
             openChatInNewWindow7();
         }
-        
-        viewSelect.selectedIndex = 0;
     }
 
     function copyViewAsText(version) {
@@ -3282,7 +3367,7 @@ ${viewCopyBarHtml('v6')}
                 let span = cb.parentElement;
                 span.outerHTML = replacement;
             });
-            return `${prefix} ${highlightMarker}${clonedSpan.textContent} (${timestamp.textContent})`;
+            return `${prefix} ${highlightMarker}${clonedSpan.textContent} (${timestamp ? timestamp.textContent : ''})`;
         }).join("\n");
 
         event.dataTransfer.setData("text/plain", dragText);
@@ -3466,7 +3551,7 @@ ${viewCopyBarHtml('v6')}
             });
             let messageText = clonedSpan.textContent;
 
-            return `${prefix} ${highlightMarker}${messageText} (${timestamp.textContent})`;
+            return `${prefix} ${highlightMarker}${messageText} (${timestamp ? timestamp.textContent : ''})`;
         });
 
         if (messages.length === 0) {
@@ -3572,12 +3657,12 @@ function getChatContent() {
             let rt = row.querySelector('.thread-reply-text');
             let rts = row.querySelector('.thread-reply-ts');
             if (rt) {
-                lines.push("  ↳ " + rt.textContent + "  @" + (rts ? rts.textContent : ''));
+                lines.push("  ↳ " + scEncReply(rt.textContent) + "  @" + (rts ? rts.textContent : ''));
                 // sub-replies (level 2)
                 row.querySelectorAll('.sub-reply-row').forEach(sr => {
                     let st = sr.querySelector('.sub-reply-text');
                     let sts = sr.querySelector('.sub-reply-ts');
-                    if (st) lines.push("    ↳↳ " + st.textContent + "  @" + (sts ? sts.textContent : ''));
+                    if (st) lines.push("    ↳↳ " + scEncReply(st.textContent) + "  @" + (sts ? sts.textContent : ''));
                 });
             }
         });
@@ -4060,7 +4145,7 @@ function formatMessageContent(messageElement) {
     
     // Remove the dot prefix that would normally be added
     // Just return the content and timestamp without any bullet point
-    return `${content} (${timestamp.textContent})`;
+    return `${content} (${timestamp ? timestamp.textContent : ''})`;
 }
 
 async function addContentToDynalist(documentId) {
@@ -4513,7 +4598,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     var tsm = rest.match(/\s{2}@(.{4,8})$/);
                     var replyTs = tsm ? tsm[1] : '';
                     var replyText = tsm ? rest.slice(0, rest.length - tsm[0].length).trim() : rest.trim();
-                    if (replyText) currentEntry.replies.push({ text: replyText, ts: replyTs });
+                    if (replyText) currentEntry.replies.push({ text: scDecReply(replyText), ts: replyTs });
                 }
                 continue;
             }
@@ -6302,17 +6387,20 @@ function buildCalDescriptionText() {
             var rText = (typeof r === 'string') ? r : r.text;
             var rSubs = (typeof r === 'object' && r.subreplies) ? r.subreplies : [];
             var rClean = thrBullet ? stripLeadingBullet(rText) : rText;
-            out.push((p.isSubchat ? '        ' : '    ') + (thrBullet ? '• ' : '') + rClean);
+            _pvPushText(out, (p.isSubchat ? '        ' : '    '), (thrBullet ? '• ' : ''), rClean, false);
             rSubs.forEach(function(sr) {
                 var srText = (typeof sr === 'string') ? sr : sr.text;
                 var srClean = stripLeadingBullet(srText);
-                out.push((p.isSubchat ? '          ' : '      ') + '↳ ' + srClean);
+                _pvPushText(out, (p.isSubchat ? '          ' : '      '), '↳ ', srClean, false);
             });
         });
         if (!p.isSubchat) out.push('');
     });
     while (out.length && out[out.length - 1] === '') out.pop();
-    return out.join('\n');
+    // Google Calendar's renderer collapses spaces and tabs: use non-breaking spaces for each line's leading indent
+    return out.join('\n').split('\n').map(function(line) {
+        return line.replace(/^[ \t]+/, function(m) { return m.replace(/\t/g, '    ').replace(/ /g, '\u00A0'); });
+    }).join('\n');
 }
 function getCurrentChatCreatedAt() {
     var id = (typeof cmCurrentId === 'function') ? cmCurrentId() : null;
