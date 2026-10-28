@@ -282,7 +282,7 @@
             font-size: 15px;
         }
         /* keep line breaks typed with Enter while editing a reply */
-        .thread-reply-text, .sub-reply-text { white-space: pre-wrap; }
+        .thread-reply-text, .sub-reply-text { white-space: pre-wrap; tab-size: 1.6em; }
         .thread-reply-ts {
             font-size: 0.78em;
             color: #94a3b8;
@@ -1169,9 +1169,60 @@
         reader.readAsText(file);
     }
 
+    var _aeMirror = null;
+    // Auto-growing textareas: the needed height is measured on a hidden twin textarea, so the real field is never
+    // collapsed and re-expanded while typing (that collapse/expand is what made the view shake).
+    var _aeMirror = null;
+    function _fitTA(textarea, maxH, withBorder, forceMin) {
+        if (!textarea.offsetWidth) return null;                       // hidden panel: nothing to measure
+        var cs = window.getComputedStyle(textarea);
+        if (!_aeMirror) {
+            _aeMirror = document.createElement('textarea');
+            _aeMirror.setAttribute('aria-hidden', 'true');
+            _aeMirror.tabIndex = -1;
+            _aeMirror.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:hidden;height:0;min-height:0;overflow:hidden;pointer-events:none;';
+            document.body.appendChild(_aeMirror);
+        }
+        ['fontFamily','fontSize','fontWeight','fontStyle','letterSpacing','lineHeight','textTransform','wordSpacing','textIndent','tabSize',
+         'paddingTop','paddingRight','paddingBottom','paddingLeft','whiteSpace','wordBreak','overflowWrap'].forEach(function(p) { _aeMirror.style[p] = cs[p]; });
+        _aeMirror.style.boxSizing = 'border-box';
+        _aeMirror.style.borderStyle = 'solid';
+        _aeMirror.style.borderWidth = cs.borderTopWidth + ' ' + cs.borderRightWidth + ' ' + cs.borderBottomWidth + ' ' + cs.borderLeftWidth;
+        _aeMirror.style.width = textarea.offsetWidth + 'px';
+        _aeMirror.value = textarea.value;
+        var border = withBorder ? (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0) : 0;
+        var need = Math.ceil(_aeMirror.scrollHeight + border);
+        var minH = parseFloat(cs.minHeight) || 0;
+        var newH = Math.min(Math.max(need, minH, forceMin || 0), maxH);
+        var over = need > maxH;
+        var changed = Math.abs(textarea.offsetHeight - newH) > 0.5;
+        if (changed) textarea.style.height = newH + 'px';
+        var oy = over ? 'auto' : 'hidden';
+        if (textarea.style.overflowY !== oy) textarea.style.overflowY = oy;
+        if (!over && textarea.scrollTop) textarea.scrollTop = 0;
+        var active = document.activeElement === textarea;
+        if (active && over) {
+            // caret at the end of a long text: keep the last line visible inside the field
+            var atEnd = textarea.selectionStart === textarea.value.length && textarea.selectionEnd === textarea.value.length;
+            if (atEnd && textarea.scrollTop + textarea.clientHeight < textarea.scrollHeight - 1) textarea.scrollTop = textarea.scrollHeight;
+        }
+        return { changed: changed, over: over, active: active };
+    }
+
     function autoExpand(textarea) {
-        textarea.style.height = 'auto';
-        textarea.style.height = textarea.scrollHeight + 'px';
+        var maxH = Math.max(110, Math.round(window.innerHeight * 0.35));   // then scroll inside the field
+        var r = _fitTA(textarea, maxH, true);
+        if (r && r.active && r.changed) {
+            // field grew below the window: bring it back into view (only when its size changed)
+            var rc = textarea.getBoundingClientRect();
+            if (rc.bottom > window.innerHeight - 4) window.scrollBy(0, rc.bottom - window.innerHeight + 8);
+        }
+    }
+
+    // Reply / sub-reply input boxes (inside the chat list): same idea, and keep the box scrolled into view while typing
+    function fitReplyTA(ta, maxH) {
+        var r = _fitTA(ta, maxH || 90, false);
+        if (r && r.active && (r.changed || r.over)) { ta.style.scrollMarginBottom = '8px'; ta.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' }); }  // 'instant': the chat list uses smooth scrolling, which restarts on every key and lags behind
     }
 
     function sendMessage(message = null, timestamp = null, isFromFile = false) {
@@ -1655,17 +1706,14 @@
             var siTa = document.createElement('textarea');
             siTa.placeholder = 'Sub-reply… (Enter to send)';
             siTa.rows = 1;
-            siTa.addEventListener('input', function() {
-                siTa.style.height = 'auto';
-                siTa.style.height = Math.min(siTa.scrollHeight, 70) + 'px';
-            });
+            siTa.addEventListener('input', function() { fitReplyTA(siTa, 70); });
             var siBtn = document.createElement('button');
             siBtn.textContent = '↩ Send';
             function doSendSubReply() {
                 var txt = siTa.value.trim();
                 if (!txt) return;
                 addSubReplyRow(txt, getCurrentTimeFmt ? getCurrentTimeFmt() : getCurrentTime());
-                siTa.value = ''; siTa.style.height = 'auto'; siTa.focus();
+                siTa.value = ''; fitReplyTA(siTa, 90); siTa.focus();
                 siTa.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 autosaveTick();
             }
@@ -2240,9 +2288,9 @@
                             }
                             var siR=document.createElement('div'); siR.className='sub-input-row';
                             var siT=document.createElement('textarea'); siT.placeholder='Sub-reply…'; siT.rows=1;
-                            siT.addEventListener('input',function(){siT.style.height='auto';siT.style.height=Math.min(siT.scrollHeight,70)+'px';});
+                            siT.addEventListener('input', function() { fitReplyTA(siT, 70); });
                             var siB=document.createElement('button'); siB.textContent='↳ Send';
-                            function doSub(){var t=siT.value.trim();if(!t)return;addSR(t,getCurrentTimeFmt?getCurrentTimeFmt():getCurrentTime());siT.value='';siT.style.height='auto';siT.focus();siT.scrollIntoView({behavior:'smooth',block:'nearest'});autosaveTick();}
+                            function doSub(){var t=siT.value.trim();if(!t)return;addSR(t,getCurrentTimeFmt?getCurrentTimeFmt():getCurrentTime());siT.value = ''; fitReplyTA(siT, 90);siT.focus();siT.scrollIntoView({behavior:'smooth',block:'nearest'});autosaveTick();}
                             siB.onclick=function(e){e.stopPropagation();doSub();};
                             siT.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();doSub();}});
                             siR.appendChild(siT);siR.appendChild(siB);
@@ -2430,11 +2478,11 @@
                 var rt = row.querySelector('.thread-reply-text');
                 var rts = row.querySelector('.thread-reply-ts');
                 if (!rt) return;
-                html += '<div class="thread-line"><span style="white-space:pre-wrap;min-width:0;">' + _escHtml(rt.textContent) + '</span>' + (rts ? ' <small>' + rts.textContent + '</small>' : '') + '</div>';
+                html += '<div class="thread-line"><span style="white-space:pre-wrap;tab-size:1.6em;min-width:0;">' + _escHtml(rt.textContent) + '</span>' + (rts ? ' <small>' + rts.textContent + '</small>' : '') + '</div>';
                 row.querySelectorAll('.sub-reply-row').forEach(function(sr) {
                     var st = sr.querySelector('.sub-reply-text');
                     var sts = sr.querySelector('.sub-reply-ts');
-                    if (st) html += '<div class="sub-thread-line"><span style="color:#9fa8da;margin-right:4px;">↳</span><span style="white-space:pre-wrap;min-width:0;">' + _escHtml(st.textContent) + '</span>' + (sts ? ' <small>' + sts.textContent + '</small>' : '') + '</div>';
+                    if (st) html += '<div class="sub-thread-line"><span style="color:#9fa8da;margin-right:4px;">↳</span><span style="white-space:pre-wrap;tab-size:1.6em;min-width:0;">' + _escHtml(st.textContent) + '</span>' + (sts ? ' <small>' + sts.textContent + '</small>' : '') + '</div>';
                 });
             });
             return html;
@@ -2684,7 +2732,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
                 <style>
                     body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
                     h2 { text-align: center; color: #333; }
-                    .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); white-space: pre-wrap; }
+                    .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); white-space: pre-wrap; tab-size: 3; }
                 </style>
             </head>
             <body>
@@ -2734,7 +2782,7 @@ let newWindow = window.open("", "_blank", `width=${width},height=${height},left=
                 <style>
                     body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f4; }
                     h2 { text-align: center; color: #333; }
-                    .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); white-space: pre-wrap; }
+                    .chat-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0px 0px 6px rgba(0, 0, 0, 0.1); white-space: pre-wrap; tab-size: 3; }
                     .checkbox-wrapper { display: inline-flex; align-items: center; margin-right: 5px; }
                     .checkbox-wrapper input[type="checkbox"] { margin: 0 5px 0 0; cursor: pointer; }
                 </style>
@@ -2907,7 +2955,7 @@ function openChatInNewWindow7() {
                 let rt = row.querySelector('.thread-reply-text');
                 let subRows = Array.from(row.querySelectorAll('.sub-reply-row')).map(sr => {
                     let st = sr.querySelector('.sub-reply-text');
-                    return `<div class="sub-reply-row"><span style="color:#c5cae9;margin-right:4px;">↳</span><span class="sub-reply-text" style="white-space:pre-wrap;">${st ? _escHtml(st.textContent) : ''}</span></div>`;
+                    return `<div class="sub-reply-row"><span style="color:#c5cae9;margin-right:4px;">↳</span><span class="sub-reply-text" style="white-space:pre-wrap;tab-size:1.6em;">${st ? _escHtml(st.textContent) : ''}</span></div>`;
                 }).join('');
                 return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? _escHtml(rt.textContent) : ''}</span></div>${subRows}`;
             }).join('');
@@ -2940,7 +2988,7 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
 .thread-panel { padding: 0 9px 6px 28px; }
 .thread-panel-inner { border-left: 2px solid #c7d2fe; padding-left: 8px; display: flex; flex-direction: column; gap: 2px; }
 .thread-reply-row { display: flex; align-items: center; gap: 4px; padding: 3px 6px; background: #fff; border-radius: 6px; border: 1px solid #e0e7ff; }
-.thread-reply-text { flex: 1; font-size: 13px; color: #334155; line-height: 1.35; word-break: break-word; white-space: pre-wrap; }
+.thread-reply-text { flex: 1; font-size: 13px; color: #334155; line-height: 1.35; word-break: break-word; white-space: pre-wrap; tab-size: 1.6em; }
 .sub-reply-row { display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 18px; }
 </style>
 </head>
@@ -2985,7 +3033,7 @@ function openChatInNewWindow6() {
                 let subRows = Array.from(row.querySelectorAll('.sub-reply-row')).map(sr => {
                     let st = sr.querySelector('.sub-reply-text');
                     let sts = sr.querySelector('.sub-reply-ts');
-                    return `<div class="sub-reply-row"><span style="color:#c5cae9;margin-right:4px;font-size:0.82em;">↳</span><span class="sub-reply-text" style="font-size:0.82em;color:#78909c;white-space:pre-wrap;">${st ? _escHtml(st.textContent) : ''}</span><span class="thread-reply-ts" style="font-size:0.72em;">${sts ? sts.textContent : ''}</span></div>`;
+                    return `<div class="sub-reply-row"><span style="color:#c5cae9;margin-right:4px;font-size:0.82em;">↳</span><span class="sub-reply-text" style="font-size:0.82em;color:#78909c;white-space:pre-wrap;tab-size:1.6em;">${st ? _escHtml(st.textContent) : ''}</span><span class="thread-reply-ts" style="font-size:0.72em;">${sts ? sts.textContent : ''}</span></div>`;
                 }).join('');
                 return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? _escHtml(rt.textContent) : ''}</span><span class="thread-reply-ts">${rts ? rts.textContent : ''}</span></div>${subRows}`;
             }).join('');
@@ -3023,7 +3071,7 @@ h1 { font-size: 1.1em; font-weight: 700; text-align: center; padding: 10px 0 12p
 .thread-panel { padding: 0 9px 6px 28px; }
 .thread-panel-inner { border-left: 2px solid #c7d2fe; padding-left: 8px; display: flex; flex-direction: column; gap: 2px; }
 .thread-reply-row { display: flex; align-items: center; gap: 4px; padding: 3px 6px; background: #fff; border-radius: 6px; border: 1px solid #e0e7ff; }
-.thread-reply-text { flex: 1; font-size: 13px; color: #334155; line-height: 1.35; word-break: break-word; white-space: pre-wrap; }
+.thread-reply-text { flex: 1; font-size: 13px; color: #334155; line-height: 1.35; word-break: break-word; white-space: pre-wrap; tab-size: 1.6em; }
 .thread-reply-ts { font-size: .78em; color: #94a3b8; white-space: nowrap; flex-shrink: 0; }
 .sub-reply-row { display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 18px; }
 </style>
@@ -3651,38 +3699,84 @@ document.addEventListener("DOMContentLoaded", function() {
         autosaveTick();
     });
 
-    // ── Enter inside an edited thread reply / sub-reply = new bulleted line inside the same note ──
-    // (default contentEditable behaviour splits the reply row into a half-styled block)
-    document.getElementById('chatBox').addEventListener('keydown', function(e) {
-        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
-        var sel = window.getSelection();
-        if (!sel || !sel.rangeCount) return;
-        var n = sel.anchorNode;
-        var el = n && (n.nodeType === 1 ? n : n.parentElement);
-        var t = el && el.closest ? el.closest('.thread-reply-text, .sub-reply-text') : null;
-        if (!t) return;
-        e.preventDefault();
-        var r = sel.getRangeAt(0);
-        r.deleteContents();
-        // caret offset inside the note's plain text
-        var pre = document.createRange();
-        pre.selectNodeContents(t);
-        pre.setEnd(r.startContainer, r.startOffset);
-        var pos = pre.toString().length;
-        var txt = t.textContent;
-        var BUL = '\u2022 ';
-        // every line of the note carries a bullet: add one to the first line if it has none
-        if (txt.indexOf('\u2022') !== 0) { txt = BUL + txt; pos += BUL.length; }
-        txt = txt.slice(0, pos) + '\n' + BUL + txt.slice(pos);
-        pos += 1 + BUL.length;
-        t.textContent = txt;
-        r = document.createRange();
-        r.setStart(t.firstChild, pos);
-        r.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(r);
-        t.dispatchEvent(new Event('input', { bubbles: true })); // trigger autosave
-    });
+    // ── Outline editing inside an edited thread reply / sub-reply ──
+    // Enter = new bullet (same level) · Tab / Shift+Tab = indent / outdent · Enter or Backspace on an empty bullet = outdent / end the list.
+    // Lines are stored as plain text: <tab × level><bullet> <content>   (so views and .txt keep the outline)
+    (function() {
+        var BULLETS = ['•', '◦', '▪'];   // • ◦ ▪
+        var MAXLEVEL = 5;
+        var LINE_RE = /^(\t*)([•◦▪]) ?([\s\S]*)$/;
+        function bulletFor(level) { return BULLETS[level % BULLETS.length]; }
+        function mk(level, content) { return new Array(level + 1).join('\t') + bulletFor(level) + ' ' + content; }
+
+        document.getElementById('chatBox').addEventListener('keydown', function(e) {
+            var isEnter = e.key === 'Enter', isTab = e.key === 'Tab', isBack = e.key === 'Backspace';
+            if (!(isEnter || isTab || isBack) || e.isComposing || e.keyCode === 229) return;
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            var sel = window.getSelection();
+            if (!sel || !sel.rangeCount) return;
+            var n = sel.anchorNode;
+            var el = n && (n.nodeType === 1 ? n : n.parentElement);
+            var t = el && el.closest ? el.closest('.thread-reply-text, .sub-reply-text') : null;
+            if (!t) return;
+            if (isBack && !sel.isCollapsed) return;           // normal deletion of a selection
+
+            var r = sel.getRangeAt(0);
+            if (!r.collapsed) r.deleteContents();
+            var pre = document.createRange();
+            pre.selectNodeContents(t);
+            pre.setEnd(r.startContainer, r.startOffset);
+            var pos = pre.toString().length;
+            var txt = t.textContent;
+
+            var ls = txt.lastIndexOf('\n', pos - 1) + 1;
+            var le = txt.indexOf('\n', pos); if (le < 0) le = txt.length;
+            var line = txt.slice(ls, le);
+            var m = LINE_RE.exec(line);
+            var level = m ? m[1].length : 0;
+            var content = m ? m[3] : line;
+            var prefixLen = m ? m[1].length + 1 + (line.charAt(m[1].length + 1) === ' ' ? 1 : 0) : 0;
+            var caretInContent = Math.max(0, pos - ls - prefixLen);
+            if (!m) caretInContent = pos - ls;
+
+            var newLine, newCaretInLine, tail = '';
+            if (isTab) {
+                var lv = e.shiftKey ? level - 1 : level + 1;
+                if (e.shiftKey && !m) { e.preventDefault(); return; }
+                lv = Math.max(0, Math.min(MAXLEVEL, lv));
+                newLine = mk(lv, content);
+                newCaretInLine = lv + 2 + caretInContent;
+            } else if (isBack) {
+                // only act when the caret sits right at the start of the bullet's content
+                if (!m || caretInContent !== 0) return;
+                if (level > 0) { newLine = mk(level - 1, content); newCaretInLine = (level - 1) + 2; }
+                else { newLine = content; newCaretInLine = 0; }
+            } else { // Enter
+                if (m && content === '') {
+                    // empty bullet: outdent, or end the list at level 0
+                    if (level > 0) { newLine = mk(level - 1, ''); newCaretInLine = (level - 1) + 2; }
+                    else { newLine = ''; newCaretInLine = 0; }
+                } else {
+                    var head = content.slice(0, caretInContent), rest = content.slice(caretInContent);
+                    newLine = mk(level, head);
+                    tail = '\n' + mk(level, rest);
+                    newCaretInLine = newLine.length + 1 + level + 2;
+                }
+            }
+            e.preventDefault();
+            var out = txt.slice(0, ls) + newLine + tail + txt.slice(le);
+            t.textContent = out;
+            // text ends with a newline: invisible <br> placeholder so the caret can sit on that last empty line
+            if (/\n$/.test(out)) t.appendChild(document.createElement('br'));
+            var caret = ls + newCaretInLine;
+            var rg = document.createRange();
+            if (t.firstChild) rg.setStart(t.firstChild, Math.min(caret, t.firstChild.length)); else rg.setStart(t, 0);
+            rg.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(rg);
+            t.dispatchEvent(new Event('input', { bubbles: true })); // trigger autosave
+        });
+    })();
 
     // Update saveChatAsFile to reuse the same file like autosave
     window.saveChatAsFile = async function() {
@@ -4261,17 +4355,14 @@ document.addEventListener("DOMContentLoaded", function() {
             var siTa = document.createElement('textarea');
             siTa.placeholder = 'Sub-reply… (Enter to send)';
             siTa.rows = 1;
-            siTa.addEventListener('input', function() {
-                siTa.style.height = 'auto';
-                siTa.style.height = Math.min(siTa.scrollHeight, 70) + 'px';
-            });
+            siTa.addEventListener('input', function() { fitReplyTA(siTa, 70); });
             var siBtn = document.createElement('button');
             siBtn.textContent = '↩ Send';
             function doSendSubReply() {
                 var txt = siTa.value.trim();
                 if (!txt) return;
                 addSubReplyRow(txt, getCurrentTimeFmt ? getCurrentTimeFmt() : getCurrentTime());
-                siTa.value = ''; siTa.style.height = 'auto'; siTa.focus();
+                siTa.value = ''; fitReplyTA(siTa, 90); siTa.focus();
                 siTa.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 autosaveTick();
             }
@@ -4326,17 +4417,14 @@ document.addEventListener("DOMContentLoaded", function() {
         var ta = document.createElement('textarea');
         ta.placeholder = 'Reply… (Enter to send, Shift+Enter new line)';
         ta.rows = 1;
-        ta.addEventListener('input', function() {
-            ta.style.height = 'auto';
-            ta.style.height = Math.min(ta.scrollHeight, 90) + 'px';
-        });
+        ta.addEventListener('input', function() { fitReplyTA(ta, 90); });
         var sendBtn = document.createElement('button');
         sendBtn.textContent = 'Reply';
         function doSendReply() {
             var txt = ta.value.trim();
             if (!txt) return;
             addReplyRow(txt, getCurrentTimeFmt ? getCurrentTimeFmt() : getCurrentTime());
-            ta.value = ''; ta.style.height = 'auto'; ta.focus();
+            ta.value = ''; fitReplyTA(ta, 90); ta.focus();
             // Scroll the newly added row (and the input row right below it) into view —
             // without this, a row added while the panel overflows the viewport stays
             // hidden until the user manually scrolls or types the next line.
@@ -4725,17 +4813,14 @@ function cmRestoreChat(data) {
                         var siTa2 = document.createElement('textarea');
                         siTa2.placeholder = 'Sub-reply… (Enter to send)';
                         siTa2.rows = 1;
-                        siTa2.addEventListener('input', function() {
-                            siTa2.style.height = 'auto';
-                            siTa2.style.height = Math.min(siTa2.scrollHeight, 70) + 'px';
-                        });
+                        siTa2.addEventListener('input', function() { fitReplyTA(siTa2, 70); });
                         var siBtn2 = document.createElement('button');
                         siBtn2.textContent = '↩ Send';
                         (function(sta, sib, asp) {
                             function doSub() {
                                 var t = sta.value.trim(); if (!t) return;
                                 asp(t, getCurrentTimeFmt ? getCurrentTimeFmt() : getCurrentTime());
-                                sta.value = ''; sta.style.height = 'auto'; sta.focus();
+                                sta.value = ''; fitReplyTA(sta, 90); sta.focus();
                                 sta.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                                 autosaveTick();
                             }
