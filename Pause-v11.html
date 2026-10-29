@@ -410,7 +410,19 @@
             flex: 0 0 auto;
         }
 
-        .template-switch-row { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+        .template-switch-row { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 6px; }
+        .ol-editor {
+            width: 100%; height: 120px; padding: 12px;
+            font-family: inherit; font-size: 0.95rem; color: var(--text-main);
+            border: 1px solid var(--border); border-radius: 6px;
+            resize: vertical; overflow: auto; margin-bottom: 12px;
+            background: #f9fafb; line-height: 1.5; cursor: text;
+            white-space: pre-wrap; overflow-wrap: anywhere; outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .ol-editor:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); background: var(--surface); }
+        .ol-editor > div { min-height: 1.5em; }
+        .log-edit-area .ol-editor { height: 90px; margin-bottom: 6px; font-size: 0.88rem; }
         .template-switch-btn {
             background: transparent;
             color: var(--text-muted);
@@ -571,7 +583,7 @@
         .log-actions button:hover { color: var(--text-main); background: #f3f4f6; }
 
         .log-content {
-            white-space: pre-wrap; 
+            white-space: normal; 
             word-wrap: break-word;
             font-size: 0.88rem;
             color: var(--text-main);
@@ -854,7 +866,15 @@
         }
         .summary-entry:last-child { border-bottom: none; padding-bottom: 0;}
         .summary-entry-time { font-weight: 700; font-size: 0.75rem; color: var(--accent); margin-bottom: 1px; }
-        .summary-entry-text { white-space: pre-wrap; font-size: 0.88rem; line-height: 1.4; }
+        .summary-entry-text { font-size: 0.88rem; line-height: 1.4; }
+        /* Outline rendering with hanging indents: wrapped lines align under the text, not the marker */
+        .ol-line { display: flex; align-items: baseline; }
+        .ol-mark { flex: 0 0 auto; }
+        .ol-mark.num { min-width: 1.6em; }
+        .ol-mark.bul { min-width: 1.1em; }
+        .ol-text { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .ol-plain { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.2em; }
+        .ol-line.ol-head > .ol-text { font-weight: 600; }
 
         /* ===== COMPACT: project groups ===== */
         .summary-project-group { margin-bottom: 12px; }
@@ -1385,6 +1405,7 @@
         </div>
 
         <div class="template-switch-row">
+            <button type="button" id="hang-toggle-btn" class="template-switch-btn" onclick="toggleHangEditor()" title="Wrapped lines line up under their own text while you type">↳ Hanging indent: ON</button>
             <button type="button" id="template-switch-btn" class="template-switch-btn" onclick="toggleReflectionTemplate()" title="Replace the template with the daily reflection questions">🌙 Daily reflection template</button>
         </div>
         <textarea id="entry-text" spellcheck="false"></textarea>
@@ -2162,7 +2183,7 @@
         const entry = document.getElementById('entry-text');
         if (entry) {
             entry.focus();
-            entry.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            (entry._ed || entry).scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
 
         FOCUS_STATE.endAt = null;
@@ -2360,6 +2381,25 @@
                      (typeof log.timestamp === 'number' ? dateKey(log.timestamp) : '')).toLowerCase();
         return terms.every(t => hay.indexOf(t) !== -1);
     }
+    // Render entry text as an outline: numbered items and bullets get hanging indents,
+    // so a long line that wraps lines up under its own text. Plain lines stay as typed.
+    function outlineHtml(raw, terms) {
+        terms = terms || [];
+        return String(raw).split('\n').map(function (line) {
+            const m = /^( *)([•◦▪]) ?(.*)$/.exec(line);
+            if (m) {
+                const level = Math.max(0, Math.floor((m[1].length - BULLET_BASE.length) / OUTLINE_INDENT.length));
+                const ml = 1.6 + level * 1.3;
+                return '<div class="ol-line" style="margin-left:' + ml + 'em"><span class="ol-mark bul">' + m[2] + '</span><span class="ol-text">' + highlightHtml(m[3], terms) + '</span></div>';
+            }
+            const n = /^(\d+\.) ?(.*)$/.exec(line);
+            if (n) {
+                return '<div class="ol-line ol-head"><span class="ol-mark num">' + n[1] + '</span><span class="ol-text">' + highlightHtml(n[2], terms) + '</span></div>';
+            }
+            return '<div class="ol-plain">' + (line === '' ? '&nbsp;' : highlightHtml(line, terms)) + '</div>';
+        }).join('');
+    }
+
     // Escape `raw` for HTML, wrapping every search-term hit in <mark>.
     function highlightHtml(raw, terms) {
         if (!terms.length) return escapeHtml(raw);
@@ -2444,7 +2484,7 @@
         const project = log.project || DEFAULT_PROJECT;
         const safeProject = escapeHtml(project);
         const hlTerms = logFilterTerms();
-        const safeText = highlightHtml(log.text, hlTerms).replace(/\n/g, "<br>");
+        const safeText = outlineHtml(log.text, hlTerms);
         const rawText = escapeHtml(log.text);
 
         if (isSpecialProject(project)) logDiv.classList.add('special-entry');
@@ -2481,6 +2521,7 @@
                 </div>
             </div>
         `;
+        enhanceOutlineEditor(logDiv.querySelector('textarea'));
         return logDiv;
     }
 
@@ -2662,6 +2703,7 @@
         return 1;
     }
     function outlineReplace(ta, from, to, text) {
+        if (ta._ed) { edReplace(ta._ed, from, to, text); return; }
         ta.setSelectionRange(from, to);
         if (!document.execCommand('insertText', false, text)) ta.setRangeText(text, from, to, 'end');
     }
@@ -2669,7 +2711,7 @@
         return el && el.tagName === 'TEXTAREA' && (el.id === 'entry-text' || (el.id || '').indexOf('edit-textarea-') === 0);
     }
     document.addEventListener('keydown', function (e) {
-        const ta = e.target;
+        const ta = (e.target && e.target._ta) || e.target;
         if (!isOutlineBox(ta) || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
         const v = ta.value, selS = ta.selectionStart, selE = ta.selectionEnd;
         const lineStart = v.lastIndexOf('\n', selS - 1) + 1;
@@ -2735,6 +2777,179 @@
         }
     });
 
+    // ============================================================
+    // HANGING-INDENT EDITOR
+    //  A plain <textarea> cannot indent only the wrapped part of a line, so while it is enabled each
+    //  textarea is paired with a contenteditable box that holds one <div> per line. The textarea stays
+    //  in the page (hidden) and its value / selection / focus are forwarded to the box, so the rest of
+    //  the app keeps working with plain text. "Hanging indent" can be switched off at any time.
+    // ============================================================
+    let HANG_ON = true;
+    try { if (localStorage.getItem('thepause_hang_editor') === '0') HANG_ON = false; } catch (e) {}
+    const _edMeasure = document.createElement('canvas').getContext('2d');
+
+    function edNorm(s) { return s.replace(/ /g, ' '); }
+    function edLines(ed) { return Array.prototype.slice.call(ed.children); }
+    function edLineText(div) { return edNorm(div.textContent); }
+    function edGet(ed) { return edLines(ed).map(edLineText).join('\n'); }
+    function edMakeLine(text) {
+        const d = document.createElement('div');
+        if (text === '') d.appendChild(document.createElement('br')); else d.textContent = text;
+        return d;
+    }
+    function edSet(ed, v) {
+        ed.textContent = '';
+        String(v).replace(/\r\n?/g, '\n').split('\n').forEach(function (l) { ed.appendChild(edMakeLine(l)); });
+        edRefresh(ed);
+    }
+    function edNormalize(ed) {   // keep every line a direct <div> child
+        Array.prototype.slice.call(ed.childNodes).forEach(function (n) {
+            if (n.nodeType === 1 && n.tagName === 'DIV') return;
+            const d = document.createElement('div');
+            if (n.nodeType === 1 && n.tagName === 'BR') { d.appendChild(document.createElement('br')); ed.replaceChild(d, n); }
+            else { ed.replaceChild(d, n); d.appendChild(n); }
+        });
+        if (!ed.firstChild) ed.appendChild(edMakeLine(''));
+    }
+    // hanging indent = pixel width of the line's "   • " / "4. " prefix
+    function edRefresh(ed) {
+        edNormalize(ed);
+        const cs = getComputedStyle(ed);
+        if (!cs.fontSize) return;
+        _edMeasure.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+        edLines(ed).forEach(function (div) {
+            const t = edLineText(div), o = outlineParse(t);
+            if (o && o.preLen > 0) {
+                const w = _edMeasure.measureText(t.slice(0, o.preLen)).width;
+                if (w > 0) { div.style.paddingLeft = w + 'px'; div.style.textIndent = (-w) + 'px'; return; }
+            }
+            if (div.style.paddingLeft) div.style.paddingLeft = '';
+            if (div.style.textIndent) div.style.textIndent = '';
+        });
+    }
+    function edPosToOffset(ed, node, off) {
+        const lines = edLines(ed), lens = lines.map(function (d) { return edLineText(d).length; });
+        const before = function (i) { let n = 0; for (let j = 0; j < i; j++) n += lens[j] + 1; return n; };
+        if (node === ed) return off >= lines.length ? edGet(ed).length : before(off);
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i] === node || lines[i].contains(node)) {
+                const r = document.createRange();
+                r.selectNodeContents(lines[i]);
+                try { r.setEnd(node, off); } catch (e) {}
+                return before(i) + edNorm(r.toString()).length;
+            }
+        }
+        return 0;
+    }
+    function edOffsetToPos(ed, offset) {
+        const lines = edLines(ed);
+        let rem = offset;
+        for (let i = 0; i < lines.length; i++) {
+            const len = edLineText(lines[i]).length;
+            if (rem <= len || i === lines.length - 1) {
+                const w = document.createTreeWalker(lines[i], NodeFilter.SHOW_TEXT);
+                let n, left = Math.min(rem, len);
+                while ((n = w.nextNode())) {
+                    if (left <= n.length) return [n, left];
+                    left -= n.length;
+                }
+                return [lines[i], 0];
+            }
+            rem -= len + 1;
+        }
+        return [ed, 0];
+    }
+    function edGetSel(ed) {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount && ed.contains(sel.anchorNode)) {
+            const r = sel.getRangeAt(0);
+            ed._sel = [edPosToOffset(ed, r.startContainer, r.startOffset), edPosToOffset(ed, r.endContainer, r.endOffset)];
+        }
+        if (!ed._sel) { const n = edGet(ed).length; ed._sel = [n, n]; }
+        return ed._sel;
+    }
+    function edSetSel(ed, a, b) {
+        ed._sel = [a, b];
+        const p1 = edOffsetToPos(ed, a), p2 = edOffsetToPos(ed, b);
+        const r = document.createRange();
+        r.setStart(p1[0], p1[1]); r.setEnd(p2[0], p2[1]);
+        const sel = window.getSelection();
+        sel.removeAllRanges(); sel.addRange(r);
+    }
+    // Replace text [from,to) — via execCommand so the browser's undo history keeps working.
+    function edReplace(ed, from, to, text) {
+        ed.focus();
+        edSetSel(ed, from, to);
+        if (from !== to) document.execCommand('delete');
+        text.split('\n').forEach(function (part, i) {
+            if (i > 0) document.execCommand('insertParagraph');
+            if (part) document.execCommand('insertText', false, part);
+        });
+        edRefresh(ed);
+    }
+
+    function enhanceOutlineEditor(ta) {
+        if (!HANG_ON || !ta || ta._ed || !ta.parentNode) return;
+        const ed = document.createElement('div');
+        ed.className = 'ol-editor';
+        ed.id = ta.id + '-ed';
+        ed.contentEditable = 'true';
+        ed.spellcheck = false;
+        ed.setAttribute('role', 'textbox');
+        ed.setAttribute('aria-multiline', 'true');
+        ed._ta = ta;
+        ta.parentNode.insertBefore(ed, ta.nextSibling);
+        edSet(ed, ta.value);
+        ta.style.display = 'none';
+        ta._ed = ed;
+        Object.defineProperty(ta, 'value', { configurable: true, get: function () { return edGet(ed); }, set: function (v) { edSet(ed, v); ed._sel = null; } });
+        Object.defineProperty(ta, 'selectionStart', { configurable: true, get: function () { return edGetSel(ed)[0]; } });
+        Object.defineProperty(ta, 'selectionEnd', { configurable: true, get: function () { return edGetSel(ed)[1]; } });
+        ta.setSelectionRange = function (a, b) { edSetSel(ed, a, b); };
+        ta.focus = function (opts) { ed.focus(opts); if (ed._sel) { try { edSetSel(ed, ed._sel[0], ed._sel[1]); } catch (e) {} } };
+
+        ed.addEventListener('input', function () { edRefresh(ed); edGetSel(ed); });
+        ed.addEventListener('focus', function () { edRefresh(ed); });
+        ed.addEventListener('keyup', function () { edGetSel(ed); });
+        ed.addEventListener('mouseup', function () { edGetSel(ed); });
+        ed.addEventListener('blur', function () { edGetSel(ed); });
+        ed.addEventListener('keydown', function (e) {
+            // Shift+Enter: plain new line (no bullet), never a <br> inside a line
+            if (e.key === 'Enter' && e.shiftKey && !e.isComposing) { e.preventDefault(); document.execCommand('insertParagraph'); }
+        });
+        ed.addEventListener('paste', function (e) {
+            e.preventDefault();
+            const t = ((e.clipboardData || window.clipboardData).getData('text/plain') || '').replace(/\r\n?/g, '\n');
+            const sel = edGetSel(ed);
+            edReplace(ed, sel[0], sel[1], t);
+        });
+        ed.addEventListener('drop', function (e) { e.preventDefault(); });
+    }
+    function destroyOutlineEditor(ta) {
+        const ed = ta && ta._ed;
+        if (!ed) return;
+        const v = edGet(ed);
+        ['value', 'selectionStart', 'selectionEnd', 'setSelectionRange', 'focus'].forEach(function (k) { try { delete ta[k]; } catch (e) {} });
+        ta.value = v;
+        ta.style.display = '';
+        ta._ed = null;
+        ed.remove();
+    }
+    function syncHangBtn() {
+        const b = document.getElementById('hang-toggle-btn');
+        if (!b) return;
+        b.textContent = '↳ Hanging indent: ' + (HANG_ON ? 'ON' : 'OFF');
+        b.classList.toggle('active', HANG_ON);
+    }
+    window.toggleHangEditor = function () {
+        HANG_ON = !HANG_ON;
+        try { localStorage.setItem('thepause_hang_editor', HANG_ON ? '1' : '0'); } catch (e) {}
+        document.querySelectorAll('textarea#entry-text, textarea[id^="edit-textarea-"]').forEach(function (ta) {
+            if (HANG_ON) enhanceOutlineEditor(ta); else destroyOutlineEditor(ta);
+        });
+        syncHangBtn();
+    };
+
     function resetEntryUI() {
         if (timerInterval) {
             clearInterval(timerInterval);
@@ -2759,7 +2974,7 @@
         if (saveBtn) saveBtn.style.display = "none";
 
         const entryText = document.getElementById('entry-text');
-        if (entryText) entryText.style.borderColor = "var(--border)";
+        if (entryText) (entryText._ed || entryText).style.borderColor = "var(--border)";
         loadPreset();
     }
 
@@ -2864,7 +3079,7 @@
             timerEndTime = null;
             timerDisplay.textContent = "Time's up! Stop and save.";
             timerDisplay.style.color = "var(--danger)";
-            entryText.style.borderColor = "var(--danger)";
+            (entryText._ed || entryText).style.borderColor = "var(--danger)";
             return;
         }
 
@@ -3112,7 +3327,7 @@
         if (currentSummaryView === 'timeline') {
             [...dayLogs].sort((a, b) => b.timestamp - a.timestamp).forEach(log => {
                 const project = escapeHtml(log.project || DEFAULT_PROJECT);
-                const safeText = escapeHtml(log.text);
+                const safeText = outlineHtml(log.text);
                 html += `<div class="summary-entry"><div class="summary-entry-time">${entryTimeLabel(log)} · <span class="project-tag">${project}</span></div><div class="summary-entry-text">${safeText}</div></div>`;
             });
         } else {
@@ -3134,7 +3349,7 @@
                 const pausedStyle = isSpecialProject(projectName) ? ' style="color: #92400e; border-bottom-color: #fbbf24;"' : '';
                 html += `<div class="summary-project-group"><div class="summary-project-header"${pausedStyle}><span>${isSpecialProject(projectName) ? '⏸️' : '📁'} ${safeProject} <button type="button" class="proj-copy-btn" data-project="${encodeURIComponent(projectName)}" title="Copy this project's text"></button><button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(projectName)}" title="Send this project to Google Calendar"></button></span><span class="summary-project-count">${projectLogs.length} ${projectLogs.length === 1 ? 'entry' : 'entries'}</span></div>`;
                 [...projectLogs].sort((a, b) => a.timestamp - b.timestamp).forEach(log => {
-                    const safeText = escapeHtml(log.text);
+                    const safeText = outlineHtml(log.text);
                     html += `<div class="summary-entry"><div class="summary-entry-time">${entryTimeLabel(log)}</div><div class="summary-entry-text">${safeText}</div></div>`;
                 });
                 html += `</div>`;
@@ -3360,7 +3575,7 @@
         let html = `<h4>📁 ${escapeHtml(projectName)} · ${relativeDateLabel(dateObj.getTime())}</h4>`;
         sorted.forEach(log => {
             const idx = logs.indexOf(log);
-            html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${escapeHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
+            html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${outlineHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
         });
         if (sorted.length > 1) html += `<div class="block-detail-actions"><button class="block-detail-delete-all" onclick="deleteAllInBlock(event)">🗑️ Delete all ${sorted.length} entries</button></div>`;
         pop.innerHTML = html;
@@ -3434,7 +3649,7 @@
         let html = `<h4>📁 ${escapeHtml(ctx.projectName)} · ${relativeDateLabel(dateObj.getTime())}</h4>`;
         sorted.forEach(log => {
             const idx = logs.indexOf(log);
-            html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${escapeHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
+            html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${outlineHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
         });
         if (sorted.length > 1) html += `<div class="block-detail-actions"><button class="block-detail-delete-all" onclick="deleteAllInBlock(event)">🗑️ Delete all ${sorted.length} entries</button></div>`;
         pop.innerHTML = html;
@@ -3799,6 +4014,8 @@
                 if (pop && !pop.contains(e.target)) pop.remove();
             });
 
+            enhanceOutlineEditor(document.getElementById('entry-text'));
+            syncHangBtn();
             logs = loadLocal();
             renderLogs();
             populateProjectSuggestions();
