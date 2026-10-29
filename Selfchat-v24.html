@@ -284,6 +284,14 @@
         }
         /* keep line breaks typed with Enter while editing a reply */
         .thread-reply-text, .sub-reply-text { white-space: pre-wrap; tab-size: 1.6em; }
+        /* Outline lines: wrapped text lines up under the bullet's text (hanging indent) */
+        .thread-reply-text.sc-ol-wrap, .sub-reply-text.sc-ol-wrap { white-space: normal; }
+        .sc-ol { display: block; white-space: pre-wrap; word-break: break-word;
+                 padding-left: calc(var(--lv, 0) * 1.6em + var(--hang, 0em)); text-indent: calc(var(--hang, 0em) * -1); }
+        .sc-ol[data-b="•"] { --hang: var(--hang-0, 0.62em); }
+        .sc-ol[data-b="◦"] { --hang: var(--hang-1, 0.62em); }
+        .sc-ol[data-b="▪"] { --hang: var(--hang-2, 0.9em); }
+        .sc-ol-t { display: none; }
         .thread-reply-ts {
             font-size: 0.78em;
             color: #94a3b8;
@@ -345,6 +353,17 @@
             box-sizing: border-box;
         }
         .thread-input-row textarea:focus { border-color: #6e8efb; }
+        /* reply box = editable outline (same hanging-indent layout as the saved replies) */
+        .thread-input-row .sc-reply-input {
+            flex: 1; min-width: 0; position: relative; padding: 6px 10px; border: 1px solid #c7d2fe; border-radius: 14px;
+            font-size: 0.80em; font-family: Arial, sans-serif; outline: none; background: #fff; color: #222;
+            min-height: 60px; max-height: 160px; overflow-y: auto; line-height: 18px; box-sizing: border-box;
+            white-space: normal; -webkit-user-select: text; user-select: text; cursor: text;
+        }
+        .thread-input-row .sc-reply-input:focus { border-color: #6e8efb; }
+        .thread-input-row .sc-reply-input.is-empty::before {
+            content: attr(data-placeholder); position: absolute; left: 10px; top: 6px; right: 10px; color: #9aa0b8; pointer-events: none;
+        }
         .thread-input-row button {
             padding: 0 10px;
             background: #6e8efb;
@@ -1172,6 +1191,7 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
 
     // Reply / sub-reply input boxes (inside the chat list): same idea, and keep the box scrolled into view while typing
     function fitReplyTA(ta, maxH) {
+        if (ta.classList && ta.classList.contains('sc-reply-input')) { scReplyBoxSync(ta); return; }
         var r = _fitTA(ta, maxH || 90, false);
         if (r && r.active && (r.changed || r.over)) { ta.style.scrollMarginBottom = '8px'; ta.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' }); }  // 'instant': the chat list uses smooth scrolling, which restarts on every key and lags behind
     }
@@ -1794,6 +1814,141 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
     // ── Paragraph / bullet view state ─────────────────────
     let _paragraphViewMode = 'plain'; // 'plain' | 'bullets'
 
+    // ── Outline lines with a hanging indent (wrapped text lines up under the bullet's text) ──────────────
+    // Model (unchanged, plain text):  <tab × level><bullet> <content>  per line, lines joined by "\n".
+    // In the app each line is a block (div.sc-ol) so the browser can hang-indent wrapped lines; textContent still equals the model.
+    var _scOlHang = null;
+    function scOlHangEm(b) {
+        if (!_scOlHang) {
+            var w = { '•': 0.62, '◦': 0.62, '▪': 0.9 };
+            try {
+                var ctx = document.createElement('canvas').getContext('2d');
+                ctx.font = '100px ' + (window.getComputedStyle(document.body).fontFamily || 'Arial');
+                Object.keys(w).forEach(function(k) { var x = ctx.measureText(k + ' ').width / 100; if (x > 0.2 && x < 2) w[k] = x; });
+            } catch (e) {}
+            _scOlHang = w;
+            var rs = document.documentElement.style;
+            rs.setProperty('--hang-0', w['•'] + 'em');
+            rs.setProperty('--hang-1', w['◦'] + 'em');
+            rs.setProperty('--hang-2', w['▪'] + 'em');
+        }
+        return _scOlHang[b] || 0;
+    }
+    // Static HTML (inline styles only) for view windows, print/PDF and the paragraph view
+    function scOlHtml(text, stripFirst) {
+        scOlHangEm('•');
+        return String(text == null ? '' : text).replace(/\r/g, '').split('\n').map(function(line, i) {
+            var m = /^([ \t]*)([\s\S]*)$/.exec(line), lv = scOlLevel(m[1]), rest = m[2], b = rest.charAt(0);
+            if (i === 0 && stripFirst) { rest = rest.replace(/^[•◦▪]\s+/, ''); b = ''; lv = 0; }
+            var h = scOlHangEm(b);
+            return '<div style="white-space:pre-wrap;word-break:break-word;padding-left:' + (lv * 1.6 + h).toFixed(2) + 'em;text-indent:-' + h.toFixed(2) + 'em;' + (rest ? '' : 'min-height:1em;') + '">' + _escHtml(rest) + '</div>';
+        }).join('');
+    }
+    function scOlLevel(ws) { var t = (ws.match(/\t/g) || []).length; return t + Math.floor((ws.length - t) / 2); }
+    var SC_OL_CHARS = '•◦▪';
+    function scOlSetAttrs(d, level, ch) {
+        d.style.setProperty('--lv', level);
+        if (ch && SC_OL_CHARS.indexOf(ch) >= 0) d.setAttribute('data-b', ch); else d.removeAttribute('data-b');
+    }
+    function scOlMakeLine(line) {
+        var m = /^([ \t]*)([\s\S]*)$/.exec(line), tabs = m[1], rest = m[2];
+        var d = document.createElement('div');
+        d.className = 'sc-ol';
+        scOlSetAttrs(d, scOlLevel(tabs), rest.charAt(0));
+        if (tabs) { var s = document.createElement('span'); s.className = 'sc-ol-t'; s.textContent = tabs; d.appendChild(s); }
+        if (rest) d.appendChild(document.createTextNode(rest)); else d.appendChild(document.createElement('br'));
+        return d;
+    }
+    function scRenderOutline(t, text) {
+        scOlHangEm('•');
+        var frag = document.createDocumentFragment();
+        String(text == null ? '' : text).replace(/\r/g, '').split('\n').forEach(function(line, i) {
+            if (i) frag.appendChild(document.createTextNode('\n'));
+            frag.appendChild(scOlMakeLine(line));
+        });
+        t.textContent = '';
+        t.classList.add('sc-ol-wrap');
+        t.appendChild(frag);
+    }
+    // structure is "line, \n, line, \n, line" with each line = [tabs span] + one text node (or <br> when empty)
+    function scOlIsCanonical(t) {
+        var k = t.childNodes, n = k.length;
+        if (!n || n % 2 === 0) return false;
+        for (var i = 0; i < n; i++) {
+            var c = k[i];
+            if (i % 2) { if (c.nodeType !== 3 || c.data !== '\n') return false; continue; }
+            if (c.nodeType !== 1 || c.tagName !== 'DIV' || c.className !== 'sc-ol') return false;
+            var texts = 0;
+            for (var j = 0; j < c.childNodes.length; j++) {
+                var g = c.childNodes[j];
+                if (g.nodeType === 3) { if (++texts > 1) return false; }
+                else if (g.nodeType === 1 && g.tagName === 'BR') { /* placeholder */ }
+                else if (g.nodeType === 1 && g.className === 'sc-ol-t' && j === 0) { /* hidden tabs */ }
+                else return false;
+            }
+        }
+        return true;
+    }
+    function scOlOffsetOf(t, node, off) {
+        var r = document.createRange();
+        r.selectNodeContents(t);
+        r.setEnd(node, off);
+        return r.toString().length;
+    }
+    function scSetOffset(t, off) {
+        var sel = window.getSelection(), r = document.createRange(), pos = 0, kids = t.childNodes;
+        for (var i = 0; i < kids.length; i += 2) {
+            var d = kids[i];
+            if (!d || d.nodeType !== 1) break;
+            var len = d.textContent.length;
+            if (off <= pos + len) {
+                var tn = null, tabsLen = 0, hasTabs = d.firstChild && d.firstChild.className === 'sc-ol-t';
+                if (hasTabs) tabsLen = d.firstChild.textContent.length;
+                for (var j = 0; j < d.childNodes.length; j++) if (d.childNodes[j].nodeType === 3) tn = d.childNodes[j];
+                if (tn) r.setStart(tn, Math.max(0, Math.min(tn.length, off - pos - tabsLen)));
+                else r.setStart(d, hasTabs ? 1 : 0);
+                r.collapse(true);
+                sel.removeAllRanges(); sel.addRange(r);
+                return;
+            }
+            pos += len + 1;
+        }
+        r.selectNodeContents(t); r.collapse(false);
+        sel.removeAllRanges(); sel.addRange(r);
+    }
+    // after native edits (Backspace/Delete across lines, cut, drop ...) rebuild the clean line structure and keep the caret
+    function scOlRebuild(t) {
+        var sel = window.getSelection(), idx = -1, col = 0, lines;
+        var kids = Array.prototype.slice.call(t.childNodes);
+        var divsOnly = kids.length && kids.every(function(n) { return n.nodeType === 1 ? n.tagName === 'DIV' : (n.nodeType === 3 && !n.data.replace(/\n/g, '').trim()); });
+        if (divsOnly) {
+            var divs = kids.filter(function(n) { return n.nodeType === 1; });
+            lines = divs.map(function(d) { return d.textContent; });
+            if (sel && sel.rangeCount && t.contains(sel.anchorNode)) {
+                var a = sel.anchorNode;
+                while (a && a.parentNode !== t) a = a.parentNode;
+                idx = divs.indexOf(a);
+                if (idx >= 0) {
+                    var rr = document.createRange();
+                    rr.setStart(a, 0); rr.setEnd(sel.anchorNode, sel.anchorOffset);
+                    col = rr.toString().length;
+                }
+            }
+        } else {
+            lines = String(t.innerText || t.textContent || '').replace(/\r/g, '').replace(/\n$/, '').split('\n');
+        }
+        scRenderOutline(t, lines.join('\n'));
+        var off = 0;
+        if (idx >= 0) { for (var i = 0; i < idx; i++) off += lines[i].length + 1; off += col; }
+        else off = lines.join('\n').length;
+        if (sel && sel.rangeCount) scSetOffset(t, off);
+    }
+    function scOlConvert(t) {
+        if (t.querySelector('.sc-ol')) return;
+        var txt = t.textContent;
+        if (txt.indexOf('\n') >= 0 || /^[ \t]*[•◦▪]/.test(txt)) scRenderOutline(t, txt);
+    }
+
     // ── Outline (bullets + tabs, multi-line replies): shared helpers ──────────────
     // In saved .txt / clipboard text a reply is ONE line, so line breaks inside it are written as ⏎ and restored on load.
     function scEncReply(t) { return String(t == null ? '' : t).replace(/\r/g, '').replace(/\n/g, '\u23CE'); }
@@ -1914,12 +2069,12 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
                 p.replies.forEach(function(r) {
                     html += '<li style="display:flex;gap:7px;align-items:baseline;color:#546e7a;font-size:0.91em;margin:3px 0;">' +
                         '<span style="color:#9fa8da;flex-shrink:0;">•</span>' +
-                        '<span style="white-space:pre-wrap;tab-size:1.6em;min-width:0;">' + _pvHtml(r, true) + '</span></li>';
+                        '<span style="flex:1;min-width:0;">' + scOlHtml(r, true) + '</span></li>';
                 });
                 html += '</ul>';
             } else {
                 p.replies.forEach(function(r) {
-                    html += '<p style="margin:2px 0 2px ' + ri + ';color:#607d8b;font-size:0.91em;font-style:italic;white-space:pre-wrap;tab-size:1.6em;">' + safe(r) + '</p>';
+                    html += '<div style="margin:2px 0 2px ' + ri + ';color:#607d8b;font-size:0.91em;font-style:italic;">' + scOlHtml(r, false) + '</div>';
                 });
                 html += '<div style="height:4px;"></div>';
             }
@@ -2236,7 +2391,7 @@ Copyright © 2026 Dr. Wen-Ming Yang. All Rights Reserved.
             replies.forEach(function(row) {
                 var rt = row.querySelector('.thread-reply-text');
                 var rts = row.querySelector('.thread-reply-ts');
-                if (rt) html += '<div class="thread-line"><span style="white-space:pre-wrap;tab-size:1.6em;min-width:0;">' + _escHtml(rt.textContent) + '</span>' + (rts ? ' <small>' + rts.textContent + '</small>' : '') + '</div>';
+                if (rt) html += '<div class="thread-line" style="display:flex;gap:6px;align-items:baseline;"><span style="flex:1;min-width:0;">' + scOlHtml(rt.textContent) + '</span>' + (rts ? ' <small style="flex-shrink:0;">' + rts.textContent + '</small>' : '') + '</div>';
             });
             return html;
         } else {
@@ -2693,7 +2848,7 @@ function openChatInNewWindow7() {
         if (replyRows.length) {
             let replyItems = Array.from(replyRows).map(row => {
                 let rt = row.querySelector('.thread-reply-text');
-                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? _escHtml(rt.textContent) : ''}</span></div>`;
+                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? scOlHtml(rt.textContent) : ''}</span></div>`;
             }).join('');
             threadHtml = `<div class="thread-panel"><div class="thread-panel-inner">${replyItems}</div></div>`;
         }
@@ -2765,7 +2920,7 @@ function openChatInNewWindow6() {
             let replyItems = Array.from(replyRows).map(row => {
                 let rt = row.querySelector('.thread-reply-text');
                 let rts = row.querySelector('.thread-reply-ts');
-                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? _escHtml(rt.textContent) : ''}</span><span class="thread-reply-ts">${rts ? rts.textContent : ''}</span></div>`;
+                return `<div class="thread-reply-row"><span class="thread-reply-text">${rt ? scOlHtml(rt.textContent) : ''}</span><span class="thread-reply-ts">${rts ? rts.textContent : ''}</span></div>`;
             }).join('');
             threadHtml = `<div class="thread-panel"><div class="thread-panel-inner">${replyItems}</div></div>`;
         }
@@ -3484,51 +3639,67 @@ document.addEventListener("DOMContentLoaded", function() {
         autosaveTick();
     });
 
-    // ── Outline editing inside an edited thread reply / sub-reply ──
+    // ── Outline editing inside a thread reply / sub-reply ──
     // Enter = new bullet (same level) · Tab / Shift+Tab = indent / outdent · Enter or Backspace on an empty bullet = outdent / end the list.
-    // Lines are stored as plain text: <tab × level><bullet> <content>   (so views and .txt keep the outline)
+    // Lines are stored as plain text: <tab × level><bullet> <content>; on screen each line is a block with a hanging indent.
     (function() {
         var BULLETS = ['•', '◦', '▪'];   // • ◦ ▪
         var MAXLEVEL = 5;
-        var LINE_RE = /^(\t*)([•◦▪]) ?([\s\S]*)$/;
+        var LINE_RE = /^([ \t]*)([•◦▪]) ?([\s\S]*)$/;
+        var SEL = '.thread-reply-text, .sub-reply-text';
         function bulletFor(level) { return BULLETS[level % BULLETS.length]; }
         function mk(level, content) { return new Array(level + 1).join('\t') + bulletFor(level) + ' ' + content; }
+        var chatBox = document.getElementById('chatBox');
+        var composing = false;
 
-        document.getElementById('chatBox').addEventListener('keydown', function(e) {
+        function replyTarget() {
+            var sel = window.getSelection();
+            if (!sel || !sel.rangeCount) return null;
+            var n = sel.anchorNode;
+            var el = n && (n.nodeType === 1 ? n : n.parentElement);
+            return el && el.closest ? el.closest(SEL) : null;
+        }
+        function fixStructure(t) {
+            if (!t.classList.contains('sc-ol-wrap')) return;
+            if (!scOlIsCanonical(t)) { scOlRebuild(t); return; }
+            var sel = window.getSelection();
+            if (!sel || !sel.rangeCount) return;
+            var a = sel.anchorNode;
+            while (a && a.parentNode !== t) a = a.parentNode;
+            if (a && a.nodeType === 1) { var m = /^([ \t]*)([\s\S]?)/.exec(a.textContent); scOlSetAttrs(a, scOlLevel(m[1]), m[2]); }
+        }
+        chatBox.addEventListener('compositionstart', function() { composing = true; }, true);
+        chatBox.addEventListener('compositionend', function() { composing = false; var t = replyTarget(); if (t) fixStructure(t); }, true);
+        chatBox.addEventListener('input', function() { if (composing) return; var t = replyTarget(); if (t) fixStructure(t); }, true);
+
+        chatBox.addEventListener('keydown', function(e) {
             var isEnter = e.key === 'Enter', isTab = e.key === 'Tab', isBack = e.key === 'Backspace';
             if (!(isEnter || isTab || isBack) || e.isComposing || e.keyCode === 229) return;
             if (e.ctrlKey || e.metaKey || e.altKey) return;
             var sel = window.getSelection();
             if (!sel || !sel.rangeCount) return;
-            var n = sel.anchorNode;
-            var el = n && (n.nodeType === 1 ? n : n.parentElement);
-            var t = el && el.closest ? el.closest('.thread-reply-text, .sub-reply-text') : null;
+            var t = replyTarget();
             if (!t) return;
             if (isBack && !sel.isCollapsed) return;           // normal deletion of a selection
 
             var r = sel.getRangeAt(0);
             if (!r.collapsed) r.deleteContents();
-            var pre = document.createRange();
-            pre.selectNodeContents(t);
-            pre.setEnd(r.startContainer, r.startOffset);
-            var pos = pre.toString().length;
+            var pos = scOlOffsetOf(t, r.startContainer, r.startOffset);
             var txt = t.textContent;
 
             var ls = txt.lastIndexOf('\n', pos - 1) + 1;
             var le = txt.indexOf('\n', pos); if (le < 0) le = txt.length;
             var line = txt.slice(ls, le);
             var m = LINE_RE.exec(line);
-            var level = m ? m[1].length : 0;
+            var level = m ? scOlLevel(m[1]) : 0;
             var content = m ? m[3] : line;
             var prefixLen = m ? m[1].length + 1 + (line.charAt(m[1].length + 1) === ' ' ? 1 : 0) : 0;
-            var caretInContent = Math.max(0, pos - ls - prefixLen);
-            if (!m) caretInContent = pos - ls;
+            var caretInContent = m ? Math.max(0, pos - ls - prefixLen) : pos - ls;
 
             var newLine, newCaretInLine, tail = '';
             if (isTab) {
-                var lv = e.shiftKey ? level - 1 : level + 1;
                 if (e.shiftKey && !m) { e.preventDefault(); return; }
-                lv = Math.max(0, Math.min(MAXLEVEL, lv));
+                var lv = Math.max(0, Math.min(MAXLEVEL, e.shiftKey ? level - 1 : level + 1));
                 newLine = mk(lv, content);
                 newCaretInLine = lv + 2 + caretInContent;
             } else if (isBack) {
@@ -3549,18 +3720,46 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
             }
             e.preventDefault();
-            var out = txt.slice(0, ls) + newLine + tail + txt.slice(le);
-            t.textContent = out;
-            // text ends with a newline: invisible <br> placeholder so the caret can sit on that last empty line
-            if (/\n$/.test(out)) t.appendChild(document.createElement('br'));
-            var caret = ls + newCaretInLine;
-            var rg = document.createRange();
-            if (t.firstChild) rg.setStart(t.firstChild, Math.min(caret, t.firstChild.length)); else rg.setStart(t, 0);
-            rg.collapse(true);
-            sel.removeAllRanges();
-            sel.addRange(rg);
+            scRenderOutline(t, txt.slice(0, ls) + newLine + tail + txt.slice(le));
+            scSetOffset(t, ls + newCaretInLine);
             t.dispatchEvent(new Event('input', { bubbles: true })); // trigger autosave
         });
+
+        // paste as plain text into the outline
+        chatBox.addEventListener('paste', function(e) {
+            var t = replyTarget();
+            if (!t) return;
+            var cd = e.clipboardData || window.clipboardData;
+            var plain = cd ? cd.getData('text/plain') : null;
+            if (plain == null) return;
+            e.preventDefault();
+            plain = plain.replace(/\r\n?/g, '\n');
+            var sel = window.getSelection(), r = sel.getRangeAt(0);
+            var s = scOlOffsetOf(t, r.startContainer, r.startOffset), en = scOlOffsetOf(t, r.endContainer, r.endOffset);
+            var cur = t.textContent;
+            scRenderOutline(t, cur.slice(0, s) + plain + cur.slice(en));
+            scSetOffset(t, s + plain.length);
+            t.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
+        // replies created / loaded as plain text (paste, open file, restore chat) get the same structure
+        var pend = [], sched = false;
+        function flush() { sched = false; var l = pend; pend = []; l.forEach(function(t) { if (t.isConnected) scOlConvert(t); }); }
+        function queue(t) { if (pend.indexOf(t) < 0) pend.push(t); if (!sched) { sched = true; setTimeout(flush, 0); } }
+        new MutationObserver(function(recs) {
+            recs.forEach(function(rec) {
+                var tgt = rec.target.nodeType === 1 ? rec.target : rec.target.parentElement;
+                var own = tgt && tgt.closest ? tgt.closest(SEL) : null;
+                if (rec.type === 'characterData') { if (own && !own.querySelector('.sc-ol')) queue(own); return; }
+                if (own) { if (!own.querySelector('.sc-ol')) queue(own); return; }
+                Array.prototype.forEach.call(rec.addedNodes, function(n) {
+                    if (n.nodeType !== 1) return;
+                    if (n.matches && n.matches(SEL)) queue(n);
+                    else if (n.querySelectorAll) Array.prototype.forEach.call(n.querySelectorAll(SEL), queue);
+                });
+            });
+        }).observe(chatBox, { childList: true, subtree: true, characterData: true });
+        Array.prototype.forEach.call(chatBox.querySelectorAll(SEL), scOlConvert);
     })();
 
     // Update saveChatAsFile to reuse the same file like autosave
@@ -4033,6 +4232,95 @@ document.addEventListener("DOMContentLoaded", function() {
     const BULLET_PREFIX = '\u2022 ';
     const INDENT_UNIT = '  ';
 
+    // Editable-div reply box that behaves like a textarea (value / selectionStart / selectionEnd) so the outliner handlers keep working,
+    // while each line is rendered with a hanging indent (wrapped text lines up under the bullet text) while typing.
+    function scReplyBoxSync(box) {
+        if (!scOlIsCanonical(box)) scOlRebuild(box);
+        box.classList.toggle('is-empty', box.textContent === '');
+        var sel = window.getSelection();
+        if (sel && sel.rangeCount && box.contains(sel.anchorNode)) {
+            var a = sel.anchorNode;
+            while (a && a.parentNode !== box) a = a.parentNode;
+            if (a && a.nodeType === 1) {
+                var m = /^([ \t]*)([\s\S]?)/.exec(a.textContent); scOlSetAttrs(a, scOlLevel(m[1]), m[2]);
+                a.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+            }
+        }
+    }
+    function scRouteReplyBox(e) {
+        var sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return;
+        var n = sel.anchorNode, el = n && (n.nodeType === 1 ? n : n.parentElement);
+        var box = el && el.closest ? el.closest('.sc-reply-input') : null;
+        if (!box || !box._scL) return;
+        var stopped = false;
+        var w = {
+            target: box, type: e.type, key: e.key, keyCode: e.keyCode, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey,
+            isComposing: e.isComposing, clipboardData: e.clipboardData,
+            preventDefault: function() { e.preventDefault(); }, stopPropagation: function() { e.stopPropagation(); },
+            stopImmediatePropagation: function() { stopped = true; }
+        };
+        var list = box._scL[e.type] || [];
+        for (var i = 0; i < list.length && !stopped; i++) list[i](w);
+    }
+    ['keydown', 'input', 'paste'].forEach(function(t) { document.addEventListener(t, scRouteReplyBox, true); });
+    function scMakeReplyBox() {
+        var box = document.createElement('div');
+        box.className = 'sc-reply-input is-empty';
+        // Key / input / paste events go to the focused editing host (the message), not to this inner box,
+        // so listeners for those three are kept here and invoked by one document-level router (see scRouteReplyBox).
+        var L = { keydown: [], input: [], paste: [] };
+        box._scL = L;
+        var nativeAdd = box.addEventListener.bind(box);
+        box.addEventListener = function(type, fn, cap) { if (L[type]) L[type].push(fn); else nativeAdd(type, fn, cap); };
+        // editable by inheritance from the message (.user-msg is contentEditable); a nested contenteditable would not take focus reliably
+        box.focus = function() {
+            var host = box.closest('[contenteditable="true"]');
+            if (host && host !== box && host.focus) host.focus({ preventScroll: true });
+            scSetOffset(box, box.textContent.length);
+        };
+        box.setAttribute('role', 'textbox');
+        box.setAttribute('aria-multiline', 'true');
+        box.setAttribute('data-placeholder', 'Reply… (bullets: Tab to indent, Enter for new bullet, Ctrl+Enter to send)');
+        function off(which) {
+            var sel = window.getSelection();
+            if (!sel || !sel.rangeCount || !box.contains(sel.anchorNode)) return box.textContent.length;
+            var r = sel.getRangeAt(0);
+            return which === 'start' ? scOlOffsetOf(box, r.startContainer, r.startOffset) : scOlOffsetOf(box, r.endContainer, r.endOffset);
+        }
+        Object.defineProperty(box, 'value', {
+            get: function() { return scOlIsCanonical(box) ? box.textContent : String(box.innerText || '').replace(/\n$/, ''); },
+            set: function(v) { scRenderOutline(box, v); box.classList.toggle('is-empty', String(v) === ''); }
+        });
+        Object.defineProperty(box, 'selectionStart', { get: function() { return off('start'); }, set: function(p) { scSetOffset(box, p); } });
+        Object.defineProperty(box, 'selectionEnd', { get: function() { return off('end'); }, set: function(p) { scSetOffset(box, p); } });
+        scRenderOutline(box, '');
+        // always paste as plain text
+        box.addEventListener('paste', function(e) {
+            var cd = e.clipboardData || window.clipboardData;
+            var text = cd ? cd.getData('text/plain') : '';
+            e.preventDefault();
+            if (!text) return;
+            text = text.replace(/\r\n?/g, '\n');
+            if (box.value.trim() === '') { handleOutlinerPaste({ target: box, clipboardData: { getData: function() { return text; } }, preventDefault: function() {} }); return; }
+            var s0 = box.selectionStart, e0 = box.selectionEnd, v = box.value;
+            box.value = v.slice(0, s0) + text + v.slice(e0);
+            box.selectionStart = s0 + text.length;
+            scReplyBoxSync(box);
+        });
+        box.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.isComposing) {
+                e.preventDefault(); e.stopImmediatePropagation();
+                var s0 = box.selectionStart, e0 = box.selectionEnd, v = box.value;
+                box.value = v.slice(0, s0) + '\n' + v.slice(e0);
+                box.selectionStart = s0 + 1;
+                scReplyBoxSync(box);
+            }
+        }, true);
+        box.addEventListener('input', function() { scReplyBoxSync(box); });
+        return box;
+    }
+
     function getLineInfo(textarea) {
         const pos = textarea.selectionStart;
         const value = textarea.value;
@@ -4049,6 +4337,7 @@ document.addEventListener("DOMContentLoaded", function() {
     }
     function setCursor(textarea, pos) { textarea.selectionStart = textarea.selectionEnd = pos; }
     function autoGrowReplyTextarea(ta) {
+        if (ta.classList && ta.classList.contains('sc-reply-input')) { scReplyBoxSync(ta); return; }
         var r = _fitTA(ta, 160, false, 60);
         if (r && r.active && (r.changed || r.over)) { ta.style.scrollMarginBottom = '8px'; ta.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' }); }  // 'instant': the chat list uses smooth scrolling, which restarts on every key and lags behind
     }
@@ -4169,7 +4458,7 @@ document.addEventListener("DOMContentLoaded", function() {
             updateToggleLabel();
             if (!isOpen) {
                 setTimeout(function() {
-                    var ta = panel.querySelector('.thread-input-row textarea');
+                    var ta = panel.querySelector('.thread-input-row .sc-reply-input, .thread-input-row textarea');
                     if (ta) ta.focus();
                 }, 60);
             }
@@ -4205,9 +4494,7 @@ document.addEventListener("DOMContentLoaded", function() {
         // Input row
         var inputRow = document.createElement('div');
         inputRow.className = 'thread-input-row';
-        var ta = document.createElement('textarea');
-        ta.placeholder = 'Reply… (bullets: Tab to indent, Enter for new bullet, Ctrl+Enter to send)';
-        ta.rows = 3;
+        var ta = scMakeReplyBox();
         ta.addEventListener('input', handleOutlinerInput);
         ta.addEventListener('paste', handleOutlinerPaste);
         var sendBtn = document.createElement('button');
