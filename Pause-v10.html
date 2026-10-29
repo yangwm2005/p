@@ -571,7 +571,7 @@
         .log-actions button:hover { color: var(--text-main); background: #f3f4f6; }
 
         .log-content {
-            white-space: pre-wrap; 
+            white-space: normal; 
             word-wrap: break-word;
             font-size: 0.88rem;
             color: var(--text-main);
@@ -854,7 +854,15 @@
         }
         .summary-entry:last-child { border-bottom: none; padding-bottom: 0;}
         .summary-entry-time { font-weight: 700; font-size: 0.75rem; color: var(--accent); margin-bottom: 1px; }
-        .summary-entry-text { white-space: pre-wrap; font-size: 0.88rem; line-height: 1.4; }
+        .summary-entry-text { font-size: 0.88rem; line-height: 1.4; }
+        /* Outline rendering with hanging indents: wrapped lines align under the text, not the marker */
+        .ol-line { display: flex; align-items: baseline; }
+        .ol-mark { flex: 0 0 auto; }
+        .ol-mark.num { min-width: 1.6em; }
+        .ol-mark.bul { min-width: 1.1em; }
+        .ol-text { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .ol-plain { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.2em; }
+        .ol-line.ol-head > .ol-text { font-weight: 600; }
 
         /* ===== COMPACT: project groups ===== */
         .summary-project-group { margin-bottom: 12px; }
@@ -2360,6 +2368,25 @@
                      (typeof log.timestamp === 'number' ? dateKey(log.timestamp) : '')).toLowerCase();
         return terms.every(t => hay.indexOf(t) !== -1);
     }
+    // Render entry text as an outline: numbered items and bullets get hanging indents,
+    // so a long line that wraps lines up under its own text. Plain lines stay as typed.
+    function outlineHtml(raw, terms) {
+        terms = terms || [];
+        return String(raw).split('\n').map(function (line) {
+            const m = /^( *)([•◦▪]) ?(.*)$/.exec(line);
+            if (m) {
+                const level = Math.max(0, Math.floor((m[1].length - BULLET_BASE.length) / OUTLINE_INDENT.length));
+                const ml = 1.6 + level * 1.3;
+                return '<div class="ol-line" style="margin-left:' + ml + 'em"><span class="ol-mark bul">' + m[2] + '</span><span class="ol-text">' + highlightHtml(m[3], terms) + '</span></div>';
+            }
+            const n = /^(\d+\.) ?(.*)$/.exec(line);
+            if (n) {
+                return '<div class="ol-line ol-head"><span class="ol-mark num">' + n[1] + '</span><span class="ol-text">' + highlightHtml(n[2], terms) + '</span></div>';
+            }
+            return '<div class="ol-plain">' + (line === '' ? '&nbsp;' : highlightHtml(line, terms)) + '</div>';
+        }).join('');
+    }
+
     // Escape `raw` for HTML, wrapping every search-term hit in <mark>.
     function highlightHtml(raw, terms) {
         if (!terms.length) return escapeHtml(raw);
@@ -2444,7 +2471,7 @@
         const project = log.project || DEFAULT_PROJECT;
         const safeProject = escapeHtml(project);
         const hlTerms = logFilterTerms();
-        const safeText = highlightHtml(log.text, hlTerms).replace(/\n/g, "<br>");
+        const safeText = outlineHtml(log.text, hlTerms);
         const rawText = escapeHtml(log.text);
 
         if (isSpecialProject(project)) logDiv.classList.add('special-entry');
@@ -3112,7 +3139,7 @@
         if (currentSummaryView === 'timeline') {
             [...dayLogs].sort((a, b) => b.timestamp - a.timestamp).forEach(log => {
                 const project = escapeHtml(log.project || DEFAULT_PROJECT);
-                const safeText = escapeHtml(log.text);
+                const safeText = outlineHtml(log.text);
                 html += `<div class="summary-entry"><div class="summary-entry-time">${entryTimeLabel(log)} · <span class="project-tag">${project}</span></div><div class="summary-entry-text">${safeText}</div></div>`;
             });
         } else {
@@ -3134,7 +3161,7 @@
                 const pausedStyle = isSpecialProject(projectName) ? ' style="color: #92400e; border-bottom-color: #fbbf24;"' : '';
                 html += `<div class="summary-project-group"><div class="summary-project-header"${pausedStyle}><span>${isSpecialProject(projectName) ? '⏸️' : '📁'} ${safeProject} <button type="button" class="proj-copy-btn" data-project="${encodeURIComponent(projectName)}" title="Copy this project's text"></button><button type="button" class="proj-cal-btn" data-project="${encodeURIComponent(projectName)}" title="Send this project to Google Calendar"></button></span><span class="summary-project-count">${projectLogs.length} ${projectLogs.length === 1 ? 'entry' : 'entries'}</span></div>`;
                 [...projectLogs].sort((a, b) => a.timestamp - b.timestamp).forEach(log => {
-                    const safeText = escapeHtml(log.text);
+                    const safeText = outlineHtml(log.text);
                     html += `<div class="summary-entry"><div class="summary-entry-time">${entryTimeLabel(log)}</div><div class="summary-entry-text">${safeText}</div></div>`;
                 });
                 html += `</div>`;
@@ -3360,7 +3387,7 @@
         let html = `<h4>📁 ${escapeHtml(projectName)} · ${relativeDateLabel(dateObj.getTime())}</h4>`;
         sorted.forEach(log => {
             const idx = logs.indexOf(log);
-            html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${escapeHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
+            html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${outlineHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
         });
         if (sorted.length > 1) html += `<div class="block-detail-actions"><button class="block-detail-delete-all" onclick="deleteAllInBlock(event)">🗑️ Delete all ${sorted.length} entries</button></div>`;
         pop.innerHTML = html;
@@ -3434,7 +3461,7 @@
         let html = `<h4>📁 ${escapeHtml(ctx.projectName)} · ${relativeDateLabel(dateObj.getTime())}</h4>`;
         sorted.forEach(log => {
             const idx = logs.indexOf(log);
-            html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${escapeHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
+            html += `<div class="block-detail-entry"><div class="block-detail-entry-body"><div class="block-detail-time">${log.time}</div><div class="block-detail-text">${outlineHtml(log.text)}</div></div><button class="block-detail-delete-btn" title="Delete this entry" onclick="deleteEntryFromPopover(event, ${idx})">🗑️</button></div>`;
         });
         if (sorted.length > 1) html += `<div class="block-detail-actions"><button class="block-detail-delete-all" onclick="deleteAllInBlock(event)">🗑️ Delete all ${sorted.length} entries</button></div>`;
         pop.innerHTML = html;
