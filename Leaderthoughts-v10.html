@@ -1467,6 +1467,13 @@ body.select-mode-active .outline-select-checkbox {
 .table-print-btn { position:absolute; top:-10px; right:81px; display:flex; align-items:center; justify-content:center; width:24px; height:20px; padding:0; margin:0; line-height:1; background:none; border:none; border-radius:5px; color:#9a9a9a; cursor:pointer; z-index:5; }
 .table-menu-btn { position:absolute; top:-10px; right:108px; display:flex; align-items:center; justify-content:center; width:24px; height:20px; padding:0; margin:0; line-height:1; background:none; border:none; border-radius:5px; color:#9a9a9a; cursor:pointer; z-index:5; }
 .table-menu-btn:hover { color:#444; background:rgba(0,0,0,0.06); }
+.table-print-marked { outline: 3px solid #3E63DD; outline-offset: 3px; border-radius: 6px; }
+#printPill { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); display: none; gap: 6px; align-items: center; background: #2b2b2b; border-radius: 999px; padding: 6px 8px; box-shadow: 0 4px 14px rgba(0,0,0,.35); z-index: 3500; }
+#printPill.show { display: flex; }
+#printPill button { background: none; border: none; color: #eee; font-size: 13px; padding: 5px 10px; border-radius: 999px; cursor: pointer; }
+#printPill button:hover { background: #444; }
+#printPill #ppGo { background: #3E63DD; color: #fff; }
+#printPill #ppGo:hover { background: #5576e8; }
 .table-delete-btn, .table-popout-btn, .table-size-toggle-btn, .table-print-btn { display: none !important; }
 .table-menu-btn { right: 0 !important; width: 34px !important; height: 22px !important; font-size: 18px !important; line-height: 1 !important; color: #555 !important; background: rgba(0,0,0,0.05) !important; border: 1px solid rgba(0,0,0,0.14) !important; border-radius: 6px !important; }
 .table-menu-btn:hover { background: rgba(0,0,0,0.12) !important; color: #222 !important; }
@@ -2417,7 +2424,8 @@ window.openPrintTablePicker = function () {
         '<button type="button" id="ptpGo" style="background:#3E63DD;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;">Print</button></div></div>';
     document.body.appendChild(ov);
     const chks = Array.from(ov.querySelectorAll('.ptpChk'));
-    chks.forEach(function (c) { c.checked = true; });
+    const anyMarked = blocks.some(function (b) { return b.classList.contains('table-print-marked'); });
+    chks.forEach(function (c) { c.checked = !anyMarked || blocks[Number(c.value)].classList.contains('table-print-marked'); });
     const close = function () { ov.remove(); };
     ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
     ov.querySelector('#ptpAll').addEventListener('click', function (e) { e.preventDefault(); chks.forEach(function (c) { c.checked = true; }); });
@@ -8656,6 +8664,36 @@ function insertNewCheckboxLine(currentLine) {
                 setStatus(rows.length + ' item' + (rows.length === 1 ? '' : 's') + ' selected');
             }
 
+
+            // ---- "Select for printing": tick tables right on the page, then
+            // print just those from the floating pill. -----------------------
+            let printPill = null;
+            function markedBlocks() { return Array.from(document.querySelectorAll('#tablesContainer .table-print-marked')); }
+            function refreshPrintPill() {
+                const n = markedBlocks().length;
+                if (!n) { if (printPill) printPill.classList.remove('show'); return; }
+                if (!printPill) {
+                    printPill = document.createElement('div');
+                    printPill.id = 'printPill';
+                    printPill.innerHTML = '<button type="button" id="ppGo"></button><button type="button" id="ppOpts" title="Choose layout / page breaks">Options…</button><button type="button" id="ppClear" title="Clear selection">✕</button>';
+                    document.body.appendChild(printPill);
+                    printPill.addEventListener('mousedown', function (e) { e.preventDefault(); });
+                    printPill.querySelector('#ppGo').addEventListener('click', function () {
+                        const blocks = markedBlocks(); if (!blocks.length) return;
+                        let pb = false; try { pb = localStorage.getItem('pt_print_pagebreaks') === '1'; } catch (e) {}
+                        window.printTables(blocks, { layout: window.getPrintLayout(), pageBreaks: pb });
+                    });
+                    printPill.querySelector('#ppOpts').addEventListener('click', function () { window.openPrintTablePicker(); });
+                    printPill.querySelector('#ppClear').addEventListener('click', function () {
+                        markedBlocks().forEach(function (b) { b.classList.remove('table-print-marked'); });
+                        refreshPrintPill();
+                    });
+                }
+                printPill.querySelector('#ppGo').textContent = '🖨 Print ' + n + ' selected table' + (n === 1 ? '' : 's');
+                printPill.classList.add('show');
+            }
+            setInterval(refreshPrintPill, 700); // also catches tables removed/rebuilt
+
             let tableMenuEl = null;
             function closeTableMenu() { if (tableMenuEl) tableMenuEl.classList.remove('show'); }
             window.openTableMenu = function (block, anchor) {
@@ -8679,6 +8717,12 @@ function insertNewCheckboxLine(currentLine) {
                 function divider() { const d = document.createElement('div'); d.className = 'outline-node-menu-divider'; tableMenuEl.appendChild(d); }
                 function kid(sel) { return block.querySelector(':scope > ' + sel); }
                 const tbl = block.tagName === 'TABLE' ? block : block.querySelector(':scope > table');
+                const marked = block.classList.contains('table-print-marked');
+                item(marked ? '☑ Selected for printing (click to undo)' : '☐ Select for printing', function () {
+                    block.classList.toggle('table-print-marked', !marked);
+                    refreshPrintPill();
+                });
+                divider();
                 item('☑ Select all items', function () { selectAllInTable(block); });
                 item('📋 Copy as text', function () {
                     const sb = serializedBlock(block);
