@@ -434,6 +434,9 @@
         }
         .template-switch-btn:hover { background: var(--tag-bg); color: var(--accent); border-color: var(--accent); }
         .template-switch-btn.active { background: #fef3c7; color: #92400e; border-color: #fbbf24; }
+        /* Expand / collapse the log input */
+        .journal-entry.entry-expanded #entry-text-ed { height: auto; min-height: 120px; max-height: none; overflow: auto; resize: vertical; }
+        .journal-entry.entry-expanded textarea#entry-text { overflow: auto; resize: vertical; }
 
         textarea {
             width: 100%;
@@ -1310,6 +1313,7 @@
         <div class="top-actions">
             <button class="toggle-btn" onclick="openSummary()">📊 Summary</button>
             <button class="toggle-btn" onclick="openWeekView()">📅 Week</button>
+            <button class="toggle-btn" id="mini-btn" onclick="toggleMiniWindow()" title="Open a small always-on-top window showing the timer status">🗗 Mini</button>
             <button class="toggle-btn" id="analog-toggle" onclick="toggleAnalog()">📄 Analog</button>
             <button class="toggle-btn" id="remind-btn" onclick="toggleReminderMenu()">🔔 Remind</button>
             
@@ -1405,6 +1409,7 @@
         </div>
 
         <div class="template-switch-row">
+            <button type="button" id="expand-toggle-btn" class="template-switch-btn" onclick="toggleEntryExpand()" title="Grow the input to show everything you have written, or shrink it back">⤢ Expand</button>
             <button type="button" id="hang-toggle-btn" class="template-switch-btn" onclick="toggleHangEditor()" title="Wrapped lines line up under their own text while you type">↳ Hanging indent: ON</button>
             <button type="button" id="template-switch-btn" class="template-switch-btn" onclick="toggleReflectionTemplate()" title="Replace the template with the daily reflection questions">🌙 Daily reflection template</button>
         </div>
@@ -1954,6 +1959,7 @@
             }
         }
         updateStepButtons();
+        updateTabTitle();
     }
 
     (function drawTicks() {
@@ -2344,6 +2350,7 @@
         const val = el ? el.value.trim() : '';
         return val || DEFAULT_PROJECT;
     }
+    document.addEventListener('input', function (e) { if (e.target && e.target.id === 'project-input') updateTabTitle(); });
     function populateProjectSuggestions() {
         const projects = [...new Set(logs.map(log => log.project).filter(Boolean))];
         const datalist = document.getElementById('project-list');
@@ -2632,6 +2639,7 @@
         const cursorPosition = JOURNAL_PRESET.indexOf(BULLET) + BULLET.length;
         textarea.setSelectionRange(cursorPosition, cursorPosition);
         reflectionMode = false;
+        if (typeof applyEntryExpand === 'function') applyEntryExpand();
         syncTemplateSwitchBtn();
     }
 
@@ -2941,6 +2949,97 @@
         b.textContent = '↳ Hanging indent: ' + (HANG_ON ? 'ON' : 'OFF');
         b.classList.toggle('active', HANG_ON);
     }
+    // ---- Timer status: browser-tab title + small floating mini window ----
+    const BASE_TITLE = 'The Pause';
+    function currentStatus() {
+        if (FOCUS_STATE.running && FOCUS_STATE.endAt) {
+            const left = Math.max(0, FOCUS_STATE.endAt - Date.now());
+            return { icon: '⏳', time: formatClock(Math.ceil(left / 1000) * 1000), label: 'focus block', color: '#f59e0b' };
+        }
+        if (SESSION.startTs) {
+            return { icon: '⏱', time: formatClock(Date.now() - SESSION.startTs), label: 'timing · save log', color: '#ef4444' };
+        }
+        if (typeof timerEndTime !== 'undefined' && timerEndTime) {
+            const left = Math.max(0, timerEndTime - Date.now());
+            return { icon: '✍', time: formatClock(Math.ceil(left / 1000) * 1000), label: 'writing', color: '#3b82f6' };
+        }
+        return null;
+    }
+    function updateTabTitle() {
+        const st = currentStatus();
+        document.title = st ? st.icon + ' ' + st.time + ' · ' + getCurrentProject() + ' — ' + BASE_TITLE : BASE_TITLE;
+        updateMiniWindow();
+    }
+    let MINI_WIN = null;
+    function syncMiniBtn() {
+        const b = document.getElementById('mini-btn');
+        if (b) b.classList.toggle('active', !!MINI_WIN);
+    }
+    function updateMiniWindow() {
+        if (!MINI_WIN) return;
+        try {
+            const d = MINI_WIN.document, st = currentStatus();
+            d.getElementById('mt').textContent = st ? st.time : '—';
+            d.getElementById('mt').style.color = st ? st.color : '#94a3b8';
+            d.getElementById('ml').textContent = st ? st.icon + ' ' + st.label : 'idle';
+            d.getElementById('mp').textContent = '📁 ' + getCurrentProject();
+        } catch (e) { MINI_WIN = null; syncMiniBtn(); }
+    }
+    window.toggleMiniWindow = async function () {
+        if (MINI_WIN) { try { MINI_WIN.close(); } catch (e) {} MINI_WIN = null; syncMiniBtn(); return; }
+        if (!('documentPictureInPicture' in window)) {
+            alert('The mini window needs Chrome or Edge (version 116 or newer).\n\nThe tab title already shows the timer status in any browser.');
+            return;
+        }
+        try {
+            const w = await window.documentPictureInPicture.requestWindow({ width: 230, height: 140 });
+            MINI_WIN = w;
+            w.document.head.insertAdjacentHTML('beforeend', '<meta charset="UTF-8"><title>The Pause</title><style>' +
+                'html,body{margin:0;height:100%}body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;' +
+                'background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;padding:8px;box-sizing:border-box}' +
+                '#mt{font-size:2.4rem;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-0.03em}' +
+                '#ml{font-size:0.78rem;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em}' +
+                '#mp{font-size:0.8rem;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+                'button{margin-top:6px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:4px 12px;font-size:0.75rem;cursor:pointer}' +
+                'button:hover{background:#334155}</style>');
+            w.document.body.innerHTML = '<div id="mt">—</div><div id="ml"></div><div id="mp"></div><button id="mb">Back to app</button>';
+            w.document.getElementById('mb').addEventListener('click', function () { window.focus(); });
+            w.addEventListener('pagehide', function () { MINI_WIN = null; syncMiniBtn(); });
+            syncMiniBtn();
+            updateMiniWindow();
+        } catch (e) {
+            console.error('Mini window failed:', e);
+            alert('Could not open the mini window: ' + (e && e.message ? e.message : e));
+        }
+    };
+
+    // ---- Expand / collapse the log input ----
+    let ENTRY_EXPANDED = false;
+    try { ENTRY_EXPANDED = localStorage.getItem('thepause_entry_expanded') === '1'; } catch (e) {}
+    function applyEntryExpand() {
+        const wrap = document.querySelector('.journal-entry');
+        const ta = document.getElementById('entry-text');
+        if (wrap) wrap.classList.toggle('entry-expanded', ENTRY_EXPANDED);
+        // plain-textarea fallback (hanging indent OFF): size it to its content
+        if (ta && !ta._ed) ta.style.height = ENTRY_EXPANDED ? 'auto' : '';
+        if (ta && !ta._ed && ENTRY_EXPANDED) ta.style.height = Math.max(120, ta.scrollHeight + 2) + 'px';
+        const b = document.getElementById('expand-toggle-btn');
+        if (b) {
+            b.textContent = ENTRY_EXPANDED ? '⤡ Collapse' : '⤢ Expand';
+            b.classList.toggle('active', ENTRY_EXPANDED);
+        }
+    }
+    window.toggleEntryExpand = function () {
+        ENTRY_EXPANDED = !ENTRY_EXPANDED;
+        // drop any height set by dragging the corner, so the toggle starts from a clean state
+        const edEl = document.getElementById('entry-text-ed'); if (edEl) edEl.style.height = '';
+        try { localStorage.setItem('thepause_entry_expanded', ENTRY_EXPANDED ? '1' : '0'); } catch (e) {}
+        applyEntryExpand();
+    };
+    document.addEventListener('input', function (e) {
+        if (ENTRY_EXPANDED && e.target && e.target.id === 'entry-text') applyEntryExpand();
+    });
+
     window.toggleHangEditor = function () {
         HANG_ON = !HANG_ON;
         try { localStorage.setItem('thepause_hang_editor', HANG_ON ? '1' : '0'); } catch (e) {}
@@ -2948,6 +3047,7 @@
             if (HANG_ON) enhanceOutlineEditor(ta); else destroyOutlineEditor(ta);
         });
         syncHangBtn();
+        applyEntryExpand();
     };
 
     function resetEntryUI() {
@@ -2956,6 +3056,7 @@
             timerInterval = null;
         }
         timerEndTime = null;
+        updateTabTitle();
 
         const timerDisplay = document.getElementById('timer-display');
         if (timerDisplay) {
@@ -3071,12 +3172,14 @@
         if (!timerDisplay || !entryText) return;
         const msLeft = timerEndTime - Date.now();
         tickIfNeeded(timerEndTime);
+        updateTabTitle();
 
         if (msLeft <= 0) {
             if (FOCUS_STATE.soundOn) playWarning();
             clearInterval(timerInterval);
             timerInterval = null;
             timerEndTime = null;
+            updateTabTitle();
             timerDisplay.textContent = "Time's up! Stop and save.";
             timerDisplay.style.color = "var(--danger)";
             (entryText._ed || entryText).style.borderColor = "var(--danger)";
@@ -4016,6 +4119,7 @@
 
             enhanceOutlineEditor(document.getElementById('entry-text'));
             syncHangBtn();
+            applyEntryExpand();
             logs = loadLocal();
             renderLogs();
             populateProjectSuggestions();
