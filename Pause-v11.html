@@ -62,6 +62,7 @@
         .sticky-timer { display: none; position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 900; align-items: center; gap: 10px; max-width: calc(100vw - 24px); padding: 6px 16px; background: #0f172a; color: #e2e8f0; border-radius: 999px; box-shadow: var(--shadow-lg); cursor: pointer; font-size: 0.8rem; }
         .sticky-timer.show { display: flex; }
         .sticky-timer #st-time { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+        .sticky-timer #st-sub { color: #cbd5e1; font-size: 0.72rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
         .sticky-timer #st-label { color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.68rem; white-space: nowrap; }
         .sticky-timer #st-acc { color: #7dd3fc; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 10px; border-left: 1px solid #334155; }
         .sticky-timer #st-proj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -1316,7 +1317,7 @@
         <span id="boot-error-message"></span>
     </div>
 
-    <div class="sticky-timer" id="sticky-timer" title="Click to jump back to the timer" onclick="document.getElementById('focus-dial').scrollIntoView({behavior:'smooth',block:'center'})"><span id="st-icon"></span><span id="st-time"></span><span id="st-label"></span><span id="st-proj"></span><span id="st-acc" title="Accumulated time logged today"></span></div>
+    <div class="sticky-timer" id="sticky-timer" title="Click to jump back to the timer" onclick="document.getElementById('focus-dial').scrollIntoView({behavior:'smooth',block:'center'})"><span id="st-icon"></span><span id="st-time"></span><span id="st-sub"></span><span id="st-label"></span><span id="st-proj"></span><span id="st-acc" title="Accumulated time logged today"></span></div>
 
     <div class="top-bar">
         <div class="brand">🌿 The Pause</div>
@@ -2964,20 +2965,21 @@
     function currentStatus() {
         if (FOCUS_STATE.running && FOCUS_STATE.endAt) {
             const left = Math.max(0, FOCUS_STATE.endAt - Date.now());
-            return { icon: '⏳', time: formatClock(Math.ceil(left / 1000) * 1000), label: 'focus block', color: '#f59e0b' };
+            const since = SESSION.startTs || FOCUS_STATE.startTs || Date.now();
+            return { icon: '⏳', time: formatClock(Math.ceil(left / 1000) * 1000), sub: 'left · elapsed ' + formatClock(Date.now() - since), label: 'focus block', color: '#f59e0b' };
         }
         if (SESSION.startTs) {
-            return { icon: '⏱', time: formatClock(Date.now() - SESSION.startTs), label: 'timing · save log', color: '#ef4444' };
+            return { icon: '⏱', time: formatClock(Date.now() - SESSION.startTs), sub: 'elapsed · since ' + hhmm(SESSION.startTs), label: 'timing · save log', color: '#ef4444' };
         }
         if (typeof timerEndTime !== 'undefined' && timerEndTime) {
             const left = Math.max(0, timerEndTime - Date.now());
-            return { icon: '✍', time: formatClock(Math.ceil(left / 1000) * 1000), label: 'writing', color: '#3b82f6' };
+            return { icon: '✍', time: formatClock(Math.ceil(left / 1000) * 1000), sub: 'left · elapsed ' + formatClock(Math.max(0, 300000 - left)), label: 'writing', color: '#3b82f6' };
         }
         return null;
     }
     function updateTabTitle() {
         const st = currentStatus();
-        document.title = st ? st.icon + ' ' + st.time + ' · ' + getCurrentProject() + ' — ' + BASE_TITLE : BASE_TITLE;
+        document.title = st ? st.icon + ' ' + st.time + ' ' + st.sub + ' · ' + getCurrentProject() + ' — ' + BASE_TITLE : BASE_TITLE;
         updateMiniWindow();
         updateStickyTimer();
     }
@@ -2996,6 +2998,7 @@
         document.getElementById('st-icon').textContent = st.icon;
         const t = document.getElementById('st-time');
         t.textContent = st.time; t.style.color = st.color;
+        document.getElementById('st-sub').textContent = st.sub;
         document.getElementById('st-label').textContent = st.label;
         document.getElementById('st-proj').textContent = '📁 ' + getCurrentProject();
         document.getElementById('st-acc').textContent = 'Σ ' + accumulatedText();
@@ -3021,6 +3024,7 @@
             const d = MINI_WIN.document, st = currentStatus();
             d.getElementById('mt').textContent = st ? st.time : '—';
             d.getElementById('mt').style.color = st ? st.color : '#94a3b8';
+            d.getElementById('ms').textContent = st ? st.sub : '';
             d.getElementById('ml').textContent = st ? st.icon + ' ' + st.label : 'idle';
             d.getElementById('mp').textContent = '📁 ' + getCurrentProject();
             d.getElementById('ma').textContent = 'Σ today ' + accumulatedText();
@@ -3033,18 +3037,19 @@
             return;
         }
         try {
-            const w = await window.documentPictureInPicture.requestWindow({ width: 230, height: 165 });
+            const w = await window.documentPictureInPicture.requestWindow({ width: 240, height: 180 });
             MINI_WIN = w;
             w.document.head.insertAdjacentHTML('beforeend', '<meta charset="UTF-8"><title>The Pause</title><style>' +
                 'html,body{margin:0;height:100%}body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;' +
                 'background:#0f172a;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;padding:8px;box-sizing:border-box}' +
                 '#mt{font-size:2.4rem;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-0.03em}' +
+                '#ms{font-size:0.8rem;color:#cbd5e1;font-variant-numeric:tabular-nums}' +
                 '#ml{font-size:0.78rem;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em}' +
                 '#ma{font-size:0.78rem;color:#7dd3fc;font-weight:600}' +
                 '#mp{font-size:0.8rem;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
                 'button{margin-top:6px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:4px 12px;font-size:0.75rem;cursor:pointer}' +
                 'button:hover{background:#334155}</style>');
-            w.document.body.innerHTML = '<div id="mt">—</div><div id="ml"></div><div id="mp"></div><div id="ma"></div><button id="mb">Back to app</button>';
+            w.document.body.innerHTML = '<div id="mt">—</div><div id="ms"></div><div id="ml"></div><div id="mp"></div><div id="ma"></div><button id="mb">Back to app</button>';
             w.document.getElementById('mb').addEventListener('click', function () { window.focus(); });
             w.addEventListener('pagehide', function () { MINI_WIN = null; syncMiniBtn(); });
             syncMiniBtn();
