@@ -434,6 +434,9 @@
         }
         .template-switch-btn:hover { background: var(--tag-bg); color: var(--accent); border-color: var(--accent); }
         .template-switch-btn.active { background: #fef3c7; color: #92400e; border-color: #fbbf24; }
+        /* Expand / collapse the log input */
+        .journal-entry.entry-expanded #entry-text-ed { height: auto; min-height: 120px; max-height: none; overflow: auto; resize: vertical; }
+        .journal-entry.entry-expanded textarea#entry-text { overflow: auto; resize: vertical; }
 
         textarea {
             width: 100%;
@@ -1405,6 +1408,7 @@
         </div>
 
         <div class="template-switch-row">
+            <button type="button" id="expand-toggle-btn" class="template-switch-btn" onclick="toggleEntryExpand()" title="Grow the input to show everything you have written, or shrink it back">⤢ Expand</button>
             <button type="button" id="hang-toggle-btn" class="template-switch-btn" onclick="toggleHangEditor()" title="Wrapped lines line up under their own text while you type">↳ Hanging indent: ON</button>
             <button type="button" id="template-switch-btn" class="template-switch-btn" onclick="toggleReflectionTemplate()" title="Replace the template with the daily reflection questions">🌙 Daily reflection template</button>
         </div>
@@ -2632,6 +2636,7 @@
         const cursorPosition = JOURNAL_PRESET.indexOf(BULLET) + BULLET.length;
         textarea.setSelectionRange(cursorPosition, cursorPosition);
         reflectionMode = false;
+        if (typeof applyEntryExpand === 'function') applyEntryExpand();
         syncTemplateSwitchBtn();
     }
 
@@ -2941,6 +2946,33 @@
         b.textContent = '↳ Hanging indent: ' + (HANG_ON ? 'ON' : 'OFF');
         b.classList.toggle('active', HANG_ON);
     }
+    // ---- Expand / collapse the log input ----
+    let ENTRY_EXPANDED = false;
+    try { ENTRY_EXPANDED = localStorage.getItem('thepause_entry_expanded') === '1'; } catch (e) {}
+    function applyEntryExpand() {
+        const wrap = document.querySelector('.journal-entry');
+        const ta = document.getElementById('entry-text');
+        if (wrap) wrap.classList.toggle('entry-expanded', ENTRY_EXPANDED);
+        // plain-textarea fallback (hanging indent OFF): size it to its content
+        if (ta && !ta._ed) ta.style.height = ENTRY_EXPANDED ? 'auto' : '';
+        if (ta && !ta._ed && ENTRY_EXPANDED) ta.style.height = Math.max(120, ta.scrollHeight + 2) + 'px';
+        const b = document.getElementById('expand-toggle-btn');
+        if (b) {
+            b.textContent = ENTRY_EXPANDED ? '⤡ Collapse' : '⤢ Expand';
+            b.classList.toggle('active', ENTRY_EXPANDED);
+        }
+    }
+    window.toggleEntryExpand = function () {
+        ENTRY_EXPANDED = !ENTRY_EXPANDED;
+        // drop any height set by dragging the corner, so the toggle starts from a clean state
+        const edEl = document.getElementById('entry-text-ed'); if (edEl) edEl.style.height = '';
+        try { localStorage.setItem('thepause_entry_expanded', ENTRY_EXPANDED ? '1' : '0'); } catch (e) {}
+        applyEntryExpand();
+    };
+    document.addEventListener('input', function (e) {
+        if (ENTRY_EXPANDED && e.target && e.target.id === 'entry-text') applyEntryExpand();
+    });
+
     window.toggleHangEditor = function () {
         HANG_ON = !HANG_ON;
         try { localStorage.setItem('thepause_hang_editor', HANG_ON ? '1' : '0'); } catch (e) {}
@@ -2948,6 +2980,7 @@
             if (HANG_ON) enhanceOutlineEditor(ta); else destroyOutlineEditor(ta);
         });
         syncHangBtn();
+        applyEntryExpand();
     };
 
     function resetEntryUI() {
@@ -4016,6 +4049,7 @@
 
             enhanceOutlineEditor(document.getElementById('entry-text'));
             syncHangBtn();
+            applyEntryExpand();
             logs = loadLocal();
             renderLogs();
             populateProjectSuggestions();
