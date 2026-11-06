@@ -2155,6 +2155,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     <!-- Multi-select mode for bulk Copy/Move/Delete across outline
          items — see #bulkActionBar and the select-mode script near the
          end of the file. -->
+    <button id="helpToggle" onclick="openHelp()" class="btn-view toolbar-pin" title="How to use this app — a 1-minute tour">❓ Help</button>
     <button id="selectModeToggle" onclick="toggleSelectMode()" class="btn-view toolbar-pin" title="Select multiple items to copy, move, or delete">☑ Select</button>
 
     <!-- Collapses/expands every cell in every table with one click.
@@ -2539,6 +2540,123 @@ window.openPrintTablePicker = function () {
             if (window.bulkCopyToClipboard) { e.preventDefault(); window.bulkCopyToClipboard(); }
         }
     }, true);
+})();
+
+// ---- "How to use this app" guide (❓ Help button + first-visit welcome) ----
+(function () {
+    var KEY = 'pt_help_hide_' + (document.title || 'app');
+    function hidden() { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } }
+    function setHidden(v) { try { localStorage.setItem(KEY, v ? '1' : '0'); } catch (e) {} }
+    var isWeek = !!document.getElementById('newWeekGoalBtn');
+    var weekLine = isWeek
+        ? '<li>In the <b>📁 project menu</b>: <b>New WeekGoal</b> / <b>New Next WeekGoal</b> make a project of six separate tables (Week Due, Projects, …); <b>+ This Week</b> / <b>+ Next Week</b> make a <i>WeekNN-progress</i> project with a Mon–Sun cell for each day.</li>'
+        : '<li>In the <b>📁 project menu</b>: <b>+ This Week</b> / <b>+ Next Week</b> make a <i>WeekNN-progress</i> project with a Mon–Sun cell for each day; <b>+ Single Table</b> and <b>⧉ Duplicate</b> are one-click starters.</li>';
+    var TABS = [
+        { id: 'start', label: '🚀 Start', html:
+            '<h4>Write like an outline</h4><ul>' +
+            '<li><b>Click any line and type.</b> Press <kbd>Enter</kbd> for a new line.</li>' +
+            '<li><kbd>Tab</kbd> indents a line under the one above; <kbd>Shift</kbd>+<kbd>Tab</kbd> moves it back out.</li>' +
+            '<li><kbd>↑</kbd> / <kbd>↓</kbd> move between lines; <kbd>Backspace</kbd> at the start of a line joins it to the previous one.</li>' +
+            '<li>Type <kbd>/</kbd> at the start of a line for bullets, checklists, numbered lists or a divider. Select text to get bold / italic / underline.</li></ul>' +
+            '<h4>The ☰ menu on every line</h4><ul>' +
+            '<li>Hover a line and click <b>☰</b>: add a checkbox, mark complete, bold, colours, indent / outdent, delete.</li></ul>' +
+            '<h4>Keep your work safe</h4><ul>' +
+            '<li><b>☁ Sign in</b> (Google) saves to the cloud and syncs across your devices.</li>' +
+            '<li><b>File ▾ → Export</b> downloads a backup file any time.</li></ul>' },
+        { id: 'tables', label: '🗂 Tables', html:
+            '<h4>Add and arrange</h4><ul>' +
+            '<li>The green <b>Add …</b> buttons at the bottom of the page add new tables.</li>' +
+            '<li>Drag a table\'s <b>⠿</b> handle (top-left) to reorder it.</li>' +
+            '<li>Each cell has <b>+✓</b> (add a checkbox line), <b>▾</b> (collapse) and <b>⤢</b> (taller / shorter). <b>⊟ Collapse All</b> in the toolbar folds every cell.</li></ul>' +
+            '<h4>The ⋯ button on each table</h4><ul>' +
+            '<li>Select all items · Copy as text · <b>Copy / Move to another project</b> · Print · Make full / half width · Pop out · Delete.</li>' +
+            '<li>Delete is at the bottom, in red, so it is hard to hit by accident.</li></ul>' },
+        { id: 'select', label: '☑ Select', html:
+            '<h4>Select several lines</h4><ul>' +
+            '<li><b>Press on a line and drag</b> down (or up) across other lines — they are highlighted. <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>C</kbd> copies them with their indentation. <kbd>Esc</kbd> clears.</li>' +
+            '<li>Or click <b>☑ Select</b> in the toolbar and tick lines with the checkboxes.</li>' +
+            '<li>A floating bar offers <b>Copy to…</b>, <b>Move to…</b> (any table, any project), <b>Copy Text</b> and <b>Delete</b>.</li>' +
+            '<li>With several lines selected, the <b>☰</b> menu on any of them (checkbox, complete, bold, colours, indent, delete) applies to <b>all</b> of them.</li>' +
+            '<li>Table ⋯ → <b>Select all items</b> selects a whole table at once.</li></ul>' },
+        { id: 'print', label: '🖨 Print', html:
+            '<h4>Print just what you want</h4><ul>' +
+            '<li>Table ⋯ → <b>☐ Select for printing</b> on each table you want (it gets a blue outline). A pill appears at the bottom: <b>🖨 Print N selected tables</b>.</li>' +
+            '<li><b>File ▾ → Print tables…</b> lets you tick tables from a list, choose <b>Keep columns</b> or <b>Single column</b>, and start each table on a new page.</li>' +
+            '<li><b>File ▾ → Print</b> prints the whole page; <b>Quick View</b> shows a clean read-only view.</li></ul>' },
+        { id: 'projects', label: '📁 Projects', html:
+            '<h4>Projects &amp; search</h4><ul>' +
+            '<li>Sign in, then use the <b>📁 menu</b> to switch, rename, add or delete projects.</li>' + weekLine +
+            '<li><b>☰ Files</b> opens the side panel with your project list and a <b>search box</b>. Choose <b>This project</b> or <b>All projects</b>; tick <b>Filter page</b> to hide everything that does not match.</li>' +
+            '<li>Click a search result to jump straight to that line, even in another project.</li></ul>' }
+    ];
+    function injectStyle() {
+        if (document.getElementById('helpGuideStyle')) return;
+        var st = document.createElement('style');
+        st.id = 'helpGuideStyle';
+        st.textContent =
+            '#helpOverlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:12px;}' +
+            '#helpCard{background:#fff;color:#222;border-radius:12px;width:600px;max-width:100%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 12px 44px rgba(0,0,0,.4);font-family:-apple-system,"Segoe UI",Arial,sans-serif;}' +
+            '#helpHead{padding:16px 20px 6px;}' +
+            '#helpHead h2{margin:0;font-size:19px;} #helpHead p{margin:4px 0 0;font-size:13px;color:#666;}' +
+            '#helpTabs{display:flex;gap:4px;padding:8px 14px 0;border-bottom:1px solid #e3e3e3;flex-wrap:wrap;}' +
+            '#helpTabs button{background:none;border:none;border-bottom:3px solid transparent;padding:7px 10px;font-size:13px;cursor:pointer;color:#555;border-radius:6px 6px 0 0;}' +
+            '#helpTabs button:hover{background:#f2f4f8;} #helpTabs button.on{border-bottom-color:#3E63DD;color:#1d3fb8;font-weight:600;}' +
+            '#helpBody{padding:6px 22px 10px;overflow:auto;font-size:14px;line-height:1.5;}' +
+            '#helpBody h4{margin:14px 0 4px;font-size:14px;color:#1d3fb8;} #helpBody ul{margin:0;padding-left:20px;} #helpBody li{margin:4px 0;}' +
+            '#helpBody kbd{background:#f1f1f1;border:1px solid #ccc;border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:12px;font-family:inherit;}' +
+            '#helpFoot{display:flex;align-items:center;gap:10px;padding:10px 20px 14px;border-top:1px solid #e3e3e3;font-size:12px;color:#666;}' +
+            '#helpFoot label{display:flex;align-items:center;gap:5px;cursor:pointer;} #helpFoot .sp{flex:1;}' +
+            '#helpFoot button{border:none;border-radius:6px;padding:7px 16px;font-size:13px;cursor:pointer;}' +
+            '#helpPrev{background:#e9ecef;color:#333;} #helpNext,#helpDone{background:#3E63DD;color:#fff;}' +
+            '@media(max-width:520px){#helpBody{padding:6px 14px 10px;} #helpTabs button{padding:6px 7px;font-size:12px;}}';
+        document.head.appendChild(st);
+    }
+    window.openHelp = function (startTab) {
+        var old = document.getElementById('helpOverlay');
+        if (old) old.remove();
+        injectStyle();
+        var name = (document.getElementById('pageTitle') || {}).innerText || document.title;
+        var ov = document.createElement('div');
+        ov.id = 'helpOverlay';
+        ov.innerHTML = '<div id="helpCard" role="dialog" aria-label="How to use this app">' +
+            '<div id="helpHead"><h2>👋 How to use this app</h2><p>A 1-minute tour — you can reopen it any time from <b>❓ Help</b> in the toolbar.</p></div>' +
+            '<div id="helpTabs"></div><div id="helpBody"></div>' +
+            '<div id="helpFoot"><label><input type="checkbox" id="helpShowStart"> Show this guide when the app opens</label><span class="sp"></span>' +
+            '<button type="button" id="helpPrev">‹ Back</button><button type="button" id="helpNext">Next ›</button><button type="button" id="helpDone">Got it — start</button></div></div>';
+        document.body.appendChild(ov);
+        var tabsEl = ov.querySelector('#helpTabs'), bodyEl = ov.querySelector('#helpBody');
+        var prev = ov.querySelector('#helpPrev'), next = ov.querySelector('#helpNext'), done = ov.querySelector('#helpDone');
+        var idx = Math.max(0, TABS.findIndex(function (t) { return t.id === startTab; }));
+        function show(i) {
+            idx = i;
+            Array.prototype.forEach.call(tabsEl.children, function (b, k) { b.classList.toggle('on', k === i); });
+            bodyEl.innerHTML = TABS[i].html; bodyEl.scrollTop = 0;
+            prev.style.display = i === 0 ? 'none' : '';
+            next.style.display = i === TABS.length - 1 ? 'none' : '';
+            done.style.display = i === TABS.length - 1 ? '' : 'none';
+        }
+        TABS.forEach(function (t, k) {
+            var b = document.createElement('button');
+            b.type = 'button'; b.textContent = t.label;
+            b.addEventListener('click', function () { show(k); });
+            tabsEl.appendChild(b);
+        });
+        var cb = ov.querySelector('#helpShowStart');
+        cb.checked = !hidden();
+        cb.addEventListener('change', function () { setHidden(!cb.checked); });
+        function close() { ov.remove(); document.removeEventListener('keydown', onKey, true); }
+        function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+        document.addEventListener('keydown', onKey, true);
+        prev.addEventListener('click', function () { show(idx - 1); });
+        next.addEventListener('click', function () { show(idx + 1); });
+        done.addEventListener('click', close);
+        ov.addEventListener('mousedown', function (e) { if (e.target === ov) close(); });
+        show(idx);
+    };
+    // First visit on this device: open the guide once the app has drawn.
+    window.addEventListener('load', function () {
+        setTimeout(function () { if (!hidden() && !document.getElementById('helpOverlay')) window.openHelp(); }, 700);
+    });
 })();
 
 function printContent() {
