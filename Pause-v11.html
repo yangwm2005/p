@@ -2512,9 +2512,35 @@
         _dateSearchCache[cacheKey] = text;
         return text;
     }
-    function logFilterTerms() { return LOG_FILTER.toLowerCase().split(/\s+/).filter(Boolean); }
+    // "Oct 10" / "10 Oct" / "October 10th" are read as ONE exact date (month + day), not as the loose
+    // words "oct" and "10"; everything else in the box stays a normal, combined word search.
+    const MONTH_RE = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+    const MONTH_IDX = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 };
+    function logFilterTerms() {
+        let q = LOG_FILTER.toLowerCase();
+        const dates = [];
+        const take = function (re, mi, di) {
+            q = q.replace(re, function () {
+                const a = arguments;
+                const m = MONTH_IDX[a[mi].slice(0, 3)], d = parseInt(a[di], 10);
+                if (m && d >= 1 && d <= 31) { dates.push({ m: m, d: d }); return ' '; }
+                return a[0];
+            });
+        };
+        take(new RegExp('\\b' + MONTH_RE + '\\.?,?\\s*(\\d{1,2})(?:st|nd|rd|th)?(?!\\d)', 'g'), 1, 2);      // Oct 10, October 10th
+        take(new RegExp('(?<!\\d)(\\d{1,2})(?:st|nd|rd|th)?\\s+' + MONTH_RE + '\\b', 'g'), 2, 1);        // 10 Oct
+        const words = q.split(/\s+/).filter(Boolean);
+        words.dates = dates;
+        words.active = words.length > 0 || dates.length > 0;
+        return words;
+    }
     function logMatches(log, terms) {
-        if (!terms.length) return true;
+        if (!terms.active) return true;
+        if (terms.dates && terms.dates.length) {
+            if (typeof log.timestamp !== 'number') return false;
+            const d = new Date(log.timestamp), m = d.getMonth() + 1, day = d.getDate();
+            if (!terms.dates.every(t => t.m === m && t.d === day)) return false;
+        }
         const hay = ((log.project || DEFAULT_PROJECT) + '\n' + (log.text || '') + '\n' + entryTimeLabel(log) + '\n' +
                      (typeof log.timestamp === 'number' ? dateSearchText(log.timestamp) : '')).toLowerCase();
         return terms.every(t => hay.indexOf(t) !== -1);
@@ -2588,8 +2614,8 @@
             grouped[key].entries.push({ log: log, idx: originalIndex });
         });
 
-        if (countEl) countEl.textContent = terms.length ? shown + ' of ' + logs.length : '';
-        if (terms.length && shown === 0) {
+        if (countEl) countEl.textContent = terms.active ? shown + ' of ' + logs.length : '';
+        if (terms.active && shown === 0) {
             logList.innerHTML = '<div class="log-no-match">No entries match “' + escapeHtml(LOG_FILTER) + '”.</div>';
             return;
         }
