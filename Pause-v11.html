@@ -1460,7 +1460,7 @@
         <div class="log-search">
             <div class="log-search-box" id="log-search-box">
                 <span class="ls-icon">🔍</span>
-                <input type="search" id="log-search-input" placeholder="Search entries and projects… (words are combined)" spellcheck="false" autocomplete="off" oninput="setLogFilter(this.value)" onkeydown="if(event.key==='Escape'){clearLogFilter();}">
+                <input type="search" id="log-search-input" placeholder="Search entries, projects, dates… (e.g. 20261108, Nov, 202610, Wed)" title="Words are combined: try “Nov Manuscript” or “Wed 2026”" spellcheck="false" autocomplete="off" oninput="setLogFilter(this.value)" onkeydown="if(event.key==='Escape'){clearLogFilter();}">
                 <button type="button" class="ls-clear" onclick="clearLogFilter()" title="Clear search">✕</button>
             </div>
             <span class="log-search-count" id="log-search-count"></span>
@@ -2489,11 +2489,34 @@
     // RENDER LOGS
     // ============================================================
     let LOG_FILTER = '';
+    // Every way a person might type a date: 20261108, 2026-11-08, 202611, 1108, 11/08, Nov, November,
+    // Sun, Sunday, "Nov 8", "8 Nov", Today, Yesterday ... built once per day and cached.
+    const _dateSearchCache = {};
+    function dateSearchText(ms) {
+        const key = dateKey(ms);
+        const cacheKey = key + '|' + todayKey();           // "Today / Yesterday" labels change at midnight
+        if (_dateSearchCache[cacheKey]) return _dateSearchCache[cacheKey];
+        const d = new Date(ms);
+        const y = String(d.getFullYear()), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
+        const f = function (o) { return d.toLocaleDateString('en-US', o); };
+        const text = [
+            y + m + dd, y + '-' + m + '-' + dd, y + '/' + m + '/' + dd, y + '.' + m + '.' + dd,
+            y + m, y + '-' + m, y + '/' + m,
+            m + dd, m + '/' + dd, m + '-' + dd,
+            y, f({ month: 'short' }), f({ month: 'long' }),
+            f({ weekday: 'short' }), f({ weekday: 'long' }),
+            f({ month: 'short', day: 'numeric' }), dd.replace(/^0/, '') + ' ' + f({ month: 'short' }),
+            f({ month: 'short', day: '2-digit' }), f({ month: 'long', day: 'numeric' }),
+            relativeDateLabel(ms)
+        ].join('\n');
+        _dateSearchCache[cacheKey] = text;
+        return text;
+    }
     function logFilterTerms() { return LOG_FILTER.toLowerCase().split(/\s+/).filter(Boolean); }
     function logMatches(log, terms) {
         if (!terms.length) return true;
         const hay = ((log.project || DEFAULT_PROJECT) + '\n' + (log.text || '') + '\n' + entryTimeLabel(log) + '\n' +
-                     (typeof log.timestamp === 'number' ? dateKey(log.timestamp) : '')).toLowerCase();
+                     (typeof log.timestamp === 'number' ? dateSearchText(log.timestamp) : '')).toLowerCase();
         return terms.every(t => hay.indexOf(t) !== -1);
     }
     // Render entry text as an outline: numbered items and bullets get hanging indents,
