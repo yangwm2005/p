@@ -2181,6 +2181,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     <button onclick="window.bulkCopyTo()">Copy to…</button>
     <button onclick="window.bulkMoveTo()">Move to…</button>
     <button onclick="window.bulkCopyToClipboard()" title="Copy as plain text to your OS clipboard">📋 Copy Text</button>
+    <button onclick="window.bulkSendTo()" title="Send to Messenger, LINE, Telegram, X, Notes, Reminders, email…">📤 Send…</button>
     <button onclick="window.bulkDeleteSelected()">Delete</button>
     <button onclick="window.clearBulkSelection()" title="Clear selection">✕</button>
 </div>
@@ -2577,7 +2578,8 @@ window.openPrintTablePicker = function () {
             '<li>Or click <b>☑ Select</b> in the toolbar and tick lines with the checkboxes.</li>' +
             '<li>A floating bar offers <b>Copy to…</b>, <b>Move to…</b> (any table, any project), <b>Copy Text</b> and <b>Delete</b>.</li>' +
             '<li>With several lines selected, the <b>☰</b> menu on any of them (checkbox, complete, bold, colours, indent, delete) applies to <b>all</b> of them.</li>' +
-            '<li>Table ⋯ → <b>Select all items</b> selects a whole table at once.</li></ul>' },
+            '<li>Table ⋯ → <b>Select all items</b> selects a whole table at once.</li>' +
+            '<li><b>📤 Send…</b> (on the floating bar, or Table ⋯ → Send to…) shares the selected lines or table to <b>Messenger, LINE, Telegram, X, WhatsApp, email, Apple Notes, Reminders</b> and any other app in your device\'s share sheet.</li></ul>' },
         { id: 'print', label: '🖨 Print', html:
             '<h4>Print just what you want</h4><ul>' +
             '<li>Table ⋯ → <b>☐ Select for printing</b> on each table you want (it gets a blue outline). A pill appears at the bottom: <b>🖨 Print N selected tables</b>.</li>' +
@@ -8703,9 +8705,10 @@ function insertNewCheckboxLine(currentLine) {
                 const items = selectedItemRefs();
                 if (items.length === 0) return;
                 const lines = [];
+                const seen = new Set();
                 items.forEach(function (item) {
                     const node = window.getLiveNode(item.rootId, item.nodeId);
-                    if (node) nodeToTextLines(node, 0, lines);
+                    if (node && !seen.has(node)) { markSeen(node, seen); nodeToTextLines(node, 0, lines); }
                 });
                 if (lines.length === 0) return;
                 copyTextToClipboard(lines.join('\n')).then(function () {
@@ -8716,6 +8719,140 @@ function insertNewCheckboxLine(currentLine) {
                 });
             };
 
+
+
+            // ---- Send selected items / a table to other apps ------------
+            // A web page can't talk to Messenger, LINE, iCloud Notes etc.
+            // directly, so this uses what the browser/OS offers: the
+            // system Share sheet (lists every installed app — Notes,
+            // Reminders, Messenger, LINE, Telegram, X…), web share links
+            // for the apps that have them, and Copy for the rest.
+            // Skip a selected line whose parent line is also selected (its
+            // text is already included with the parent's children).
+            function markSeen(node, seen) { seen.add(node); (node.children || []).forEach(function (c) { markSeen(c, seen); }); }
+            function collectEntries(node, depth, out) {
+                out.push({ depth: depth, text: node.text || '', checkbox: !!node.checkbox, done: !!node.done });
+                (node.children || []).forEach(function (c) { collectEntries(c, depth + 1, out); });
+            }
+            function entriesFromTableData(t) {
+                const out = [];
+                (t.rows || []).forEach(function (row) {
+                    row.forEach(function (cell) {
+                        if (cell.title) out.push({ heading: true, depth: 0, text: cell.title });
+                        (cell.tree || []).forEach(function (n) { collectEntries(n, 0, out); });
+                    });
+                });
+                return out;
+            }
+            function formatEntries(entries, mode) {
+                return entries.map(function (e) {
+                    if (e.heading) return e.text;
+                    const ind = '  '.repeat(e.depth);
+                    if (mode === 'plain') return ind + e.text;
+                    if (mode === 'check') return ind + (e.checkbox ? (e.done ? '☑ ' : '☐ ') : '• ') + e.text;
+                    return ind + (e.checkbox ? (e.done ? '[x] ' : '[ ] ') : '- ') + e.text;
+                }).join('\n');
+            }
+            function icsEscape(s) { return String(s).replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n'); }
+            function remindersIcs(entries) {
+                const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+                const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Outliner//Send//EN'];
+                entries.forEach(function (e, i) {
+                    if (e.heading || !String(e.text).trim()) return;
+                    L.push('BEGIN:VTODO', 'UID:' + Date.now() + '-' + i + '@outliner', 'DTSTAMP:' + stamp,
+                        'SUMMARY:' + icsEscape(e.text), 'STATUS:' + (e.done ? 'COMPLETED' : 'NEEDS-ACTION'), 'END:VTODO');
+                });
+                L.push('END:VCALENDAR');
+                return L.join('\r\n');
+            }
+            function downloadFile(name, mime, content) {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(new Blob([content], { type: mime }));
+                a.download = name;
+                document.body.appendChild(a); a.click();
+                setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+            }
+            function openSendDialog(entries, title) {
+                const old = document.getElementById('sendOverlay');
+                if (old) old.remove();
+                if (!entries.length) { alert('Nothing to send.'); return; }
+                const hasShare = !!navigator.share;
+                const apple = /iPhone|iPad|Macintosh|Mac OS/i.test(navigator.userAgent);
+                const ios = /iPhone|iPad/i.test(navigator.userAgent);
+                const ov = document.createElement('div');
+                ov.id = 'sendOverlay';
+                ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99998;display:flex;align-items:center;justify-content:center;padding:12px;';
+                const btn = 'style="background:#f1f3f6;border:1px solid #d5d9e0;border-radius:8px;padding:8px 6px;font-size:13px;cursor:pointer;color:#222;"';
+                ov.innerHTML =
+                    '<div style="background:#fff;color:#222;border-radius:12px;padding:16px 18px;width:520px;max-width:100%;max-height:92vh;overflow:auto;box-shadow:0 12px 44px rgba(0,0,0,.4);font-family:-apple-system,Segoe UI,Arial,sans-serif;">' +
+                    '<h3 style="margin:0 0 8px;font-size:16px;">📤 Send to…</h3>' +
+                    '<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#666;margin-bottom:4px;">Text to send' +
+                    '<select id="sdFmt" style="margin-left:auto;font-size:12px;padding:2px 4px;"><option value="outline">Outline (- / [ ])</option><option value="check">Checklist (☐ / ☑ / •)</option><option value="plain">Plain lines</option></select></div>' +
+                    '<textarea id="sdText" rows="9" style="width:100%;box-sizing:border-box;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;padding:8px;border:1px solid #ccc;border-radius:8px;resize:vertical;"></textarea>' +
+                    '<div id="sdCount" style="font-size:11px;color:#888;margin:2px 0 10px;"></div>' +
+                    (hasShare ? '<button type="button" id="sdShare" style="width:100%;background:#3E63DD;color:#fff;border:none;border-radius:8px;padding:10px;font-size:14px;cursor:pointer;margin-bottom:6px;">📱 Share… — Notes, Reminders, Messenger, LINE, Telegram, X…</button><div style="font-size:11px;color:#888;margin-bottom:10px;">Opens your device\'s share sheet with every app you have installed.</div>'
+                        : '<div style="font-size:12px;color:#a60;margin-bottom:10px;">This browser has no system share sheet — use the buttons below, or Copy and paste anywhere.</div>') +
+                    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;">' +
+                    '<button type="button" data-t="telegram" ' + btn + '>✈ Telegram</button>' +
+                    '<button type="button" data-t="line" ' + btn + '>💬 LINE</button>' +
+                    '<button type="button" data-t="x" ' + btn + '>𝕏 X (Twitter)</button>' +
+                    '<button type="button" data-t="whatsapp" ' + btn + '>🟢 WhatsApp</button>' +
+                    '<button type="button" data-t="messenger" ' + btn + '>🔵 Messenger</button>' +
+                    '<button type="button" data-t="email" ' + btn + '>✉ Email</button>' +
+                    '<button type="button" data-t="sms" ' + btn + '>💭 SMS</button>' +
+                    '<button type="button" data-t="notes" ' + btn + '>🗒 Apple Notes</button>' +
+                    '<button type="button" data-t="reminders" ' + btn + '>✅ Reminders (.ics)</button>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:8px;margin-top:12px;"><button type="button" data-t="copy" ' + btn + ' style="flex:1;background:#f1f3f6;border:1px solid #d5d9e0;border-radius:8px;padding:8px;font-size:13px;cursor:pointer;">📋 Copy text</button>' +
+                    '<button type="button" id="sdClose" style="background:#6c757d;color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:13px;cursor:pointer;">Close</button></div>' +
+                    '<div id="sdNote" style="font-size:12px;color:#2a7;margin-top:8px;min-height:15px;"></div></div>';
+                document.body.appendChild(ov);
+                const ta = ov.querySelector('#sdText'), fmt = ov.querySelector('#sdFmt'), cnt = ov.querySelector('#sdCount'), note = ov.querySelector('#sdNote');
+                function fill() { ta.value = formatEntries(entries, fmt.value); upd(); }
+                function upd() { cnt.textContent = ta.value.length + ' characters' + (ta.value.length > 280 ? ' (X allows 280 — it will need trimming)' : ''); }
+                ta.addEventListener('input', upd); fmt.addEventListener('change', fill); fill();
+                const close = function () { ov.remove(); };
+                ov.addEventListener('mousedown', function (e) { if (e.target === ov) close(); });
+                ov.querySelector('#sdClose').addEventListener('click', close);
+                function copied(msg) { copyTextToClipboard(ta.value).then(function () { note.textContent = msg; }).catch(function () { note.textContent = 'Could not copy — select the text and copy it manually.'; }); }
+                function open(url) { window.open(url, '_blank', 'noopener'); }
+                const sh = ov.querySelector('#sdShare');
+                if (sh) sh.addEventListener('click', function () {
+                    navigator.share({ title: title || 'Notes', text: ta.value }).catch(function () {});
+                });
+                ov.addEventListener('click', function (e) {
+                    const t = e.target && e.target.getAttribute && e.target.getAttribute('data-t');
+                    if (!t) return;
+                    const txt = ta.value, q = encodeURIComponent(txt);
+                    if (t === 'copy') copied('Copied to the clipboard.');
+                    else if (t === 'telegram') open('https://t.me/share/url?url=%20&text=' + q);
+                    else if (t === 'line') open('https://line.me/R/msg/text/?' + q);
+                    else if (t === 'x') open('https://x.com/intent/post?text=' + encodeURIComponent(txt.length > 280 ? txt.slice(0, 277) + '…' : txt));
+                    else if (t === 'whatsapp') open('https://wa.me/?text=' + q);
+                    else if (t === 'email') window.location.href = 'mailto:?subject=' + encodeURIComponent(title || 'Notes') + '&body=' + q;
+                    else if (t === 'sms') window.location.href = 'sms:' + (ios ? '&' : '?') + 'body=' + q;
+                    else if (t === 'messenger') { copied('Copied — paste it into a Messenger chat.'); open('https://www.messenger.com/'); }
+                    else if (t === 'notes') {
+                        copied('Copied — paste it into a new note.');
+                        if (apple) setTimeout(function () { window.location.href = ios ? 'mobilenotes://' : 'notes://'; }, 300);
+                    }
+                    else if (t === 'reminders') {
+                        downloadFile('reminders.ics', 'text/calendar', remindersIcs(entries));
+                        note.textContent = 'Downloaded reminders.ics — open it to add each line as a reminder (works best on a Mac; on iPhone use Share… → Reminders).';
+                    }
+                });
+            }
+            window.bulkSendTo = function () {
+                const items = selectedItemRefs();
+                if (!items.length) return;
+                const entries = [];
+                const seen = new Set();
+                items.forEach(function (item) {
+                    const node = window.getLiveNode(item.rootId, item.nodeId);
+                    if (node && !seen.has(node)) { markSeen(node, seen); collectEntries(node, 0, entries); }
+                });
+                openSendDialog(entries, document.getElementById('pageTitle') ? document.getElementById('pageTitle').innerText.trim() : 'Notes');
+            };
 
             // ---- Whole-table actions (the ⋯ button on every table) -------
             // Select all items / copy table text / copy or move the whole
@@ -8843,6 +8980,10 @@ function insertNewCheckboxLine(currentLine) {
                 item('📋 Copy as text', function () {
                     const sb = serializedBlock(block);
                     if (sb) { writeClipboard(tableAsText(sb.data)); setStatus('Table copied as text'); }
+                });
+                item('📤 Send to…', function () {
+                    const sb = serializedBlock(block);
+                    if (sb) openSendDialog(entriesFromTableData(sb.data), document.getElementById('pageTitle') ? document.getElementById('pageTitle').innerText.trim() : 'Notes');
                 });
                 divider();
                 item('⧉ Copy to project…', function () { openTransferDialog(block, 'copy'); });
