@@ -526,6 +526,23 @@
         .log-search-box .ls-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: none; background: transparent; border: none; cursor: pointer; color: var(--text-muted); font-size: 0.9rem; padding: 2px 6px; }
         .log-search-box.has-text .ls-clear { display: block; }
         .log-search-count { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
+        .log-group-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; }
+        .lg-label { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-right: 2px; }
+        .lg-btn { background: transparent; border: 1px solid var(--border); color: var(--text-muted); border-radius: 999px; padding: 3px 11px; font-size: 0.78rem; font-family: inherit; cursor: pointer; }
+        .lg-btn:hover { background: var(--tag-bg); color: var(--accent); border-color: var(--accent); }
+        .lg-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+        .lg-btn.lg-all { margin-left: auto; padding: 3px 9px; }
+        .grp-header { cursor: pointer; user-select: none; }
+        .grp-header:hover { color: var(--accent); }
+        .grp-header .grp-caret { font-size: 0.8rem; }
+        .grp-header .grp-title { white-space: nowrap; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+        .grp-header .grp-meta { font-weight: 500; text-transform: none; letter-spacing: 0; white-space: nowrap; opacity: 0.85; }
+        .grp-header.collapsed { opacity: 0.8; }
+        .grp-header .grp-caret, .grp-header .grp-title, .grp-header .grp-meta { flex: none; }
+        .sub-day { margin: 8px 0 3px 2px; font-size: 0.68rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+        .log-date { font-weight: 700; font-size: 0.7rem; color: var(--accent); margin-right: 6px; white-space: nowrap; }
+        .log-also { font-size: 0.68rem; color: var(--text-muted); margin-left: 6px; }
+        .log-item.log-dup { opacity: 0.72; border-style: dashed; }
         .log-no-match { text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 18px 0; }
         mark.search-hit { background: #fde68a; color: inherit; border-radius: 2px; padding: 0 1px; }
         .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;}
@@ -1474,6 +1491,14 @@
             </div>
             <span class="log-search-count" id="log-search-count"></span>
         </div>
+        <div class="log-group-bar" id="log-group-bar">
+            <span class="lg-label">Organize by</span>
+            <button type="button" class="lg-btn" data-mode="day" onclick="setLogGroup('day')" title="One section per day">📅 Day</button>
+            <button type="button" class="lg-btn" data-mode="week" onclick="setLogGroup('week')" title="One section per week (Mon–Sun), with the days inside">🗓 Week</button>
+            <button type="button" class="lg-btn" data-mode="project" onclick="setLogGroup('project')" title="One section per project">📁 Project</button>
+            <button type="button" class="lg-btn" data-mode="tag" onclick="setLogGroup('tag')" title="One section per #keyword you write in your entries, e.g. #manuscript">＃ Keyword</button>
+            <button type="button" class="lg-btn lg-all" onclick="toggleAllLogGroups()" title="Collapse or expand every section">⇅</button>
+        </div>
         <div id="log-list"></div>
     </div>
 
@@ -1509,7 +1534,7 @@
                 <div class="guide-grid">
                     <div class="guide-card"><b>📊 Summary</b>Timeline, By Project, or Time Spent for any day. Copy it, print it, or send it to Google Calendar.</div>
                     <div class="guide-card"><b>📅 Week</b>Your whole week at a glance, as stacked bars or on a time axis.</div>
-                    <div class="guide-card"><b>Log list</b>Search your entries, then use <strong>📋</strong> copy, <strong>📅</strong> calendar, <strong>✏️</strong> edit, <strong>🗑️</strong> delete. <strong>🛑 Wrap up</strong> closes off the day's last block. <strong>Export .md</strong> downloads everything.</div>
+                    <div class="guide-card"><b>Log list</b>Organize it by <strong>Day, Week, Project or #Keyword</strong> (write #words in your notes), click a section title to fold it. Search your entries, then use <strong>📋</strong> copy, <strong>📅</strong> calendar, <strong>✏️</strong> edit, <strong>🗑️</strong> delete. <strong>🛑 Wrap up</strong> closes off the day's last block. <strong>Export .md</strong> downloads everything.</div>
                     <div class="guide-card"><b>🌙 Daily reflection · ☀ Office start</b>Switch the note box to end-of-day reflection questions, or to a morning checklist where you click each ☐ to tick it off. Either one also starts a 30-minute focus block for you.</div>
                 </div>
 
@@ -2617,52 +2642,184 @@
         setLogFilter('');
     };
 
+    // ============================================================
+    // ORGANISE THE LOG: group by Day / Week / Project / #Tag (keyword)
+    // ============================================================
+    let LOG_GROUP = 'day';
+    try { const g = localStorage.getItem('thepause_log_group'); if (g === 'day' || g === 'week' || g === 'project' || g === 'tag') LOG_GROUP = g; } catch (e) {}
+    const LOG_COLLAPSED = new Set();
+    let _grpFullKeys = [];
+
+    // per-entry time spent, computed day by day exactly like the Summary view
+    function entryDurationMap() {
+        const byDay = {}, map = new Map();
+        logs.forEach(function (l) {
+            if (typeof l.timestamp !== 'number' || isNaN(l.timestamp)) return;
+            (byDay[dateKey(l.timestamp)] = byDay[dateKey(l.timestamp)] || []).push(l);
+        });
+        Object.keys(byDay).forEach(function (k) {
+            const dayLogs = byDay[k].slice().sort(function (a, b) { return a.timestamp - b.timestamp; });
+            const next = new Date(k + 'T00:00:00'); next.setDate(next.getDate() + 1);
+            const cap = Math.min(Date.now(), next.getTime());
+            timeSegments(dayLogs, cap).forEach(function (seg) { map.set(seg.log, Math.max(0, seg.endMs - seg.startMs)); });
+        });
+        return map;
+    }
+    // #keywords written in an entry (letters of any language, digits, _ and -)
+    function logTags(text) {
+        const out = [], seen = {};
+        const re = /(^|[\s(（])#([\p{L}\p{N}_\-]+)/gu;
+        let m;
+        while ((m = re.exec(text || ''))) {
+            const k = m[2].toLowerCase();
+            if (!seen[k]) { seen[k] = 1; out.push({ key: k, label: m[2] }); }
+        }
+        return out;
+    }
+    function shortDateLabel(ms) {
+        const d = new Date(ms), o = { weekday: 'short', month: 'short', day: 'numeric' };
+        if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+        return d.toLocaleDateString('en-US', o);
+    }
+    function weekTitle(ms) {
+        const mon = getMondayOf(ms), sun = new Date(mon); sun.setDate(sun.getDate() + 6);
+        const o = { month: 'short', day: 'numeric' };
+        let t = mon.toLocaleDateString('en-US', o) + ' – ' + sun.toLocaleDateString('en-US', o);
+        if (sun.getFullYear() !== new Date().getFullYear()) t += ', ' + sun.getFullYear();
+        const thisMon = getMondayOf(Date.now()), lastMon = new Date(thisMon); lastMon.setDate(lastMon.getDate() - 7);
+        if (dateKey(mon.getTime()) === dateKey(thisMon.getTime())) t = 'This week · ' + t;
+        else if (dateKey(mon.getTime()) === dateKey(lastMon.getTime())) t = 'Last week · ' + t;
+        return t;
+    }
+    function syncLogGroupBar() {
+        document.querySelectorAll('.lg-btn').forEach(function (b) { b.classList.toggle('active', b.dataset.mode === LOG_GROUP); });
+    }
+    window.setLogGroup = function (mode) {
+        if (mode !== 'day' && mode !== 'week' && mode !== 'project' && mode !== 'tag') return;
+        LOG_GROUP = mode;
+        try { localStorage.setItem('thepause_log_group', mode); } catch (e) {}
+        syncLogGroupBar();
+        renderLogs();
+    };
+    window.toggleLogGroupOpen = function (i) {
+        const k = _grpFullKeys[i];
+        if (k === undefined) return;
+        if (LOG_COLLAPSED.has(k)) LOG_COLLAPSED.delete(k); else LOG_COLLAPSED.add(k);
+        renderLogs();
+    };
+    window.toggleAllLogGroups = function () {
+        const allClosed = _grpFullKeys.length > 0 && _grpFullKeys.every(function (k) { return LOG_COLLAPSED.has(k); });
+        _grpFullKeys.forEach(function (k) { if (allClosed) LOG_COLLAPSED.delete(k); else LOG_COLLAPSED.add(k); });
+        renderLogs();
+    };
+
     function renderLogs() {
         const logList = document.getElementById('log-list');
         if (!logList) return;
         logList.innerHTML = '';
         const countEl = document.getElementById('log-search-count');
         const terms = logFilterTerms();
+        _grpFullKeys = [];
         if (logs.length === 0) { if (countEl) countEl.textContent = ''; return; }
 
-        const grouped = {};
-        let shown = 0;
-        logs.forEach((log, originalIndex) => {
-            if (!logMatches(log, terms)) return;
-            shown++;
-            const ts = log.timestamp || null;
-            const key = ts ? dateKey(ts) : 'undated';
-            if (!grouped[key]) grouped[key] = { key: key, ts: ts, entries: [] };
-            grouped[key].entries.push({ log: log, idx: originalIndex });
-        });
-
+        const matched = [];
+        logs.forEach(function (log, idx) { if (logMatches(log, terms)) matched.push({ log: log, idx: idx }); });
+        const shown = matched.length;
         if (countEl) countEl.textContent = terms.active ? shown + ' of ' + logs.length : '';
         if (terms.active && shown === 0) {
             logList.innerHTML = '<div class="log-no-match">No entries match “' + escapeHtml(LOG_FILTER) + '”.</div>';
             return;
         }
 
-        const dayKeys = Object.keys(grouped).sort((a, b) => {
-            if (a === 'undated') return 1;
-            if (b === 'undated') return -1;
-            return b.localeCompare(a);
+        const durMap = entryDurationMap();
+        const tsOf = function (l) { return (typeof l.timestamp === 'number' && !isNaN(l.timestamp)) ? l.timestamp : null; };
+        const groups = new Map();
+        const put = function (key, title, entry, extra) {
+            let g = groups.get(key);
+            if (!g) { g = { key: key, title: title, latest: -1, entries: [], last: false }; groups.set(key, g); }
+            const ts = tsOf(entry.log);
+            if (ts !== null && ts > g.latest) g.latest = ts;
+            g.entries.push(Object.assign({ log: entry.log, idx: entry.idx, dup: false }, extra || {}));
+            return g;
+        };
+
+        matched.forEach(function (e) {
+            const ts = tsOf(e.log);
+            if (LOG_GROUP === 'day') {
+                put(ts ? dateKey(ts) : 'undated', ts ? relativeDateLabel(ts) : 'Undated entries', e);
+            } else if (LOG_GROUP === 'week') {
+                const g = ts ? put(dateKey(getMondayOf(ts).getTime()), weekTitle(ts), e) : put('undated', 'Undated entries', e);
+            } else if (LOG_GROUP === 'project') {
+                const name = (e.log.project || DEFAULT_PROJECT).trim() || DEFAULT_PROJECT;
+                put(name.toLowerCase(), '📁 ' + name, e);
+            } else {
+                const tags = logTags(e.log.text);
+                if (!tags.length) { const g = put('~none', 'No #tag yet', e); g.last = true; }
+                else tags.forEach(function (t, n) { put(t.key, '#' + t.label, e, { dup: n > 0, also: tags.length > 1 ? tags.filter(function (x) { return x.key !== t.key; }).map(function (x) { return '#' + x.label; }).join(' ') : '' }); });
+            }
         });
 
-        dayKeys.forEach(dayKey_ => {
-            const day = grouped[dayKey_];
-            const divider = document.createElement('div');
-            divider.className = 'day-divider';
-            divider.textContent = dayKey_ === 'undated'
-                ? 'Undated entries'
-                : relativeDateLabel(day.ts);
-            logList.appendChild(divider);
-            day.entries.forEach(({ log, idx }) => {
-                logList.appendChild(renderLogItem(log, idx));
+        const list = Array.from(groups.values());
+        if (LOG_GROUP === 'day' || LOG_GROUP === 'week') {
+            list.sort(function (a, b) {
+                if (a.key === 'undated') return 1; if (b.key === 'undated') return -1;
+                return b.key.localeCompare(a.key);
+            });
+        } else {
+            list.sort(function (a, b) { if (a.last !== b.last) return a.last ? 1 : -1; return b.latest - a.latest; });
+        }
+
+        list.forEach(function (g, gi) {
+            if (LOG_GROUP !== 'day') {
+                g.entries.sort(function (a, b) { const x = tsOf(a.log), y = tsOf(b.log); if (x === null) return 1; if (y === null) return -1; return y - x; });
+            }
+            const full = LOG_GROUP + '|' + g.key;
+            _grpFullKeys.push(full);
+            const closed = LOG_COLLAPSED.has(full);
+            let ms = 0;
+            g.entries.forEach(function (en) {
+                if (LOG_GROUP !== 'project' && isSpecialProject(en.log.project || DEFAULT_PROJECT)) return;
+                ms += durMap.get(en.log) || 0;
+            });
+            const n = g.entries.length;
+            const head = document.createElement('div');
+            head.className = 'day-divider grp-header' + (closed ? ' collapsed' : '');
+            head.setAttribute('onclick', 'toggleLogGroupOpen(' + gi + ')');
+            head.title = closed ? 'Click to expand' : 'Click to collapse';
+            head.innerHTML = '<span class="grp-caret">' + (closed ? '▸' : '▾') + '</span><span class="grp-title">' + escapeHtml(g.title) + '</span>' +
+                '<span class="grp-meta">' + n + (n === 1 ? ' entry' : ' entries') + (ms >= 60000 ? ' · ⏱ ' + formatDuration(ms) : '') + '</span>';
+            logList.appendChild(head);
+            if (closed) return;
+
+            let lastDay = null;
+            g.entries.forEach(function (en) {
+                if (LOG_GROUP === 'week') {
+                    const ts = tsOf(en.log), dk = ts ? dateKey(ts) : 'undated';
+                    if (dk !== lastDay) {
+                        const sd = document.createElement('div');
+                        sd.className = 'sub-day';
+                        sd.textContent = ts ? relativeDateLabel(ts) : 'Undated';
+                        logList.appendChild(sd);
+                        lastDay = dk;
+                    }
+                }
+                const showDate = (LOG_GROUP === 'project' || LOG_GROUP === 'tag') && tsOf(en.log) !== null;
+                const el = renderLogItem(en.log, en.idx, { showDate: showDate });
+                if (en.dup) {   // same entry listed under a second #tag: a read-only copy, so ids and editing never clash
+                    el.id = el.id + '-dup-' + gi;
+                    ['.log-actions', '.log-edit-area'].forEach(function (sel) { const x = el.querySelector(sel); if (x) x.remove(); });
+                    el.classList.add('log-dup');
+                    el.title = 'Listed here too because of its #tag. Edit it under its first tag.';
+                } else if (LOG_GROUP === 'tag' && en.also) {
+                    const meta = el.querySelector('.log-meta');
+                    if (meta) meta.insertAdjacentHTML('beforeend', '<span class="log-also" title="This entry also has these tags">' + escapeHtml(en.also) + '</span>');
+                }
+                logList.appendChild(el);
             });
         });
     }
 
-    function renderLogItem(log, index) {
+    function renderLogItem(log, index, opts) {
         const logDiv = document.createElement('div');
         logDiv.className = 'log-item';
         logDiv.id = `log-item-${index}`;
@@ -2679,6 +2836,7 @@
         logDiv.innerHTML = `
             <div class="log-header-row">
                 <div class="log-meta">
+                    ${opts && opts.showDate ? `<span class="log-date">${escapeHtml(shortDateLabel(log.timestamp))}</span>` : ''}
                     <span class="log-time">${entryTimeLabel(log)}</span>
                     <span class="project-tag">${highlightHtml(project, hlTerms)}</span>
                 </div>
@@ -4413,6 +4571,7 @@
             loadPreset();
             maybeShowFirstRunTip();
             maybeShowGuide();
+            syncLogGroupBar();
             initFocusDial();
             loadSession();
             if (SESSION.startTs) { ensureSessionTicker(); updateSessionUI(); }
