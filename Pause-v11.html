@@ -566,6 +566,8 @@
 
         .log-section { width: 100%; }
         .log-search { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+        .log-project-filter { margin-top: -4px; }
+        .log-search-box input::-webkit-search-cancel-button, .log-search-box input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }
         .log-search-box { position: relative; flex: 1; }
         .log-search-box input {
             width: 100%; box-sizing: border-box; padding: 7px 30px 7px 30px;
@@ -1548,6 +1550,14 @@
             <span class="log-search-count" id="log-search-count"></span>
             <button type="button" class="lg-btn report-open-btn" onclick="openResults()" title="Open the entries shown below as a clean report you can copy or save as PDF">📑 Report</button>
         </div>
+        <div class="log-search log-project-filter">
+            <div class="log-search-box" id="log-proj-box">
+                <span class="ls-icon">📁</span>
+                <input type="search" id="log-project-input" list="log-project-filter-list" placeholder="Project name only — pick one or type to filter…" title="Matches the project name only, not the notes. Pick an existing project from the list, or type part of a name." spellcheck="false" autocomplete="off" oninput="setLogProjectFilter(this.value)">
+                <button type="button" class="ls-clear" onclick="clearLogProjectFilter()" title="Clear project filter">✕</button>
+                <datalist id="log-project-filter-list"></datalist>
+            </div>
+        </div>
         <div class="log-group-bar" id="log-group-bar">
             <span class="lg-label">Organize by</span>
             <button type="button" class="lg-btn" data-mode="day" onclick="setLogGroup('day')" title="One section per day">📅 Day</button>
@@ -1616,7 +1626,7 @@
                 <div class="guide-grid">
                     <div class="guide-card"><b>📊 Summary</b>Timeline, By Project, or Time Spent for any day. Copy it, print it, or send it to Google Calendar.</div>
                     <div class="guide-card"><b>📅 Week</b>Your whole week at a glance, as stacked bars or on a time axis.</div>
-                    <div class="guide-card"><b>Log list</b>Organize it by <strong>Day, Week, Project or #Keyword</strong> (write #words in your notes), click a section title to fold it. <strong>📑 Report</strong> opens what you see as a clean page to copy or save as PDF. Search your entries, then use <strong>📋</strong> copy, <strong>📅</strong> calendar, <strong>✏️</strong> edit, <strong>🗑️</strong> delete. <strong>🛑 Wrap up</strong> closes off the day's last block. <strong>Export .md</strong> downloads everything.</div>
+                    <div class="guide-card"><b>Log list</b>Organize it by <strong>Day, Week, Project or #Keyword</strong> (write #words in your notes), click a section title to fold it. <strong>📑 Report</strong> opens what you see as a clean page to copy or save as PDF. Search your entries (the 📁 box filters by project name only), then use <strong>📋</strong> copy, <strong>📅</strong> calendar, <strong>✏️</strong> edit, <strong>🗑️</strong> delete. <strong>🛑 Wrap up</strong> closes off the day's last block. <strong>Export .md</strong> downloads everything.</div>
                     <div class="guide-card"><b>🌙 Daily reflection · ☀ Office start</b>Switch the note box to end-of-day reflection questions, or to a morning checklist where you click each ☐ to tick it off. Either one also starts a 30-minute focus block for you.</div>
                 </div>
 
@@ -2615,7 +2625,10 @@
         const ow = document.getElementById('results-open-wrap');
         if (ow) ow.style.display = d.folded ? '' : 'none';
         const skipNote = (d.onlyOpen && d.folded) ? ' &nbsp;·&nbsp; <span title="Folded in the log list">' + d.folded + ' folded ' + (d.folded === 1 ? 'section' : 'sections') + ' left out</span>' : '';
-        const filterHtml = LOG_FILTER ? '<span class="rd-filter">🔍 ' + escapeHtml(LOG_FILTER) + '</span>' : '<span class="rd-filter" style="background:#e0f2fe;color:#075985">All entries</span>';
+        const chips = [];
+        if (LOG_PROJECT) chips.push('<span class="rd-filter" style="background:#dbeafe;color:#1e40af">📁 ' + escapeHtml(LOG_PROJECT) + '</span>');
+        if (LOG_FILTER) chips.push('<span class="rd-filter">🔍 ' + escapeHtml(LOG_FILTER) + '</span>');
+        const filterHtml = chips.length ? chips.join(' ') : '<span class="rd-filter" style="background:#e0f2fe;color:#075985">All entries</span>';
         let h = '<h1 class="rd-title">Log report</h1>' +
             '<p class="rd-sub">' + filterHtml + ' &nbsp;·&nbsp; organized by ' + GROUP_NAMES[LOG_GROUP] + skipNote + '</p>' +
             '<div class="rd-stats">' +
@@ -2664,7 +2677,7 @@
     function reportPlainText() {
         const d = reportData(), n = d.matched.length;
         const out = [];
-        out.push('LOG REPORT' + (LOG_FILTER ? ' — “' + LOG_FILTER + '”' : ' — all entries'));
+        out.push('LOG REPORT' + ((LOG_PROJECT || LOG_FILTER) ? ' — ' + [LOG_PROJECT ? 'project: ' + LOG_PROJECT : '', LOG_FILTER ? '“' + LOG_FILTER + '”' : ''].filter(Boolean).join(' + ') : ' — all entries'));
         out.push(n + (n === 1 ? ' entry' : ' entries') + (d.totalMs >= 60000 ? ' · ⏱ ' + formatDuration(d.totalMs) : '') + ' · ' + reportSpan(d) + ' · by ' + GROUP_NAMES[LOG_GROUP] + (d.onlyOpen && d.folded ? ' · ' + d.folded + ' folded section(s) left out' : ''));
         d.list.forEach(function (g) {
             const cnt = g.entries.length;
@@ -2810,6 +2823,7 @@
         return words;
     }
     function logMatches(log, terms) {
+        if (!projectMatches(log)) return false;
         if (!terms.active) return true;
         if (terms.dates && terms.dates.length) {
             if (typeof log.timestamp !== 'number') return false;
@@ -2858,6 +2872,40 @@
         }
         return out;
     }
+    // Project-name filter: matches the project title ONLY (never the note text).
+    // An exact existing name shows just that project; anything else is matched as part of a name.
+    let LOG_PROJECT = '';
+    let LOG_PROJECT_NAMES = new Set();
+    function projectMatches(log) {
+        if (!LOG_PROJECT) return true;
+        const name = (log.project || DEFAULT_PROJECT).trim().toLowerCase();
+        const q = LOG_PROJECT.toLowerCase();
+        return LOG_PROJECT_NAMES.has(q) ? name === q : name.indexOf(q) !== -1;
+    }
+    function refreshProjectFilterList() {
+        const counts = new Map();   // lower-case name -> { label, n }
+        logs.forEach(function (l) {
+            const label = (l.project || DEFAULT_PROJECT).trim() || DEFAULT_PROJECT, k = label.toLowerCase();
+            const c = counts.get(k) || { label: label, n: 0 };
+            c.n++; counts.set(k, c);
+        });
+        LOG_PROJECT_NAMES = new Set(counts.keys());
+        const dl = document.getElementById('log-project-filter-list');
+        if (!dl) return;
+        dl.innerHTML = Array.from(counts.values()).sort(function (a, b) { return a.label.localeCompare(b.label); })
+            .map(function (c) { return '<option value="' + escapeHtml(c.label) + '" label="' + c.n + (c.n === 1 ? ' entry' : ' entries') + '"></option>'; }).join('');
+    }
+    window.setLogProjectFilter = function (v) {
+        LOG_PROJECT = (v || '').trim();
+        const box = document.getElementById('log-proj-box');
+        if (box) box.classList.toggle('has-text', (v || '').length > 0);
+        renderLogs();
+    };
+    window.clearLogProjectFilter = function () {
+        const inp = document.getElementById('log-project-input');
+        if (inp) inp.value = '';
+        setLogProjectFilter('');
+    };
     window.setLogFilter = function (v) {
         LOG_FILTER = (v || '').trim();
         const box = document.getElementById('log-search-box');
@@ -3011,14 +3059,16 @@
         const countEl = document.getElementById('log-search-count');
         const terms = logFilterTerms();
         _grpFullKeys = [];
+        refreshProjectFilterList();
         if (logs.length === 0) { if (countEl) countEl.textContent = ''; syncAllToggleBtn(); return; }
 
         const matched = [];
         logs.forEach(function (log, idx) { if (logMatches(log, terms)) matched.push({ log: log, idx: idx }); });
         const shown = matched.length;
-        if (countEl) countEl.textContent = terms.active ? shown + ' of ' + logs.length : '';
-        if (terms.active && shown === 0) {
-            logList.innerHTML = '<div class="log-no-match">No entries match “' + escapeHtml(LOG_FILTER) + '”.</div>';
+        const filtering = terms.active || !!LOG_PROJECT;
+        if (countEl) countEl.textContent = filtering ? shown + ' of ' + logs.length : '';
+        if (filtering && shown === 0) {
+            logList.innerHTML = '<div class="log-no-match">No entries match ' + [LOG_PROJECT ? 'project “' + escapeHtml(LOG_PROJECT) + '”' : '', LOG_FILTER ? '“' + escapeHtml(LOG_FILTER) + '”' : ''].filter(Boolean).join(' + ') + '.</div>';
             syncAllToggleBtn();
             return;
         }
