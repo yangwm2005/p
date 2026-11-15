@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>🔁 Mindful Reflections | Daily Journal v25.4</title>
+    <title>🔁 Mindful Reflections | Daily Journal v26</title>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
         /* ── Google Drive Sync Panel ── */
         .gdrive-panel {
@@ -3288,6 +3289,7 @@ input:checked + .slider:before {
                     <button class="mobile-action-btn mab-export" id="mob-export-btn">📤 Export</button>
                     <label  class="mobile-action-btn mab-load"   for="mob-file-input">📂 Load JSON</label>
                     <button class="mobile-action-btn mab-clear"  id="mob-clear-btn">🗑 Clear</button>
+                    <button class="mobile-action-btn mab-save" id="mob-cal-btn" style="grid-column: span 2;">📅 Send Day to Calendar</button>
                 </div>
                 <input type="file" id="mob-file-input" style="display:none" accept=".json">
             </div>
@@ -3558,6 +3560,7 @@ input:checked + .slider:before {
                         <div style="display: flex; align-items: center; gap: 10px;">
                             <span class="reflection-date" id="current-date"></span>
                             <span id="morning-autosave" class="autosave-indicator"></span>
+                            <button class="rf-cal-btn" data-cal-scope="morning" title="Send Morning Reflection to Google Calendar">📅</button>
                             <button class="section-popout-btn" data-section="morning" style="background: none; border: none; cursor: pointer; font-size: 1.2rem; padding: 5px; border-radius: 4px; transition: all 0.2s;" title="Open in popout window" onmouseover="this.style.backgroundColor='var(--light-color)'" onmouseout="this.style.backgroundColor='transparent'">
                                 🪟
                             </button>
@@ -3578,6 +3581,7 @@ input:checked + .slider:before {
                         <div style="display: flex; align-items: center; gap: 10px;">
                             <span class="reflection-date" id="current-date-self"></span>
                             <span id="selfaware-autosave" class="autosave-indicator"></span>
+                            <button class="rf-cal-btn" data-cal-scope="selfaware" title="Send Self-awareness Log to Google Calendar">📅</button>
                             <button class="section-popout-btn" data-section="selfaware" style="background: none; border: none; cursor: pointer; font-size: 1.2rem; padding: 5px; border-radius: 4px; transition: all 0.2s;" title="Open in popout window" onmouseover="this.style.backgroundColor='var(--light-color)'" onmouseout="this.style.backgroundColor='transparent'">
                                 🪟
                             </button>
@@ -3622,6 +3626,7 @@ input:checked + .slider:before {
                         <div style="display: flex; align-items: center; gap: 10px;">
                             <span class="reflection-date" id="current-date-night"></span>
                             <span id="night-autosave" class="autosave-indicator"></span>
+                            <button class="rf-cal-btn" data-cal-scope="night" title="Send Evening Reflection to Google Calendar">📅</button>
                             <button class="section-popout-btn" data-section="night" style="background: none; border: none; cursor: pointer; font-size: 1.2rem; padding: 5px; border-radius: 4px; transition: all 0.2s;" title="Open in popout window" onmouseover="this.style.backgroundColor='var(--light-color)'" onmouseout="this.style.backgroundColor='transparent'">
                                 🪟
                             </button>
@@ -3699,6 +3704,9 @@ input:checked + .slider:before {
                         </label>
                         <button class="btn-primary" id="export-btn">
                             <span class="btn-icon">📤</span> Export
+                        </button>
+                        <button class="btn-primary" id="rf-cal-day-btn" style="background: linear-gradient(135deg, #10b981, #059669);">
+                            <span class="btn-icon">📅</span> Send Day to Calendar
                         </button>
                         <button class="btn-primary" id="dynalist-export-btn">
                             <span class="btn-icon">📝</span> Export to Dynalist
@@ -3936,7 +3944,7 @@ input:checked + .slider:before {
 
     <footer>
         <div class="footer-content">
-            <p>Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. v2.4 with Claude AI Analyze API key</p>
+            <p>Copyright © 2026 Dr. Wen-Ming Yang. All rights reserved. v2.6 with Claude AI Analyze API key + Google Calendar</p>
         </div>
     </footer>
 
@@ -6040,6 +6048,8 @@ if (timestripeBtn) {
             let gdriveSyncTimer = null;
             let gdrivePollInterval = null;
             let gdriveLastSavedAt = 0;
+            // Exposed so the Google Calendar module (separate script below) can use the same sign-in
+            window._rfCloud = { user: function(){ return fbUser; }, db: function(){ return fbDb; } };
 
             function isAutoSyncEnabled(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
 
@@ -7688,5 +7698,357 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
     })();
     </script>
     <!-- END AI WEEK ANALYSIS JAVASCRIPT -->
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GOOGLE CALENDAR — send reflections (with date & time) to a
+         dedicated "Mindful Reflections" calendar. Ported from The Pause v11.
+         Uses the same Google OAuth client; this page's origin must be in
+         "Authorized JavaScript origins" (same host as Pause = already fine).
+    ════════════════════════════════════════════════════════════════ -->
+    <div class="rf-toast" id="rfCalToast"></div>
+    <div class="rf-modal-backdrop hidden" id="rfCalModalBackdrop">
+        <div class="rf-modal">
+            <div class="rf-modal-title">📅 Send to Calendar</div>
+            <div class="rf-modal-text" id="rfCalModalNote"></div>
+            <button type="button" class="rf-opt-btn" id="rfCalAllDayBtn">🗓️ Whole-day event</button>
+            <button type="button" class="rf-opt-btn" id="rfCalTimedBtn">🕐 Timed event</button>
+            <div class="rf-date-pick-row" id="rfCalDateRow">
+                <input type="date" id="rfCalDateInput" title="Choose the day for a whole-day event">
+            </div>
+            <button type="button" class="rf-cancel-btn" id="rfCalCancelBtn">Cancel</button>
+        </div>
+    </div>
+    <style>
+    .rf-cal-btn { background: none; border: none; cursor: pointer; font-size: 1.2rem; padding: 5px; border-radius: 4px; transition: all 0.2s; }
+    .rf-cal-btn:hover { background-color: var(--light-color); transform: none; box-shadow: none; }
+    .rf-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(8px); background: #1e293b; color: #f8fafc; padding: 0.55rem 1.1rem; border-radius: 999px; font-size: 0.82rem; box-shadow: 0 10px 30px rgba(0,0,0,0.25); z-index: 3100; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none; max-width: 90vw; text-align: center; }
+    .rf-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .rf-toast.error { background: #b91c1c; }
+    .rf-modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: flex; align-items: center; justify-content: center; z-index: 3200; padding: 16px; }
+    .rf-modal-backdrop.hidden { display: none; }
+    .rf-modal { background: #fff; border-radius: 16px; padding: 22px 22px 18px; max-width: 380px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,0.25); }
+    .rf-modal-title { font-weight: 600; font-size: 1.05rem; color: #1e293b; margin-bottom: 6px; }
+    .rf-modal-text { font-size: 0.85rem; color: #64748b; margin-bottom: 16px; max-height: 110px; overflow-y: auto; white-space: pre-wrap; line-height: 1.4; }
+    .rf-opt-btn { display: block; width: 100%; text-align: left; background: #f1f5f9; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 10px 14px; font-size: 0.9rem; font-family: inherit; color: #1e293b; cursor: pointer; margin-bottom: 8px; justify-content: flex-start; font-weight: 500; }
+    .rf-opt-btn:hover { background: #e2e8f0; border-color: #cbd5e1; transform: none; box-shadow: none; }
+    .rf-date-pick-row { margin-bottom: 8px; }
+    .rf-date-pick-row input[type="date"] { width: 100%; padding: 9px 10px; border-radius: 12px; border: 1.5px solid #e2e8f0; font-family: inherit; font-size: 0.88rem; }
+    .rf-cancel-btn { display: block; width: 100%; text-align: center; background: none; border: none; padding: 8px; font-size: 0.85rem; color: #94a3b8; cursor: pointer; margin-top: 4px; justify-content: center; }
+    .rf-cancel-btn:hover { color: #475569; background: none; transform: none; box-shadow: none; }
+    @media print { .rf-toast, .rf-modal-backdrop, .rf-cal-btn { display: none !important; } }
+    </style>
+    <script>
+    (function () {
+        const GCAL_SCOPE = 'https://www.googleapis.com/auth/calendar';
+        const GCAL_CALENDAR_NAME = 'Mindful Reflections';
+        const GCAL_CLIENT_ID = '663058774385-0209ekni5vchpbf9mr3rkofd369hrhr3.apps.googleusercontent.com';
+        const TITLE_ICON = '🌅 ';
+        const SECTIONS = {
+            morning:   { icon: '☀️', label: 'Morning Reflection', tsKey: '_ts_morning',   el: function(){ return document.getElementById('morning-text'); } },
+            selfaware: { icon: '🧠', label: 'Self-awareness Log', tsKey: '_ts_selfaware', el: function(){ return document.getElementById('selfaware-text'); } },
+            night:     { icon: '🌙', label: 'Evening Reflection', tsKey: '_ts_night',     el: function(){ return document.getElementById('night-text'); } }
+        };
+
+        let gcalAccessToken = null, gcalTokenObtainedAt = 0, gcalCalendarId = null;
+        let gcalCreatingCalendar = null, gcalCalendarIdVerifiedAt = 0;
+        let gisTokenClient = null, calendarReconnectPromise = null, silentReconnectResolvers = [];
+        let pendingJob = null, pendingJobAt = 0;
+        let currentScope = 'all';   // 'all' | 'morning' | 'selfaware' | 'night'
+        let currentDay = null;      // snapshot of the day being sent
+
+        const toastEl = document.getElementById('rfCalToast');
+        const backdrop = document.getElementById('rfCalModalBackdrop');
+        const dateInput = document.getElementById('rfCalDateInput');
+
+        function pad2(n) { return String(n).padStart(2, '0'); }
+        function ymd(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+        function fmtTime(ms) { return new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); }
+        function fmtLongDate(d) { return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }); }
+        function tokenIsFresh() { return !!gcalAccessToken && (Date.now() - gcalTokenObtainedAt) < 50 * 60 * 1000; }
+        function cloud() { return window._rfCloud || null; }
+        function user() { const c = cloud(); return c ? c.user() : null; }
+        function toast(message, isError) {
+            toastEl.textContent = message;
+            toastEl.classList.toggle('error', !!isError);
+            toastEl.classList.add('show');
+            clearTimeout(toast._t);
+            toast._t = setTimeout(function () { toastEl.classList.remove('show'); }, 3200);
+        }
+
+        // ── Google Identity Services token client ──
+        function initGis() {
+            if (gisTokenClient) return gisTokenClient;
+            if (!window.google || !google.accounts || !google.accounts.oauth2) return null;
+            gisTokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: GCAL_CLIENT_ID,
+                scope: GCAL_SCOPE,
+                callback: function (resp) {
+                    const resolvers = silentReconnectResolvers.splice(0);
+                    if (resp && resp.access_token) {
+                        gcalAccessToken = resp.access_token;
+                        gcalTokenObtainedAt = Date.now();
+                        resolvers.forEach(function (fn) { fn(true); });
+                        if (pendingJob && (Date.now() - pendingJobAt) < 5 * 60 * 1000) {
+                            const j = pendingJob; pendingJob = null; sendEvents(j);
+                        } else { pendingJob = null; }
+                    } else {
+                        resolvers.forEach(function (fn) { fn(false); });
+                        if (resolvers.length === 0) toast('⚠️ Calendar connection failed', true);
+                    }
+                },
+                error_callback: function (err) {
+                    const resolvers = silentReconnectResolvers.splice(0);
+                    resolvers.forEach(function (fn) { fn(false); });
+                    if (err && err.type === 'popup_failed_to_open') { toast('⚠️ Popup blocked — allow popups, then click 📅 again', true); return; }
+                    if (err && err.type === 'popup_closed') return;
+                    console.warn('GIS token error:', err);
+                    if (resolvers.length === 0) toast('⚠️ Calendar connection failed', true);
+                }
+            });
+            return gisTokenClient;
+        }
+
+        function ensureConnected() {
+            if (tokenIsFresh()) return Promise.resolve(true);
+            if (!user()) return Promise.resolve(false);
+            if (calendarReconnectPromise) return calendarReconnectPromise;
+            const client = initGis();
+            if (!client) return Promise.resolve(false);
+            calendarReconnectPromise = new Promise(function (resolve) {
+                let settled = false;
+                const finish = function (ok) { if (settled) return; settled = true; calendarReconnectPromise = null; resolve(ok); };
+                silentReconnectResolvers.push(finish);
+                toast('🔑 Connecting to Google Calendar…');
+                setTimeout(function () { finish(tokenIsFresh()); }, 90000);
+                try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
+            });
+            return calendarReconnectPromise;
+        }
+
+        async function gcalFetch(path, options) {
+            if (!tokenIsFresh()) return null;
+            let res;
+            try {
+                res = await fetch('https://www.googleapis.com/calendar/v3/' + path, Object.assign({
+                    headers: Object.assign({ 'Authorization': 'Bearer ' + gcalAccessToken, 'Content-Type': 'application/json' }, (options && options.headers) || {})
+                }, options || {}));
+            } catch (e) { console.warn('Calendar request failed:', e); return null; }
+            if (res.status === 401) { gcalAccessToken = null; return null; }
+            return res;
+        }
+
+        // ── Find / create the dedicated calendar ──
+        async function findExistingCalendarId() {
+            const res = await gcalFetch('users/me/calendarList?maxResults=250');
+            if (!res || !res.ok) return null;
+            const list = await res.json();
+            const matches = ((list && list.items) || []).filter(function (c) {
+                return (c.summaryOverride || c.summary) === GCAL_CALENDAR_NAME && c.accessRole === 'owner';
+            });
+            if (!matches.length) return null;
+            matches.sort(function (a, b) { return a.id.localeCompare(b.id); });
+            return matches[0].id;
+        }
+        async function calendarStillExists(id) {
+            if (!id) return false;
+            const res = await gcalFetch('calendars/' + encodeURIComponent(id));
+            return !!(res && res.ok);
+        }
+        function settingsRef() {
+            const c = cloud(), u = user();
+            if (!c || !u || !c.db()) return null;
+            return c.db().collection('users').doc(u.uid).collection('reflectionData').doc('calendar');
+        }
+        async function ensureCalendarId() {
+            if (gcalCalendarId) {
+                if (Date.now() - gcalCalendarIdVerifiedAt < 5 * 60 * 1000) return gcalCalendarId;
+                if (await calendarStillExists(gcalCalendarId)) { gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId; }
+                gcalCalendarId = null;
+            }
+            if (gcalCreatingCalendar) return gcalCreatingCalendar;
+            gcalCreatingCalendar = (async function () {
+                try {
+                    const ref = settingsRef();
+                    if (ref) {
+                        try {
+                            const doc = await ref.get();
+                            const savedId = doc.exists && doc.data().calendarId;
+                            if (savedId && await calendarStillExists(savedId)) {
+                                gcalCalendarId = savedId; gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId;
+                            }
+                        } catch (e) { console.warn('Calendar settings read failed (falling back to name lookup):', e); }
+                    }
+                    const foundId = await findExistingCalendarId();
+                    if (foundId) {
+                        gcalCalendarId = foundId; gcalCalendarIdVerifiedAt = Date.now();
+                        if (ref) ref.set({ calendarId: foundId }, { merge: true }).catch(function () {});
+                        return gcalCalendarId;
+                    }
+                    const res = await gcalFetch('calendars', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            summary: GCAL_CALENDAR_NAME,
+                            description: 'Auto-created by the Mindful Reflections app to hold reflections sent from it.',
+                            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                        })
+                    });
+                    if (!res || !res.ok) return null;
+                    const created = await res.json();
+                    gcalCalendarId = created.id; gcalCalendarIdVerifiedAt = Date.now();
+                    if (ref) ref.set({ calendarId: created.id }, { merge: true }).catch(function () {});
+                    return gcalCalendarId;
+                } finally { gcalCreatingCalendar = null; }
+            })();
+            return gcalCreatingCalendar;
+        }
+
+        // ── Snapshot of the day currently on screen (live textarea text, saved-at times from the data store) ──
+        function snapshotDay() {
+            const sd = (typeof selectedDate !== 'undefined') ? new Date(selectedDate) : new Date();
+            const ds = (typeof formatDate === 'function') ? formatDate(sd) : ymd(sd);
+            const stored = (typeof reflectionsData !== 'undefined' && reflectionsData[ds]) || {};
+            const sections = {};
+            Object.keys(SECTIONS).forEach(function (k) {
+                const el = SECTIONS[k].el();
+                const text = (el ? el.value : (stored[k] || '')).replace(/\s+$/, '').replace(/^\s*\n/, '');
+                sections[k] = { text: text, ts: stored[SECTIONS[k].tsKey] || stored._savedAt || null };
+            });
+            return { date: sd, ds: ds, sections: sections };
+        }
+        function includedKeys(day, scope) {
+            const keys = scope === 'all' ? Object.keys(SECTIONS) : [scope];
+            return keys.filter(function (k) { return day.sections[k].text.trim() !== ''; });
+        }
+
+        // ── Text for the event description ──
+        function buildDescription(day, keys) {
+            const out = [];
+            out.push('Mindful Reflections — ' + fmtLongDate(day.date));
+            out.push('');
+            keys.forEach(function (k) {
+                const sec = SECTIONS[k], d = day.sections[k];
+                out.push(sec.icon + ' ' + sec.label + (d.ts ? '  (saved ' + fmtTime(d.ts) + ')' : ''));
+                out.push(d.text);
+                out.push('');
+            });
+            while (out.length && out[out.length - 1] === '') out.pop();
+            return out.join('\n');
+        }
+        function eventTitle(day, scope) {
+            const d = day.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            if (scope === 'all') return TITLE_ICON + 'Reflections — ' + d;
+            return SECTIONS[scope].icon + ' ' + SECTIONS[scope].label + ' — ' + d;
+        }
+
+        // ── Time range for a timed event ──
+        // Prefer clock times written in the text ("• 9:15 am ..."); otherwise use the saved-at time; otherwise a sensible default.
+        function parseWrittenTimes(day, keys) {
+            const found = [];
+            const re = /(^|[\s•\-–(])(\d{1,2}):(\d{2})\s*(am|pm)\b/gi;
+            keys.forEach(function (k) {
+                let m;
+                re.lastIndex = 0;
+                const text = day.sections[k].text;
+                while ((m = re.exec(text)) !== null) {
+                    let h = parseInt(m[2], 10) % 12;
+                    if (m[4].toLowerCase() === 'pm') h += 12;
+                    const min = parseInt(m[3], 10);
+                    if (h <= 23 && min <= 59) { const t = new Date(day.date); t.setHours(h, min, 0, 0); found.push(t.getTime()); }
+                }
+            });
+            return found;
+        }
+        function timeRange(day, keys) {
+            const written = parseWrittenTimes(day, keys);
+            let start, end, basis;
+            if (written.length) {
+                start = Math.min.apply(null, written); end = Math.max.apply(null, written); basis = 'written';
+            } else {
+                const stamps = keys.map(function (k) { return day.sections[k].ts; }).filter(function (t) {
+                    return t && ymd(new Date(t)) === day.ds;
+                });
+                if (stamps.length) { start = Math.min.apply(null, stamps); end = Math.max.apply(null, stamps); basis = 'saved'; }
+                else {
+                    const defaults = { morning: 7, selfaware: 12, night: 21 };
+                    const h = keys.length === 1 ? defaults[keys[0]] : 8;
+                    const t = new Date(day.date); t.setHours(h, 0, 0, 0);
+                    start = t.getTime(); end = start; basis = 'default';
+                }
+            }
+            if (end - start < 30 * 60000) end = start + 30 * 60000;
+            return { start: start, end: end, basis: basis };
+        }
+
+        async function sendEvents(job) {
+            if (!user()) { toast('Please sign in (☁ Drive Sync) first, then click 📅 again.', true); return; }
+            toast('📤 Sending to Calendar…');
+            const connected = await ensureConnected();
+            if (!connected) {
+                pendingJob = job; pendingJobAt = Date.now();
+                toast('⚠️ Not connected yet — finish the Google popup (it will then send automatically)', true);
+                return;
+            }
+            const calendarId = await ensureCalendarId();
+            if (!calendarId) { toast('⚠️ Calendar sync failed', true); return; }
+            try {
+                const res = await gcalFetch('calendars/' + encodeURIComponent(calendarId) + '/events', { method: 'POST', body: JSON.stringify(job) });
+                if (res && res.ok) toast('✅ Added to Calendar “' + GCAL_CALENDAR_NAME + '”');
+                else toast('⚠️ Calendar sync failed', true);
+            } catch (e) { console.warn('Send to calendar failed:', e); toast('⚠️ Calendar sync failed', true); }
+        }
+
+        function buildAllDay(dateStr) {
+            const keys = includedKeys(currentDay, currentScope);
+            const day = Object.assign({}, currentDay, { date: new Date(dateStr + 'T12:00:00'), ds: dateStr });
+            const next = new Date(dateStr + 'T00:00:00'); next.setDate(next.getDate() + 1);
+            return { summary: eventTitle(day, currentScope), description: buildDescription(currentDay, keys), start: { date: dateStr }, end: { date: ymd(next) } };
+        }
+        function buildTimed() {
+            const keys = includedKeys(currentDay, currentScope);
+            const r = timeRange(currentDay, keys);
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const s = new Date(r.start); s.setSeconds(0, 0);
+            return { summary: eventTitle(currentDay, currentScope), description: buildDescription(currentDay, keys),
+                     start: { dateTime: s.toISOString(), timeZone: tz }, end: { dateTime: new Date(r.end).toISOString(), timeZone: tz } };
+        }
+
+        async function openCalendarModal(scope) {
+            if (!user()) { toast('Please sign in first (☁ Drive Sync → Sign in with Google), then click 📅 again.', true); return; }
+            const day = snapshotDay();
+            const keys = includedKeys(day, scope);
+            if (!keys.length) { toast('Nothing written in ' + (scope === 'all' ? 'this day' : SECTIONS[scope].label) + ' yet.', true); return; }
+            if (!tokenIsFresh()) {
+                if (!initGis()) { toast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+                const ok = await ensureConnected();
+                if (!ok) { toast('⚠️ Calendar not connected — finish the Google popup, then click 📅 again', true); return; }
+            }
+            currentScope = scope; currentDay = day;
+            const r = timeRange(day, keys);
+            const basisText = r.basis === 'written' ? 'from the times written in your notes' : r.basis === 'saved' ? 'from when the notes were saved' : 'default time — no times found';
+            document.getElementById('rfCalModalNote').textContent =
+                fmtLongDate(day.date) + '\n' + keys.map(function (k) { return SECTIONS[k].icon + ' ' + SECTIONS[k].label; }).join('  ·  ');
+            document.getElementById('rfCalTimedBtn').textContent = '🕐 Timed event ' + fmtTime(r.start) + '–' + fmtTime(r.end) + ' (' + basisText + ')';
+            dateInput.value = day.ds;
+            backdrop.classList.remove('hidden');
+        }
+        function closeModal() { backdrop.classList.add('hidden'); }
+
+        document.getElementById('rfCalCancelBtn').addEventListener('click', closeModal);
+        backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });
+        document.getElementById('rfCalAllDayBtn').addEventListener('click', function () {
+            const v = dateInput.value || currentDay.ds; closeModal(); sendEvents(buildAllDay(v));
+        });
+        document.getElementById('rfCalTimedBtn').addEventListener('click', function () { closeModal(); sendEvents(buildTimed()); });
+
+        document.querySelectorAll('.rf-cal-btn').forEach(function (b) {
+            b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); openCalendarModal(b.dataset.calScope); });
+        });
+        const dayBtn = document.getElementById('rf-cal-day-btn');
+        if (dayBtn) dayBtn.addEventListener('click', function () { openCalendarModal('all'); });
+        const mobBtn = document.getElementById('mob-cal-btn');
+        if (mobBtn) mobBtn.addEventListener('click', function () { openCalendarModal('all'); });
+    })();
+    </script>
+    
 </body>
 </html>
