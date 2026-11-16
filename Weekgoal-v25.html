@@ -1050,6 +1050,9 @@
     padding: 0 2px;
     cursor: text;
 }
+.cell-count-badge { display: inline-flex; gap: 5px; margin-left: 6px; font-size: 11px; font-weight: normal; vertical-align: middle; user-select: none; cursor: default; }
+.cell-count-badge > span { background: rgba(0,0,0,0.07); color: #555; border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
+.cell-count-badge .cc-todo.all { background: #dff3e3; color: #1d7a34; }
 .cell-title:hover {
     background-color: rgba(0, 0, 0, 0.05);
 }
@@ -2374,7 +2377,7 @@ window.printTables = function (blocks, opts) {
         rows.forEach(function (rowTds) {
             rowTds.forEach(function (td) {
                 const c = td.cloneNode(true);
-                c.querySelectorAll('.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, button')
+                c.querySelectorAll('.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, .cell-count-badge, button')
                     .forEach(function (x) { x.remove(); });
                 c.querySelectorAll('[contenteditable]').forEach(function (x) { x.removeAttribute('contenteditable'); });
                 window.prepareCloneForOutput(td, c);
@@ -2713,6 +2716,59 @@ window.openPrintTablePicker = function () {
     });
 })();
 
+// ---- To-do / note counts shown beside each table's title ----
+(function () {
+    function countCell(td) {
+        var todo = 0, done = 0, notes = 0;
+        td.querySelectorAll('.outline-node-row').forEach(function (row) {
+            var cb = row.querySelector(':scope > .outline-checkbox');
+            var t = row.querySelector(':scope > .outline-text');
+            if (cb) { todo++; if (cb.checked) done++; }
+            else if (t && t.textContent.trim()) notes++;
+        });
+        return { todo: todo, done: done, notes: notes };
+    }
+    function update() {
+        document.querySelectorAll('#tablesContainer td').forEach(function (td) {
+            var titleEl = td.querySelector('.cell-title');
+            if (!titleEl || !titleEl.parentElement) return;
+            var badge = titleEl.parentElement.querySelector(':scope > .cell-count-badge');
+            var c = countCell(td);
+            if (!c.todo && !c.notes) { if (badge) badge.remove(); return; }
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'cell-count-badge';
+                badge.contentEditable = 'false';
+                titleEl.insertAdjacentElement('afterend', badge);
+            }
+            var parts = [];
+            if (c.todo) parts.push('<span class="cc-todo' + (c.done === c.todo ? ' all' : '') + '">☐ ' + c.done + '/' + c.todo + '</span>');
+            if (c.notes) parts.push('<span class="cc-note">📝 ' + c.notes + '</span>');
+            var html = parts.join('');
+            if (badge.innerHTML !== html) badge.innerHTML = html;
+            badge.title = (c.todo ? c.done + ' of ' + c.todo + ' to-dos done' : 'no to-dos') + ' · ' + c.notes + ' note' + (c.notes === 1 ? '' : 's');
+        });
+    }
+    var timer = null;
+    function soon() { clearTimeout(timer); timer = setTimeout(update, 200); }
+    window.updateCellCounts = update;
+    window.addEventListener('load', function () {
+        var box = document.getElementById('tablesContainer');
+        if (box && window.MutationObserver) {
+            new MutationObserver(function (muts) {
+                for (var i = 0; i < muts.length; i++) {
+                    var n = muts[i].target;
+                    if (!(n.classList && n.classList.contains('cell-count-badge')) && !(n.parentElement && n.parentElement.classList && n.parentElement.classList.contains('cell-count-badge'))) { soon(); return; }
+                }
+            }).observe(box, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'] });
+        }
+        document.addEventListener('change', soon, true);
+        document.addEventListener('input', soon, true);
+        setInterval(update, 2000);
+        update();
+    });
+})();
+
 function printContent() {
     const pageTitle = document.getElementById('pageTitle').innerText.trim();
     const tables = document.querySelectorAll('#tablesContainer table');
@@ -2735,7 +2791,7 @@ function printContent() {
                 table { width: 100%; border-collapse: collapse; margin: 20px 0; }
                 td { border: 1px solid #ccc; padding: 10px; vertical-align: top; width: ${100 / maxColumns}%; }
                 /* Hide buttons in print output */
-                .cell-action-button { display: none !important; }
+                .cell-action-button, .cell-count-badge { display: none !important; }
                 /* Style checkboxes for print */
                 input[type="checkbox"] { 
                     -webkit-appearance: checkbox !important;
@@ -2813,7 +2869,7 @@ function printContent() {
                 // full content, regardless of its on-screen collapsed
                 // state)
                 const buttons = cellClone.querySelectorAll(
-                    '.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, button'
+                    '.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, .cell-count-badge, button'
                 );
                 buttons.forEach(button => button.remove());
                 printWindow.document.write(`<td>${cellClone.innerHTML}</td>`);
@@ -2933,7 +2989,7 @@ function quickView() {
                 const cellClone = cell.cloneNode(true);
                 window.prepareCloneForOutput(cell, cellClone);
                 cellClone.querySelectorAll(
-                    '.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, button'
+                    '.cell-action-button, .cell-toggle, .cell-height-toggle, .outline-menu-inline, .cell-count-badge, button'
                 ).forEach(el => el.remove());
                 // Each line is its own separate contenteditable region
                 // in the live editor — dragging a selection across
