@@ -1748,6 +1748,12 @@ body:not(.pre-hover) .outline-node-row:hover,
         that row in too, making it hard to land the selection exactly
         where you meant to stop. */
 }
+.outline-bullet.has-kids { color: #3E63DD; font-weight: bold; cursor: pointer; }
+.outline-bullet.has-kids:hover { color: #1d3fb8; }
+.outline-bullet.is-folded { font-size: 13px; }
+.outline-fold-count { flex: 0 0 auto; align-self: center; margin: 0 6px 0 4px; padding: 0 7px; font-size: 11px; line-height: 17px; border-radius: 9px; background: #e4ebff; color: #1d3fb8; cursor: pointer; user-select: none; white-space: nowrap; }
+.outline-node-row.has-folded > .outline-text { flex: 0 1 auto; }
+.outline-fold-count:hover { background: #cdd9ff; }
 .outline-checkbox {
     margin: 3px 4px 0 0;
     flex: 0 0 auto;
@@ -2612,6 +2618,7 @@ window.openPrintTablePicker = function () {
             '<h4>Write like an outline</h4><ul>' +
             '<li><b>Click any line and type.</b> Press <kbd>Enter</kbd> for a new line.</li>' +
             '<li><kbd>Tab</kbd> indents a line under the one above; <kbd>Shift</kbd>+<kbd>Tab</kbd> moves it back out.</li>' +
+            '<li>Lines with sub-lines have a <b>blue bullet</b> — click it to fold / unfold them. A folded line shows <b>▸</b> and a <b>+N</b> pill with the number of hidden lines.</li>' +
             '<li><kbd>↑</kbd> / <kbd>↓</kbd> move between lines; <kbd>Backspace</kbd> at the start of a line joins it to the previous one.</li>' +
             '<li>Type <kbd>/</kbd> at the start of a line for bullets, checklists, numbered lists or a divider. Select text to get bold / italic / underline.</li></ul>' +
             '<h4>The ☰ menu on every line</h4><ul>' +
@@ -5983,7 +5990,7 @@ function insertNewCheckboxLine(currentLine) {
             // The add/remove-checkbox icon shows for every item (its
             // glyph/mode changes, not its presence), so these three
             // positions stay fixed regardless of checkbox state.
-            const checkboxLeft = Math.max(4, rect.left - 56);
+            const checkboxLeft = Math.max(4, rect.left - 36); // the old ▾ fold button used to sit here; folding is now done with the bullet
             const toggleLeft = Math.max(4, rect.left - 36);
             const dragLeft = Math.max(4, rect.left - 16);
             otToggle.style.top = top + 'px';
@@ -5995,7 +6002,7 @@ function insertNewCheckboxLine(currentLine) {
 
             const hasKids = !!(found && found.node.children.length);
             otToggle.textContent = hasKids ? (found.node.collapsed ? '▸' : '▾') : '';
-            otToggle.classList.toggle('show', hasKids);
+            otToggle.classList.remove('show'); // folding = click the blue bullet or the +N pill
             otDrag.classList.add('show');
             if (found) {
                 otCheckboxRemove.textContent = hasCheckbox ? '✕' : '+';
@@ -6345,6 +6352,21 @@ function insertNewCheckboxLine(currentLine) {
             const bullet = document.createElement('span');
             bullet.className = 'outline-bullet';
             bullet.textContent = '•';
+            // Lines that have sub-items get a blue bullet; when folded the
+            // bullet turns into ▸ and a "+N" pill shows how many lines are
+            // hidden. Clicking either one unfolds / folds the line.
+            const kidCount = (function cnt(arr) { return (arr || []).reduce(function (t, c) { return t + 1 + cnt(c.children); }, 0); })(n.children);
+            if (kidCount) {
+                bullet.classList.add('has-kids');
+                bullet.title = n.collapsed ? 'Folded — click to show ' + kidCount + ' hidden line' + (kidCount === 1 ? '' : 's') : 'Click to fold ' + kidCount + ' sub-line' + (kidCount === 1 ? '' : 's');
+                if (n.collapsed) { bullet.classList.add('is-folded'); bullet.textContent = '▸'; }
+                bullet.addEventListener('mousedown', function (e) { e.preventDefault(); });
+                bullet.addEventListener('click', function (e) {
+                    e.preventDefault(); e.stopPropagation();
+                    n.collapsed = !n.collapsed;
+                    renderRoot(rootId, { focusId: n.id, cursorPos: 'keep' });
+                });
+            }
             row.appendChild(bullet);
 
             if (n.checkbox) {
@@ -6465,6 +6487,22 @@ function insertNewCheckboxLine(currentLine) {
                 openMenuFor(rootId, n.id, menuBtn);
             });
             row.appendChild(menuBtn);
+
+            if (kidCount && n.collapsed) {
+                const pill = document.createElement('span');
+                pill.className = 'outline-fold-count';
+                pill.contentEditable = 'false';
+                pill.textContent = '+' + kidCount;
+                pill.title = kidCount + ' hidden line' + (kidCount === 1 ? '' : 's') + ' — click to unfold';
+                pill.addEventListener('mousedown', function (e) { e.preventDefault(); });
+                pill.addEventListener('click', function (e) {
+                    e.preventDefault(); e.stopPropagation();
+                    n.collapsed = false;
+                    renderRoot(rootId, { focusId: n.id, cursorPos: 'keep' });
+                });
+                row.classList.add('has-folded');
+                row.insertBefore(pill, menuBtn);
+            }
 
             // (Reordering itself is driven entirely by mousedown/mousemove/
             // mouseup on the ⠿ handle — see startManualDrag above — not by
