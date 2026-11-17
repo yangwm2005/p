@@ -454,6 +454,8 @@
             font-weight: 500;
             outline: none;
         }
+        .draft-note { margin: 0 0 8px; padding: 6px 12px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; border-radius: 8px; font-size: 0.8rem; transition: opacity 1.4s; }
+        .draft-note.fade { opacity: 0; }
         .proj-start-group { flex: none; display: inline-flex; align-items: center; gap: 4px; }
         .ps-step { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--text-main); font-size: 1rem; line-height: 1; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-family: inherit; }
         .ps-step:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--tag-bg); }
@@ -1611,7 +1613,7 @@
                     <li><b>Write a short note</b>
                         In the big box, jot down what you did and what comes next. Use <strong>⤢ Expand</strong> to see everything you wrote, and drag the bottom-right corner to resize it.</li>
                     <li><b>Press Save Log</b>
-                        Your note is saved with the time it took. The clock keeps counting after the dial finishes until you save, so nothing is lost. Press <strong>✕ Discard</strong> if you do not want to log it.</li>
+                        Your note is saved with the time it took. The clock keeps counting after the dial finishes until you save, so nothing is lost. Press <strong>✕ Discard</strong> if you do not want to log it. If you close the app or shut the computer down halfway, your note and timers are kept, so you can pick up where you left off.</li>
                 </ol>
 
                 <div class="guide-h">Keep an eye on the time</div>
@@ -2298,6 +2300,7 @@
             const newTotalMinutes = Math.max(1, Math.round((elapsedMs + newMsLeft) / 60000));
             FOCUS_STATE.minutes = newTotalMinutes;
             updateDialUI();
+            persistFocusRun();
         } else {
             FOCUS_STATE.minutes = Math.max(DIAL_MIN_MINUTES, Math.min(DIAL_MAX_MINUTES, FOCUS_STATE.minutes + change));
             const dial = document.getElementById('focus-dial');
@@ -2307,15 +2310,35 @@
         }
     };
 
-    window.dialStart = function () {
+    // The running focus block survives closing the app / shutting the computer down.
+    const FOCUS_RUN_KEY = 'thepause_focus_run';
+    function persistFocusRun() {
+        try {
+            if (FOCUS_STATE.running && FOCUS_STATE.endAt) localStorage.setItem(FOCUS_RUN_KEY, JSON.stringify({ startTs: FOCUS_STATE.startTs, endAt: FOCUS_STATE.endAt, minutes: FOCUS_STATE.minutes }));
+            else localStorage.removeItem(FOCUS_RUN_KEY);
+        } catch (e) {}
+    }
+    function restoreFocusRun() {
+        try {
+            const rec = JSON.parse(localStorage.getItem(FOCUS_RUN_KEY) || 'null');
+            if (!rec) return;
+            localStorage.removeItem(FOCUS_RUN_KEY);
+            if (typeof rec.endAt !== 'number') return;
+            if (rec.minutes >= 1) FOCUS_STATE.minutes = rec.minutes;
+            if (rec.endAt > Date.now()) dialStart({ __resume: true, startTs: rec.startTs, endAt: rec.endAt });
+            // else: the block ended while you were away - a running session simply keeps counting until you press Save Log
+        } catch (e) {}
+    }
+    window.dialStart = function (resume) {
         if (FOCUS_STATE.running) return;
+        const isResume = !!(resume && resume.__resume === true);
         const dial = document.getElementById('focus-dial');
         if (!dial) return;
         dial.classList.remove('done');
         dial.classList.add('running');
         FOCUS_STATE.running = true;
-        FOCUS_STATE.startTs = Date.now();
-        FOCUS_STATE.endAt = FOCUS_STATE.startTs + FOCUS_STATE.minutes * 60 * 1000;
+        FOCUS_STATE.startTs = isResume ? resume.startTs : Date.now();
+        FOCUS_STATE.endAt = isResume ? resume.endAt : FOCUS_STATE.startTs + FOCUS_STATE.minutes * 60 * 1000;
         FOCUS_STATE.lastTickSec = null;
         if (FOCUS_STATE.soundOn || FOCUS_STATE.tickOn) getAudio();   // unlock audio from this click
 
@@ -2343,7 +2366,9 @@
                 dialComplete();
             }
         }, 250);
-        sessionBeginIfNeeded();
+        if (!isResume) sessionBeginIfNeeded();           // a resumed block keeps whatever session state it had
+        else if (SESSION.startTs) ensureSessionTicker();
+        persistFocusRun();
     };
 
     window.dialStop = function () {
@@ -2360,6 +2385,7 @@
         const plannedMin = FOCUS_STATE.minutes;
         FOCUS_STATE.endAt = null;
         FOCUS_STATE.startTs = null;
+        persistFocusRun();
 
         const startBtn = document.getElementById('dial-start-btn');
         if (startBtn) startBtn.style.display = '';
@@ -2414,6 +2440,7 @@
 
         FOCUS_STATE.endAt = null;
         FOCUS_STATE.startTs = null;
+        persistFocusRun();
         updateSessionUI();
     }
 
@@ -2733,6 +2760,84 @@
         setTimeout(function () { window.print(); setTimeout(clear, 1500); }, 50);
     };
     // ============================================================
+    // DRAFT: what you are typing is kept on this device until you press Save Log, so closing the
+    // app or shutting the computer down loses nothing. Timers (focus block, 5-minute timer and the
+    // running session) are restored too.
+    // ============================================================
+    const DRAFT_KEY = 'thepause_draft_v1';
+    let _draftSig = null;
+    function draftSnapshot() {
+        const ta = document.getElementById('entry-text'), pi = document.getElementById('project-input');
+        if (!ta) return null;
+        return { text: ta.value, project: pi ? pi.value : '', office: officeMode, reflection: reflectionMode };
+    }
+    function draftHasContent(d) {
+        return !!d && (d.office || d.reflection || (d.text.trim() !== '' && d.text !== JOURNAL_PRESET));
+    }
+    function saveDraft() {
+        try {
+            const d = draftSnapshot();
+            if (!d) return;
+            const empty = !draftHasContent(d) && !d.project.trim();
+            const sig = empty ? '' : JSON.stringify(d);
+            if (sig === _draftSig) return;
+            _draftSig = sig;
+            if (empty) localStorage.removeItem(DRAFT_KEY);
+            else localStorage.setItem(DRAFT_KEY, JSON.stringify(Object.assign({ savedAt: Date.now() }, d)));
+        } catch (e) {}
+    }
+    function restoreDraft() {
+        let restoredContent = false;
+        try {
+            const raw = localStorage.getItem(DRAFT_KEY);
+            if (raw) {
+                const d = JSON.parse(raw);
+                const ta = document.getElementById('entry-text'), pi = document.getElementById('project-input');
+                if (d && typeof d.text === 'string' && ta) {
+                    ta.value = d.text;
+                    if (pi && typeof d.project === 'string') pi.value = d.project;
+                    officeMode = !!d.office;
+                    reflectionMode = !!d.reflection && !officeMode;
+                    syncTemplateSwitchBtn();
+                    applyEntryExpand();
+                    restoredContent = draftHasContent(d);
+                    if (restoredContent) {
+                        const sb = document.getElementById('save-btn');   // a restored draft must always be saveable
+                        if (sb) sb.style.display = 'flex';
+                        showDraftNote(d.savedAt);
+                    }
+                }
+            }
+        } catch (e) {}
+        _draftSig = null;
+        saveDraft();
+        return restoredContent;
+    }
+    function showDraftNote(ts) {
+        const td = document.getElementById('timer-display');
+        if (!td || !td.parentNode) return;
+        const n = document.createElement('div');
+        n.className = 'draft-note';
+        const when = ts ? new Date(ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+        n.innerHTML = '📝 Your unsaved note was restored' + (when ? ' (last kept ' + escapeHtml(when) + ')' : '') + '. Press Save Log when you are done.';
+        td.parentNode.insertBefore(n, td);
+        setTimeout(function () { n.classList.add('fade'); }, 9000);
+        setTimeout(function () { n.remove(); }, 10500);
+    }
+    function restoreWriteTimer() {
+        try {
+            const end = parseInt(localStorage.getItem(WRITE_END_KEY), 10);
+            if (end && end > Date.now()) handleStartTimer(end);
+            else localStorage.removeItem(WRITE_END_KEY);
+        } catch (e) {}
+    }
+    setInterval(saveDraft, 1500);
+    document.addEventListener('input', function () { saveDraft(); });
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') saveDraft(); });
+    window.addEventListener('pagehide', saveDraft);
+    window.addEventListener('beforeunload', saveDraft);
+
+    // ============================================================
     // HOW-TO GUIDE (opens automatically once for brand-new users)
     // ============================================================
     window.openGuide = function () {
@@ -2755,6 +2860,7 @@
             if (localStorage.getItem('thepause_guide_seen') === '1') return;
             if (localStorage.getItem('thepause_tip_dismissed') === '1') return;   // an existing user
             if (typeof logs !== 'undefined' && logs && logs.length > 0) return;   // an existing user
+            if (localStorage.getItem(DRAFT_KEY)) return;                          // already using the app
             setTimeout(openGuide, 400);
         } catch (e) { /* storage blocked: skip the auto pop-up; the button still works */ }
     }
@@ -3827,6 +3933,7 @@
             timerInterval = null;
         }
         timerEndTime = null;
+        persistWriteEnd();
         updateTabTitle();
 
         const timerDisplay = document.getElementById('timer-display');
@@ -3848,6 +3955,7 @@
         const entryText = document.getElementById('entry-text');
         if (entryText) (entryText._ed || entryText).style.borderColor = "var(--border)";
         loadPreset();
+        setTimeout(saveDraft, 0);   // after the save flow has cleared the fields
     }
 
     function handleSaveLog() {
@@ -3913,7 +4021,10 @@
     let timerInterval;
     let timerEndTime = null;
 
-    function handleStartTimer() {
+    const WRITE_END_KEY = 'thepause_write_end';
+    function persistWriteEnd() { try { if (timerEndTime) localStorage.setItem(WRITE_END_KEY, String(timerEndTime)); else localStorage.removeItem(WRITE_END_KEY); } catch (e) {} }
+    function handleStartTimer(resumeEnd) {
+        const isResume = typeof resumeEnd === 'number';
         const startBtn = document.getElementById('start-btn');
         const saveBtn = document.getElementById('save-btn');
         const timerDisplay = document.getElementById('timer-display');
@@ -3923,10 +4034,11 @@
         startBtn.disabled = true;
         startBtn.textContent = "Writing...";
         saveBtn.style.display = "flex";
-        entryText.focus();
+        if (!isResume) entryText.focus();
 
         const now = Date.now();
-        timerEndTime = now + (300 * 1000);
+        timerEndTime = isResume ? resumeEnd : now + (300 * 1000);
+        persistWriteEnd();
         FOCUS_STATE.lastTickSec = null;
         if (FOCUS_STATE.soundOn || FOCUS_STATE.tickOn) getAudio();
 
@@ -3952,6 +4064,7 @@
             clearInterval(timerInterval);
             timerInterval = null;
             timerEndTime = null;
+            persistWriteEnd();
             updateTabTitle();
             timerDisplay.textContent = "Time's up! Stop and save.";
             timerDisplay.style.color = "var(--danger)";
@@ -4908,6 +5021,9 @@
             initFocusDial();
             loadSession();
             if (SESSION.startTs) { ensureSessionTicker(); updateSessionUI(); }
+            restoreFocusRun();
+            const hadDraft = restoreDraft();
+            restoreWriteTimer();
             weekStartDate = getMondayOf(new Date());
             initCloud();
             setInterval(updateTodayTotal, 30000);
