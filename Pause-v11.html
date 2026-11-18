@@ -1626,7 +1626,7 @@
 
                 <div class="guide-h">Review your day and week</div>
                 <div class="guide-grid">
-                    <div class="guide-card"><b>📊 Summary</b>Timeline, By Project, or Time Spent for any day. Copy it, print it, or send it to Google Calendar.</div>
+                    <div class="guide-card"><b>📊 Summary</b>Timeline, By Project, or Time Spent for any day. Copy it, print it, or send it to Google Calendar (any Google account: use <strong>Change account</strong> in the Calendar window).</div>
                     <div class="guide-card"><b>📅 Week</b>Your whole week at a glance, as stacked bars or on a time axis.</div>
                     <div class="guide-card"><b>Log list</b>Organize it by <strong>Day, Week, Project or #Keyword</strong> (write #words in your notes), click a section title to fold it. <strong>📑 Report</strong> opens what you see as a clean page to copy or save as PDF. Search your entries (the 📁 box filters by project name only), then use <strong>📋</strong> copy, <strong>📅</strong> calendar, <strong>✏️</strong> edit, <strong>🗑️</strong> delete. <strong>🛑 Wrap up</strong> closes off the day's last block. <strong>Export .md</strong> downloads everything.</div>
                     <div class="guide-card"><b>🌙 Daily reflection · ☀ Office start</b>Switch the note box to end-of-day reflection questions, or to a morning checklist where you click each ☐ to tick it off. Either one also starts a 30-minute focus block for you.</div>
@@ -4816,6 +4816,7 @@
 
     window.cloudSignIn = function () {
         const provider = new firebase.auth.GoogleAuthProvider();
+        provider.setCustomParameters({ prompt: 'select_account' });   // let the person pick which Google account
         setCloudStatus('Signing in…');
         cloudAuth.signInWithPopup(provider).catch(function (err) {
             console.error('Popup sign-in failed, trying redirect:', err);
@@ -5055,6 +5056,7 @@
         <div class="cal-modal">
             <div class="cal-modal-title">📅 Send to Calendar</div>
             <div class="cal-modal-text" id="calTypeModalNoteText"></div>
+            <div class="cal-account-row"><span class="cal-acct-text">📧 <b class="cal-acct-email">…</b></span><button type="button" class="cal-acct-change" onclick="changeCalendarAccount()" title="Send to a different Google account">Change account</button></div>
             <button type="button" class="cal-opt-btn" id="calTypeAllDayBtn">🗓️ Whole-day event</button>
             <button type="button" class="cal-opt-btn" id="calTypeTimedBtn">🕐 Timed event (first entry → last entry)</button>
             <button type="button" class="cal-cancel-btn" id="calTypeCancelBtn">Cancel</button>
@@ -5087,6 +5089,11 @@
     .cal-modal-text { font-size: 0.85rem; color: #64748b; margin-bottom: 16px; max-height: 90px; overflow-y: auto; white-space: pre-wrap; line-height: 1.4; }
     .cal-opt-btn { display: block; width: 100%; text-align: left; background: #f1f5f9; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 10px 14px; font-size: 0.9rem; font-family: inherit; color: #1e293b; cursor: pointer; margin-bottom: 8px; justify-content: flex-start; }
     .cal-opt-btn:hover { background: #e2e8f0; border-color: #cbd5e1; }
+    .cal-account-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -6px 0 12px; padding: 7px 10px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 10px; font-size: 0.8rem; color: #475569; }
+    .cal-acct-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cal-acct-email { color: #1e293b; }
+    .cal-acct-change { flex: none; background: #fff; border: 1px solid #cbd5e1; border-radius: 999px; padding: 3px 10px; font-size: 0.74rem; font-family: inherit; color: #2563eb; cursor: pointer; font-weight: 600; }
+    .cal-acct-change:hover { background: #eff6ff; border-color: #2563eb; }
     .cal-date-pick-row { display: flex; gap: 8px; margin-bottom: 8px; }
     .cal-date-pick-row input[type="date"] { flex: 1; min-width: 0; padding: 9px 10px; border-radius: 12px; border: 1.5px solid #e2e8f0; font-family: inherit; font-size: 0.88rem; }
     .cal-date-pick-row .cal-opt-btn { width: auto; margin-bottom: 0; flex-shrink: 0; }
@@ -5111,6 +5118,12 @@
     let gcalCreatingCalendar = null, gcalCalendarIdVerifiedAt = 0;
     let gisTokenClient = null, calendarReconnectPromise = null, silentReconnectResolvers = [];
     let pendingCalEvent = null, pendingCalEventAt = 0;
+    // The Calendar account is chosen separately from the cloud sign-in account: it can be any Google account.
+    const GCAL_ACCOUNT_KEY = 'thepause_gcal_account';
+    let gcalAccountEmail = '';          // account the current access token belongs to
+    let gcalEmailForToken = null;       // token for which gcalAccountEmail was looked up
+    let gcalHint = '';                  // remembered choice, used as a hint so reconnecting stays on that account
+    try { gcalHint = localStorage.getItem(GCAL_ACCOUNT_KEY) || ''; } catch (e) {}
 
     const calToast = document.getElementById('calToast');
     const calTypeModalBackdrop = document.getElementById('calTypeModalBackdrop');
@@ -5140,6 +5153,7 @@
                 if (resp && resp.access_token) {
                     gcalAccessToken = resp.access_token;
                     gcalTokenObtainedAt = Date.now();
+                    gcalCalendarId = null; gcalCalendarIdVerifiedAt = 0; gcalEmailForToken = null;   // a new token may belong to another account
                     resolvers.forEach(function (fn) { fn(true); });
                     if (pendingCalEvent && (Date.now() - pendingCalEventAt) < 5 * 60 * 1000) {
                         const ev = pendingCalEvent; pendingCalEvent = null; sendCalEvent(ev);
@@ -5173,10 +5187,49 @@
             silentReconnectResolvers.push(finish);
             showCalToast('🔑 Connecting to Google Calendar…');
             setTimeout(function () { finish(gcalTokenIsFresh()); }, 90000);
-            try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
+            try { client.requestAccessToken(gcalHint ? { prompt: '', hint: gcalHint } : { prompt: 'select_account' }); } catch (e) { finish(false); }
         });
         return calendarReconnectPromise;
     }
+
+    // Look up which Google account the current token belongs to (the primary calendar's id is the e-mail address).
+    async function ensureAccountEmail() {
+        if (!gcalTokenIsFresh()) return gcalAccountEmail;
+        if (gcalEmailForToken === gcalAccessToken && gcalAccountEmail) return gcalAccountEmail;
+        const res = await gcalFetch('calendars/primary');
+        if (res && res.ok) {
+            try {
+                const c = await res.json();
+                if (c && c.id) {
+                    gcalAccountEmail = c.id;
+                    gcalEmailForToken = gcalAccessToken;
+                    gcalHint = c.id;
+                    try { localStorage.setItem(GCAL_ACCOUNT_KEY, c.id); } catch (e) {}
+                }
+            } catch (e) {}
+        }
+        return gcalAccountEmail;
+    }
+    function refreshCalAccountLabels() {
+        document.querySelectorAll('.cal-acct-email').forEach(function (el) {
+            el.textContent = gcalAccountEmail || gcalHint || 'your Google account';
+        });
+    }
+    // "Change account": always show Google's account chooser, then use whichever account is picked.
+    window.changeCalendarAccount = function () {
+        const client = initGisTokenClient();
+        if (!client) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+        silentReconnectResolvers.push(function (ok) {
+            if (!ok) return;
+            ensureAccountEmail().then(function (email) {
+                refreshCalAccountLabels();
+                if (email) showCalToast('📧 Calendar account: ' + email);
+            });
+        });
+        showCalToast('🔑 Choose the Google account for Calendar…');
+        try { client.requestAccessToken({ prompt: 'select_account' }); } catch (e) { showCalToast('⚠️ Could not open the account chooser', true); }
+    };
+    function calAccountKey(email) { return String(email || '').toLowerCase().replace(/[.#$\[\]\/]/g, '_'); }
 
     async function gcalFetch(path, options) {
         if (!gcalTokenIsFresh()) return null;
@@ -5211,6 +5264,8 @@
         return cloudDb.collection('users').doc(cloudUser.uid).collection('pauseData').doc('calendar');
     }
     async function ensurePauseCalendarId() {
+        const acctEmail = await ensureAccountEmail();
+        const acctKey = calAccountKey(acctEmail);
         if (gcalCalendarId) {
             if (Date.now() - gcalCalendarIdVerifiedAt < 5 * 60 * 1000) return gcalCalendarId;
             if (await calendarStillExists(gcalCalendarId)) { gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId; }
@@ -5223,7 +5278,10 @@
                 if (ref) {
                     try {
                         const doc = await ref.get();
-                        const savedId = doc.exists && doc.data().calendarId;
+                        const data = (doc.exists && doc.data()) || {};
+                        // saved per Google account; the old single "calendarId" belonged to the cloud sign-in account
+                        const legacyOk = !acctEmail || String(acctEmail).toLowerCase() === String((cloudUser && cloudUser.email) || '').toLowerCase();
+                        const savedId = (data.calendars && acctKey && data.calendars[acctKey]) || (legacyOk && data.calendarId) || null;
                         if (savedId && await calendarStillExists(savedId)) {
                             gcalCalendarId = savedId; gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId;
                         }
@@ -5232,7 +5290,7 @@
                 const foundId = await findExistingPauseCalendarId();
                 if (foundId) {
                     gcalCalendarId = foundId; gcalCalendarIdVerifiedAt = Date.now();
-                    if (ref) ref.set({ calendarId: foundId }, { merge: true }).catch(function () {});
+                    if (ref) ref.set({ calendars: { [acctKey || 'default']: foundId } }, { merge: true }).catch(function () {});
                     return gcalCalendarId;
                 }
                 const res = await gcalFetch('calendars', {
@@ -5246,7 +5304,7 @@
                 if (!res || !res.ok) return null;
                 const created = await res.json();
                 gcalCalendarId = created.id; gcalCalendarIdVerifiedAt = Date.now();
-                if (ref) ref.set({ calendarId: created.id }, { merge: true }).catch(function () {});
+                if (ref) ref.set({ calendars: { [acctKey || 'default']: created.id } }, { merge: true }).catch(function () {});
                 return gcalCalendarId;
             } finally { gcalCreatingCalendar = null; }
         })();
@@ -5336,7 +5394,9 @@
             if (!ok) { showCalToast('⚠️ Calendar not connected — finish the Google popup, then click 📅 Calendar again', true); return; }
         }
         calTypeModalNoteText.textContent = summaryViewDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + ' — By Project summary';
+        refreshCalAccountLabels();
         calTypeModalBackdrop.classList.remove('hidden');
+        ensureAccountEmail().then(refreshCalAccountLabels);
     }
     window.openCalEventTypeModal = openCalEventTypeModal;
     function closeCalEventTypeModal() { calTypeModalBackdrop.classList.add('hidden'); }
@@ -5497,6 +5557,7 @@
         <div class="cal-modal">
             <div class="cal-modal-title">📅 Send entry to Calendar</div>
             <div class="cal-modal-text" id="calEntryModalNote"></div>
+            <div class="cal-account-row"><span class="cal-acct-text">📧 <b class="cal-acct-email">…</b></span><button type="button" class="cal-acct-change" onclick="changeCalendarAccount()" title="Send to a different Google account">Change account</button></div>
             <button type="button" class="cal-opt-btn" id="calEntryTimedBtn"></button>
             <button type="button" class="cal-opt-btn" id="calEntryDayBtn">🗓️ Whole-day event</button>
             <button type="button" class="cal-cancel-btn" id="calEntryCancelBtn">Cancel</button>
@@ -5589,7 +5650,9 @@
         document.getElementById('calEntryTimedBtn').textContent = r.timer
             ? '🕐 Timed event ' + f(r.start) + '–' + f(r.end) + ' (' + formatDuration(r.end - r.start) + ')'
             : '🕐 Timed event at ' + f(r.start) + ' (30 min — no timer was used)';
+        refreshCalAccountLabels();
         document.getElementById('calEntryModalBackdrop').classList.remove('hidden');
+        ensureAccountEmail().then(refreshCalAccountLabels);
     };
     function closeEntryCalModal() { document.getElementById('calEntryModalBackdrop').classList.add('hidden'); }
     function entryEventBase(log) {
