@@ -1473,6 +1473,7 @@ body.select-mode-active .outline-select-checkbox {
 .table-print-btn { position:absolute; top:-9px; right:72px; display:flex; align-items:center; justify-content:center; width:22px; height:18px; padding:0; margin:0; line-height:1; background:none; border:none; border-radius:5px; color:#9a9a9a; cursor:pointer; z-index:5; }
 .table-menu-btn { position:absolute; top:-9px; right:97px; display:flex; align-items:center; justify-content:center; width:22px; height:18px; padding:0; margin:0; line-height:1; background:none; border:none; border-radius:5px; color:#9a9a9a; cursor:pointer; z-index:5; }
 .table-menu-btn:hover { color:#444; background:rgba(0,0,0,0.06); }
+.today-table { scroll-margin-top: 80px; box-shadow: 0 0 0 3px rgba(62,99,221,0.35); border-radius: 6px; }
 .table-print-marked { outline: 3px solid #3E63DD; outline-offset: 3px; border-radius: 6px; }
 #printPill { position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%); display: none; gap: 6px; align-items: center; background: #2b2b2b; border-radius: 999px; padding: 6px 8px; box-shadow: 0 4px 14px rgba(0,0,0,.35); z-index: 3500; }
 #printPill.show { display: flex; }
@@ -7225,7 +7226,40 @@ function insertNewCheckboxLine(currentLine) {
             return td;
         }
 
+        // Opening a week project ("WeekNN-progress", one cell per day, titled
+        // like "Nov 18 Wed"): make TODAY's table full width and open, and
+        // scroll to it, so the current day is front and centre.
+        function focusTodayInWeekProject(data) {
+            try {
+                if (!data || !data.tables) return data;
+                const todayTitle = formatWeekTitle(new Date());
+                const dayRe = /^[A-Z][a-z]{2} \d{1,2} (Sun|Mon|Tue|Wed|Thu|Fri|Sat)$/;
+                let found = false, dayCount = 0;
+                data.tables.forEach(function (t) {
+                    const cell = t.rows && t.rows.length === 1 && t.rows[0].length === 1 ? t.rows[0][0] : null;
+                    if (!cell || !dayRe.test(cell.title || '')) return;
+                    dayCount++;
+                    if (cell.title === todayTitle) { found = true; t.small = false; cell.collapsed = false; }
+                });
+                if (found && dayCount >= 5) {
+                    setTimeout(function () {
+                        const titles = document.querySelectorAll('#tablesContainer .cell-title');
+                        for (let i = 0; i < titles.length; i++) {
+                            if (titles[i].textContent.trim() !== todayTitle) continue;
+                            const blk = titles[i].closest('.table-wrapper') || titles[i].closest('table');
+                            if (!blk) continue;
+                            blk.classList.add('today-table');
+                            if (window.scrollY < 80 && blk.scrollIntoView) blk.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                            break;
+                        }
+                    }, 250);
+                }
+            } catch (e) { console.warn('focusToday failed', e); }
+            return data;
+        }
+
         function rebuildTablesContainer(data) {
+            data = focusTodayInWeekProject(data);
             const container = document.getElementById('tablesContainer');
             container.innerHTML = '';
             const sidebarNotesEl = document.querySelector('#sidebar .notes-area');
