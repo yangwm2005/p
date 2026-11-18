@@ -2043,6 +2043,8 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
          regardless of how the middle strip scrolls or grows. -->
     <button id="fileSidebarToggle" class="gray toolbar-pin" onclick="toggleFileSidebar()" title="Open a side panel with your project list">☰ Files</button>
     <button id="collapseAllToggle" class="gray toolbar-pin" onclick="toggleAllCells()" title="Collapse or expand every table cell at once">▾ Collapse All</button>
+    <button id="showFilledBtn" onclick="window.showFilledCells('content')" class="gray toolbar-pin" title="One click: open every table that has notes or to-dos, fold the empty ones">📂 With content</button>
+    <button id="showTodoBtn" onclick="window.showFilledCells('todo')" class="gray toolbar-pin" title="One click: open only the tables that still have unchecked to-dos, fold the rest">☐ Open to-dos</button>
 
     <div id="toolbarScroll">
     <!-- Office Starting Dropdown -->
@@ -2630,7 +2632,8 @@ window.openPrintTablePicker = function () {
             '<h4>Add and arrange</h4><ul>' +
             '<li>The green <b>Add …</b> buttons at the bottom of the page add new tables.</li>' +
             '<li>Drag a table\'s <b>⠿</b> handle (top-left) to reorder it.</li>' +
-            '<li>Each cell has <b>+✓</b> (add a checkbox line), <b>▾</b> (collapse) and <b>⤢</b> (taller / shorter). <b>⊟ Collapse All</b> in the toolbar folds every cell.</li></ul>' +
+            '<li>Each cell has <b>+✓</b> (add a checkbox line), <b>▾</b> (collapse) and <b>⤢</b> (taller / shorter). <b>⊟ Collapse All</b> in the toolbar folds every cell.</li>' +
+            '<li><b>📂 With content</b> opens every table that has notes or to-dos and folds the empty ones; <b>☐ Open to-dos</b> opens only tables that still have unchecked to-dos. Tables also show ☐ done/total and 📝 note counts beside their titles.</li></ul>' +
             '<h4>The ⋯ button on each table</h4><ul>' +
             '<li>Select all items · Copy as text · <b>Copy / Move to another project</b> · Print · Make full / half width · Pop out · Delete.</li>' +
             '<li>Delete is at the bottom, in red, so it is hard to hit by accident.</li></ul>' },
@@ -3041,6 +3044,40 @@ function quickView() {
     // everything; only once everything is already collapsed does it
     // switch to expanding everything, so repeated clicks alternate
     // cleanly between the two extremes.
+    // One-click "show me what matters": expand the cells that hold
+    // something and fold the empty ones. mode 'content' = any line;
+    // mode 'todo' = at least one UNCHECKED to-do.
+    window.showFilledCells = function (mode) {
+        var cells = document.querySelectorAll('#tablesContainer td');
+        if (!cells.length) return;
+        var shown = 0;
+        cells.forEach(function (td) {
+            var has = false;
+            td.querySelectorAll('.outline-node-row').forEach(function (row) {
+                var cb = row.querySelector(':scope > .outline-checkbox');
+                var t = row.querySelector(':scope > .outline-text');
+                if (mode === 'todo') { if (cb && !cb.checked) has = true; }
+                else if (cb || (t && t.textContent.trim())) has = true;
+            });
+            td.classList.toggle('cell-collapsed', !has);
+            var toggle = td.querySelector('.cell-toggle');
+            if (toggle) toggle.textContent = has ? '▾' : '▸';
+            if (has) shown++;
+        });
+        if (window.refreshCollapseAllLabel) window.refreshCollapseAllLabel();
+        else { var cb2 = document.getElementById('collapseAllToggle'); if (cb2) cb2.innerHTML = document.querySelector('#tablesContainer td:not(.cell-collapsed)') ? '▾ Collapse All' : '▸ Expand All'; }
+        if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+        var msg = shown
+            ? 'Showing ' + shown + ' table' + (shown === 1 ? '' : 's') + (mode === 'todo' ? ' with open to-dos' : ' with content') + ' · ' + (cells.length - shown) + ' folded'
+            : (mode === 'todo' ? 'No open to-dos — all tables folded' : 'All tables are empty');
+        var old = document.getElementById('filledToast'); if (old) old.remove();
+        var el = document.createElement('div');
+        el.id = 'filledToast'; el.textContent = msg;
+        el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#2b2b2b;color:#fff;padding:8px 16px;border-radius:999px;font-size:13px;z-index:100000;box-shadow:0 4px 14px rgba(0,0,0,.35);';
+        document.body.appendChild(el);
+        setTimeout(function () { el.remove(); }, 2600);
+    };
+
     window.toggleAllCells = function () {
         const toggles = document.querySelectorAll('#tablesContainer .cell-toggle');
         if (!toggles.length) return;
