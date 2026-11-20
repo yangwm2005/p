@@ -1478,7 +1478,10 @@ body.select-mode-active .outline-select-checkbox {
 #printPill button:hover { background: #444; }
 #printPill #ppGo { background: #3E63DD; color: #fff; }
 #printPill #ppGo:hover { background: #5576e8; }
-.table-delete-btn, .table-popout-btn, .table-size-toggle-btn, .table-print-btn { display: none !important; }
+.table-delete-btn, .table-popout-btn, .table-print-btn { display: none !important; }
+.table-size-toggle-btn { display: flex !important; align-items: center; justify-content: center; position: absolute !important; top: -10px !important; right: 38px !important; width: 32px !important; height: 22px !important; padding: 0 !important; margin: 0 !important; color: #555 !important; background: rgba(0,0,0,0.05) !important; border: 1px solid rgba(0,0,0,0.14) !important; border-radius: 6px !important; cursor: pointer; z-index: 5; }
+.table-size-toggle-btn:hover { background: rgba(0,0,0,0.12) !important; color: #222 !important; }
+.table-size-toggle-btn svg { width: 16px; height: 16px; pointer-events: none; }
 .table-menu-btn { right: 0 !important; width: 34px !important; height: 22px !important; font-size: 18px !important; line-height: 1 !important; color: #555 !important; background: rgba(0,0,0,0.05) !important; border: 1px solid rgba(0,0,0,0.14) !important; border-radius: 6px !important; }
 .table-menu-btn:hover { background: rgba(0,0,0,0.12) !important; color: #222 !important; }
 .outline-node-menu button.menu-danger { color: #ff8a80; }
@@ -2177,6 +2180,7 @@ body.pre-hover .outline-node-row:hover .outline-menu-inline {
     <button id="collapseAllToggle" onclick="window.toggleAllTableCells()" class="btn-view toolbar-pin" title="Collapse or expand every cell in every table">⊟ Collapse All</button>
     <button id="showFilledBtn" onclick="window.showFilledCells('content')" class="btn-view toolbar-pin" title="One click: open every table that has notes or to-dos, fold the empty ones">📂 With content</button>
     <button id="showTodoBtn" onclick="window.showFilledCells('todo')" class="btn-view toolbar-pin" title="One click: open only the tables that still have unchecked to-dos, fold the rest">☐ Open to-dos</button>
+    <button id="widthAllBtn" onclick="window.setAllTableWidths()" class="btn-view toolbar-pin" title="Make every table full / half width">⇔ All full width</button>
 
     <!-- Right-pinned: Notes/Think Log sidebar toggle. Mirrors the Files
          button on the left so the two sidebar controls bookend the bar
@@ -2582,7 +2586,7 @@ window.openPrintTablePicker = function () {
             '<li>The green <b>Add …</b> buttons at the bottom of the page add new tables.</li>' +
             '<li>Drag a table\'s <b>⠿</b> handle (top-left) to reorder it.</li>' +
             '<li>Each cell has <b>+✓</b> (add a checkbox line), <b>▾</b> (collapse) and <b>⤢</b> (taller / shorter). <b>⊟ Collapse All</b> in the toolbar folds every cell.</li>' +
-            '<li><b>📂 With content</b> opens every table that has notes or to-dos and folds the empty ones; <b>☐ Open to-dos</b> opens only tables that still have unchecked to-dos. Tables also show ☐ done/total and 📝 note counts beside their titles.</li></ul>' +
+            '<li><b>⇔ All full width / ▯▯ All half width</b> switches every table at once (each table\'s ⋯ menu still sets just that one). <b>📂 With content</b> opens every table that has notes or to-dos and folds the empty ones; <b>☐ Open to-dos</b> opens only tables that still have unchecked to-dos. Tables also show ☐ done/total and 📝 note counts beside their titles.</li></ul>' +
             '<h4>The ⋯ button on each table</h4><ul>' +
             '<li>Select all items · Copy as text · <b>Copy / Move to another project</b> · Print · Make full / half width · Pop out · Delete.</li>' +
             '<li>Delete is at the bottom, in red, so it is hard to hit by accident.</li></ul>' },
@@ -3029,6 +3033,33 @@ function quickView() {
     // One-click "show me what matters": expand the cells that hold
     // something and fold the empty ones. mode 'content' = any line;
     // mode 'todo' = at least one UNCHECKED to-do.
+    // Toolbar width switch: set EVERY table to full width, or every table
+    // to half width (two per row). Uses each table's own width toggle so
+    // the saved state stays exactly as if you had clicked them one by one.
+    window.setAllTableWidths = function () {
+        var tables = Array.prototype.slice.call(document.querySelectorAll('#tablesContainer table.cell-table, #tablesContainer table')).filter(function (t, i, a) { return a.indexOf(t) === i && !t.closest('td table') && t.querySelector('td'); });
+        if (!tables.length) return;
+        var anySmall = tables.some(function (t) { return t.classList.contains('cell-table-small'); });
+        var wantSmall = !anySmall;                       // all full → make half; otherwise → make full
+        var changed = 0;
+        tables.forEach(function (t) {
+            if (t.classList.contains('cell-table-small') === wantSmall) return;
+            var holder = t.closest('.table-wrapper') || t;
+            var btn = holder.querySelector(':scope > .table-size-toggle-btn') || t.querySelector(':scope > .table-size-toggle-btn');
+            if (btn) { btn.click(); changed++; }
+        });
+        window.refreshWidthAllLabel();
+        if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+    };
+    window.refreshWidthAllLabel = function () {
+        var b = document.getElementById('widthAllBtn');
+        if (!b) return;
+        var any = Array.prototype.some.call(document.querySelectorAll('#tablesContainer table'), function (t) { return t.classList.contains('cell-table-small'); });
+        b.innerHTML = any ? '⇔ All full width' : '▯▯ All half width';
+        b.title = any ? 'Make every table full width (one per row)' : 'Make every table half width (two per row)';
+    };
+    window.addEventListener('load', function () { setInterval(window.refreshWidthAllLabel, 1500); window.refreshWidthAllLabel(); });
+
     window.showFilledCells = function (mode) {
         var cells = document.querySelectorAll('#tablesContainer td');
         if (!cells.length) return;
