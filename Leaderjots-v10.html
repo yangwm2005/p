@@ -1636,6 +1636,7 @@
             </button>
             <button type="button" class="fm-btn clear-all-btn hidden" id="clearFiltersBtn" title="Clear tag, date and search filters">✕ Clear filters</button>
             <button type="button" class="fm-btn" id="outlineBtn" title="Toggle the outline sidebar (all notes by week)">🗂 Outline</button>
+            <button type="button" class="fm-btn hidden" id="hideDoneBtn" title="Hide completed items">✓ Hide done (0)</button>
             <button type="button" class="fm-btn hidden" id="remindersBtn" title="Show only notes with a reminder">⏰ Reminders (0)</button>
             <button type="button" class="fm-btn hidden" id="collapseAllBtn" title="Collapse or expand all sub-items (replies)">▼ Collapse all</button>
             <button type="button" class="fm-btn help-btn" id="helpBtn" aria-expanded="false" title="How to use">❓ Help</button>
@@ -2977,6 +2978,7 @@
                 }));
             }
 
+            if (hideDone) list = list.filter(it => !it.done);
             if (remindersOnly) {
                 return list.filter(it => !it.done && it.remindAt).sort((a, b) => a.remindAt - b.remindAt);
             }
@@ -2999,13 +3001,16 @@
             const hasFilters = searchQuery.trim() || activeTagFilters.size || activeDateFilter || remindersOnly;
 
             if (!visible.length) {
-                if (hasFilters) {
+                if (hideDone && !hasFilters && itemsArray.length) {
+                    itemsList.innerHTML = `<div class="empty-state">✓ All items are done and hidden. Click “Show done” to see them.</div>`;
+                } else if (hasFilters) {
                     itemsList.innerHTML = `<div class="empty-state">🔍 No items match your filter.</div>`;
                 } else {
                     itemsList.innerHTML = `<div class="empty-state">✨ No items yet. Add a to‑do or idea above.</div>`;
                 }
                 updateCollapseAllBtn();
                 updateRemindersBtn();
+            updateHideDoneBtn();
                 renderOutline();
                 return;
             }
@@ -3169,6 +3174,7 @@
             applyClamping();
             updateCollapseAllBtn();
             updateRemindersBtn();
+            updateHideDoneBtn();
             renderOutline();
 
             if (editingItemId) {
@@ -3522,7 +3528,7 @@
         }
         function renderOutline() {
             if (!outlineOpen) return;
-            const filtering = !!(searchQuery.trim() || activeTagFilters.size || activeDateFilter || remindersOnly);
+            const filtering = !!(searchQuery.trim() || activeTagFilters.size || activeDateFilter || remindersOnly || hideDone);
             const source = filtering ? getVisibleItems() : itemsArray;
             const groups = new Map();
             source.forEach(it => {
@@ -3575,6 +3581,8 @@
             if (!el) {
                 // The note is hidden by a filter — clear filters so it can be shown.
                 const cfb = document.getElementById('clearFiltersBtn');
+                hideDone = false;
+                try { localStorage.setItem(HIDE_DONE_KEY, '0'); } catch (e) { /* ignore */ }
                 remindersOnly = false;
                 activeTagFilters.clear();
                 activeDateFilter = null;
@@ -3647,6 +3655,25 @@
                 el.insertAdjacentElement('afterend', btn);
             });
         }
+        // ---- Hide / show completed (done) items with one button ----
+        const HIDE_DONE_KEY = COLLAPSE_KEY + '_hideDone';
+        let hideDone = false;
+        try { hideDone = localStorage.getItem(HIDE_DONE_KEY) === '1'; } catch (e) { /* ignore */ }
+        function updateHideDoneBtn() {
+            const btn = document.getElementById('hideDoneBtn');
+            if (!btn) return;
+            const n = itemsArray.filter(i => i.done).length;
+            btn.classList.toggle('hidden', n === 0 && !hideDone);
+            btn.classList.toggle('has-filter', hideDone);
+            btn.textContent = (hideDone ? '✓ Show done' : '✓ Hide done') + ' (' + n + ')';
+            btn.title = hideDone ? 'Completed items are hidden — click to show them' : 'Hide completed items';
+        }
+        document.getElementById('hideDoneBtn').addEventListener('click', () => {
+            hideDone = !hideDone;
+            try { localStorage.setItem(HIDE_DONE_KEY, hideDone ? '1' : '0'); } catch (e) { /* ignore */ }
+            renderItems();
+        });
+
         // ---- "Reminders" list: show only notes with an active (snoozed) reminder ----
         let remindersOnly = false;
         function activeReminderItems() {
