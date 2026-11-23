@@ -861,6 +861,7 @@
         <div style="display:flex;align-items:center;gap:6px;margin-top:4px;font-size:11px;color:#94a3b8;">
             <span id="gcalSyncStatus">📅 Calendar: not connected</span>
             <button type="button" id="gcalConnectBtn" style="background:none;border:none;color:#5c6bc0;text-decoration:underline;cursor:pointer;font-size:11px;padding:0;">Connect</button>
+            <button type="button" id="gcalSwitchBtn" title="Send to a different Google account's calendar" style="background:none;border:none;color:#5c6bc0;text-decoration:underline;cursor:pointer;font-size:11px;padding:0;">Use another account</button>
         </div>
     </div>
 </div>
@@ -5854,6 +5855,8 @@ document.addEventListener('DOMContentLoaded', function() { scUpdateAuthUI(); });
         <div class="cal-modal-text" id="calTypeModalNoteText"></div>
         <button type="button" class="cal-opt-btn" id="calTypeAllDayBtn">🗓️ Whole-day event</button>
         <button type="button" class="cal-opt-btn" id="calTypeTimedBtn">🕐 Timed event (created time → last message)</button>
+        <div class="cal-modal-text" id="calAcctLine" style="font-size:12px;opacity:.8;margin-top:6px;"></div>
+        <button type="button" class="cal-opt-btn" id="calSwitchAcctBtn">🔁 Use another Google account</button>
         <button type="button" class="cal-cancel-btn" id="calTypeCancelBtn">Cancel</button>
     </div>
 </div>
@@ -6008,6 +6011,23 @@ let gcalCalendarId = null;
 let gcalCreatingCalendar = null;
 let gcalCalendarIdVerifiedAt = 0;
 let gisTokenClient = null;
+let gcalAccountEmail = null;   // Google account the Calendar token belongs to (may differ from the sign-in account)
+function gcalSavedAccount() { try { return localStorage.getItem('sc_gcal_account') || ''; } catch (e) { return ''; } }
+function gcalAcctKey() { return (gcalAccountEmail || 'unknown').toLowerCase().replace(/[^a-z0-9]/g, '_'); }
+async function gcalLoadAccount() {
+    const res = await gcalFetch('calendars/primary');
+    if (res && res.ok) {
+        try {
+            const c = await res.json();
+            if (c && c.id) {
+                gcalAccountEmail = c.id;
+                try { localStorage.setItem('sc_gcal_account', c.id); } catch (e) {}
+            }
+        } catch (e) {}
+    }
+    setCalendarConnected(gcalTokenIsFresh());
+    return gcalAccountEmail;
+}
 let calendarReconnectPromise = null;
 let silentReconnectResolvers = [];
 let pendingCalEvent = null;   // event waiting for Calendar to finish connecting
@@ -6035,7 +6055,9 @@ function gcalTokenIsFresh() {
     return !!gcalAccessToken && (Date.now() - gcalTokenObtainedAt) < 50 * 60 * 1000;
 }
 function setCalendarConnected(connected) {
-    if (gcalSyncStatus) gcalSyncStatus.textContent = connected ? '📅 Calendar: connected' : '📅 Calendar: not connected';
+    if (gcalSyncStatus) gcalSyncStatus.textContent = connected ? ('📅 Calendar: connected' + (gcalAccountEmail ? ' (' + gcalAccountEmail + ')' : '')) : '📅 Calendar: not connected';
+    var al = document.getElementById('calAcctLine');
+    if (al) al.textContent = (connected && gcalAccountEmail) ? ('Sending to: ' + gcalAccountEmail) : (gcalSavedAccount() ? ('Last used account: ' + gcalSavedAccount()) : '');
     if (gcalConnectBtn) gcalConnectBtn.textContent = connected ? 'Reconnect' : 'Connect';
 }
 function showCalToast(message, isError) {
@@ -6058,7 +6080,9 @@ function initGisTokenClient() {
             if (tokenResponse && tokenResponse.access_token) {
                 gcalAccessToken = tokenResponse.access_token;
                 gcalTokenObtainedAt = Date.now();
+                gcalAccountEmail = null; gcalCalendarId = null; gcalCalendarIdVerifiedAt = 0;
                 setCalendarConnected(true);
+                gcalLoadAccount();
                 resolvers.forEach(fn => fn(true));
                 // If a send was given up on (not connected yet), finish it now
                 if (pendingCalEvent && (Date.now() - pendingCalEventAt) < 5 * 60 * 1000) {
@@ -6102,7 +6126,7 @@ function ensureCalendarConnected() {
         showCalToast('🔑 Connecting to Google Calendar…');
         // Give the Google sign-in popup plenty of time (was 8s, too short if you pick an account)
         setTimeout(() => finish(gcalTokenIsFresh()), 90000);
-        try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
+        try { const h = gcalSavedAccount(); client.requestAccessToken(h ? { prompt: '', hint: h } : { prompt: '' }); } catch (e) { finish(false); }
     });
     return calendarReconnectPromise;
 }
@@ -6112,9 +6136,25 @@ if (gcalConnectBtn) {
         if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
         const client = initGisTokenClient();
         if (!client) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
-        client.requestAccessToken({ prompt: 'consent' });
+        const h = gcalSavedAccount();
+        client.requestAccessToken(h ? { prompt: 'consent', hint: h } : { prompt: 'consent' });
     });
 }
+// Choose a different Google account for the calendar (independent of the Firebase sign-in account)
+function gcalSwitchAccount() {
+    if (!scUser) { showCalToast('Please sign in first, then Connect Calendar.', true); return; }
+    const client = initGisTokenClient();
+    if (!client) { showCalToast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+    try { localStorage.removeItem('sc_gcal_account'); } catch (e) {}
+    gcalAccessToken = null; gcalAccountEmail = null; gcalCalendarId = null; gcalCalendarIdVerifiedAt = 0;
+    setCalendarConnected(false);
+    showCalToast('🔁 Choose the Google account for Calendar…');
+    client.requestAccessToken({ prompt: 'select_account consent' });
+}
+['gcalSwitchBtn', 'calSwitchAcctBtn'].forEach(function(id) {
+    var b = document.getElementById(id);
+    if (b) b.addEventListener('click', function(e) { e.stopPropagation(); gcalSwitchAccount(); });
+});
 
 async function gcalFetch(path, options) {
     if (!gcalTokenIsFresh()) { setCalendarConnected(false); return null; }
@@ -6163,7 +6203,9 @@ async function ensureSelfchatCalendarId() {
             const ref = selfchatSettingsDocRef();
             if (ref) {
                 const doc = await ref.get();
-                const savedId = doc.exists && doc.data().calendarId;
+                if (!gcalAccountEmail) await gcalLoadAccount();
+                const dd = doc.exists ? doc.data() : {};
+                const savedId = (dd.calendarIds && dd.calendarIds[gcalAcctKey()]) || dd.calendarId;
                 if (savedId && await calendarStillExists(savedId)) {
                     gcalCalendarId = savedId;
                     gcalCalendarIdVerifiedAt = Date.now();
@@ -6174,7 +6216,7 @@ async function ensureSelfchatCalendarId() {
             if (foundId) {
                 gcalCalendarId = foundId;
                 gcalCalendarIdVerifiedAt = Date.now();
-                if (ref) ref.set({ calendarId: foundId }, { merge: true }).catch(() => {});
+                if (ref) ref.set({ calendarIds: { [gcalAcctKey()]: foundId } }, { merge: true }).catch(() => {});
                 return gcalCalendarId;
             }
             const res = await gcalFetch('calendars', {
@@ -6189,7 +6231,7 @@ async function ensureSelfchatCalendarId() {
             const created = await res.json();
             gcalCalendarId = created.id;
             gcalCalendarIdVerifiedAt = Date.now();
-            if (ref) ref.set({ calendarId: created.id }, { merge: true }).catch(() => {});
+            if (ref) ref.set({ calendarIds: { [gcalAcctKey()]: created.id } }, { merge: true }).catch(() => {});
             return gcalCalendarId;
         } finally { gcalCreatingCalendar = null; }
     })();
