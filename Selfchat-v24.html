@@ -6060,13 +6060,13 @@ function setCalendarConnected(connected) {
     if (al) al.textContent = (connected && gcalAccountEmail) ? ('Sending to: ' + gcalAccountEmail) : (gcalSavedAccount() ? ('Last used account: ' + gcalSavedAccount()) : '');
     if (gcalConnectBtn) gcalConnectBtn.textContent = connected ? 'Reconnect' : 'Connect';
 }
-function showCalToast(message, isError) {
+function showCalToast(message, isError, ms) {
     if (!calToast) return;
     calToast.textContent = message;
     calToast.classList.toggle('error', !!isError);
     calToast.classList.add('show');
     clearTimeout(showCalToast._t);
-    showCalToast._t = setTimeout(() => calToast.classList.remove('show'), 2600);
+    showCalToast._t = setTimeout(() => calToast.classList.remove('show'), ms || (isError ? 7000 : 3500));
 }
 
 function initGisTokenClient() {
@@ -6183,8 +6183,17 @@ async function findExistingSelfchatCalendarId() {
 }
 async function calendarStillExists(id) {
     if (!id) return false;
-    const res = await gcalFetch(`calendars/${encodeURIComponent(id)}`);
-    return !!(res && res.ok);
+    // must be in THIS account's calendar list and writable (a calendar id saved for another account is not accepted)
+    const res = await gcalFetch(`users/me/calendarList/${encodeURIComponent(id)}`);
+    if (!(res && res.ok)) return false;
+    try {
+        const c = await res.json();
+        if (c.accessRole !== 'owner' && c.accessRole !== 'writer') return false;
+        if (c.hidden || c.selected === false) {   // make sure the calendar is shown in Google Calendar's left list
+            gcalFetch(`users/me/calendarList/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ hidden: false, selected: true }) }).catch(() => {});
+        }
+    } catch (e) {}
+    return true;
 }
 function selfchatSettingsDocRef() {
     if (!scUser) return null;
@@ -6288,18 +6297,37 @@ async function sendCalEvent(eventBody) {
         showCalToast('⚠️ Not connected yet — click Connect (sidebar); it will then send automatically', true);
         return;
     }
-    const calendarId = await ensureSelfchatCalendarId();
-    if (!calendarId) { showCalToast('⚠️ Calendar sync failed', true); return; }
-    try {
-        const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events`, {
-            method: 'POST',
-            body: JSON.stringify(eventBody),
-        });
-        if (res && res.ok) showCalToast('✅ Added to Calendar');
-        else showCalToast('⚠️ Calendar sync failed', true);
-    } catch (e) {
-        console.warn('Send to calendar failed:', e);
-        showCalToast('⚠️ Calendar sync failed', true);
+    if (!gcalAccountEmail) await gcalLoadAccount();
+    // Google limits an event description to 8192 characters
+    if (eventBody.description && eventBody.description.length > 7900) {
+        eventBody = Object.assign({}, eventBody, { description: eventBody.description.slice(0, 7800) + '\n… (truncated: Google Calendar limits the description length)' });
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const calendarId = await ensureSelfchatCalendarId();
+        if (!calendarId) { showCalToast('⚠️ Could not find or create the "Selfchat" calendar in ' + (gcalAccountEmail || 'this account') + '. Try Connect / Use another account.', true); return; }
+        try {
+            const res = await gcalFetch(`calendars/${encodeURIComponent(calendarId)}/events`, {
+                method: 'POST',
+                body: JSON.stringify(eventBody),
+            });
+            if (res && res.ok) {
+                let link = '';
+                try { const ev = await res.json(); link = ev && ev.htmlLink || ''; console.log('Calendar event created:', ev && ev.id, link); } catch (e) {}
+                showCalToast('✅ Added to the "Selfchat" calendar of ' + (gcalAccountEmail || 'your Google account') + ' (turn that calendar on in Google Calendar\'s left list if you do not see it)', false, 8000);
+                return;
+            }
+            if (!res) { showCalToast('⚠️ Calendar request failed (token expired?) — click Connect and send again', true); return; }
+            let msg = '';
+            try { const j = await res.json(); msg = (j && j.error && j.error.message) || ''; } catch (e) {}
+            console.warn('Calendar insert failed', res.status, msg);
+            if ((res.status === 404 || res.status === 410) && attempt === 0) { gcalCalendarId = null; gcalCalendarIdVerifiedAt = 0; continue; }
+            showCalToast('⚠️ Calendar refused the event (' + res.status + (msg ? ': ' + msg : '') + ')', true);
+            return;
+        } catch (e) {
+            console.warn('Send to calendar failed:', e);
+            showCalToast('⚠️ Calendar sync failed: ' + (e && e.message || e), true);
+            return;
+        }
     }
 }
 
