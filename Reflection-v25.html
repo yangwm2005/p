@@ -7890,6 +7890,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
         <div class="rf-modal">
             <div class="rf-modal-title">📅 Send to Calendar</div>
             <div class="rf-modal-text" id="rfCalModalNote"></div>
+            <div class="rf-acct-row"><span>Google account: <b id="rfCalAcct">…</b></span><button type="button" id="rfCalSwitchBtn">Use another account</button></div>
             <button type="button" class="rf-opt-btn" id="rfCalAllDayBtn">🗓️ Whole-day event</button>
             <button type="button" class="rf-opt-btn" id="rfCalTimedBtn">🕐 Timed event</button>
             <div class="rf-date-pick-row" id="rfCalDateRow">
@@ -7911,6 +7912,10 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
     .rf-modal-text { font-size: 0.85rem; color: #64748b; margin-bottom: 16px; max-height: 110px; overflow-y: auto; white-space: pre-wrap; line-height: 1.4; }
     .rf-opt-btn { display: block; width: 100%; text-align: left; background: #f1f5f9; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 10px 14px; font-size: 0.9rem; font-family: inherit; color: #1e293b; cursor: pointer; margin-bottom: 8px; justify-content: flex-start; font-weight: 500; }
     .rf-opt-btn:hover { background: #e2e8f0; border-color: #cbd5e1; transform: none; box-shadow: none; }
+    .rf-acct-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.78rem; color: #64748b; margin-bottom: 12px; padding: 7px 10px; background: #f8fafc; border-radius: 10px; }
+    .rf-acct-row b { color: #1e293b; word-break: break-all; }
+    .rf-acct-row button { background: none; border: none; color: #2563eb; cursor: pointer; font-size: 0.78rem; padding: 2px 4px; white-space: nowrap; font-family: inherit; }
+    .rf-acct-row button:hover { text-decoration: underline; background: none; transform: none; box-shadow: none; }
     .rf-date-pick-row { margin-bottom: 8px; }
     .rf-date-pick-row input[type="date"] { width: 100%; padding: 9px 10px; border-radius: 12px; border: 1.5px solid #e2e8f0; font-family: inherit; font-size: 0.88rem; }
     .rf-cancel-btn { display: block; width: 100%; text-align: center; background: none; border: none; padding: 8px; font-size: 0.85rem; color: #94a3b8; cursor: pointer; margin-top: 4px; justify-content: center; }
@@ -7929,7 +7934,10 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             night:     { icon: '🌙', label: 'Evening Reflection', tsKey: '_ts_night',     el: function(){ return document.getElementById('night-text'); } }
         };
 
-        let gcalAccessToken = null, gcalTokenObtainedAt = 0, gcalCalendarId = null;
+        let gcalAccessToken = null, gcalTokenObtainedAt = 0, gcalCalendarId = null, gcalAccountEmail = '', switchingAccount = false;
+        const HINT_KEY = 'rfCalAccountHint';
+        function getHint() { try { return localStorage.getItem(HINT_KEY) || ''; } catch (e) { return ''; } }
+        function setHint(v) { try { if (v) localStorage.setItem(HINT_KEY, v); } catch (e) {} }
         let gcalCreatingCalendar = null, gcalCalendarIdVerifiedAt = 0;
         let gisTokenClient = null, calendarReconnectPromise = null, silentReconnectResolvers = [];
         let pendingJob = null, pendingJobAt = 0;
@@ -7965,6 +7973,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                 callback: function (resp) {
                     const resolvers = silentReconnectResolvers.splice(0);
                     if (resp && resp.access_token) {
+                        if (switchingAccount) { gcalCalendarId = null; gcalCalendarIdVerifiedAt = 0; gcalAccountEmail = ''; switchingAccount = false; }
                         gcalAccessToken = resp.access_token;
                         gcalTokenObtainedAt = Date.now();
                         resolvers.forEach(function (fn) { fn(true); });
@@ -7972,11 +7981,13 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                             const j = pendingJob; pendingJob = null; sendEvents(j);
                         } else { pendingJob = null; }
                     } else {
+                        switchingAccount = false;
                         resolvers.forEach(function (fn) { fn(false); });
                         if (resolvers.length === 0) toast('⚠️ Calendar connection failed', true);
                     }
                 },
                 error_callback: function (err) {
+                    switchingAccount = false;
                     const resolvers = silentReconnectResolvers.splice(0);
                     resolvers.forEach(function (fn) { fn(false); });
                     if (err && err.type === 'popup_failed_to_open') { toast('⚠️ Popup blocked — allow popups, then click 📅 again', true); return; }
@@ -7988,8 +7999,8 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             return gisTokenClient;
         }
 
-        function ensureConnected() {
-            if (tokenIsFresh()) return Promise.resolve(true);
+        function ensureConnected(force) {
+            if (!force && tokenIsFresh()) return Promise.resolve(true);
             if (!user()) return Promise.resolve(false);
             if (calendarReconnectPromise) return calendarReconnectPromise;
             const client = initGis();
@@ -7998,9 +8009,12 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                 let settled = false;
                 const finish = function (ok) { if (settled) return; settled = true; calendarReconnectPromise = null; resolve(ok); };
                 silentReconnectResolvers.push(finish);
-                toast('🔑 Connecting to Google Calendar…');
+                toast(force ? '🔑 Choose a Google account…' : '🔑 Connecting to Google Calendar…');
                 setTimeout(function () { finish(tokenIsFresh()); }, 90000);
-                try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
+                try {
+                    const hint = getHint();
+                    client.requestAccessToken(force ? { prompt: 'select_account' } : (hint ? { prompt: '', hint: hint } : { prompt: '' }));
+                } catch (e) { finish(false); }
             });
             return calendarReconnectPromise;
         }
@@ -8015,6 +8029,18 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             } catch (e) { console.warn('Calendar request failed:', e); return null; }
             if (res.status === 401) { gcalAccessToken = null; return null; }
             return res;
+        }
+
+        async function fetchAccount() {
+            if (gcalAccountEmail) return gcalAccountEmail;
+            const res = await gcalFetch('calendars/primary');
+            if (res && res.ok) { const j = await res.json(); gcalAccountEmail = j.id || ''; setHint(gcalAccountEmail); }
+            return gcalAccountEmail;
+        }
+        function saveCalId(ref, id) {
+            if (!ref) return;
+            const ids = {}; ids[gcalAccountEmail || 'unknown'] = id;
+            ref.set({ ids: ids }, { merge: true }).catch(function () {});
         }
 
         // ── Find / create the dedicated calendar ──
@@ -8048,11 +8074,13 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             if (gcalCreatingCalendar) return gcalCreatingCalendar;
             gcalCreatingCalendar = (async function () {
                 try {
+                    await fetchAccount();
                     const ref = settingsRef();
                     if (ref) {
                         try {
                             const doc = await ref.get();
-                            const savedId = doc.exists && doc.data().calendarId;
+                            const d0 = doc.exists ? doc.data() : {};
+                            const savedId = gcalAccountEmail && d0.ids ? d0.ids[gcalAccountEmail] : null;
                             if (savedId && await calendarStillExists(savedId)) {
                                 gcalCalendarId = savedId; gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId;
                             }
@@ -8061,7 +8089,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                     const foundId = await findExistingCalendarId();
                     if (foundId) {
                         gcalCalendarId = foundId; gcalCalendarIdVerifiedAt = Date.now();
-                        if (ref) ref.set({ calendarId: foundId }, { merge: true }).catch(function () {});
+                        saveCalId(ref, foundId);
                         return gcalCalendarId;
                     }
                     const res = await gcalFetch('calendars', {
@@ -8075,7 +8103,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                     if (!res || !res.ok) return null;
                     const created = await res.json();
                     gcalCalendarId = created.id; gcalCalendarIdVerifiedAt = Date.now();
-                    if (ref) ref.set({ calendarId: created.id }, { merge: true }).catch(function () {});
+                    saveCalId(ref, created.id);
                     return gcalCalendarId;
                 } finally { gcalCreatingCalendar = null; }
             })();
@@ -8203,6 +8231,8 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                 if (!ok) { toast('⚠️ Calendar not connected — finish the Google popup, then click 📅 again', true); return; }
             }
             currentScope = scope; currentDay = day;
+            document.getElementById('rfCalAcct').textContent = gcalAccountEmail || '…';
+            fetchAccount().then(function (em) { if (em) document.getElementById('rfCalAcct').textContent = em; });
             const r = timeRange(day, keys);
             const basisText = r.basis === 'written' ? 'from the times written in your notes' : r.basis === 'saved' ? 'from when the notes were saved' : 'default time — no times found';
             document.getElementById('rfCalModalNote').textContent =
@@ -8214,6 +8244,17 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
         function closeModal() { backdrop.classList.add('hidden'); }
 
         document.getElementById('rfCalCancelBtn').addEventListener('click', closeModal);
+        document.getElementById('rfCalSwitchBtn').addEventListener('click', async function () {
+            const scope = currentScope;
+            closeModal();
+            if (!initGis()) { toast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+            switchingAccount = true;
+            const ok = await ensureConnected(true);
+            if (!ok) { switchingAccount = false; toast('⚠️ Account not changed', true); return; }
+            const em = await fetchAccount();
+            toast('✅ Using ' + (em || 'new account'));
+            openCalendarModal(scope);
+        });
         backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });
         document.getElementById('rfCalAllDayBtn').addEventListener('click', function () {
             const v = dateInput.value || currentDay.ds; closeModal(); sendEvents(buildAllDay(v));
