@@ -8279,7 +8279,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
         const TS_ONLY = /^\s*•\s*(\d{1,2}:\d{2}\s*[ap]m)?\s*$/i;     // "•", "• ", "• 9:15 am "
         const BULLET = /^(\s*)•[ \t]?(.*)$/;
 
-        function fire(ta) { ta.dispatchEvent(new Event('input', { bubbles: true })); }
+        function fire(ta) { ta._rfEdited = true; ta.dispatchEvent(new Event('input', { bubbles: true })); }
         function lineBounds(ta, pos) {
             const t = ta.value;
             const a = t.lastIndexOf('\n', pos - 1) + 1;
@@ -8303,8 +8303,14 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             ta.setSelectionRange(b.length, b.length);
         }
         // Leaving an untouched field puts it back to empty so a lone bullet isn't saved as an entry
+        // Only fires an input event (→ autosave + cloud sync with a fresh timestamp) if YOU actually edited the field;
+        // merely clicking in and out must never stamp an empty "newer" value that could overwrite another device's text.
         function unseed(ta) {
-            if (ta.value.trim() !== '' && isBlank(ta)) { ta.value = '\n'; fire(ta); }
+            if (ta.value.trim() !== '' && isBlank(ta)) {
+                ta.value = '\n';
+                if (ta._rfEdited) fire(ta);
+            }
+            ta._rfEdited = false;
         }
 
         function setLine(ta, a, b, newLine, caretInLine) {
@@ -8389,6 +8395,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             const ta = document.getElementById(id);
             if (!ta) return;
             ta.addEventListener('keydown', onKey, true);                  // capture: runs before the older Enter handlers
+            ta.addEventListener('beforeinput', function () { ta._rfEdited = true; });
             ta.addEventListener('focus', function () {
                 seed(ta);
                 // the mouse-up that follows a click moves the caret; put it back after the bullet
