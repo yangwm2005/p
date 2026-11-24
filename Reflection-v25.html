@@ -3292,6 +3292,7 @@ input:checked + .slider:before {
                     <label  class="mobile-action-btn mab-load"   for="mob-file-input">📂 Load JSON</label>
                     <button class="mobile-action-btn mab-clear"  id="mob-clear-btn">🗑 Clear</button>
                     <button class="mobile-action-btn mab-save" id="mob-cal-btn" style="grid-column: span 2;">📅 Send Day to Calendar</button>
+                    <button class="mobile-action-btn mab-export" id="mob-diag-btn" style="grid-column: span 2;">🩺 Sync Diagnostics</button>
                 </div>
                 <input type="file" id="mob-file-input" style="display:none" accept=".json">
             </div>
@@ -3709,6 +3710,9 @@ input:checked + .slider:before {
                         </button>
                         <button class="btn-primary" id="rf-cal-day-btn" style="background: linear-gradient(135deg, #10b981, #059669);">
                             <span class="btn-icon">📅</span> Send Day to Calendar
+                        </button>
+                        <button class="btn-primary" id="rf-diag-btn" style="background: linear-gradient(135deg, #64748b, #475569);">
+                            <span class="btn-icon">🩺</span> Sync Diagnostics
                         </button>
                         <button class="btn-primary" id="dynalist-export-btn">
                             <span class="btn-icon">📝</span> Export to Dynalist
@@ -6230,7 +6234,8 @@ if (timestripeBtn) {
             let gdriveLastSavedAt = 0;
             // Exposed so the Google Calendar module (separate script below) can use the same sign-in
             window._rfCloud = { user: function(){ return fbUser; }, db: function(){ return fbDb; },
-                flush: function(){ if (fbUser && isAutoSyncEnabled()) fbSaveAll(true); } };
+                flush: function(){ if (fbUser && isAutoSyncEnabled()) fbSaveAll(true); },
+                diag: function(){ return runDiag(); } };
 
             function isAutoSyncEnabled(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
 
@@ -6531,6 +6536,87 @@ if (timestripeBtn) {
                 return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out')), ms))]);
             }
 
+            // Replace unpaired UTF-16 surrogates (can come from phone keyboards / dictation) — Firestore rejects them.
+            function wellFormed(str){
+                let out = '';
+                for (let i = 0; i < str.length; i++) {
+                    const c = str.charCodeAt(i);
+                    if (c >= 0xD800 && c <= 0xDBFF) {
+                        const n = str.charCodeAt(i + 1);
+                        if (n >= 0xDC00 && n <= 0xDFFF) { out += str[i] + str[i + 1]; i++; } else out += '�';
+                    } else if (c >= 0xDC00 && c <= 0xDFFF) out += '�';
+                    else out += str[i];
+                }
+                return out;
+            }
+            function cleanText(v){ return wellFormed(v == null ? '' : (typeof v === 'string' ? v : String(v))); }
+            function cleanNum(v, dflt){ return (typeof v === 'number' && isFinite(v)) ? v : dflt; }
+
+            // ── Sync diagnostics: step-by-step test with a readable report ──
+            async function runDiag(){
+                const ov = document.createElement('div');
+                ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:14px;';
+                ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:88vh;display:flex;flex-direction:column;padding:14px;">'
+                    + '<div style="font-weight:600;margin-bottom:8px;">🩺 Sync diagnostics</div>'
+                    + '<pre id="rf-diag-pre" style="flex:1;overflow:auto;font-size:12px;line-height:1.4;white-space:pre-wrap;word-break:break-word;background:#f8fafc;border-radius:8px;padding:10px;margin:0 0 10px;"></pre>'
+                    + '<div style="display:flex;gap:8px;justify-content:flex-end;"><button id="rf-diag-copy" style="padding:8px 14px;">Copy</button><button id="rf-diag-close" style="padding:8px 14px;">Close</button></div></div>';
+                document.body.appendChild(ov);
+                const pre = ov.querySelector('#rf-diag-pre');
+                const log = m => { pre.textContent += m + '\n'; pre.scrollTop = pre.scrollHeight; };
+                ov.querySelector('#rf-diag-close').onclick = () => ov.remove();
+                ov.querySelector('#rf-diag-copy').onclick = () => { try { navigator.clipboard.writeText(pre.textContent); } catch(_){} };
+                try {
+                    log('Reflection v26 · ' + new Date().toString());
+                    log('Browser: ' + navigator.userAgent);
+                    log('Online: ' + navigator.onLine);
+                    log('Last error: ' + (window._rfLastSyncError || '(none this session)'));
+                    log('Uses plain-HTTPS route: ' + (localStorage.getItem('rf_useRest') === '1' ? 'yes' : 'no'));
+                    log('Auto-sync: ' + (isAutoSyncEnabled() ? 'ON' : 'OFF'));
+                    if (!fbUser) { log('✗ NOT SIGNED IN — sign in from the ☁ menu first.'); return; }
+                    log('Signed in: ' + fbUser.email + ' (uid ' + fbUser.uid.slice(0, 6) + '…)');
+                    // local data health
+                    const keys = Object.keys(reflectionsData || {});
+                    const json = JSON.stringify(reflectionsData || {});
+                    let bad = [], surrogates = 0, biggest = 0, biggestKey = '';
+                    keys.forEach(k => {
+                        const e = reflectionsData[k];
+                        if (!e || typeof e !== 'object') { bad.push(k + ' (not an object)'); return; }
+                        ['morning','selfaware','night'].forEach(f => {
+                            if (e[f] != null && typeof e[f] !== 'string') bad.push(k + '.' + f + ' is ' + typeof e[f]);
+                            const t = typeof e[f] === 'string' ? e[f] : '';
+                            if (wellFormed(t) !== t) surrogates++;
+                            if (t.length > biggest) { biggest = t.length; biggestKey = k + '.' + f; }
+                        });
+                        if (k === '' || /\//.test(k) || /^__.*__$/.test(k)) bad.push('odd key "' + k + '"');
+                    });
+                    log('Local data: ' + keys.length + ' days, ' + Math.round(json.length / 1024) + ' KB; longest field ' + biggest + ' chars (' + biggestKey + ')');
+                    log('Problem entries: ' + (bad.length ? bad.slice(0, 8).join('; ') : 'none') + ' · fields with broken characters: ' + surrogates);
+                    // token
+                    let token;
+                    try { token = await fbUser.getIdToken(); log('✓ Sign-in token OK'); } catch (e) { log('✗ Sign-in token failed: ' + e.message); return; }
+                    const base = 'https://firestore.googleapis.com/v1/projects/' + FIREBASE_CONFIG.projectId + '/databases/(default)/documents/users/' + encodeURIComponent(fbUser.uid);
+                    // REST read
+                    try {
+                        const r = await fetch(base, { headers: { 'Authorization': 'Bearer ' + token } });
+                        if (r.ok) { const j = await r.json(); const txt = JSON.stringify(j.fields || {}); const days = (((j.fields||{}).reflectionJournalData||{}).mapValue||{}).fields; log('✓ HTTPS read OK · cloud document ' + Math.round(txt.length / 1024) + ' KB (limit ≈1024 KB) · ' + (days ? Object.keys(days).length : 0) + ' journal days'); }
+                        else { let d=''; try{ const j=await r.json(); d=(j.error&&j.error.message)||''; }catch(_){} log('✗ HTTPS read failed: ' + r.status + ' ' + d); }
+                    } catch (e) { log('✗ HTTPS read blocked: ' + e.message); }
+                    // SDK read
+                    try { const sn = await withTimeout(getUserDocRef().get(), 10000, 'SDK read'); log('✓ SDK read OK (exists: ' + sn.exists + ')'); }
+                    catch (e) { log('✗ SDK read failed: ' + (e.code || '') + ' ' + e.message); }
+                    // HTTPS write ping (tiny, separate field)
+                    try {
+                        const r = await fetch(base + '?updateMask.fieldPaths=reflectionDiagPing', { method: 'PATCH', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { reflectionDiagPing: { integerValue: String(Date.now()) } } }) });
+                        if (r.ok) log('✓ HTTPS write OK (tiny test field)');
+                        else { let d=''; try{ const j=await r.json(); d=(j.error&&j.error.status+': '+j.error.message)||''; }catch(_){} log('✗ HTTPS write failed: ' + r.status + ' ' + d); }
+                    } catch (e) { log('✗ HTTPS write blocked: ' + e.message); }
+                    // SDK write ping
+                    try { await withTimeout(getUserDocRef().set({ reflectionDiagPing: Date.now() }, { merge: true }), 10000, 'SDK write'); log('✓ SDK write OK (tiny test field)'); }
+                    catch (e) { log('✗ SDK write failed: ' + (e.code || '') + ' ' + e.message); }
+                    log('— end of report —');
+                } catch (e) { log('✗ Diagnostics crashed: ' + e.message); }
+            }
+
             async function fbSaveAll(silent=false){
                 if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
                 if(gdriveSyncing) return;
@@ -6544,15 +6630,16 @@ if (timestripeBtn) {
                     const dataToSave = {};
                     for (const [key, val] of Object.entries(reflectionsData)) {
                         if (!val || typeof val !== 'object') continue;
+                        if (!key || /\//.test(key) || /^__.*__$/.test(key)) continue;   // keys Firestore would reject
                         dataToSave[key] = {
-                            morning:       val.morning       != null ? val.morning       : '',
-                            selfaware:     val.selfaware     != null ? val.selfaware     : '',
-                            night:         val.night         != null ? val.night         : '',
-                            date:          val.date          != null ? val.date          : '',
-                            _savedAt:      val._savedAt      || now,
-                            _ts_morning:   val._ts_morning   || val._savedAt || now,
-                            _ts_selfaware: val._ts_selfaware || val._savedAt || now,
-                            _ts_night:     val._ts_night     || val._savedAt || now,
+                            morning:       cleanText(val.morning),
+                            selfaware:     cleanText(val.selfaware),
+                            night:         cleanText(val.night),
+                            date:          cleanText(val.date),
+                            _savedAt:      cleanNum(val._savedAt, now),
+                            _ts_morning:   cleanNum(val._ts_morning,   cleanNum(val._savedAt, now)),
+                            _ts_selfaware: cleanNum(val._ts_selfaware, cleanNum(val._savedAt, now)),
+                            _ts_night:     cleanNum(val._ts_night,     cleanNum(val._savedAt, now)),
                         };
                     }
                     const docRef = getUserDocRef();
@@ -6580,7 +6667,17 @@ if (timestripeBtn) {
                         try { await fn(); lastErr = null; if (name === 'REST') localStorage.setItem('rf_useRest', '1'); else localStorage.removeItem('rf_useRest'); break; }
                         catch (err) { errs.push(name + ': ' + ((err && err.code) ? err.code + ' ' : '') + (err && err.message ? err.message : err)); lastErr = new Error(errs.join('  |  ')); }
                     }
-                    if (lastErr) throw lastErr;
+                    if (lastErr) {
+                        // Both whole-journal routes failed: try day by day over HTTPS so a single problem entry can't block the rest.
+                        const okDays = [], badDays = [];
+                        for (const k of Object.keys(dataToSave)) {
+                            try { const one = {}; one[k] = dataToSave[k]; await restSaveJournal(one, now); okDays.push(k); }
+                            catch (e2) { badDays.push(k + ' (' + (e2 && e2.message ? e2.message : e2) + ')'); if (okDays.length === 0 && badDays.length >= 2) break; }
+                        }
+                        if (okDays.length === 0) throw lastErr;
+                        window._rfLastSyncError = 'Partly saved. Failed days: ' + badDays.join('; ');
+                        showGdriveStatus('⚠ Saved ' + okDays.length + ' days; problem days: ' + badDays.map(x => x.split(' ')[0]).join(', '), false, true);
+                    }
                     setSyncIndicator('ok');
                     gdriveLastSavedAt = Date.now();
                     localStorage.setItem('rf_lastCloudSync', new Date().toISOString());
@@ -8486,6 +8583,14 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
         }
         document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushNow(); });
         window.addEventListener('pagehide', flushNow);
+    })();
+    </script>
+    <script>
+    (function () {
+        ['rf-diag-btn', 'mob-diag-btn'].forEach(function (id) {
+            const b = document.getElementById(id);
+            if (b) b.addEventListener('click', function () { if (window._rfCloud && window._rfCloud.diag) window._rfCloud.diag(); });
+        });
     })();
     </script>
     </body>
