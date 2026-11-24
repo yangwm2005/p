@@ -3292,7 +3292,6 @@ input:checked + .slider:before {
                     <label  class="mobile-action-btn mab-load"   for="mob-file-input">📂 Load JSON</label>
                     <button class="mobile-action-btn mab-clear"  id="mob-clear-btn">🗑 Clear</button>
                     <button class="mobile-action-btn mab-save" id="mob-cal-btn" style="grid-column: span 2;">📅 Send Day to Calendar</button>
-                    <button class="mobile-action-btn mab-export" id="mob-diag-btn" style="grid-column: span 2;">🩺 Sync Diagnostics</button>
                 </div>
                 <input type="file" id="mob-file-input" style="display:none" accept=".json">
             </div>
@@ -3710,9 +3709,6 @@ input:checked + .slider:before {
                         </button>
                         <button class="btn-primary" id="rf-cal-day-btn" style="background: linear-gradient(135deg, #10b981, #059669);">
                             <span class="btn-icon">📅</span> Send Day to Calendar
-                        </button>
-                        <button class="btn-primary" id="rf-diag-btn" style="background: linear-gradient(135deg, #64748b, #475569);">
-                            <span class="btn-icon">🩺</span> Sync Diagnostics
                         </button>
                         <button class="btn-primary" id="dynalist-export-btn">
                             <span class="btn-icon">📝</span> Export to Dynalist
@@ -6233,9 +6229,7 @@ if (timestripeBtn) {
             let gdrivePollInterval = null;
             let gdriveLastSavedAt = 0;
             // Exposed so the Google Calendar module (separate script below) can use the same sign-in
-            window._rfCloud = { user: function(){ return fbUser; }, db: function(){ return fbDb; },
-                flush: function(){ if (fbUser && isAutoSyncEnabled()) fbSaveAll(true); },
-                diag: function(){ return runDiag(); } };
+            window._rfCloud = { user: function(){ return fbUser; }, db: function(){ return fbDb; } };
 
             function isAutoSyncEnabled(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
 
@@ -6444,7 +6438,7 @@ if (timestripeBtn) {
                                 // local-only entries (never yet uploaded) are preserved.
                                 (async ()=>{
                                     try {
-                                        const snap = await fetchUserDoc();
+                                        const snap = await getUserDocRef().get();
                                         if(snap.exists){
                                             const cloudTs = snap.data().reflectionUpdatedAt || 0;
                                             const lastSync = localStorage.getItem('rf_lastCloudSync');
@@ -6500,170 +6494,6 @@ if (timestripeBtn) {
             // We also keep a top-level _fieldTs map for fast comparison without
             // loading all text.
 
-            // ── Plain-HTTPS fallback writer ──────────────────────────────────────
-            // iPhone Safari can block/stall the Firebase SDK's streaming connection while ordinary HTTPS requests work.
-            // This writes the same fields through Firestore's REST endpoint with the signed-in user's token
-            // (same security rules apply). Only the journal fields are touched, never the rest of the user doc.
-            async function restSaveJournal(dataToSave, now){
-                const token = await idToken();
-                const enc = (v) => {
-                    if (v === null || v === undefined) return { nullValue: null };
-                    if (typeof v === 'string')  return { stringValue: v };
-                    if (typeof v === 'boolean') return { booleanValue: v };
-                    if (typeof v === 'number')  return Number.isInteger(v) ? { integerValue: String(v) } : (isFinite(v) ? { doubleValue: v } : { nullValue: null });
-                    const fields = {};
-                    Object.keys(v).forEach(k => { fields[k] = enc(v[k]); });
-                    return { mapValue: { fields } };
-                };
-                const fields = { reflectionJournalData: enc(dataToSave), reflectionUpdatedAt: { integerValue: String(now) } };
-                const masks = ['reflectionUpdatedAt'].concat(Object.keys(dataToSave).map(k => 'reflectionJournalData.`' + k.replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`'));
-                const url = 'https://firestore.googleapis.com/v1/projects/' + FIREBASE_CONFIG.projectId + '/databases/(default)/documents/users/' + encodeURIComponent(fbUser.uid)
-                          + '?' + masks.map(m => 'updateMask.fieldPaths=' + encodeURIComponent(m)).join('&');
-                const res = await fetchT(url, {
-                    method: 'PATCH',
-                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fields })
-                }, 30000);
-                if (!res.ok) {
-                    let detail = ''; try { const j = await res.json(); detail = (j.error && (j.error.status + ': ' + j.error.message)) || ''; } catch (_) {}
-                    throw new Error('REST ' + res.status + ' ' + detail);
-                }
-            }
-            function withTimeout(promise, ms, label){
-                return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out')), ms))]);
-            }
-
-            // ── Transport selection ──────────────────────────────────────────────
-            // iPhone Safari frequently stalls the Firebase SDK's streaming channel (endless "syncing", write errors).
-            // On iPhone/iPod we therefore talk to Firestore over plain HTTPS (REST) with the user's sign-in token,
-            // with hard time limits so nothing can hang forever. Other devices keep the normal SDK route.
-            const IS_IPHONE = /iPhone|iPod/i.test(navigator.userAgent);
-            function useRestFirst(){ return IS_IPHONE || localStorage.getItem('rf_useRest') === '1'; }
-            function fetchT(url, opts, ms){
-                const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-                const t = setTimeout(() => { if (ctl) ctl.abort(); }, ms || 20000);
-                return fetch(url, Object.assign({}, opts || {}, ctl ? { signal: ctl.signal } : {}))
-                    .catch(e => { throw new Error(e && e.name === 'AbortError' ? 'network request timed out' : (e && e.message) || 'network error'); })
-                    .finally(() => clearTimeout(t));
-            }
-            function docUrl(){ return 'https://firestore.googleapis.com/v1/projects/' + FIREBASE_CONFIG.projectId + '/databases/(default)/documents/users/' + encodeURIComponent(fbUser.uid); }
-            function decodeValue(v){
-                if (!v) return null;
-                if ('stringValue' in v) return v.stringValue;
-                if ('integerValue' in v) return Number(v.integerValue);
-                if ('doubleValue' in v) return v.doubleValue;
-                if ('booleanValue' in v) return v.booleanValue;
-                if ('timestampValue' in v) return Date.parse(v.timestampValue);
-                if ('mapValue' in v) { const o = {}; const f = v.mapValue.fields || {}; Object.keys(f).forEach(k => { o[k] = decodeValue(f[k]); }); return o; }
-                if ('arrayValue' in v) return (v.arrayValue.values || []).map(decodeValue);
-                return null;
-            }
-            async function idToken(){ return withTimeout(fbUser.getIdToken(), 15000, 'Sign-in token'); }
-            async function restReadUserDoc(){
-                const token = await idToken();
-                const res = await fetchT(docUrl(), { headers: { 'Authorization': 'Bearer ' + token } }, 25000);
-                if (res.status === 404) return { exists: false, data: () => ({}) };
-                if (!res.ok) { let d=''; try { const j = await res.json(); d = (j.error && (j.error.status + ': ' + j.error.message)) || ''; } catch(_){} throw new Error('REST read ' + res.status + ' ' + d); }
-                const j = await res.json(); const data = {};
-                Object.keys(j.fields || {}).forEach(k => { data[k] = decodeValue(j.fields[k]); });
-                return { exists: true, data: () => data };
-            }
-            async function fetchUserDoc(){
-                if (useRestFirst()) {
-                    try { return await restReadUserDoc(); }
-                    catch (e1) {
-                        try { return await withTimeout(getUserDocRef().get(), 10000, 'SDK read'); }
-                        catch (e2) { throw new Error('read failed — HTTPS: ' + e1.message + ' | SDK: ' + e2.message); }
-                    }
-                }
-                try { return await withTimeout(getUserDocRef().get(), 15000, 'SDK read'); }
-                catch (e1) {
-                    try { const r = await restReadUserDoc(); return r; }
-                    catch (e2) { throw new Error('read failed — SDK: ' + e1.message + ' | HTTPS: ' + e2.message); }
-                }
-            }
-
-            // Replace unpaired UTF-16 surrogates (can come from phone keyboards / dictation) — Firestore rejects them.
-            function wellFormed(str){
-                let out = '';
-                for (let i = 0; i < str.length; i++) {
-                    const c = str.charCodeAt(i);
-                    if (c >= 0xD800 && c <= 0xDBFF) {
-                        const n = str.charCodeAt(i + 1);
-                        if (n >= 0xDC00 && n <= 0xDFFF) { out += str[i] + str[i + 1]; i++; } else out += '�';
-                    } else if (c >= 0xDC00 && c <= 0xDFFF) out += '�';
-                    else out += str[i];
-                }
-                return out;
-            }
-            function cleanText(v){ return wellFormed(v == null ? '' : (typeof v === 'string' ? v : String(v))); }
-            function cleanNum(v, dflt){ return (typeof v === 'number' && isFinite(v)) ? v : dflt; }
-
-            // ── Sync diagnostics: step-by-step test with a readable report ──
-            async function runDiag(){
-                const ov = document.createElement('div');
-                ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:14px;';
-                ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:88vh;display:flex;flex-direction:column;padding:14px;">'
-                    + '<div style="font-weight:600;margin-bottom:8px;">🩺 Sync diagnostics</div>'
-                    + '<pre id="rf-diag-pre" style="flex:1;overflow:auto;font-size:12px;line-height:1.4;white-space:pre-wrap;word-break:break-word;background:#f8fafc;border-radius:8px;padding:10px;margin:0 0 10px;"></pre>'
-                    + '<div style="display:flex;gap:8px;justify-content:flex-end;"><button id="rf-diag-copy" style="padding:8px 14px;">Copy</button><button id="rf-diag-close" style="padding:8px 14px;">Close</button></div></div>';
-                document.body.appendChild(ov);
-                const pre = ov.querySelector('#rf-diag-pre');
-                const log = m => { pre.textContent += m + '\n'; pre.scrollTop = pre.scrollHeight; };
-                ov.querySelector('#rf-diag-close').onclick = () => ov.remove();
-                ov.querySelector('#rf-diag-copy').onclick = () => { try { navigator.clipboard.writeText(pre.textContent); } catch(_){} };
-                try {
-                    log('Reflection v26 · ' + new Date().toString());
-                    log('Browser: ' + navigator.userAgent);
-                    log('Online: ' + navigator.onLine);
-                    log('Last error: ' + (window._rfLastSyncError || '(none this session)'));
-                    log('Uses plain-HTTPS route first: ' + (useRestFirst() ? 'yes' : 'no') + (IS_IPHONE ? ' (iPhone)' : ''));
-                    log('Auto-sync: ' + (isAutoSyncEnabled() ? 'ON' : 'OFF'));
-                    if (!fbUser) { log('✗ NOT SIGNED IN — sign in from the ☁ menu first.'); return; }
-                    log('Signed in: ' + fbUser.email + ' (uid ' + fbUser.uid.slice(0, 6) + '…)');
-                    // local data health
-                    const keys = Object.keys(reflectionsData || {});
-                    const json = JSON.stringify(reflectionsData || {});
-                    let bad = [], surrogates = 0, biggest = 0, biggestKey = '';
-                    keys.forEach(k => {
-                        const e = reflectionsData[k];
-                        if (!e || typeof e !== 'object') { bad.push(k + ' (not an object)'); return; }
-                        ['morning','selfaware','night'].forEach(f => {
-                            if (e[f] != null && typeof e[f] !== 'string') bad.push(k + '.' + f + ' is ' + typeof e[f]);
-                            const t = typeof e[f] === 'string' ? e[f] : '';
-                            if (wellFormed(t) !== t) surrogates++;
-                            if (t.length > biggest) { biggest = t.length; biggestKey = k + '.' + f; }
-                        });
-                        if (k === '' || /\//.test(k) || /^__.*__$/.test(k)) bad.push('odd key "' + k + '"');
-                    });
-                    log('Local data: ' + keys.length + ' days, ' + Math.round(json.length / 1024) + ' KB; longest field ' + biggest + ' chars (' + biggestKey + ')');
-                    log('Problem entries: ' + (bad.length ? bad.slice(0, 8).join('; ') : 'none') + ' · fields with broken characters: ' + surrogates);
-                    // token
-                    let token;
-                    try { token = await idToken(); log('✓ Sign-in token OK'); } catch (e) { log('✗ Sign-in token failed: ' + e.message); return; }
-                    const base = 'https://firestore.googleapis.com/v1/projects/' + FIREBASE_CONFIG.projectId + '/databases/(default)/documents/users/' + encodeURIComponent(fbUser.uid);
-                    // REST read
-                    try {
-                        const r = await fetchT(base, { headers: { 'Authorization': 'Bearer ' + token } }, 20000);
-                        if (r.ok) { const j = await r.json(); const txt = JSON.stringify(j.fields || {}); const days = (((j.fields||{}).reflectionJournalData||{}).mapValue||{}).fields; log('✓ HTTPS read OK · cloud document ' + Math.round(txt.length / 1024) + ' KB (limit ≈1024 KB) · ' + (days ? Object.keys(days).length : 0) + ' journal days'); }
-                        else { let d=''; try{ const j=await r.json(); d=(j.error&&j.error.message)||''; }catch(_){} log('✗ HTTPS read failed: ' + r.status + ' ' + d); }
-                    } catch (e) { log('✗ HTTPS read blocked: ' + e.message); }
-                    // SDK read
-                    try { const sn = await withTimeout(getUserDocRef().get(), 10000, 'SDK read'); log('✓ SDK read OK (exists: ' + sn.exists + ')'); }
-                    catch (e) { log('✗ SDK read failed: ' + (e.code || '') + ' ' + e.message); }
-                    // HTTPS write ping (tiny, separate field)
-                    try {
-                        const r = await fetchT(base + '?updateMask.fieldPaths=reflectionDiagPing', { method: 'PATCH', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: { reflectionDiagPing: { integerValue: String(Date.now()) } } }) }, 20000);
-                        if (r.ok) log('✓ HTTPS write OK (tiny test field)');
-                        else { let d=''; try{ const j=await r.json(); d=(j.error&&j.error.status+': '+j.error.message)||''; }catch(_){} log('✗ HTTPS write failed: ' + r.status + ' ' + d); }
-                    } catch (e) { log('✗ HTTPS write blocked: ' + e.message); }
-                    // SDK write ping
-                    try { await withTimeout(getUserDocRef().set({ reflectionDiagPing: Date.now() }, { merge: true }), 10000, 'SDK write'); log('✓ SDK write OK (tiny test field)'); }
-                    catch (e) { log('✗ SDK write failed: ' + (e.code || '') + ' ' + e.message); }
-                    log('— end of report —');
-                } catch (e) { log('✗ Diagnostics crashed: ' + e.message); }
-            }
-
             async function fbSaveAll(silent=false){
                 if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
                 if(gdriveSyncing) return;
@@ -6677,53 +6507,29 @@ if (timestripeBtn) {
                     const dataToSave = {};
                     for (const [key, val] of Object.entries(reflectionsData)) {
                         if (!val || typeof val !== 'object') continue;
-                        if (!key || /\//.test(key) || /^__.*__$/.test(key)) continue;   // keys Firestore would reject
                         dataToSave[key] = {
-                            morning:       cleanText(val.morning),
-                            selfaware:     cleanText(val.selfaware),
-                            night:         cleanText(val.night),
-                            date:          cleanText(val.date),
-                            _savedAt:      cleanNum(val._savedAt, now),
-                            _ts_morning:   cleanNum(val._ts_morning,   cleanNum(val._savedAt, now)),
-                            _ts_selfaware: cleanNum(val._ts_selfaware, cleanNum(val._savedAt, now)),
-                            _ts_night:     cleanNum(val._ts_night,     cleanNum(val._savedAt, now)),
+                            morning:       val.morning       != null ? val.morning       : '',
+                            selfaware:     val.selfaware     != null ? val.selfaware     : '',
+                            night:         val.night         != null ? val.night         : '',
+                            date:          val.date          != null ? val.date          : '',
+                            _savedAt:      val._savedAt      || now,
+                            _ts_morning:   val._ts_morning   || val._savedAt || now,
+                            _ts_selfaware: val._ts_selfaware || val._savedAt || now,
+                            _ts_night:     val._ts_night     || val._savedAt || now,
                         };
                     }
                     const docRef = getUserDocRef();
-                    // One merged write (no read-before-write — the read is what fails on a flaky phone connection),
-                    // retried a few times on transient network errors.
-                    const payload = { reflectionJournalData: dataToSave, reflectionUpdatedAt: now };
-                    let lastErr = null, sdkErr = null;
-                    const preferRest = useRestFirst();
-                    const viaSdk = async () => {
-                        for (let attempt = 0; attempt < (preferRest ? 1 : 3); attempt++) {
-                            try { await withTimeout(docRef.set(payload, { merge: true }), preferRest ? 10000 : 12000, 'Firestore write'); return; }
-                            catch (err) {
-                                sdkErr = err;
-                                const transient = /unavailable|deadline|offline|network|aborted|internal|timed out/i.test((err.code || '') + ' ' + (err.message || ''));
-                                if (!transient) throw err;
-                                await new Promise(r => setTimeout(r, 600 * Math.pow(2, attempt)));
-                            }
-                        }
-                        throw sdkErr;
-                    };
-                    const viaRest = async () => { await restSaveJournal(dataToSave, now); };
-                    const order = preferRest ? [['REST', viaRest], ['SDK', viaSdk]] : [['SDK', viaSdk], ['REST', viaRest]];
-                    const errs = [];
-                    for (const [name, fn] of order) {
-                        try { await fn(); lastErr = null; if (name === 'REST' && !preferRest) localStorage.setItem('rf_useRest', '1'); break; }
-                        catch (err) { errs.push(name + ': ' + ((err && err.code) ? err.code + ' ' : '') + (err && err.message ? err.message : err)); lastErr = new Error(errs.join('  |  ')); }
-                    }
-                    if (lastErr) {
-                        // Both whole-journal routes failed: try day by day over HTTPS so a single problem entry can't block the rest.
-                        const okDays = [], badDays = [];
-                        for (const k of Object.keys(dataToSave)) {
-                            try { const one = {}; one[k] = dataToSave[k]; await restSaveJournal(one, now); okDays.push(k); }
-                            catch (e2) { badDays.push(k + ' (' + (e2 && e2.message ? e2.message : e2) + ')'); if (okDays.length === 0 && badDays.length >= 2) break; }  // give up quickly if nothing works
-                        }
-                        if (okDays.length === 0) throw lastErr;
-                        window._rfLastSyncError = 'Partly saved. Failed days: ' + badDays.join('; ');
-                        showGdriveStatus('⚠ Saved ' + okDays.length + ' days; problem days: ' + badDays.map(x => x.split(' ')[0]).join(', '), false, true);
+                    const snap = await docRef.get();
+                    if (snap.exists) {
+                        await docRef.update({
+                            reflectionJournalData: dataToSave,
+                            reflectionUpdatedAt: now
+                        });
+                    } else {
+                        await docRef.set({
+                            reflectionJournalData: dataToSave,
+                            reflectionUpdatedAt: now
+                        });
                     }
                     setSyncIndicator('ok');
                     gdriveLastSavedAt = Date.now();
@@ -6732,9 +6538,7 @@ if (timestripeBtn) {
                     if(!silent) showGdriveStatus('✓ Saved journal to cloud', true);
                 } catch(e){
                     setSyncIndicator('error');
-                    const _msg = ((e && e.code) ? e.code + ': ' : '') + (e && e.message ? e.message : e);
-                    window._rfLastSyncError = _msg;
-                    showGdriveStatus('✗ Sync failed: '+_msg, false, true);
+                    showGdriveStatus('✗ Sync failed: '+e.message, false, true);
                     console.error('[Reflection sync] fbSaveAll error:', e);
                 } finally { gdriveSyncing = false; }
             }
@@ -6744,7 +6548,7 @@ if (timestripeBtn) {
                 if(!silent) showGdriveStatus('⬇ Loading from cloud…', false, false);
                 setSyncIndicator('syncing');
                 try {
-                    const snap = await fetchUserDoc();
+                    const snap = await getUserDocRef().get();
                     if(!snap.exists || !snap.data().reflectionJournalData){
                         setSyncIndicator('ok');
                         if(!silent) showGdriveStatus('⚠ No journal data found in cloud yet.', false, true);
@@ -6895,7 +6699,7 @@ if (timestripeBtn) {
                 // Never interrupt the user mid-sentence: if they typed in the last 3 s, skip.
                 if(typeof _isTyping === 'function' && _isTyping()) return;
                 try {
-                    const snap = await fetchUserDoc();
+                    const snap = await getUserDocRef().get();
                     if(!snap.exists) return;
                     const driveModified = snap.data().reflectionUpdatedAt || 0;
                     if(driveModified > gdriveLastSavedAt + 5000){
@@ -6920,7 +6724,6 @@ if (timestripeBtn) {
             document.addEventListener('visibilitychange', ()=>{
                 if(document.visibilityState === 'visible') pollDriveForChanges();
             });
-            window.addEventListener('online', ()=>{ if(fbUser && isAutoSyncEnabled()) fbSaveAll(true); });
 
             // ── Timestamp helpers ─────────────────────────────────────
             function rfmtTime(iso){
@@ -8476,7 +8279,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
         const TS_ONLY = /^\s*•\s*(\d{1,2}:\d{2}\s*[ap]m)?\s*$/i;     // "•", "• ", "• 9:15 am "
         const BULLET = /^(\s*)•[ \t]?(.*)$/;
 
-        function fire(ta) { ta._rfEdited = true; ta.dispatchEvent(new Event('input', { bubbles: true })); }
+        function fire(ta) { ta.dispatchEvent(new Event('input', { bubbles: true })); }
         function lineBounds(ta, pos) {
             const t = ta.value;
             const a = t.lastIndexOf('\n', pos - 1) + 1;
@@ -8500,14 +8303,8 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             ta.setSelectionRange(b.length, b.length);
         }
         // Leaving an untouched field puts it back to empty so a lone bullet isn't saved as an entry
-        // Only fires an input event (→ autosave + cloud sync with a fresh timestamp) if YOU actually edited the field;
-        // merely clicking in and out must never stamp an empty "newer" value that could overwrite another device's text.
         function unseed(ta) {
-            if (ta.value.trim() !== '' && isBlank(ta)) {
-                ta.value = '\n';
-                if (ta._rfEdited) fire(ta);
-            }
-            ta._rfEdited = false;
+            if (ta.value.trim() !== '' && isBlank(ta)) { ta.value = '\n'; fire(ta); }
         }
 
         function setLine(ta, a, b, newLine, caretInLine) {
@@ -8592,7 +8389,6 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             const ta = document.getElementById(id);
             if (!ta) return;
             ta.addEventListener('keydown', onKey, true);                  // capture: runs before the older Enter handlers
-            ta.addEventListener('beforeinput', function () { ta._rfEdited = true; });
             ta.addEventListener('focus', function () {
                 seed(ta);
                 // the mouse-up that follows a click moves the caret; put it back after the bullet
@@ -8609,36 +8405,5 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
 
     })();
     </script>
-<script>
-    // ═══ FLUSH ON LEAVE: phones freeze the page a moment after you lock the screen / switch apps, so the usual
-    //     2 s autosave + 2.5 s cloud-sync timers never fire and the entry stays only on that phone. ═══
-    (function () {
-        function flushNow() {
-            try {
-                const ds = formatDate(selectedDate);
-                const stored = reflectionsData[ds] || {};
-                [['morning', 'morning-text'], ['selfaware', 'selfaware-text'], ['night', 'night-text']].forEach(function (pair) {
-                    const el = document.getElementById(pair[1]);
-                    if (!el) return;
-                    const v = el.value;
-                    if (v !== (stored[pair[0]] || '') && (stored[pair[0]] || v.replace(/[•\s]|\d{1,2}:\d{2}\s*[ap]m/gi, '') !== '')) {
-                        autosaveReflections(pair[0]);
-                    }
-                });
-                if (window._rfCloud && window._rfCloud.flush) window._rfCloud.flush();
-            } catch (e) { console.warn('flush failed', e); }
-        }
-        document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushNow(); });
-        window.addEventListener('pagehide', flushNow);
-    })();
-    </script>
-    <script>
-    (function () {
-        ['rf-diag-btn', 'mob-diag-btn'].forEach(function (id) {
-            const b = document.getElementById(id);
-            if (b) b.addEventListener('click', function () { if (window._rfCloud && window._rfCloud.diag) window._rfCloud.diag(); });
-        });
-    })();
-    </script>
-    </body>
+</body>
 </html>
