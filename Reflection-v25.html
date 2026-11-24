@@ -6498,6 +6498,39 @@ if (timestripeBtn) {
             // We also keep a top-level _fieldTs map for fast comparison without
             // loading all text.
 
+            // ── Plain-HTTPS fallback writer ──────────────────────────────────────
+            // iPhone Safari can block/stall the Firebase SDK's streaming connection while ordinary HTTPS requests work.
+            // This writes the same fields through Firestore's REST endpoint with the signed-in user's token
+            // (same security rules apply). Only the journal fields are touched, never the rest of the user doc.
+            async function restSaveJournal(dataToSave, now){
+                const token = await fbUser.getIdToken();
+                const enc = (v) => {
+                    if (v === null || v === undefined) return { nullValue: null };
+                    if (typeof v === 'string')  return { stringValue: v };
+                    if (typeof v === 'boolean') return { booleanValue: v };
+                    if (typeof v === 'number')  return Number.isInteger(v) ? { integerValue: String(v) } : (isFinite(v) ? { doubleValue: v } : { nullValue: null });
+                    const fields = {};
+                    Object.keys(v).forEach(k => { fields[k] = enc(v[k]); });
+                    return { mapValue: { fields } };
+                };
+                const fields = { reflectionJournalData: enc(dataToSave), reflectionUpdatedAt: { integerValue: String(now) } };
+                const masks = ['reflectionUpdatedAt'].concat(Object.keys(dataToSave).map(k => 'reflectionJournalData.`' + k.replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`'));
+                const url = 'https://firestore.googleapis.com/v1/projects/' + FIREBASE_CONFIG.projectId + '/databases/(default)/documents/users/' + encodeURIComponent(fbUser.uid)
+                          + '?' + masks.map(m => 'updateMask.fieldPaths=' + encodeURIComponent(m)).join('&');
+                const res = await fetch(url, {
+                    method: 'PATCH',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fields })
+                });
+                if (!res.ok) {
+                    let detail = ''; try { const j = await res.json(); detail = (j.error && (j.error.status + ': ' + j.error.message)) || ''; } catch (_) {}
+                    throw new Error('REST ' + res.status + ' ' + detail);
+                }
+            }
+            function withTimeout(promise, ms, label){
+                return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error(label + ' timed out')), ms))]);
+            }
+
             async function fbSaveAll(silent=false){
                 if(!fbUser || !fbDb){ showGdriveStatus('Not signed in.', false, true); return; }
                 if(gdriveSyncing) return;
@@ -6526,15 +6559,26 @@ if (timestripeBtn) {
                     // One merged write (no read-before-write — the read is what fails on a flaky phone connection),
                     // retried a few times on transient network errors.
                     const payload = { reflectionJournalData: dataToSave, reflectionUpdatedAt: now };
-                    let lastErr = null;
-                    for (let attempt = 0; attempt < 4; attempt++) {
-                        try { await docRef.set(payload, { merge: true }); lastErr = null; break; }
-                        catch (err) {
-                            lastErr = err;
-                            const transient = /unavailable|deadline|offline|network|aborted|internal/i.test((err.code || '') + ' ' + (err.message || ''));
-                            if (!transient) break;
-                            await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt)));
+                    let lastErr = null, sdkErr = null;
+                    const preferRest = localStorage.getItem('rf_useRest') === '1';
+                    const viaSdk = async () => {
+                        for (let attempt = 0; attempt < 3; attempt++) {
+                            try { await withTimeout(docRef.set(payload, { merge: true }), 12000, 'Firestore write'); return; }
+                            catch (err) {
+                                sdkErr = err;
+                                const transient = /unavailable|deadline|offline|network|aborted|internal|timed out/i.test((err.code || '') + ' ' + (err.message || ''));
+                                if (!transient) throw err;
+                                await new Promise(r => setTimeout(r, 600 * Math.pow(2, attempt)));
+                            }
                         }
+                        throw sdkErr;
+                    };
+                    const viaRest = async () => { await restSaveJournal(dataToSave, now); };
+                    const order = preferRest ? [['REST', viaRest], ['SDK', viaSdk]] : [['SDK', viaSdk], ['REST', viaRest]];
+                    const errs = [];
+                    for (const [name, fn] of order) {
+                        try { await fn(); lastErr = null; if (name === 'REST') localStorage.setItem('rf_useRest', '1'); else localStorage.removeItem('rf_useRest'); break; }
+                        catch (err) { errs.push(name + ': ' + ((err && err.code) ? err.code + ' ' : '') + (err && err.message ? err.message : err)); lastErr = new Error(errs.join('  |  ')); }
                     }
                     if (lastErr) throw lastErr;
                     setSyncIndicator('ok');
