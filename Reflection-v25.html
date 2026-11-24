@@ -6229,7 +6229,8 @@ if (timestripeBtn) {
             let gdrivePollInterval = null;
             let gdriveLastSavedAt = 0;
             // Exposed so the Google Calendar module (separate script below) can use the same sign-in
-            window._rfCloud = { user: function(){ return fbUser; }, db: function(){ return fbDb; } };
+            window._rfCloud = { user: function(){ return fbUser; }, db: function(){ return fbDb; },
+                flush: function(){ if (fbUser && isAutoSyncEnabled()) fbSaveAll(true); } };
 
             function isAutoSyncEnabled(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
 
@@ -8412,5 +8413,28 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
 
     })();
     </script>
-</body>
+<script>
+    // ═══ FLUSH ON LEAVE: phones freeze the page a moment after you lock the screen / switch apps, so the usual
+    //     2 s autosave + 2.5 s cloud-sync timers never fire and the entry stays only on that phone. ═══
+    (function () {
+        function flushNow() {
+            try {
+                const ds = formatDate(selectedDate);
+                const stored = reflectionsData[ds] || {};
+                [['morning', 'morning-text'], ['selfaware', 'selfaware-text'], ['night', 'night-text']].forEach(function (pair) {
+                    const el = document.getElementById(pair[1]);
+                    if (!el) return;
+                    const v = el.value;
+                    if (v !== (stored[pair[0]] || '') && (stored[pair[0]] || v.replace(/[•\s]|\d{1,2}:\d{2}\s*[ap]m/gi, '') !== '')) {
+                        autosaveReflections(pair[0]);
+                    }
+                });
+                if (window._rfCloud && window._rfCloud.flush) window._rfCloud.flush();
+            } catch (e) { console.warn('flush failed', e); }
+        }
+        document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushNow(); });
+        window.addEventListener('pagehide', flushNow);
+    })();
+    </script>
+    </body>
 </html>
