@@ -6422,6 +6422,9 @@ if (timestripeBtn) {
                     catch(e) { fbApp = firebase.initializeApp(FIREBASE_CONFIG, 'reflection'); }
                     fbAuth = fbApp.auth();
                     fbDb = fbApp.firestore();
+                    // iPhone Safari often drops Firestore's streaming connection ("client is offline" / sync error).
+                    // Auto-detect and fall back to long-polling, which works reliably on iOS.
+                    try { fbDb.settings({ experimentalAutoDetectLongPolling: true, merge: true }); } catch(e) { console.warn('Firestore settings:', e); }
                     fbAuth.onAuthStateChanged(user => {
                         if(user){
                             fbUser = user;
@@ -6520,18 +6523,20 @@ if (timestripeBtn) {
                         };
                     }
                     const docRef = getUserDocRef();
-                    const snap = await docRef.get();
-                    if (snap.exists) {
-                        await docRef.update({
-                            reflectionJournalData: dataToSave,
-                            reflectionUpdatedAt: now
-                        });
-                    } else {
-                        await docRef.set({
-                            reflectionJournalData: dataToSave,
-                            reflectionUpdatedAt: now
-                        });
+                    // One merged write (no read-before-write — the read is what fails on a flaky phone connection),
+                    // retried a few times on transient network errors.
+                    const payload = { reflectionJournalData: dataToSave, reflectionUpdatedAt: now };
+                    let lastErr = null;
+                    for (let attempt = 0; attempt < 4; attempt++) {
+                        try { await docRef.set(payload, { merge: true }); lastErr = null; break; }
+                        catch (err) {
+                            lastErr = err;
+                            const transient = /unavailable|deadline|offline|network|aborted|internal/i.test((err.code || '') + ' ' + (err.message || ''));
+                            if (!transient) break;
+                            await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt)));
+                        }
                     }
+                    if (lastErr) throw lastErr;
                     setSyncIndicator('ok');
                     gdriveLastSavedAt = Date.now();
                     localStorage.setItem('rf_lastCloudSync', new Date().toISOString());
@@ -6539,7 +6544,9 @@ if (timestripeBtn) {
                     if(!silent) showGdriveStatus('✓ Saved journal to cloud', true);
                 } catch(e){
                     setSyncIndicator('error');
-                    showGdriveStatus('✗ Sync failed: '+e.message, false, true);
+                    const _msg = ((e && e.code) ? e.code + ': ' : '') + (e && e.message ? e.message : e);
+                    window._rfLastSyncError = _msg;
+                    showGdriveStatus('✗ Sync failed: '+_msg, false, true);
                     console.error('[Reflection sync] fbSaveAll error:', e);
                 } finally { gdriveSyncing = false; }
             }
@@ -6725,6 +6732,7 @@ if (timestripeBtn) {
             document.addEventListener('visibilitychange', ()=>{
                 if(document.visibilityState === 'visible') pollDriveForChanges();
             });
+            window.addEventListener('online', ()=>{ if(fbUser && isAutoSyncEnabled()) fbSaveAll(true); });
 
             // ── Timestamp helpers ─────────────────────────────────────
             function rfmtTime(iso){
