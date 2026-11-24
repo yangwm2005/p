@@ -593,7 +593,7 @@
         .selfaware-reflection .format-btn:hover { background: #dcfce7; }
         .night-reflection .format-btn:hover { background: #f0ebff; }
         
-        textarea {
+        textarea, .rf-ta {
             width: 100%;
             min-height: 200px;
             padding: 15px;
@@ -605,7 +605,7 @@
             transition: all 0.2s;
             font-family: 'Inter', sans-serif;
         }
-        textarea:focus {
+        textarea:focus, .rf-ta:focus {
             outline: none;
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(93, 123, 166, 0.1);
@@ -2525,7 +2525,7 @@ input:checked + .slider:before {
         #mobile-ts-row.mfmt-show { display: flex !important; gap: 6px; margin-bottom: 8px; }
 
         /* ── textarea ── */
-        textarea {
+        textarea, .rf-ta {
             min-height: 130px !important;
             resize: none !important;
             font-size: 1rem !important;
@@ -2788,6 +2788,7 @@ input:checked + .slider:before {
         .reflection-card.section-collapsed .reflection-prompt,
         .reflection-card.section-collapsed .formatting-toolbar,
         .reflection-card.section-collapsed textarea,
+        .reflection-card.section-collapsed .rf-ta,
         .reflection-card.section-collapsed div[style*="display: flex"] {
             display: none !important;
         }
@@ -2796,7 +2797,8 @@ input:checked + .slider:before {
         .reflection-card.section-focused {
             padding: 14px 16px 20px !important;
         }
-        .reflection-card.section-focused textarea {
+        .reflection-card.section-focused textarea,
+        .reflection-card.section-focused .rf-ta {
             min-height: calc(100dvh - 230px) !important;
             transition: min-height 0.3s ease;
         }
@@ -4094,6 +4096,184 @@ input:checked + .slider:before {
         </div>
     </div>
 
+        <style>
+    /* contenteditable stand-in for the textarea: one <div> per line so each line can hang-indent on its own */
+    .rf-ta { display: block; box-sizing: border-box; overflow: auto; position: relative; white-space: pre-wrap; overflow-wrap: anywhere;
+             background: field; color: fieldtext; outline: none; cursor: text; -webkit-user-modify: read-write-plaintext-only; }
+    .rf-ta[data-empty="1"]::before { content: attr(data-placeholder); position: absolute; top: 0; left: 0; right: 0; padding: inherit; box-sizing: border-box;
+             color: #9ca3af; pointer-events: none; }
+    .rf-ta > div { min-height: 1em; }
+    </style>
+    <script>
+    // ═══ TEXTAREA → LINE-BASED EDITOR SHIM ═══
+    // Each outline line is its own block so it can hang-indent at ITS level (nested bullets too) and the caret stays exact.
+    // The element keeps the textarea API the rest of the app uses: value, selectionStart/End, setSelectionRange, select, focus.
+    (function () {
+        const IDS = ['morning-text','selfaware-text','night-text','fullpage-morning-text','fullpage-selfaware-text','fullpage-night-text'];
+        const meter = document.createElement('span');
+        meter.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;left:-9999px;top:0;';
+        document.body.appendChild(meter);
+
+        function build(ta) {
+            const root = document.createElement('div');
+            root.id = ta.id;
+            root.className = (ta.className + ' rf-ta').trim();
+            root.setAttribute('contenteditable', 'true');
+            root.setAttribute('role', 'textbox');
+            root.setAttribute('aria-multiline', 'true');
+            root.dataset.placeholder = ta.getAttribute('placeholder') || '';
+            root.spellcheck = true;
+            ta.replaceWith(root);
+
+            let stored = { s: 0, e: 0 }, metricKey = '', spaceW = 0, bulletW = 0;
+            const nativeFocus = root.focus;
+
+            const lineEls = () => Array.from(root.children).filter(c => c.tagName === 'DIV');
+            const clean = t => t.replace(/ /g, ' ');
+            const lines = () => lineEls().map(d => clean(d.textContent));
+            const lineStart = (ls, i) => { let n = 0; for (let j = 0; j < i; j++) n += ls[j].length + 1; return n; };
+            function isClean() {
+                if (!root.firstChild) return false;
+                return Array.from(root.childNodes).every(n => n.nodeType === 1 && n.tagName === 'DIV' &&
+                    Array.from(n.childNodes).every(c => c.nodeType === 3 || c.tagName === 'BR'));
+            }
+            function makeLine(text) {
+                const d = document.createElement('div');
+                if (text === '') d.appendChild(document.createElement('br')); else d.textContent = text;
+                return d;
+            }
+            function rebuild(text) {
+                root.textContent = '';
+                text.split('\n').forEach(l => root.appendChild(makeLine(l)));
+            }
+            function fixStructure() {
+                if (isClean()) return;
+                const keepSel = document.activeElement === root;
+                const txt = clean(root.innerText || '').replace(/\n$/, '');
+                rebuild(txt);
+                if (keepSel) applySel(txt.length, txt.length);
+            }
+
+            // hanging indent per line: leading spaces + "• " are pulled back, wrapped lines start under the text
+            function metrics() {
+                const cs = getComputedStyle(root);
+                const key = cs.fontStyle + cs.fontWeight + cs.fontSize + cs.fontFamily;
+                if (key !== metricKey) {
+                    meter.style.font = cs.font; meter.style.fontFamily = cs.fontFamily; meter.style.fontSize = cs.fontSize; meter.style.fontWeight = cs.fontWeight;
+                    meter.textContent = '                '; spaceW = meter.getBoundingClientRect().width / 16;
+                    meter.textContent = '• '; bulletW = meter.getBoundingClientRect().width;
+                    metricKey = key;
+                }
+            }
+            function styleAll() {
+                metrics();
+                lineEls().forEach(function (d) {
+                    const m = /^( *)(• )?/.exec(d.textContent.replace(/ /g, ' '));
+                    const pad = Math.round((m[1].length * spaceW + (m[2] ? bulletW : 0)) * 100) / 100;
+                    const v = pad ? pad + 'px' : '';
+                    if (d.style.paddingLeft !== v) { d.style.paddingLeft = v; d.style.textIndent = pad ? '-' + pad + 'px' : ''; }
+                });
+                const t = lines().join('');
+                root.dataset.empty = t.trim() === '' ? '1' : '';
+                if (root.dataset.empty === '') delete root.dataset.empty;
+            }
+
+            // ── selection <-> text offsets ──
+            function posOf(node, off) {
+                const els = lineEls();
+                if (node === root) { const ls = lines(); return off >= els.length ? ls.join('\n').length : lineStart(ls, off); }
+                let div = node; while (div && div.parentNode !== root) div = div.parentNode;
+                if (!div) return null;
+                const idx = els.indexOf(div); if (idx < 0) return null;
+                const r = document.createRange(); r.setStart(div, 0);
+                try { r.setEnd(node, off); } catch (e) { return null; }
+                return lineStart(lines(), idx) + clean(r.toString()).length;
+            }
+            function locate(pos) {
+                const ls = lines(); let i = 0; pos = Math.max(0, pos);
+                while (i < ls.length - 1 && pos > ls[i].length) { pos -= ls[i].length + 1; i++; }
+                return [i, Math.min(pos, ls[i].length)];
+            }
+            function setPt(r, which, div, col) {
+                const fn = which === 's' ? 'setStart' : 'setEnd';
+                const w = document.createTreeWalker(div, NodeFilter.SHOW_TEXT); let n, left = col;
+                while ((n = w.nextNode())) { if (left <= n.nodeValue.length) { r[fn](n, left); return; } left -= n.nodeValue.length; }
+                r[fn](div, 0);
+            }
+            function applySel(a, b) {
+                const els = lineEls(); if (!els.length) return;
+                const p = locate(a), q = locate(b), r = document.createRange();
+                setPt(r, 's', els[p[0]], p[1]); setPt(r, 'e', els[q[0]], q[1]);
+                const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+            }
+            function readSel() {
+                if (document.activeElement === root) {
+                    const sel = getSelection();
+                    if (sel.rangeCount) {
+                        const r = sel.getRangeAt(0);
+                        if (root.contains(r.startContainer) && root.contains(r.endContainer)) {
+                            const s0 = posOf(r.startContainer, r.startOffset), e0 = posOf(r.endContainer, r.endOffset);
+                            if (s0 !== null && e0 !== null) stored = { s: s0, e: e0 };
+                        }
+                    }
+                }
+                const len = lines().join('\n').length;
+                return { s: Math.min(stored.s, len), e: Math.min(stored.e, len) };
+            }
+            document.addEventListener('selectionchange', function () { if (document.activeElement === root) readSel(); });
+
+            function getValue() { fixStructure(); return lines().join('\n'); }
+            function setValue(v) {
+                v = String(v == null ? '' : v).replace(/\r\n?/g, '\n');
+                const nl = v.split('\n');
+                if (!isClean()) rebuild(v);
+                else {
+                    const els = lineEls(), ol = lines();
+                    let p = 0; while (p < ol.length && p < nl.length && ol[p] === nl[p]) p++;
+                    let q = 0; while (q < ol.length - p && q < nl.length - p && ol[ol.length - 1 - q] === nl[nl.length - 1 - q]) q++;
+                    const ref = els[ol.length - q] || null;
+                    for (let i = p; i < ol.length - q; i++) els[i].remove();
+                    nl.slice(p, nl.length - q).forEach(l => root.insertBefore(makeLine(l), ref));
+                }
+                styleAll();
+                stored = { s: v.length, e: v.length };
+                if (document.activeElement === root) applySel(v.length, v.length);
+            }
+
+            Object.defineProperty(root, 'value', { get: getValue, set: setValue, configurable: true });
+            Object.defineProperty(root, 'selectionStart', { get: function () { return readSel().s; }, set: function (n) { const c = readSel(); root.setSelectionRange(n, Math.max(n, c.e)); }, configurable: true });
+            Object.defineProperty(root, 'selectionEnd', { get: function () { return readSel().e; }, set: function (n) { const c = readSel(); root.setSelectionRange(Math.min(c.s, n), n); }, configurable: true });
+            root.setSelectionRange = function (a, b) {
+                stored = { s: a, e: b === undefined ? a : b };
+                if (document.activeElement === root) applySel(stored.s, stored.e);
+            };
+            root.select = function () { root.setSelectionRange(0, getValue().length); };
+            root.focus = function (o) { nativeFocus.call(root, o); applySel(stored.s, stored.e); };
+
+            root.addEventListener('input', function () { fixStructure(); styleAll(); }, true);
+            root.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' && e.shiftKey && !e.isComposing) { e.preventDefault(); document.execCommand('insertParagraph'); }
+            }, true);
+            root.addEventListener('paste', function (e) {
+                e.preventDefault();
+                const txt = ((e.clipboardData || window.clipboardData).getData('text/plain') || '').replace(/\r\n?/g, '\n');
+                if (!txt) return;
+                const c = readSel(), v = getValue();
+                setValue(v.slice(0, c.s) + txt + v.slice(c.e));
+                const pos = c.s + txt.length; root.setSelectionRange(pos, pos);
+                root.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+            root.addEventListener('drop', function (e) { e.preventDefault(); });
+
+            rebuild(ta.value || '');
+            styleAll();
+            window.addEventListener('resize', function () { metricKey = ''; styleAll(); });
+            if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { metricKey = ''; styleAll(); });
+            return root;
+        }
+        IDS.forEach(function (id) { const ta = document.getElementById(id); if (ta && ta.tagName === 'TEXTAREA') build(ta); });
+    })();
+    </script>
     <script>
         // Initialize variables
         let currentDate = new Date();
@@ -6049,7 +6229,8 @@ if (timestripeBtn) {
             let gdrivePollInterval = null;
             let gdriveLastSavedAt = 0;
             // Exposed so the Google Calendar module (separate script below) can use the same sign-in
-            window._rfCloud = { user: function(){ return fbUser; }, db: function(){ return fbDb; } };
+            window._rfCloud = { user: function(){ return fbUser; }, db: function(){ return fbDb; },
+                flush: function(){ if (fbUser && isAutoSyncEnabled()) fbSaveAll(true); } };
 
             function isAutoSyncEnabled(){ return localStorage.getItem('gdriveAutoSync')==='1'; }
 
@@ -6241,6 +6422,9 @@ if (timestripeBtn) {
                     catch(e) { fbApp = firebase.initializeApp(FIREBASE_CONFIG, 'reflection'); }
                     fbAuth = fbApp.auth();
                     fbDb = fbApp.firestore();
+                    // iPhone Safari often drops Firestore's streaming connection ("client is offline" / sync error).
+                    // Auto-detect and fall back to long-polling, which works reliably on iOS.
+                    try { fbDb.settings({ experimentalAutoDetectLongPolling: true, merge: true }); } catch(e) { console.warn('Firestore settings:', e); }
                     fbAuth.onAuthStateChanged(user => {
                         if(user){
                             fbUser = user;
@@ -6339,18 +6523,20 @@ if (timestripeBtn) {
                         };
                     }
                     const docRef = getUserDocRef();
-                    const snap = await docRef.get();
-                    if (snap.exists) {
-                        await docRef.update({
-                            reflectionJournalData: dataToSave,
-                            reflectionUpdatedAt: now
-                        });
-                    } else {
-                        await docRef.set({
-                            reflectionJournalData: dataToSave,
-                            reflectionUpdatedAt: now
-                        });
+                    // One merged write (no read-before-write — the read is what fails on a flaky phone connection),
+                    // retried a few times on transient network errors.
+                    const payload = { reflectionJournalData: dataToSave, reflectionUpdatedAt: now };
+                    let lastErr = null;
+                    for (let attempt = 0; attempt < 4; attempt++) {
+                        try { await docRef.set(payload, { merge: true }); lastErr = null; break; }
+                        catch (err) {
+                            lastErr = err;
+                            const transient = /unavailable|deadline|offline|network|aborted|internal/i.test((err.code || '') + ' ' + (err.message || ''));
+                            if (!transient) break;
+                            await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt)));
+                        }
                     }
+                    if (lastErr) throw lastErr;
                     setSyncIndicator('ok');
                     gdriveLastSavedAt = Date.now();
                     localStorage.setItem('rf_lastCloudSync', new Date().toISOString());
@@ -6358,7 +6544,9 @@ if (timestripeBtn) {
                     if(!silent) showGdriveStatus('✓ Saved journal to cloud', true);
                 } catch(e){
                     setSyncIndicator('error');
-                    showGdriveStatus('✗ Sync failed: '+e.message, false, true);
+                    const _msg = ((e && e.code) ? e.code + ': ' : '') + (e && e.message ? e.message : e);
+                    window._rfLastSyncError = _msg;
+                    showGdriveStatus('✗ Sync failed: '+_msg, false, true);
                     console.error('[Reflection sync] fbSaveAll error:', e);
                 } finally { gdriveSyncing = false; }
             }
@@ -6544,6 +6732,7 @@ if (timestripeBtn) {
             document.addEventListener('visibilitychange', ()=>{
                 if(document.visibilityState === 'visible') pollDriveForChanges();
             });
+            window.addEventListener('online', ()=>{ if(fbUser && isAutoSyncEnabled()) fbSaveAll(true); });
 
             // ── Timestamp helpers ─────────────────────────────────────
             function rfmtTime(iso){
@@ -6584,7 +6773,7 @@ if (timestripeBtn) {
             let _lastTypingAt = 0;
             let _lastDisplayRefreshAt = 0;
             document.addEventListener('input', e => {
-                if (e.target.tagName === 'TEXTAREA') _lastTypingAt = Date.now();
+                if (e.target.tagName === 'TEXTAREA' || (e.target.classList && e.target.classList.contains('rf-ta'))) _lastTypingAt = Date.now();
             }, true);
             function _isTyping() { return Date.now() - _lastTypingAt < 3000; }
             // Expose so updateReflectionDisplay() can stamp when it last ran
@@ -7710,6 +7899,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
         <div class="rf-modal">
             <div class="rf-modal-title">📅 Send to Calendar</div>
             <div class="rf-modal-text" id="rfCalModalNote"></div>
+            <div class="rf-acct-row"><span>Google account: <b id="rfCalAcct">…</b></span><button type="button" id="rfCalSwitchBtn">Use another account</button></div>
             <button type="button" class="rf-opt-btn" id="rfCalAllDayBtn">🗓️ Whole-day event</button>
             <button type="button" class="rf-opt-btn" id="rfCalTimedBtn">🕐 Timed event</button>
             <div class="rf-date-pick-row" id="rfCalDateRow">
@@ -7731,6 +7921,10 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
     .rf-modal-text { font-size: 0.85rem; color: #64748b; margin-bottom: 16px; max-height: 110px; overflow-y: auto; white-space: pre-wrap; line-height: 1.4; }
     .rf-opt-btn { display: block; width: 100%; text-align: left; background: #f1f5f9; border: 1.5px solid #e2e8f0; border-radius: 12px; padding: 10px 14px; font-size: 0.9rem; font-family: inherit; color: #1e293b; cursor: pointer; margin-bottom: 8px; justify-content: flex-start; font-weight: 500; }
     .rf-opt-btn:hover { background: #e2e8f0; border-color: #cbd5e1; transform: none; box-shadow: none; }
+    .rf-acct-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.78rem; color: #64748b; margin-bottom: 12px; padding: 7px 10px; background: #f8fafc; border-radius: 10px; }
+    .rf-acct-row b { color: #1e293b; word-break: break-all; }
+    .rf-acct-row button { background: none; border: none; color: #2563eb; cursor: pointer; font-size: 0.78rem; padding: 2px 4px; white-space: nowrap; font-family: inherit; }
+    .rf-acct-row button:hover { text-decoration: underline; background: none; transform: none; box-shadow: none; }
     .rf-date-pick-row { margin-bottom: 8px; }
     .rf-date-pick-row input[type="date"] { width: 100%; padding: 9px 10px; border-radius: 12px; border: 1.5px solid #e2e8f0; font-family: inherit; font-size: 0.88rem; }
     .rf-cancel-btn { display: block; width: 100%; text-align: center; background: none; border: none; padding: 8px; font-size: 0.85rem; color: #94a3b8; cursor: pointer; margin-top: 4px; justify-content: center; }
@@ -7749,7 +7943,10 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             night:     { icon: '🌙', label: 'Evening Reflection', tsKey: '_ts_night',     el: function(){ return document.getElementById('night-text'); } }
         };
 
-        let gcalAccessToken = null, gcalTokenObtainedAt = 0, gcalCalendarId = null;
+        let gcalAccessToken = null, gcalTokenObtainedAt = 0, gcalCalendarId = null, gcalAccountEmail = '', switchingAccount = false;
+        const HINT_KEY = 'rfCalAccountHint';
+        function getHint() { try { return localStorage.getItem(HINT_KEY) || ''; } catch (e) { return ''; } }
+        function setHint(v) { try { if (v) localStorage.setItem(HINT_KEY, v); } catch (e) {} }
         let gcalCreatingCalendar = null, gcalCalendarIdVerifiedAt = 0;
         let gisTokenClient = null, calendarReconnectPromise = null, silentReconnectResolvers = [];
         let pendingJob = null, pendingJobAt = 0;
@@ -7785,6 +7982,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                 callback: function (resp) {
                     const resolvers = silentReconnectResolvers.splice(0);
                     if (resp && resp.access_token) {
+                        if (switchingAccount) { gcalCalendarId = null; gcalCalendarIdVerifiedAt = 0; gcalAccountEmail = ''; switchingAccount = false; }
                         gcalAccessToken = resp.access_token;
                         gcalTokenObtainedAt = Date.now();
                         resolvers.forEach(function (fn) { fn(true); });
@@ -7792,11 +7990,13 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                             const j = pendingJob; pendingJob = null; sendEvents(j);
                         } else { pendingJob = null; }
                     } else {
+                        switchingAccount = false;
                         resolvers.forEach(function (fn) { fn(false); });
                         if (resolvers.length === 0) toast('⚠️ Calendar connection failed', true);
                     }
                 },
                 error_callback: function (err) {
+                    switchingAccount = false;
                     const resolvers = silentReconnectResolvers.splice(0);
                     resolvers.forEach(function (fn) { fn(false); });
                     if (err && err.type === 'popup_failed_to_open') { toast('⚠️ Popup blocked — allow popups, then click 📅 again', true); return; }
@@ -7808,8 +8008,8 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             return gisTokenClient;
         }
 
-        function ensureConnected() {
-            if (tokenIsFresh()) return Promise.resolve(true);
+        function ensureConnected(force) {
+            if (!force && tokenIsFresh()) return Promise.resolve(true);
             if (!user()) return Promise.resolve(false);
             if (calendarReconnectPromise) return calendarReconnectPromise;
             const client = initGis();
@@ -7818,9 +8018,12 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                 let settled = false;
                 const finish = function (ok) { if (settled) return; settled = true; calendarReconnectPromise = null; resolve(ok); };
                 silentReconnectResolvers.push(finish);
-                toast('🔑 Connecting to Google Calendar…');
+                toast(force ? '🔑 Choose a Google account…' : '🔑 Connecting to Google Calendar…');
                 setTimeout(function () { finish(tokenIsFresh()); }, 90000);
-                try { client.requestAccessToken({ prompt: '' }); } catch (e) { finish(false); }
+                try {
+                    const hint = getHint();
+                    client.requestAccessToken(force ? { prompt: 'select_account' } : (hint ? { prompt: '', hint: hint } : { prompt: '' }));
+                } catch (e) { finish(false); }
             });
             return calendarReconnectPromise;
         }
@@ -7835,6 +8038,18 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             } catch (e) { console.warn('Calendar request failed:', e); return null; }
             if (res.status === 401) { gcalAccessToken = null; return null; }
             return res;
+        }
+
+        async function fetchAccount() {
+            if (gcalAccountEmail) return gcalAccountEmail;
+            const res = await gcalFetch('calendars/primary');
+            if (res && res.ok) { const j = await res.json(); gcalAccountEmail = j.id || ''; setHint(gcalAccountEmail); }
+            return gcalAccountEmail;
+        }
+        function saveCalId(ref, id) {
+            if (!ref) return;
+            const ids = {}; ids[gcalAccountEmail || 'unknown'] = id;
+            ref.set({ ids: ids }, { merge: true }).catch(function () {});
         }
 
         // ── Find / create the dedicated calendar ──
@@ -7868,11 +8083,13 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
             if (gcalCreatingCalendar) return gcalCreatingCalendar;
             gcalCreatingCalendar = (async function () {
                 try {
+                    await fetchAccount();
                     const ref = settingsRef();
                     if (ref) {
                         try {
                             const doc = await ref.get();
-                            const savedId = doc.exists && doc.data().calendarId;
+                            const d0 = doc.exists ? doc.data() : {};
+                            const savedId = gcalAccountEmail && d0.ids ? d0.ids[gcalAccountEmail] : null;
                             if (savedId && await calendarStillExists(savedId)) {
                                 gcalCalendarId = savedId; gcalCalendarIdVerifiedAt = Date.now(); return gcalCalendarId;
                             }
@@ -7881,7 +8098,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                     const foundId = await findExistingCalendarId();
                     if (foundId) {
                         gcalCalendarId = foundId; gcalCalendarIdVerifiedAt = Date.now();
-                        if (ref) ref.set({ calendarId: foundId }, { merge: true }).catch(function () {});
+                        saveCalId(ref, foundId);
                         return gcalCalendarId;
                     }
                     const res = await gcalFetch('calendars', {
@@ -7895,7 +8112,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                     if (!res || !res.ok) return null;
                     const created = await res.json();
                     gcalCalendarId = created.id; gcalCalendarIdVerifiedAt = Date.now();
-                    if (ref) ref.set({ calendarId: created.id }, { merge: true }).catch(function () {});
+                    saveCalId(ref, created.id);
                     return gcalCalendarId;
                 } finally { gcalCreatingCalendar = null; }
             })();
@@ -7917,7 +8134,7 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
         }
         function includedKeys(day, scope) {
             const keys = scope === 'all' ? Object.keys(SECTIONS) : [scope];
-            return keys.filter(function (k) { return day.sections[k].text.trim() !== ''; });
+            return keys.filter(function (k) { return day.sections[k].text.replace(/[•\s]|\d{1,2}:\d{2}\s*[ap]m/gi, '') !== ''; });
         }
 
         // ── Text for the event description ──
@@ -8023,6 +8240,8 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
                 if (!ok) { toast('⚠️ Calendar not connected — finish the Google popup, then click 📅 again', true); return; }
             }
             currentScope = scope; currentDay = day;
+            document.getElementById('rfCalAcct').textContent = gcalAccountEmail || '…';
+            fetchAccount().then(function (em) { if (em) document.getElementById('rfCalAcct').textContent = em; });
             const r = timeRange(day, keys);
             const basisText = r.basis === 'written' ? 'from the times written in your notes' : r.basis === 'saved' ? 'from when the notes were saved' : 'default time — no times found';
             document.getElementById('rfCalModalNote').textContent =
@@ -8034,6 +8253,17 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
         function closeModal() { backdrop.classList.add('hidden'); }
 
         document.getElementById('rfCalCancelBtn').addEventListener('click', closeModal);
+        document.getElementById('rfCalSwitchBtn').addEventListener('click', async function () {
+            const scope = currentScope;
+            closeModal();
+            if (!initGis()) { toast("Google's library hasn't loaded yet — try again in a moment.", true); return; }
+            switchingAccount = true;
+            const ok = await ensureConnected(true);
+            if (!ok) { switchingAccount = false; toast('⚠️ Account not changed', true); return; }
+            const em = await fetchAccount();
+            toast('✅ Using ' + (em || 'new account'));
+            openCalendarModal(scope);
+        });
         backdrop.addEventListener('click', function (e) { if (e.target === backdrop) closeModal(); });
         document.getElementById('rfCalAllDayBtn').addEventListener('click', function () {
             const v = dateInput.value || currentDay.ds; closeModal(); sendEvents(buildAllDay(v));
@@ -8050,5 +8280,169 @@ Write in a warm, personal, non-clinical tone. Reference specific things from the
     })();
     </script>
     
-</body>
+<script>
+    // ═══ OUTLINE MODE: every field starts with a bullet; Tab / Shift+Tab nest; Enter keeps the level ═══
+    (function () {
+        const IDS = ['morning-text','selfaware-text','night-text','fullpage-morning-text','fullpage-selfaware-text','fullpage-night-text'];
+        const INDENT = '    ', MAX_LEVEL = 5;
+        const TS_ONLY = /^\s*•\s*(\d{1,2}:\d{2}\s*[ap]m)?\s*$/i;     // "•", "• ", "• 9:15 am "
+        const BULLET = /^(\s*)•[ \t]?(.*)$/;
+
+        function fire(ta) { ta._rfEdited = true; ta.dispatchEvent(new Event('input', { bubbles: true })); }
+        function lineBounds(ta, pos) {
+            const t = ta.value;
+            const a = t.lastIndexOf('\n', pos - 1) + 1;
+            let b = t.indexOf('\n', pos); if (b === -1) b = t.length;
+            return [a, b];
+        }
+        function isSelf(ta) { return ta.id.indexOf('selfaware') !== -1; }
+        function tsOn() { const c = document.getElementById('bullet-timestamp-enter-toggle'); return !c || c.checked; }
+        function firstBullet(ta) {
+            if (!isSelf(ta) || !tsOn()) return '• ';
+            const n = new Date(); let h = n.getHours(); const m = n.getMinutes(); const ap = h >= 12 ? 'pm' : 'am';
+            h = h % 12 || 12; return '• ' + h + ':' + (m < 10 ? '0' + m : m) + ' ' + ap + ' ';
+        }
+        function isBlank(ta) { return ta.value.split('\n').every(function (l) { return l.trim() === '' || TS_ONLY.test(l); }); }
+
+        // Start every empty field with a bullet when you click/tab into it
+        function seed(ta) {
+            if (ta.value.trim() !== '') return;
+            const b = firstBullet(ta);
+            ta.value = b + '\n';
+            ta.setSelectionRange(b.length, b.length);
+        }
+        // Leaving an untouched field puts it back to empty so a lone bullet isn't saved as an entry
+        // Only fires an input event (→ autosave + cloud sync with a fresh timestamp) if YOU actually edited the field;
+        // merely clicking in and out must never stamp an empty "newer" value that could overwrite another device's text.
+        function unseed(ta) {
+            if (ta.value.trim() !== '' && isBlank(ta)) {
+                ta.value = '\n';
+                if (ta._rfEdited) fire(ta);
+            }
+            ta._rfEdited = false;
+        }
+
+        function setLine(ta, a, b, newLine, caretInLine) {
+            const t = ta.value;
+            ta.value = t.slice(0, a) + newLine + t.slice(b);
+            const c = a + (caretInLine === undefined ? newLine.length : caretInLine);
+            ta.setSelectionRange(c, c);
+            fire(ta);
+        }
+
+        function onKey(e) {
+            const ta = e.target;
+            if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+            const t = ta.value, ss = ta.selectionStart, se = ta.selectionEnd;
+
+            // ── Tab / Shift+Tab : nest / un-nest the bullet line(s) ──
+            if (e.key === 'Tab') {
+                const [a0] = lineBounds(ta, ss);
+                const [, b1] = lineBounds(ta, se);
+                const block = t.slice(a0, b1);
+                const lines = block.split('\n');
+                if (!lines.every(function (l) { return l.trim() === '' || BULLET.test(l); })) return;   // plain text: normal Tab
+                e.preventDefault(); e.stopImmediatePropagation();
+                let delta0 = 0, deltaAll = 0;
+                const out = lines.map(function (l, i) {
+                    if (l.trim() === '') return l;
+                    const ind = BULLET.exec(l)[1].replace(/\t/g, INDENT);
+                    let nl;
+                    if (e.shiftKey) nl = ind.length >= INDENT.length ? ind.slice(INDENT.length) + l.trimStart() : l.trimStart();
+                    else nl = (ind.length / INDENT.length >= MAX_LEVEL) ? ind + l.trimStart() : INDENT + ind + l.trimStart();
+                    const d = nl.length - l.length;
+                    if (i === 0) delta0 = d;
+                    deltaAll += d;
+                    return nl;
+                });
+                ta.value = t.slice(0, a0) + out.join('\n') + t.slice(b1);
+                ta.setSelectionRange(Math.max(a0, ss + delta0), se + deltaAll);
+                fire(ta);
+                return;
+            }
+
+            if (ss !== se) return;
+
+            // ── Enter ──
+            if (e.key === 'Enter' && !e.shiftKey) {
+                const [a, b] = lineBounds(ta, ss);
+                const line = t.slice(a, b);
+                const m = BULLET.exec(line);
+                if (!m) return;
+                const indent = m[1], level = Math.floor(indent.length / INDENT.length);
+                if (ss - a < indent.length + 1) return;                 // caret before the marker: default
+                if (TS_ONLY.test(line)) {                                 // empty bullet → outdent / leave the list
+                    e.preventDefault(); e.stopImmediatePropagation();
+                    if (level > 0) setLine(ta, a, b, INDENT.repeat(level - 1) + '• ');
+                    else setLine(ta, a, b, '');
+                    return;
+                }
+                if (level > 0) {                                          // inside an outline: keep level, plain bullet
+                    e.preventDefault(); e.stopImmediatePropagation();
+                    const ins = '\n' + indent + '• ';
+                    ta.value = t.slice(0, ss) + ins + t.slice(ss);
+                    const c = ss + ins.length; ta.setSelectionRange(c, c); fire(ta);
+                }
+                // level 0 with text: let the existing handler run (timestamp bullet in Self-awareness, plain bullet elsewhere)
+                return;
+            }
+
+            // ── Backspace right after the marker : outdent, then drop the bullet ──
+            if (e.key === 'Backspace') {
+                const [a, b] = lineBounds(ta, ss);
+                const line = t.slice(a, b);
+                const m = /^(\s*)•[ \t]$/.exec(t.slice(a, ss));
+                if (!m || !(line.slice(ss - a) === '' )) return;
+                e.preventDefault(); e.stopImmediatePropagation();
+                const level = Math.floor(m[1].length / INDENT.length);
+                if (level > 0) setLine(ta, a, b, INDENT.repeat(level - 1) + '• ');
+                else setLine(ta, a, b, '');
+            }
+        }
+
+        IDS.forEach(function (id) {
+            const ta = document.getElementById(id);
+            if (!ta) return;
+            ta.addEventListener('keydown', onKey, true);                  // capture: runs before the older Enter handlers
+            ta.addEventListener('beforeinput', function () { ta._rfEdited = true; });
+            ta.addEventListener('focus', function () {
+                seed(ta);
+                // the mouse-up that follows a click moves the caret; put it back after the bullet
+                setTimeout(function () {
+                    if (isBlank(ta)) { const e = ta.value.indexOf('\n'); const c = e === -1 ? ta.value.length : e; ta.setSelectionRange(c, c); }
+                }, 0);
+            });
+            ta.addEventListener('mouseup', function () {
+                if (isBlank(ta) && ta.value.trim() !== '') { const e = ta.value.indexOf('\n'); const c = e === -1 ? ta.value.length : e; ta.setSelectionRange(c, c); }
+            });
+            ta.addEventListener('blur', function () { unseed(ta); });
+            ta.style.tabSize = '4';
+        });
+
+    })();
+    </script>
+<script>
+    // ═══ FLUSH ON LEAVE: phones freeze the page a moment after you lock the screen / switch apps, so the usual
+    //     2 s autosave + 2.5 s cloud-sync timers never fire and the entry stays only on that phone. ═══
+    (function () {
+        function flushNow() {
+            try {
+                const ds = formatDate(selectedDate);
+                const stored = reflectionsData[ds] || {};
+                [['morning', 'morning-text'], ['selfaware', 'selfaware-text'], ['night', 'night-text']].forEach(function (pair) {
+                    const el = document.getElementById(pair[1]);
+                    if (!el) return;
+                    const v = el.value;
+                    if (v !== (stored[pair[0]] || '') && (stored[pair[0]] || v.replace(/[•\s]|\d{1,2}:\d{2}\s*[ap]m/gi, '') !== '')) {
+                        autosaveReflections(pair[0]);
+                    }
+                });
+                if (window._rfCloud && window._rfCloud.flush) window._rfCloud.flush();
+            } catch (e) { console.warn('flush failed', e); }
+        }
+        document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushNow(); });
+        window.addEventListener('pagehide', flushNow);
+    })();
+    </script>
+    </body>
 </html>
