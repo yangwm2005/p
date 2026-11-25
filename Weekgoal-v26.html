@@ -1869,8 +1869,9 @@ body:not(.pre-hover) .outline-node-row:hover,
     display: none;
     align-items: center;
     justify-content: center;
+    width: 16px;
     height: 16px;
-    padding: 0 5px;
+    padding: 0;
     border-radius: 3px;
     background-color: #3b6ea5;
     color: #fff;
@@ -5944,9 +5945,22 @@ function insertNewCheckboxLine(currentLine) {
             const n = new Date();
             return m[n.getMonth()] + ' ' + n.getDate() + ' ' + d[n.getDay()];
         }
-        function findTodayRootId() {
+        function isWeekProgressPage() {
             const pt = document.getElementById('pageTitle');
-            if (!pt || !/^\s*Week\s*\d+\s*-\s*progress\s*$/i.test(pt.textContent || '')) return null;
+            return !!(pt && /^\s*Week\s*\d+\s*-\s*progress\s*$/i.test(pt.textContent || ''));
+        }
+        // {mode:'local', rootId} when today's cell is in the open project;
+        // {mode:'cross', name} when this is an older/other WeekNN-progress
+        // project and this week's project exists (item goes there, into today's cell).
+        function findTodayTarget() {
+            if (!isWeekProgressPage()) return null;
+            const local = findTodayRootId();
+            if (local) return { mode: 'local', rootId: local };
+            const cur = window.__wkCurrentWeekProject && window.__wkCurrentWeekProject();
+            return cur ? { mode: 'cross', name: cur.name } : null;
+        }
+        function findTodayRootId() {
+            if (!isWeekProgressPage()) return null;
             const want = todayCellTitle();
             const cells = document.querySelectorAll('#tablesContainer td');
             for (let i = 0; i < cells.length; i++) {
@@ -5979,18 +5993,23 @@ function insertNewCheckboxLine(currentLine) {
 
             otToday = document.createElement('div');
             otToday.className = 'outline-today-fixed';
-            otToday.textContent = '→ Today';
+            otToday.textContent = 'T';
             document.body.appendChild(otToday);
             otToday.addEventListener('mousedown', function (e) { e.preventDefault(); });
             otToday.addEventListener('click', function (e) {
                 e.preventDefault();
                 if (!otHoverNodeId) return;
-                const todayRoot = findTodayRootId();
-                if (!todayRoot || todayRoot === otHoverRootId) return;
+                const tgt = findTodayTarget();
+                if (!tgt) return;
                 const rid = otHoverRootId, nid = otHoverNodeId;
+                if (tgt.mode === 'local' && tgt.rootId === rid) return;
                 otToday.classList.remove('show');
-                performDrop(rid, nid, null, 'end', todayRoot);
-                if (typeof window.scheduleCloudAutoSave === 'function') window.scheduleCloudAutoSave();
+                if (tgt.mode === 'local') {
+                    performDrop(rid, nid, null, 'end', tgt.rootId);
+                    if (typeof window.scheduleCloudAutoSave === 'function') window.scheduleCloudAutoSave();
+                } else if (window.__wkMoveToTodayCross) {
+                    window.__wkMoveToTodayCross(rid, nid);
+                }
             });
 
             [otToggle, otDrag, otCheckboxRemove, otToday].forEach(function (el) {
@@ -6174,10 +6193,12 @@ function insertNewCheckboxLine(currentLine) {
             // keep everything visible as long as the mouse is anywhere
             // inside it — see the mousemove listener below.
             // "→ Today": week-progress projects only, and not on today's own cell
-            const todayRoot = findTodayRootId();
-            const showToday = !!(todayRoot && todayRoot !== otHoverRootId);
-            const todayLeft = Math.max(4, rect.left - 100);
-            otToday.title = 'Move this item to today (' + todayCellTitle() + ')';
+            const tgt = findTodayTarget();
+            const showToday = !!(tgt && !(tgt.mode === 'local' && tgt.rootId === otHoverRootId));
+            const todayLeft = Math.max(4, rect.left - 56);
+            otToday.title = tgt && tgt.mode === 'cross'
+                ? 'Move to today (' + todayCellTitle() + ') in ' + tgt.name
+                : 'Move this item to today (' + todayCellTitle() + ')';
             otToday.style.top = top + 'px';
             otToday.style.left = todayLeft + 'px';
             otToday.classList.toggle('show', showToday);
@@ -9638,6 +9659,45 @@ function insertNewCheckboxLine(currentLine) {
 
             window.closeDestPicker = function () {
                 document.getElementById('destPickerOverlay').classList.remove('active');
+            };
+
+            // "T" button for items in an older WeekNN-progress project: send the
+            // item (with sub-items) into today's cell of THIS week's project.
+            window.__wkCurrentWeekProject = function () {
+                const name = 'Week' + getISOWeekNumber(getMonday(new Date())) + '-progress';
+                const p = projectsCache.find(function (x) { return (x.name || '').trim().toLowerCase() === name.toLowerCase(); });
+                return (p && p.id !== currentProjectId) ? { id: p.id, name: p.name || name } : null;
+            };
+            window.__wkMoveToTodayCross = function (rootId, nodeId) {
+                const target = window.__wkCurrentWeekProject();
+                const live = window.getLiveNode(rootId, nodeId);
+                if (!target || !live) return;
+                const mn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                const dn = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+                const now = new Date();
+                const todayTitle = mn[now.getMonth()] + ' ' + now.getDate() + ' ' + dn[now.getDay()];
+                setStatus('Moving to "' + target.name + '"…');
+                loadProjectDataForPicker(target.id).then(function (data) {
+                    const cell = getCellsFromProjectData(data).filter(function (c) { return (c.title || '').trim() === todayTitle; })[0];
+                    if (!cell) { setStatus('Today\'s cell (' + todayTitle + ') not found in "' + target.name + '"'); return; }
+                    cell.cellRef.tree = cell.cellRef.tree || [];
+                    cell.cellRef.tree.push(window.cloneOutlineNodeDeep(live));
+                    return saveProjectDataDirect(target.id, data).then(function () {
+                        window.removeLiveNode(rootId, nodeId);
+                        // never leave a table with zero lines
+                        if ((window.getOutlineTree(rootId) || []).length === 0) {
+                            const blank = window.cloneOutlineNodeDeep(live);
+                            blank.text = ''; blank.html = null; blank.children = []; blank.checkbox = false; blank.done = false;
+                            window.appendNodeToRoot(rootId, blank);
+                        }
+                        window.rerenderOutlineRoot(rootId);
+                        window.scheduleCloudAutoSave();
+                        setStatus('Moved to today in "' + target.name + '"');
+                    });
+                }).catch(function (err) {
+                    console.error('Move to today failed:', err);
+                    setStatus('Move to today failed');
+                });
             };
 
             window.confirmDestPicker = function () {
