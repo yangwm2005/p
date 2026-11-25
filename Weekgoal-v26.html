@@ -1864,6 +1864,26 @@ body:not(.pre-hover) .outline-node-row:hover,
     z-index: 2500;
     user-select: none;
 }
+.outline-today-fixed {
+    position: fixed;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    height: 16px;
+    padding: 0 5px;
+    border-radius: 3px;
+    background-color: #3b6ea5;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 2500;
+    user-select: none;
+    white-space: nowrap;
+}
+.outline-today-fixed.show { display: flex; }
+.outline-today-fixed:hover { background-color: #2f5988; }
 .outline-checkbox-toggle-fixed.show { display: flex; }
 .outline-checkbox-toggle-fixed:hover { background-color: rgba(0, 0, 0, 0.3); }
 .outline-checkbox-toggle-fixed.remove-mode:hover { background-color: rgba(220, 53, 69, 0.7); color: #fff; }
@@ -5913,7 +5933,29 @@ function insertNewCheckboxLine(currentLine) {
         // ☰ hover-icon pattern exactly, so these icons never consume
         // row layout space and the bullet/text stay flush with the
         // other tables regardless of whether the icons are visible. ---
-        let otToggle, otDrag, otCheckboxRemove;
+        let otToggle, otDrag, otCheckboxRemove, otToday;
+
+        // --- "→ Today" hover button: only in a WeekNN-progress project
+        // (one cell per day, titled like "Nov 25 Tue"). Moves the hovered
+        // item (with its sub-items) to the end of today's day cell. ---
+        function todayCellTitle() {
+            const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const d = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+            const n = new Date();
+            return m[n.getMonth()] + ' ' + n.getDate() + ' ' + d[n.getDay()];
+        }
+        function findTodayRootId() {
+            const pt = document.getElementById('pageTitle');
+            if (!pt || !/^\s*Week\s*\d+\s*-\s*progress\s*$/i.test(pt.textContent || '')) return null;
+            const want = todayCellTitle();
+            const cells = document.querySelectorAll('#tablesContainer td');
+            for (let i = 0; i < cells.length; i++) {
+                const t = cells[i].querySelector('.cell-title');
+                const r = cells[i].querySelector('.outline-root');
+                if (t && r && r.id && roots[r.id] && t.textContent.trim() === want) return r.id;
+            }
+            return null;
+        }
         let otHoverRootId = null, otHoverNodeId = null, otHoverRow = null;
         let otHideTimer = null;
         let otSafeZone = null; // {left, right, top, bottom} — see comment below
@@ -5935,7 +5977,23 @@ function insertNewCheckboxLine(currentLine) {
             otCheckboxRemove.className = 'outline-checkbox-toggle-fixed';
             document.body.appendChild(otCheckboxRemove);
 
-            [otToggle, otDrag, otCheckboxRemove].forEach(function (el) {
+            otToday = document.createElement('div');
+            otToday.className = 'outline-today-fixed';
+            otToday.textContent = '→ Today';
+            document.body.appendChild(otToday);
+            otToday.addEventListener('mousedown', function (e) { e.preventDefault(); });
+            otToday.addEventListener('click', function (e) {
+                e.preventDefault();
+                if (!otHoverNodeId) return;
+                const todayRoot = findTodayRootId();
+                if (!todayRoot || todayRoot === otHoverRootId) return;
+                const rid = otHoverRootId, nid = otHoverNodeId;
+                otToday.classList.remove('show');
+                performDrop(rid, nid, null, 'end', todayRoot);
+                if (typeof window.scheduleCloudAutoSave === 'function') window.scheduleCloudAutoSave();
+            });
+
+            [otToggle, otDrag, otCheckboxRemove, otToday].forEach(function (el) {
                 el.addEventListener('mouseenter', cancelOtHide);
                 el.addEventListener('mouseleave', scheduleOtHide);
             });
@@ -6115,8 +6173,17 @@ function insertNewCheckboxLine(currentLine) {
             // rectangle spanning from the icons to the row instead, and
             // keep everything visible as long as the mouse is anywhere
             // inside it — see the mousemove listener below.
+            // "→ Today": week-progress projects only, and not on today's own cell
+            const todayRoot = findTodayRootId();
+            const showToday = !!(todayRoot && todayRoot !== otHoverRootId);
+            const todayLeft = Math.max(4, rect.left - 100);
+            otToday.title = 'Move this item to today (' + todayCellTitle() + ')';
+            otToday.style.top = top + 'px';
+            otToday.style.left = todayLeft + 'px';
+            otToday.classList.toggle('show', showToday);
+
             otSafeZone = {
-                left: checkboxLeft - 8,
+                left: (showToday ? Math.min(checkboxLeft, todayLeft) : checkboxLeft) - 8,
                 right: rect.right + 8,
                 top: rect.top - 10,
                 bottom: rect.bottom + 10
@@ -6131,12 +6198,13 @@ function insertNewCheckboxLine(currentLine) {
                 otToggle.classList.remove('show');
                 otDrag.classList.remove('show');
                 otCheckboxRemove.classList.remove('show');
+                if (otToday) otToday.classList.remove('show');
                 otHoverRootId = null; otHoverNodeId = null; otHoverRow = null; otSafeZone = null;
             }, 250);
         }
 
         function isOtChrome(el) {
-            return el === otToggle || el === otDrag || el === otCheckboxRemove;
+            return el === otToggle || el === otDrag || el === otCheckboxRemove || el === otToday;
         }
 
         // Each line's text is its own separate contenteditable field
