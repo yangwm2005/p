@@ -1187,6 +1187,100 @@
             .section-label { font-size: 1rem; padding: 10px 12px 8px 12px; }
             .section-label i:first-child { font-size: 1.2rem; }
         }
+        /* ── QUICK-JUMP BAR (sticks with the search bar) ───────── */
+        .quick-nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+            padding: 8px 10px;
+            max-height: 92px;
+            overflow-y: auto;
+            background: #fff;
+            border-radius: 22px;
+            box-shadow: 0 2px 10px rgba(30, 50, 90, 0.08);
+        }
+        .quick-nav-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+            max-width: 220px;
+            border: none;
+            border-radius: 20px;
+            padding: 5px 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #1a3a7a;
+            background: rgba(58, 107, 240, 0.1);
+            cursor: pointer;
+            transition: 0.15s;
+        }
+        .quick-nav-chip span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .quick-nav-chip:hover { background: rgba(58, 107, 240, 0.22); }
+        .quick-nav-chip.active { background: #3a6bf0; color: white; }
+        .quick-nav-group { display: inline-flex; flex-shrink: 0; gap: 1px; }
+        .quick-nav-group .quick-nav-chip { border-radius: 20px 0 0 20px; }
+        .quick-nav-more {
+            border: none;
+            border-radius: 0 20px 20px 0;
+            padding: 0 10px 0 8px;
+            font-size: 0.75rem;
+            color: #1a3a7a;
+            background: rgba(58, 107, 240, 0.1);
+            cursor: pointer;
+        }
+        .quick-nav-more:hover,
+        .quick-nav-more[aria-expanded="true"] { background: rgba(58, 107, 240, 0.22); }
+        .quick-nav-chip.active + .quick-nav-more { background: #3a6bf0; color: white; }
+        .quick-nav-menu {
+            position: fixed;
+            z-index: 900;
+            width: 260px;
+            overflow-y: auto;
+            padding: 6px;
+            background: white;
+            border: 1px solid #d7e0ee;
+            border-radius: 16px;
+            box-shadow: 0 10px 28px rgba(0, 10, 30, 0.18);
+        }
+        .quick-nav-menu button {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            border: none;
+            background: transparent;
+            border-radius: 10px;
+            padding: 8px 10px;
+            font-size: 0.85rem;
+            color: #1e2a45;
+            text-align: left;
+            cursor: pointer;
+        }
+        .quick-nav-menu button:hover,
+        .quick-nav-menu button:focus-visible { background: rgba(58, 107, 240, 0.12); }
+        .quick-nav-menu button i { width: 18px; text-align: center; color: #3a6bf0; }
+        .quick-nav-menu button span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .quick-nav-menu .quick-nav-empty { padding: 10px; font-size: 0.82rem; color: #4a6188; }
+        .section-container.quick-nav-flash > .section-label {
+            animation: quickNavFlash 1.4s ease;
+        }
+        @keyframes quickNavFlash {
+            0%, 60% { box-shadow: 0 0 0 3px #3a6bf0; }
+            100% { box-shadow: 0 0 0 3px transparent; }
+        }
+        @media (max-width: 640px) {
+            .quick-nav { flex-wrap: nowrap; overflow-x: auto; }
+        }
     </style>
 </head>
 <body>
@@ -1262,6 +1356,7 @@
             <input type="text" id="siteSearchInput" placeholder="Search your websites by name or URL…" autocomplete="off">
             <button class="search-clear-btn" id="siteSearchClearBtn" title="Clear search" style="display:none;"><i class="fas fa-xmark"></i></button>
         </div>
+        <nav class="quick-nav" id="quickNav" aria-label="Jump to section"></nav>
     </div>
 
     <div class="section-container" id="searchResultsSection" style="display:none;">
@@ -2892,6 +2987,7 @@ function setupSectionReorderDrag(container) {
 function renderCustomSections() {
     const container = document.getElementById('customSectionsContainer');
     if (!container) return;
+    renderQuickNav();
     
     let html = '';
     ylCustomSections.forEach(sec => {
@@ -4236,6 +4332,178 @@ function loadViewMode() {
     const saved = localStorage.getItem('yanglab_view_mode');
     setViewMode(saved === 'list' ? 'list' : 'grid');
 }
+
+// ── QUICK-JUMP BAR ──────────────────────────────────────────
+// One chip per section, in page order. Clicking a chip expands that
+// section if needed and scrolls it to just below the sticky bar.
+const quickNavEl = document.getElementById('quickNav');
+let quickNavTimer = null;
+let quickNavLockedId = null; // keeps the clicked chip lit while scrolling
+
+function quickNavSections() {
+    return [
+        { id: 'mySection', title: 'My Websites', icon: 'fa-star' },
+        ...ylCustomSections.map(s => ({ id: s.id + 'Section', title: s.title, icon: 'fa-layer-group' })),
+        { id: 'freqSection', title: 'Frequent', icon: 'fa-fire' },
+        { id: 'recentSection', title: 'Recent', icon: 'fa-clock' }
+    ];
+}
+
+function renderQuickNav() {
+    if (!quickNavEl) return;
+    closeQuickNavMenu();
+    const chips = quickNavSections().map(s => {
+        const id = ylEscapeHtml(s.id);
+        const chip = `<button type="button" class="quick-nav-chip" data-jump="${id}"><i class="fas ${s.icon}"></i><span>${ylEscapeHtml(s.title)}</span></button>`;
+        if (s.id === 'freqSection' || s.id === 'recentSection') return chip;
+        return `<span class="quick-nav-group">${chip}<button type="button" class="quick-nav-more" data-menu="${id}" title="Show websites in this section" aria-label="Show websites in this section" aria-haspopup="true" aria-expanded="false"><i class="fas fa-chevron-down"></i></button></span>`;
+    });
+    chips.unshift('<button type="button" class="quick-nav-chip" data-jump="top" title="Back to top"><i class="fas fa-arrow-up"></i><span>Top</span></button>');
+    quickNavEl.innerHTML = chips.join('');
+    // Full name on hover, for titles that get shortened with "…"
+    quickNavEl.querySelectorAll('.quick-nav-chip:not([title])').forEach(c => c.title = c.textContent);
+    updateQuickNavActive();
+}
+
+// Height covered by the sticky search + chip bar, plus a little air
+function quickNavOffset() {
+    return document.querySelector('.search-bar-row').offsetHeight + 20;
+}
+
+function jumpToSection(sectionId) {
+    // An active search would sit above the sections, so clear it first
+    if (searchInputEl.value) {
+        searchInputEl.value = '';
+        searchClearBtnEl.style.display = 'none';
+        renderSearchResults('');
+    }
+    if (sectionId === 'top') {
+        quickNavLockedId = null;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+    }
+    const el = document.getElementById(sectionId);
+    if (!el) return;
+    const wasCollapsed = !isSectionExpanded(sectionId);
+    if (wasCollapsed) {
+        setSectionExpanded(sectionId, true);
+        localStorage.setItem('yanglab_section_states', JSON.stringify(ylSectionStates));
+        updateCollapseAllBtn();
+    }
+    const scroll = () => window.scrollTo({
+        top: el.getBoundingClientRect().top + window.scrollY - quickNavOffset(),
+        behavior: 'smooth'
+    });
+    quickNavLockedId = sectionId;
+    scroll();
+    clearTimeout(quickNavTimer);
+    // The page grows while a section opens, so aim again once it has
+    if (wasCollapsed) quickNavTimer = setTimeout(scroll, 450);
+
+    el.classList.remove('quick-nav-flash');
+    void el.offsetWidth; // restart the animation on repeat clicks
+    el.classList.add('quick-nav-flash');
+    updateQuickNavActive();
+}
+
+// Light up the chip for the section currently at the top of the view
+function updateQuickNavActive() {
+    if (!quickNavEl) return;
+    let current = quickNavLockedId;
+    if (!current && window.scrollY > 0) {
+        const line = quickNavOffset() + 40;
+        quickNavSections().forEach(s => {
+            const el = document.getElementById(s.id);
+            if (el && el.getBoundingClientRect().top <= line) current = s.id;
+        });
+    }
+    quickNavEl.querySelectorAll('.quick-nav-chip').forEach(c =>
+        c.classList.toggle('active', c.dataset.jump === current));
+
+    // Keep the lit chip visible inside the bar (sideways on phones)
+    const active = quickNavEl.querySelector('.quick-nav-chip.active');
+    if (active && quickNavEl.scrollWidth > quickNavEl.clientWidth) {
+        const a = active.getBoundingClientRect(), n = quickNavEl.getBoundingClientRect();
+        if (a.left < n.left || a.right > n.right) quickNavEl.scrollLeft += a.left - n.left - 10;
+    }
+}
+
+// ▾ menu: the websites inside one section, opened without scrolling
+let quickNavMenuEl = null;
+let quickNavMenuBtn = null;
+
+function closeQuickNavMenu() {
+    if (!quickNavMenuEl) return;
+    quickNavMenuEl.remove();
+    quickNavMenuBtn.setAttribute('aria-expanded', 'false');
+    quickNavMenuEl = quickNavMenuBtn = null;
+}
+
+function toggleQuickNavMenu(btn) {
+    const wasOpen = quickNavMenuBtn === btn;
+    closeQuickNavMenu();
+    if (wasOpen) return;
+
+    const sectionId = btn.dataset.menu;
+    const sec = ylCustomSections.find(s => s.id + 'Section' === sectionId);
+    const items = sectionId === 'mySection' ? ylItems : (sec ? sec.items : []);
+
+    const menu = document.createElement('div');
+    menu.className = 'quick-nav-menu';
+    if (items.length === 0) {
+        menu.innerHTML = '<div class="quick-nav-empty">No websites in this section yet.</div>';
+    }
+    items.forEach(item => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.title = item.url;
+        const icon = document.createElement('i');
+        icon.className = item.icon || 'fa-solid fa-globe';
+        const label = document.createElement('span');
+        label.textContent = item.title;
+        row.append(icon, label);
+        row.addEventListener('click', () => {
+            closeQuickNavMenu();
+            openPopup(item.url);
+        });
+        menu.appendChild(row);
+    });
+    document.body.appendChild(menu);
+
+    // Sit under the ▾ button, kept inside the window
+    const r = btn.getBoundingClientRect();
+    menu.style.top = (r.bottom + 6) + 'px';
+    menu.style.left = Math.max(8, Math.min(r.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.maxHeight = Math.max(120, window.innerHeight - r.bottom - 16) + 'px';
+
+    btn.setAttribute('aria-expanded', 'true');
+    quickNavMenuEl = menu;
+    quickNavMenuBtn = btn;
+}
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.quick-nav-menu, .quick-nav-more')) closeQuickNavMenu();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeQuickNavMenu();
+});
+// The menu is fixed in place, so close it if the page or bar moves under it
+window.addEventListener('scroll', closeQuickNavMenu, { passive: true });
+window.addEventListener('resize', closeQuickNavMenu);
+quickNavEl.addEventListener('scroll', closeQuickNavMenu, { passive: true });
+
+quickNavEl.addEventListener('click', (e) => {
+    const more = e.target.closest('.quick-nav-more');
+    if (more) { toggleQuickNavMenu(more); return; }
+    const chip = e.target.closest('.quick-nav-chip');
+    if (chip) jumpToSection(chip.dataset.jump);
+});
+window.addEventListener('scroll', updateQuickNavActive, { passive: true });
+// Once you scroll by hand, the highlight follows your position again
+['wheel', 'touchmove', 'mousedown', 'keydown'].forEach(type =>
+    window.addEventListener(type, (e) => {
+        if (!(e.target.closest && e.target.closest('.quick-nav'))) quickNavLockedId = null;
+    }, { passive: true }));
 
 // ── INIT ────────────────────────────────────────────────────
 // Load custom sections first so their DOM exists before section
