@@ -1481,7 +1481,7 @@
                     <span class="chime-icon" id="dial-chime-icon">🔕</span>
                     <span class="chime-label">Alarm</span>
                 </button>
-                <button class="chime-toggle" id="dial-tick-toggle" onclick="dialToggleTick()" title="Tick every second while the timer runs: OFF">
+                <button class="chime-toggle" id="dial-tick-toggle" onclick="dialToggleTick()" title="Tick every second while the timer runs (a lower click continues in overtime): OFF">
                     <span class="chime-icon" id="dial-tick-icon">🔇</span>
                     <span class="chime-label">Tick</span>
                 </button>
@@ -1920,6 +1920,7 @@
         SESSION.ticker = setInterval(function () {
             if (!SESSION.startTs) { clearInterval(SESSION.ticker); SESSION.ticker = null; return; }
             updateSessionUI();
+            overtimeTickIfNeeded();
         }, 1000);
     }
     function sessionBeginIfNeeded() {
@@ -1929,6 +1930,7 @@
     }
     function sessionClear() {
         SESSION.startTs = null;
+        FOCUS_STATE.overtime = false;
         persistSession();
         if (SESSION.ticker) { clearInterval(SESSION.ticker); SESSION.ticker = null; }
         const dial = document.getElementById('focus-dial');
@@ -2326,12 +2328,13 @@
             if (typeof rec.endAt !== 'number') return;
             if (rec.minutes >= 1) FOCUS_STATE.minutes = rec.minutes;
             if (rec.endAt > Date.now()) dialStart({ __resume: true, startTs: rec.startTs, endAt: rec.endAt });
-            // else: the block ended while you were away - a running session simply keeps counting until you press Save Log
+            else if (SESSION.startTs) FOCUS_STATE.overtime = true;   // the block ended while you were away: still timing = overtime
         } catch (e) {}
     }
     window.dialStart = function (resume) {
         if (FOCUS_STATE.running) return;
         const isResume = !!(resume && resume.__resume === true);
+        FOCUS_STATE.overtime = false;
         const dial = document.getElementById('focus-dial');
         if (!dial) return;
         dial.classList.remove('done');
@@ -2410,6 +2413,7 @@
             FOCUS_STATE.intervalId = null;
         }
         FOCUS_STATE.running = false;
+        FOCUS_STATE.overtime = true;          // from now on the timing is overtime
         if (dial) {
             dial.classList.remove('running');
             dial.classList.add('done');
@@ -2475,6 +2479,17 @@
         if (!ctx) return;
         const urgent = secsLeft !== undefined && secsLeft <= 10;
         beepAt(ctx, ctx.currentTime, urgent ? 1500 : 1000, 0.045, urgent ? 0.09 : 0.05, 'square');
+    }
+    // Overtime click: once the block is over but the timing keeps running, the bright tick is replaced by a
+    // low, round "tock" every second, so you can hear that time is still passing.
+    function playOvertimeTick() {
+        const ctx = getAudio();
+        if (!ctx) return;
+        beepAt(ctx, ctx.currentTime, 300, 0.10, 0.12, 'triangle');
+        beepAt(ctx, ctx.currentTime, 150, 0.12, 0.08, 'sine');
+    }
+    function overtimeTickIfNeeded() {
+        if (FOCUS_STATE.tickOn && FOCUS_STATE.overtime && !FOCUS_STATE.running && SESSION.startTs) playOvertimeTick();
     }
     // Warning alarm: three bursts of three beeps (~3 s).
     function playWarning() {
@@ -2558,7 +2573,7 @@
         if (icon) icon.textContent = FOCUS_STATE.tickOn ? '🔊' : '🔇';
         if (btn) {
             btn.classList.toggle('on', FOCUS_STATE.tickOn);
-            btn.title = 'Tick every second while the timer runs: ' + (FOCUS_STATE.tickOn ? 'ON' : 'OFF');
+            btn.title = 'Tick every second while the timer runs (a lower click continues in overtime): ' + (FOCUS_STATE.tickOn ? 'ON' : 'OFF');
         }
     }
     window.dialToggleTick = function () {
