@@ -62,6 +62,19 @@
             max-width: none;
         }
 
+        /* Optional per-table background (Table menu → 🎨 Table background…) */
+        table[data-bg] td { background-color: var(--tbl-bg); }
+        #tableBgPopover {
+            position: fixed; z-index: 99990; display: none; background: #fff; border: 1px solid #ccc;
+            border-radius: 8px; padding: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.25); width: 200px;
+            font-family: -apple-system, Segoe UI, Arial, sans-serif; font-size: 12px; color: #333;
+        }
+        #tableBgPopover.show { display: block; }
+        #tableBgPopover .tbg-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 6px 0 8px; }
+        #tableBgPopover .tbg-sw { width: 24px; height: 24px; border-radius: 4px; border: 1px solid #bbb; cursor: pointer; padding: 0; }
+        #tableBgPopover .tbg-sw:hover { outline: 2px solid #3b6ea5; }
+        #tableBgPopover .tbg-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+        #tableBgPopover .tbg-none { border: 1px solid #bbb; background: #f5f5f5; border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 12px; }
         td {
             border: 1px solid #ccc;
             background-color: white;
@@ -7457,6 +7470,7 @@ function insertNewCheckboxLine(currentLine) {
                     wrapped: wrapped,
                     mainTableId: table.id === 'mainTable',
                     small: table.classList.contains('cell-table-small'),
+                    bg: table.dataset.bg || '',
                     rows: rows
                 });
             });
@@ -7560,6 +7574,7 @@ function insertNewCheckboxLine(currentLine) {
                 const table = document.createElement('table');
                 if (tableData.mainTableId) table.id = 'mainTable';
                 if (tableData.small) table.classList.add('cell-table-small');
+                if (tableData.bg && /^#[0-9a-fA-F]{3,8}$/.test(tableData.bg)) { table.dataset.bg = tableData.bg; table.style.setProperty('--tbl-bg', tableData.bg); }
                 // Built here in plain row-major order first (one <tr>
                 // per stored row) — same as always — then regrouped into
                 // independent column stacks afterward, once every cell
@@ -9366,6 +9381,41 @@ function insertNewCheckboxLine(currentLine) {
 
             let tableMenuEl = null;
             function closeTableMenu() { if (tableMenuEl) tableMenuEl.classList.remove('show'); }
+
+            // --- Optional background colour for one table (saved with the project) ---
+            let tableBgPop = null, tableBgTarget = null;
+            function setTableBg(tbl, color) {
+                if (!tbl) return;
+                if (color) { tbl.dataset.bg = color; tbl.style.setProperty('--tbl-bg', color); }
+                else { delete tbl.dataset.bg; tbl.style.removeProperty('--tbl-bg'); }
+                if (window.scheduleCloudAutoSave) window.scheduleCloudAutoSave();
+            }
+            function openTableBgPopover(tbl, rect) {
+                if (!tableBgPop) {
+                    tableBgPop = document.createElement('div');
+                    tableBgPop.id = 'tableBgPopover';
+                    const colors = ['#fff9c4','#ffe0b2','#ffcdd2','#f8bbd0','#e1bee7','#c5cae9','#bbdefb','#b2ebf2','#c8e6c9','#dcedc8','#d7ccc8','#eceff1'];
+                    tableBgPop.innerHTML = '<div><b>Table background</b></div><div class="tbg-grid">' +
+                        colors.map(function (c) { return '<button type="button" class="tbg-sw" data-c="' + c + '" style="background:' + c + '" title="' + c + '"></button>'; }).join('') +
+                        '</div><div class="tbg-row"><button type="button" class="tbg-none">None (default)</button>' +
+                        '<label title="Custom colour">Custom <input type="color" class="tbg-custom" value="#ffffff" style="vertical-align:middle;width:30px;height:22px;padding:0;border:0;"></label></div>';
+                    document.body.appendChild(tableBgPop);
+                    tableBgPop.addEventListener('mousedown', function (e) { if (e.target.tagName !== 'INPUT') e.preventDefault(); });
+                    tableBgPop.addEventListener('click', function (e) {
+                        const sw = e.target.closest('.tbg-sw');
+                        if (sw) { setTableBg(tableBgTarget, sw.dataset.c); tableBgPop.classList.remove('show'); }
+                        else if (e.target.closest('.tbg-none')) { setTableBg(tableBgTarget, ''); tableBgPop.classList.remove('show'); }
+                    });
+                    tableBgPop.querySelector('.tbg-custom').addEventListener('input', function (e) { setTableBg(tableBgTarget, e.target.value); });
+                    document.addEventListener('mousedown', function (e) {
+                        if (tableBgPop.classList.contains('show') && !tableBgPop.contains(e.target)) tableBgPop.classList.remove('show');
+                    }, true);
+                }
+                tableBgTarget = tbl;
+                tableBgPop.style.top = Math.min(rect.bottom + 4, window.innerHeight - 190) + 'px';
+                tableBgPop.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - 220)) + 'px';
+                tableBgPop.classList.add('show');
+            }
             window.openTableMenu = function (block, anchor) {
                 if (!tableMenuEl) {
                     tableMenuEl = document.createElement('div');
@@ -9406,6 +9456,7 @@ function insertNewCheckboxLine(currentLine) {
                 item('⧉ Copy to project…', function () { openTransferDialog(block, 'copy'); });
                 item('➜ Move to project…', function () { openTransferDialog(block, 'move'); });
                 divider();
+                item('🎨 Table background…', function () { openTableBgPopover(tbl, anchor.getBoundingClientRect()); });
                 item('🖨 Print this table', function () { window.printSingleTable(block); });
                 const sizeBtn = kid('.table-size-toggle-btn');
                 if (sizeBtn && tbl) {
